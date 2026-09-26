@@ -22,7 +22,7 @@ CI 会拒绝不符合格式、日期无效、轻量标签、未指向远端 `mai
 ## 发布前置条件
 
 1. 所有待发布功能均已提交；工作区必须干净，不得携带构建产物、临时文件或无关修改。
-2. 若前端子模块有提交，先推送前端 `main`；随后提交并推送主仓库中更新后的子模块指针。
+2. 按 `AGENTS.md` 第 5 节检查主仓库记录的**全部**子模块指针；先推送所有尚未到达各自远端分支的子模块提交，再提交并推送主仓库。即使本次未修改某个子模块，也不得跳过其指针检查。
 3. 在 GitHub 上确认该主仓库提交的 CI 全部通过，包括后端测试、前端检查和构建矩阵。
 4. 确认该提交就是远端 `main` 的当前提交；不要从历史提交、分支提交或本地未推送提交创建 beta 标签。
 5. 确认下一枚 beta 标签未在本地或远端存在。
@@ -32,6 +32,8 @@ CI 会拒绝不符合格式、日期无效、轻量标签、未指向远端 `mai
 以下命令中的版本仅为示例，发布时替换为下一枚合法 beta 标签：
 
 ```bash
+git -C ECL/game push origin main
+git -C ECL/services/florolding push origin main
 git -C frontend push origin main
 git push origin main
 git status --short
