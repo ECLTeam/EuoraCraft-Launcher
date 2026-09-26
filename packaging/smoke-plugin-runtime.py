@@ -67,12 +67,34 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps({"name": "smoke", "entry_point": "main:Plugin"}), encoding="utf-8"
         )
         (plugin_path / "main.py").write_text(
-            "import os\nclass Plugin:\n    def identity(self):\n        return os.getpid()\n", encoding="utf-8"
+            "import os\n"
+            "class Plugin:\n"
+            "    enabled = False\n"
+            "    def on_enable(self):\n"
+            "        self.enabled = True\n"
+            "    def on_disable(self):\n"
+            "        self.enabled = False\n"
+            "    def identity(self):\n"
+            "        return {'pid': os.getpid(), 'enabled': self.enabled}\n",
+            encoding="utf-8",
         )
         with PluginWorkerProcess(worker_python, paths.worker_path, plugin_path) as worker:
-            worker_pid = worker.call("identity")
-        if not isinstance(worker_pid, int) or worker_pid <= 0:
-            raise RuntimeError("插件 Worker 未能返回独立进程标识")
+            worker.enable()
+            active = worker.call("identity")
+            worker.disable()
+            inactive = worker.call("identity")
+            worker.enable()
+            active_again = worker.call("identity")
+        if (
+            not isinstance(active, dict)
+            or not isinstance(active.get("pid"), int)
+            or active["pid"] <= 0
+            or active.get("enabled") is not True
+            or inactive != {"pid": active["pid"], "enabled": False}
+            or active_again != active
+        ):
+            raise RuntimeError("插件 Worker 生命周期冒烟失败")
+        worker_pid = active["pid"]
         print(f"插件运行时冒烟通过: {python_version}, {uv_version}, Worker PID {worker_pid}")
     return 0
 

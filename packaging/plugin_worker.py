@@ -16,6 +16,7 @@ import importlib.util
 import json
 import re
 import sys
+from contextlib import suppress
 from multiprocessing.connection import Client, Connection
 from pathlib import Path
 
@@ -81,8 +82,62 @@ def _dispatch_call(plugin: object, request: dict[str, object]) -> object:
     return getattr(plugin, method_name)(*args, **kwargs)
 
 
+def _call_hook(plugin: object, hook_name: str) -> None:
+    hook = getattr(plugin, hook_name, None)
+    if hook is not None:
+        hook()
+
+
+class _WorkerState:
+    def __init__(self) -> None:
+        self.plugin: object | None = None
+        self.enabled = False
+
+    def dispatch(self, request: dict[str, object]) -> object:
+        operation = request.get("op")
+        if operation == "load":
+            if self.plugin is not None:
+                raise ValueError("插件已加载")
+            raw_path = request.get("code_path")
+            if not isinstance(raw_path, str):
+                raise ValueError("插件代码路径无效")
+            candidate = _load_plugin(Path(raw_path))
+            try:
+                _call_hook(candidate, "on_load")
+            except Exception:
+                with suppress(Exception):
+                    _call_hook(candidate, "on_unload")
+                raise
+            self.plugin = candidate
+            return None
+        if self.plugin is None:
+            raise ValueError("插件尚未加载")
+        if operation == "enable":
+            if not self.enabled:
+                _call_hook(self.plugin, "on_enable")
+                self.enabled = True
+            return None
+        if operation == "disable":
+            if self.enabled:
+                _call_hook(self.plugin, "on_disable")
+                self.enabled = False
+            return None
+        if operation == "call":
+            return _dispatch_call(self.plugin, request)
+        raise ValueError("未知 Worker 操作")
+
+    def close(self) -> None:
+        if self.plugin is None:
+            return
+        try:
+            if self.enabled:
+                _call_hook(self.plugin, "on_disable")
+        finally:
+            _call_hook(self.plugin, "on_unload")
+
+
 def _serve(connection: Connection) -> None:
-    plugin: object | None = None
+    state = _WorkerState()
     while True:
         try:
             request = json.loads(connection.recv_bytes(max_frame_bytes).decode("utf-8"))
@@ -95,25 +150,11 @@ def _serve(connection: Connection) -> None:
             return
         operation = request.get("op")
         try:
-            if operation == "load":
-                if plugin is not None:
-                    raise ValueError("插件已加载")
-                raw_path = request.get("code_path")
-                if not isinstance(raw_path, str):
-                    raise ValueError("插件代码路径无效")
-                plugin = _load_plugin(Path(raw_path))
+            if operation == "close":
+                state.close()
                 result = None
-            elif operation == "call":
-                if plugin is None:
-                    raise ValueError("插件尚未加载")
-                result = _dispatch_call(plugin, request)
-            elif operation == "close":
-                _message(
-                    connection, {"version": protocol_version, "request_id": request_id, "success": True, "result": None}
-                )
-                return
             else:
-                raise ValueError("未知 Worker 操作")
+                result = state.dispatch(request)
             _message(
                 connection, {"version": protocol_version, "request_id": request_id, "success": True, "result": result}
             )
@@ -127,6 +168,8 @@ def _serve(connection: Connection) -> None:
                     "error": f"{type(exc).__name__}: {exc}",
                 },
             )
+        if operation == "close":
+            return
 
 
 def main(argv: list[str] | None = None) -> int:

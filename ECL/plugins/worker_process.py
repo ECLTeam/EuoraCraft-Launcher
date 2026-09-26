@@ -169,7 +169,7 @@ class PluginWorkerProcess:
                 if response["success"] is False:
                     raise PluginWorkerCallError(str(response.get("error", "Worker 调用失败")))
                 return response.get("result")
-            except (OSError, UnicodeError, ValueError, TypeError) as exc:
+            except (OSError, EOFError, UnicodeError, ValueError, TypeError) as exc:
                 raise PluginWorkerError("Worker 通信失败") from exc
 
     def call(self, method: str, *args: object, timeout: float = request_timeout_seconds, **kwargs: object) -> object:
@@ -196,6 +196,34 @@ class PluginWorkerProcess:
             return self._request({"op": "call", "method": method, "args": args, "kwargs": kwargs}, timeout)
         except PluginWorkerCallError:
             raise
+        except PluginWorkerError:
+            self.close()
+            raise
+
+    def enable(self) -> None:
+        """
+        在 Worker 中启用已加载插件，运行其 `on_enable` 钩子。
+
+        钩子失败会关闭 Worker；调用方不得回退到宿主进程运行插件。
+
+        :raises PluginWorkerError: 钩子失败或通信失效时抛出
+        """
+        try:
+            self._request({"op": "enable"})
+        except PluginWorkerError:
+            self.close()
+            raise
+
+    def disable(self) -> None:
+        """
+        在 Worker 中禁用插件，运行其 `on_disable` 钩子。
+
+        钩子失败会关闭 Worker，避免继续使用状态不明的插件实例。
+
+        :raises PluginWorkerError: 钩子失败或通信失效时抛出
+        """
+        try:
+            self._request({"op": "disable"})
         except PluginWorkerError:
             self.close()
             raise

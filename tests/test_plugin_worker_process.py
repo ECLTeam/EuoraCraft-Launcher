@@ -106,3 +106,86 @@ def test_worker_rejects_unbounded_timeout(tmp_path: Path) -> None:
         with pytest.raises(PluginWorkerError, match="超时必须"):
             worker.call("read", timeout=float("inf"))
         assert worker.call("read")["value"] == "bounded"
+
+
+def test_worker_lifecycle_hooks_are_ordered_and_idempotent(tmp_path: Path) -> None:
+    """
+    插件生命周期只在独立 Worker 中执行，重复启停不重复调用钩子。
+    """
+    code_path = tmp_path / "plugin"
+    code_path.mkdir()
+    (code_path / "plugin.json").write_text('{"name":"demo","entry_point":"main:Plugin"}', encoding="utf-8")
+    (code_path / "main.py").write_text(
+        "from pathlib import Path\n"
+        "class Plugin:\n"
+        "    def __init__(self):\n"
+        "        self.events = []\n"
+        "    def on_load(self):\n"
+        "        self.events.append('load')\n"
+        "    def on_enable(self):\n"
+        "        self.events.append('enable')\n"
+        "    def on_disable(self):\n"
+        "        self.events.append('disable')\n"
+        "    def on_unload(self):\n"
+        "        self.events.append('unload')\n"
+        "        Path(__file__).with_name('events.txt').write_text(','.join(self.events))\n"
+        "    def snapshot(self):\n"
+        "        return self.events\n",
+        encoding="utf-8",
+    )
+    with PluginWorkerProcess(Path(sys.executable), _worker_script(), code_path) as worker:
+        assert worker.call("snapshot") == ["load"]
+        worker.enable()
+        worker.enable()
+        assert worker.call("snapshot") == ["load", "enable"]
+        worker.disable()
+        worker.disable()
+        assert worker.call("snapshot") == ["load", "enable", "disable"]
+        worker.enable()
+    assert (code_path / "events.txt").read_text(encoding="utf-8") == "load,enable,disable,enable,disable,unload"
+
+
+def test_worker_enable_failure_closes_process(tmp_path: Path) -> None:
+    """
+    启用钩子失败时不保留状态不明的插件进程。
+    """
+    code_path = tmp_path / "plugin"
+    code_path.mkdir()
+    (code_path / "plugin.json").write_text('{"name":"demo","entry_point":"main:Plugin"}', encoding="utf-8")
+    (code_path / "main.py").write_text(
+        "from pathlib import Path\n"
+        "class Plugin:\n"
+        "    def on_enable(self):\n"
+        "        raise RuntimeError('enable failed')\n"
+        "    def on_unload(self):\n"
+        "        Path(__file__).with_name('unloaded.txt').write_text('yes')\n",
+        encoding="utf-8",
+    )
+    worker = PluginWorkerProcess(Path(sys.executable), _worker_script(), code_path)
+    worker.start()
+    process = worker._process
+    assert process is not None
+    with pytest.raises(PluginWorkerError, match="enable failed"):
+        worker.enable()
+    assert process.poll() is not None
+    assert (code_path / "unloaded.txt").read_text(encoding="utf-8") == "yes"
+
+
+def test_worker_crash_becomes_connection_error_and_is_reaped(tmp_path: Path) -> None:
+    """
+    子进程突然退出时关闭连接并回收进程，不向调用方泄漏 EOFError。
+    """
+    code_path = tmp_path / "plugin"
+    code_path.mkdir()
+    (code_path / "plugin.json").write_text('{"name":"demo","entry_point":"main:Plugin"}', encoding="utf-8")
+    (code_path / "main.py").write_text(
+        "import os\nclass Plugin:\n    def crash(self):\n        os._exit(11)\n", encoding="utf-8"
+    )
+    worker = PluginWorkerProcess(Path(sys.executable), _worker_script(), code_path)
+    worker.start()
+    process = worker._process
+    assert process is not None
+    with pytest.raises(PluginWorkerError, match="通信失败"):
+        worker.call("crash")
+    assert process.poll() is not None
+    assert worker._process is None
