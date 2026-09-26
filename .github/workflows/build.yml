@@ -274,6 +274,13 @@ jobs:
             --output-dir build-plugin-runtime \
             --manifest resources/plugin_runtime_manifest.json
 
+      - name: Smoke test plugin Python runtime asset
+        shell: bash
+        run: |
+          python packaging/smoke-plugin-runtime.py \
+            --asset-dir build-plugin-runtime \
+            --manifest resources/plugin_runtime_manifest.json
+
       - name: Build with Nuitka
         if: ${{ runner.os != 'macOS' }}
         shell: bash
@@ -475,6 +482,13 @@ jobs:
         run: |
           .venv-arch/bin/python packaging/build-plugin-runtime.py \
             --output-dir build-plugin-runtime \
+            --manifest resources/plugin_runtime_manifest.json
+
+      - name: Smoke test plugin Python runtime asset
+        shell: bash
+        run: |
+          .venv-arch/bin/python packaging/smoke-plugin-runtime.py \
+            --asset-dir build-plugin-runtime \
             --manifest resources/plugin_runtime_manifest.json
 
       - name: Inject build secrets
