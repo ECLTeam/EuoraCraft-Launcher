@@ -267,6 +267,13 @@ jobs:
               print("No tag detected, keeping existing version.py")
           PY
 
+      - name: Build plugin Python runtime asset
+        shell: bash
+        run: |
+          python packaging/build-plugin-runtime.py \
+            --output-dir build-plugin-runtime \
+            --manifest resources/plugin_runtime_manifest.json
+
       - name: Build with Nuitka
         if: ${{ runner.os != 'macOS' }}
         shell: bash
@@ -352,11 +359,20 @@ jobs:
           path: ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
           archive: false
 
+      - name: Upload plugin runtime artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: plugin-runtime-${{ matrix.os }}-${{ runner.arch }}
+          path: build-plugin-runtime/plugin-runtime-*.zip
+          archive: false
+
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
+          files: |
+            ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
+            build-plugin-runtime/plugin-runtime-*.zip
           prerelease: ${{ steps.version_info.outputs.type != 'release' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -453,6 +469,13 @@ jobs:
           uv venv --python 3.12 .venv-arch
           uv pip install --python .venv-arch/bin/python -e ".[dev]"
           .venv-arch/bin/python -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version'
+
+      - name: Build plugin Python runtime asset
+        shell: bash
+        run: |
+          .venv-arch/bin/python packaging/build-plugin-runtime.py \
+            --output-dir build-plugin-runtime \
+            --manifest resources/plugin_runtime_manifest.json
 
       - name: Inject build secrets
         shell: bash
@@ -604,6 +627,13 @@ jobs:
           path: EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}
           archive: false
 
+      - name: Upload Arch plugin runtime as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: plugin-runtime-arch-x64
+          path: build-plugin-runtime/plugin-runtime-*.zip
+          archive: false
+
   publish-arch:
     name: Publish Arch-x64
     if: startsWith(github.ref, 'refs/tags/v')
@@ -624,6 +654,12 @@ jobs:
           name: EuoraCraft-Launcher-Arch-X64-${{ github.ref_name }}
           path: release-assets
 
+      - name: Download Arch plugin runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: plugin-runtime-arch-x64
+          path: release-assets
+
       - name: Upload Arch artifacts to Release
         shell: bash
         env:
@@ -632,10 +668,15 @@ jobs:
         run: |
           PKG_FILE="release-assets/${{ needs.build-arch-pkg.outputs.package_artifact }}"
           ARCH_BIN="release-assets/EuoraCraft-Launcher-Arch-X64-$TAG"
+          RUNTIME_FILES=(release-assets/plugin-runtime-*.zip)
           [ -f "$PKG_FILE" ] || { echo "未找到 Arch 主包：$PKG_FILE" >&2; exit 1; }
           [ -f "$ARCH_BIN" ] || { echo "未找到 Arch 二进制：$ARCH_BIN" >&2; exit 1; }
-          echo "uploading $PKG_FILE and $ARCH_BIN to $TAG"
+          [ "${#RUNTIME_FILES[@]}" -eq 1 ] && [ -f "${RUNTIME_FILES[0]}" ] || {
+            echo "未找到唯一的 Arch 插件运行时资产" >&2
+            exit 1
+          }
+          echo "uploading $PKG_FILE, $ARCH_BIN and ${RUNTIME_FILES[0]} to $TAG"
           # 本发布 Job 未 checkout 仓库，必须显式指定目标仓库，避免 gh 调用 git 推断仓库失败。
-          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" \
+          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" "${RUNTIME_FILES[0]}" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

@@ -9,6 +9,7 @@
 #   - class PluginRuntimeError — 运行时资产获取或校验失败。
 #   - class PluginRuntimeAsset — 构建时固定的运行时资产描述。
 #   - class PluginRuntimePaths — 已安装运行时的 Python 与 uv 路径。
+#   - load_plugin_runtime_asset(path) -> PluginRuntimeAsset — 读取内嵌的固定资产清单。
 #   - class PluginRuntimeStore — 管理数据目录中的版本化插件运行时。
 # ============================================================
 
@@ -93,6 +94,33 @@ def _validate_asset(asset: PluginRuntimeAsset) -> tuple[Path, Path]:
     return _asset_relpath(asset.python_relpath), _asset_relpath(asset.uv_relpath)
 
 
+def load_plugin_runtime_asset(manifest_path: Path) -> PluginRuntimeAsset:
+    """
+    从启动器随包资源读取并校验固定的插件运行时资产清单。
+
+    无标签开发构建可没有下载地址，但正式在线安装必须得到 HTTPS 地址。
+
+    :param manifest_path: CI 在打包启动器前生成的 JSON 清单路径
+    :return: 可供运行时缓存使用的固定资产描述
+    :raises PluginRuntimeError: 清单缺失、字段类型或路径无效时抛出
+    """
+    try:
+        parsed = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PluginRuntimeError("插件运行时资产清单不可读取") from exc
+    if not isinstance(parsed, dict):
+        raise PluginRuntimeError("插件运行时资产清单必须是对象")
+    required = {"runtime_id", "sha256", "python_relpath", "uv_relpath", "download_url"}
+    if set(parsed) != required or any(not isinstance(parsed[key], str) for key in required - {"download_url"}):
+        raise PluginRuntimeError("插件运行时资产清单字段无效")
+    download_url = parsed["download_url"]
+    if download_url is not None and (not isinstance(download_url, str) or not download_url.startswith("https://")):
+        raise PluginRuntimeError("插件运行时资产下载地址无效")
+    asset = PluginRuntimeAsset(**parsed)
+    _validate_asset(asset)
+    return asset
+
+
 def _verify_archive(archive_path: Path, expected_sha256: str) -> None:
     """
     在解包前流式校验固定摘要和压缩包大小。
@@ -155,7 +183,7 @@ def _extract_runtime(archive_path: Path, root_path: Path) -> None:
                 destination.mkdir(parents=True, exist_ok=True)
                 continue
             destination.parent.mkdir(parents=True, exist_ok=True)
-            partial_path = destination.with_name(f".{destination.name}.{uuid4().hex}.partial")
+            partial_path = destination.with_name(f".ecl-{uuid4().hex[:8]}.tmp")
             with archive.open(entry) as source, partial_path.open("xb") as target:
                 copied = 0
                 while chunk := source.read(copy_chunk_bytes):
