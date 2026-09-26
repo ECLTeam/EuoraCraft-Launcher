@@ -281,6 +281,13 @@ jobs:
             --asset-dir build-plugin-runtime \
             --manifest resources/plugin_runtime_manifest.json
 
+      - name: Smoke test offline plugin dependency installation
+        shell: bash
+        env:
+          ECL_PLUGIN_RUNTIME_MANIFEST: resources/plugin_runtime_manifest.json
+          ECL_PLUGIN_RUNTIME_ASSET_DIR: build-plugin-runtime
+        run: python -m pytest tests/test_plugin_package_preparation.py -q
+
       - name: Build with Nuitka
         if: ${{ runner.os != 'macOS' }}
         shell: bash
@@ -490,6 +497,13 @@ jobs:
           .venv-arch/bin/python packaging/smoke-plugin-runtime.py \
             --asset-dir build-plugin-runtime \
             --manifest resources/plugin_runtime_manifest.json
+
+      - name: Smoke test offline plugin dependency installation
+        shell: bash
+        env:
+          ECL_PLUGIN_RUNTIME_MANIFEST: resources/plugin_runtime_manifest.json
+          ECL_PLUGIN_RUNTIME_ASSET_DIR: build-plugin-runtime
+        run: .venv-arch/bin/python -m pytest tests/test_plugin_package_preparation.py -q
 
       - name: Inject build secrets
         shell: bash

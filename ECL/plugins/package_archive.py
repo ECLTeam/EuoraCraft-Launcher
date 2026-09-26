@@ -263,6 +263,9 @@ def extract_plugin_package(archive_path: Path, target_path: Path) -> PluginPacka
                     if digest.hexdigest() != expected_hash or size != expected_size:
                         raise PluginPackageError(f"解包时文件发生变化: {name}")
                 partial_path.replace(destination)
+            manifest_partial = target_path / "package-manifest.json.partial"
+            manifest_partial.write_bytes(manifest_bytes)
+            manifest_partial.replace(target_path / "package-manifest.json")
     except (OSError, RuntimeError, ValueError, StopIteration, zipfile.BadZipFile) as exc:
         shutil.rmtree(target_path)
         if isinstance(exc, PluginPackageError):

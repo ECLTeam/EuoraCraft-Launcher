@@ -52,6 +52,7 @@ def test_build_inspect_extract_roundtrip(tmp_path: Path) -> None:
     target_path = tmp_path / "installed"
     assert extract_plugin_package(first_path, target_path) == first_info
     assert (target_path / "main.py").read_bytes() == (source_path / "main.py").read_bytes()
+    assert (target_path / "package-manifest.json").is_file()
     with pytest.raises(PluginPackageError, match="目标已存在"):
         extract_plugin_package(first_path, target_path)
 
