@@ -127,6 +127,29 @@ class PluginRegistry(_PluginState):
         """
         self.events.subscribe(event, handler, owner=plugin.name)
 
+    def _append_unloaded_candidate_entries(self, result: list[dict[str, Any]], loaded_names: set[str]) -> None:
+        # 安全模式下补充「已发现但未加载」的用户插件条目，元数据从 plugin.json 读取。
+        error_names = set(self._plugin_errors.keys()) | set(self._dependency_resolution.errors.keys())
+        pending_names = (
+            self._candidate_map.keys()
+            - loaded_names
+            - self._disabled_plugins
+            - set(self._dependency_resolution.skipped)
+            - error_names
+        )
+        for name in sorted(pending_names):
+            candidate = self._candidate_map[name]
+            if candidate.get("is_system", False):
+                continue
+            result.append(
+                _plugin_entry(
+                    name,
+                    candidate.get("metadata", {}),
+                    "unloaded",
+                    None,
+                )
+            )
+
     def list_plugins(self) -> list[dict[str, Any]]:
         """
         获取插件列表。
@@ -158,6 +181,9 @@ class PluginRegistry(_PluginState):
                     self._dependency_resolution.errors.get(name),
                 )
             )
+        # 补充安全模式（--disable-plugins）下未加载的候选插件条目，使其可见并可按需启用
+        if not self._startup_auto_enable:
+            self._append_unloaded_candidate_entries(result, loaded_names)
         # 补充被禁用且未实例化的插件条目，仍从 plugin.json 读取元数据供前端展示
         for name in sorted((self._disabled_plugins & self._candidate_map.keys()) - loaded_names):
             candidate = self._candidate_map[name]

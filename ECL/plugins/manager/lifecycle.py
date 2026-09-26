@@ -73,8 +73,12 @@ class PluginLifecycle(_PluginState):
     def _enable(self, name: str) -> tuple[bool, str]:
         # 启用单个插件；若因被禁用而未加载则先按候选信息加载。
         plugin = self._plugins.get(name)
-        # 若插件因被禁用而未加载，先按候选信息加载
-        if plugin is None and name in self._disabled_plugins and name in self._candidate_map:
+        # 若插件因被禁用或安全模式（--disable-plugins）而未加载，先按候选信息加载
+        if (
+            plugin is None
+            and name in self._candidate_map
+            and (name in self._disabled_plugins or not self._startup_auto_enable)
+        ):
             candidate = self._candidate_map[name]
             self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
             plugin = self._plugins.get(name)

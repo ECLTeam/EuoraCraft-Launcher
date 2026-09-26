@@ -15,6 +15,7 @@
 #   - test_frontend_ready_is_idempotent_and_reenabled_plugins_get_hook(tmp_path) -> None — on_frontend_ready 重复调用只生效一次；前端就绪后重新启用的插件单独补调。
 #   - test_register_route_is_idempotent(tmp_path) -> None — 同一插件重复注册相同路径时，路由列表中只保留一条。
 #   - test_close_does_not_mark_all_plugins_disabled(tmp_path) -> None — 框架关闭时不应把已加载插件全部写入 plugin_state.json。
+#   - test_auto_enable_false_keeps_plugins_discovered_but_unloaded(tmp_path) -> None — auto_enable=False 时插件仅被发现，不加载也不启用，随后仍可按需启用。
 # ============================================================
 
 """插件禁用状态持久化测试。"""
@@ -330,3 +331,45 @@ def test_close_does_not_mark_all_plugins_disabled(tmp_path) -> None:
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert "demo" not in state.get("disabled", [])
     assert "other_plugin" in state.get("disabled", [])
+
+
+def test_auto_enable_false_keeps_plugins_discovered_but_unloaded(tmp_path) -> None:
+    """auto_enable=False 时插件仅被发现，不加载也不启用，随后仍可按需启用。"""
+    data_path = tmp_path / "data"
+    resource_path = tmp_path / "resources"
+    _write_plugin(
+        data_path / "plugins" / "lazy_plugin",
+        {
+            "name": "lazy_plugin",
+            "version": "1.0.0",
+            "entry_point": "main:LazyPlugin",
+            "permissions": [
+                {"scope": "events", "action": "emit", "resource": "lazy_plugin:*"},
+                {"scope": "commands", "action": "execute", "resource": "*"},
+            ],
+        },
+        "from ECL.plugins import Plugin\n"
+        "class LazyPlugin(Plugin):\n"
+        "    @Plugin.on_command('hello')\n"
+        "    def cmd_hello(self): return {'ok': True}\n",
+    )
+
+    safe_framework = PluginManager()
+    safe_framework.initialize(data_path, resource_path, auto_enable=False)
+
+    assert safe_framework.get_plugin("lazy_plugin") is None
+    assert "lazy_plugin" in safe_framework._candidate_map
+    info = {p["name"]: p for p in safe_framework.list_plugins()}
+    assert info["lazy_plugin"]["status"] == "unloaded"
+
+    # 安全模式下按需启用应加载并启用该插件
+    result = safe_framework.enable("lazy_plugin")
+    assert result.status == "enabled"
+    assert safe_framework.get_plugin("lazy_plugin") is not None
+    assert safe_framework._status.get("lazy_plugin") == "enabled"
+
+    # 对照组：默认行为仍会加载并启用同一插件，证明差异来自 auto_enable 参数。
+    default_framework = PluginManager()
+    default_framework.initialize(data_path, resource_path)
+    assert default_framework.get_plugin("lazy_plugin") is not None
+    assert default_framework._status.get("lazy_plugin") == "enabled"

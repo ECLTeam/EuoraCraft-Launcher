@@ -9,7 +9,8 @@
 #   - class ApplicationState — 保存一次应用运行期间会变化的后端状态。
 #   - class ApplicationContext — 显式保存后端依赖图，并统一管理共享资源的生命周期。
 #       - close() -> None — 按依赖逆序关闭后端资源，并清空事件订阅。
-#   - create_application(runtime_info, on_state_ready) -> ApplicationContext — 构造一次应用运行所需的完整后端依赖图。
+#   - create_application(runtime_info, *, launch_options=None, on_state_ready=None) -> ApplicationContext
+#     — 构造一次应用运行所需的完整后端依赖图。
 # ============================================================
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from urllib.request import getproxies
 
 import httpx
 
+from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.common import BuildEnvironment, __version__, __version_type__
 from ECL.common.runtime import RuntimeInfo
 from ECL.events import EventBus
@@ -221,6 +223,7 @@ class ApplicationState:
     :param resource_path: 打包资源或源码资源所在目录
     :param data_path: 后端持久化数据目录
     :param is_frozen: 当前是否运行于打包后的可执行文件
+    :param launch_options: 命令行启动参数；会话内粘滞覆盖配置，不写入存盘配置
     :param active_window_chrome: 主窗口创建时固定的有效窗口模式
     """
 
@@ -232,6 +235,7 @@ class ApplicationState:
     launcher_version_type: str = __version_type__
     debug: bool = False
     config: dict[str, Any] = field(default_factory=dict)
+    launch_options: LaunchOptions | None = None
     active_window_chrome: str = "custom"
 
 
@@ -303,6 +307,7 @@ class ApplicationContext:
 def create_application(
     runtime_info: RuntimeInfo,
     *,
+    launch_options: LaunchOptions | None = None,
     on_state_ready: Callable[[ApplicationState], None] | None = None,
 ) -> ApplicationContext:
     """
@@ -311,6 +316,7 @@ def create_application(
     初始化中途失败时，本函数会按逆序释放已经创建的资源，再将原始异常抛给启动器。
 
     :param runtime_info: 运行目录、资源目录和打包状态
+    :param launch_options: 命令行启动参数；在环境变量覆盖之后叠加，会话内粘滞
     :param on_state_ready: 配置读取后、服务构造前的可选回调，用于提前应用日志级别
     :return: 负责后端依赖与资源生命周期的应用上下文
     """
@@ -319,11 +325,12 @@ def create_application(
         resource_path=runtime_info["resource_path"],
         data_path=runtime_info["data_path"],
         is_frozen=runtime_info["is_frozen"],
+        launch_options=launch_options,
     )
     events = EventBus()
     environment = Environment(state.app_path)
     config = ConfigStore(state.data_path, events)
-    state.config = environment.apply_to_config(config.get_config())
+    state.config = apply_launch_overrides(environment.apply_to_config(config.get_config()), launch_options)
     state.debug = bool((state.config.get("launcher") or {}).get("debug"))
     if on_state_ready is not None:
         on_state_ready(state)
@@ -449,7 +456,11 @@ def create_application(
             crash_extensions=game.crash_extensions,
         )
         created.append(plugins)
-        plugins.initialize(state.data_path, state.resource_path)
+        plugins.initialize(
+            state.data_path,
+            state.resource_path,
+            auto_enable=not (launch_options is not None and launch_options.disable_plugins),
+        )
         logger.debug("插件管理器已初始化")
 
         dev_channel: DevChannelService | None = None
@@ -512,8 +523,10 @@ def create_application(
         if section != "launcher":
             return
         launcher_config = data if isinstance(data, Mapping) else state.config.get("launcher") or {}
-        state.config = environment.apply_to_config(config.get_config())
-        state.debug = bool((data or {}).get("debug", False))
+        # 重新叠加命令行覆盖，使会话内粘滞的启动参数不被设置界面的任意改动清除。
+        state.config = apply_launch_overrides(environment.apply_to_config(config.get_config()), state.launch_options)
+        # 调试标记跟随叠加覆盖后的生效配置，与初始化阶段的派生逻辑保持一致。
+        state.debug = bool((state.config.get("launcher") or {}).get("debug"))
         _apply_ssl_verify(
             ssl_verify_context,
             not bool((data or {}).get("disable_ssl_verify", False)),

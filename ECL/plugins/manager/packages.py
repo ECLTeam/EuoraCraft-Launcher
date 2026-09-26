@@ -238,11 +238,16 @@ class PluginPackages(_PluginState):
         self._package_entries[name] = {"metadata": {"name": name}, "status": "error", "error": message}
         self.logger.error("归档插件 %s 无法恢复: %s", name, message)
 
-    def _restore_package_plugins(self, user_names: set[str], system_names: set[str]) -> set[str]:
+    def _restore_package_plugins(
+        self, user_names: set[str], system_names: set[str], *, restore_workers: bool = True
+    ) -> set[str]:
         """
         在目录发现前恢复归档 Worker；失败时保留错误状态并阻止宿主回退。
 
         同名目录插件与归档冲突时两者都不启动，避免误加载未隔离代码。
+
+        :param restore_workers: 是否恢复归档 Worker 进程；--disable-plugins 安全模式下
+            仅完成发现与冲突登记，不启动任何归档插件进程
         """
         self._close_packages()
         self._package_entries.clear()
@@ -256,7 +261,7 @@ class PluginPackages(_PluginState):
         for name in sorted(names & system_names):
             self.logger.error("归档插件 %s 与系统插件重名，忽略归档活动指针", name)
         restorable_names = names - self._package_conflicts - system_names
-        if not restorable_names:
+        if not restorable_names or not restore_workers:
             return names
         try:
             asset = self._package_asset()

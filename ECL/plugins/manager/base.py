@@ -93,6 +93,8 @@ class _PluginState:
         self._permission_manager = PermissionManager()  # 插件权限管理器
         # 被禁用的插件名集合，持久化到 plugin_state.json
         self._disabled_plugins: set[str] = set()
+        # 启动阶段是否自动加载并启用插件；--disable-plugins 安全模式下为 False
+        self._startup_auto_enable = True
         self._plugin_state_path: Path | None = None  # plugin_state.json 的路径
         # 候选插件映射，用于在启用被禁用的插件时按需加载
         self._candidate_map: dict[str, dict[str, Any]] = {}
@@ -106,12 +108,15 @@ class _PluginState:
         self._frontend_ready = False
         self._sidebar_collapsed: bool | None = None  # 侧栏是否折叠
 
-    def initialize(self, data_path: Path, resource_path: Path | None = None) -> None:
+    def initialize(self, data_path: Path, resource_path: Path | None = None, *, auto_enable: bool = True) -> None:
         """
         从用户和系统目录发现插件，按依赖顺序加载并启用可用插件。
 
         :param data_path: 启动器数据目录
         :param resource_path: 启动器只读资源目录
+        :param auto_enable: 是否在发现后立即加载并启用插件；False 时仅完成发现、
+            安装事务恢复与依赖解析（对应命令行 --disable-plugins 安全模式），
+            插件保持未加载状态，可由用户在插件页或开发通道按需启用
         """
         self._data_path = Path(data_path)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
@@ -129,6 +134,7 @@ class _PluginState:
             self._resource_path / "resources" / "system_plugins",
         )
         self._load_plugin_state()
+        self._startup_auto_enable = auto_enable
         # 订阅 HTML 注入事件，收集插槽内容
         if not self._event_handlers_registered:
             self.events.subscribe("plugin:html_injected", self._on_html_injected)
@@ -142,7 +148,7 @@ class _PluginState:
         )
         system_plugins = {candidate["name"] for candidate in system_candidates}
         package_names = self._restore_package_plugins(
-            {candidate["name"] for candidate in user_candidates}, system_plugins
+            {candidate["name"] for candidate in user_candidates}, system_plugins, restore_workers=auto_enable
         )
         candidates = [
             candidate
@@ -167,10 +173,14 @@ class _PluginState:
             self._dependency_resolution.load_order,
             len(self._dependency_resolution.errors),
         )
-        self.logger.info("正在按依赖顺序加载 %d 个插件候选项", len(candidates))
-        self._load_plugins_in_order(candidates, self._dependency_resolution.load_order)
-        self.logger.debug("插件加载阶段完成，正在启用已加载插件")
-        self._enable_all()
+        if not auto_enable:
+            # 安全模式：只完成发现与依赖解析，不执行插件代码，保留按需启用的能力。
+            self.logger.warning("已按启动参数跳过插件的加载与启用，可稍后在插件页手动启用")
+        else:
+            self.logger.info("正在按依赖顺序加载 %d 个插件候选项", len(candidates))
+            self._load_plugins_in_order(candidates, self._dependency_resolution.load_order)
+            self.logger.debug("插件加载阶段完成，正在启用已加载插件")
+            self._enable_all()
         self.logger.info(
             "插件框架初始化完成，已加载 %d 个插件，已禁用 %d 个插件",
             len(self._plugins),

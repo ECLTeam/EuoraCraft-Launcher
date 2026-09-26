@@ -8,6 +8,7 @@
 # 公开接口：
 #   - class LauncherExitCode
 #   - class EuoraCraftLauncher — 编排一次桌面应用的完整运行周期。
+#       - __init__(options=None) — 应用命令行启动参数并初始化日志系统。
 #       - run() -> LauncherExitCode — 初始化后端并运行前端事件循环。
 # ============================================================
 
@@ -22,6 +23,7 @@ from typing import Any
 
 from ECL.adapters import Adapter
 from ECL.application import ApplicationContext, ApplicationState, create_application
+from ECL.cli import LaunchOptions
 from ECL.common import __version__, __version_type__, get_runtime_info
 from ECL.services.app_update import clear_stale_pending_update
 from ECL.services.maintenance import apply_pending_debug_maintenance
@@ -43,11 +45,14 @@ class EuoraCraftLauncher:
     :func:`create_application` 构造，本类仅负责初始化、运行与关闭的调度。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, options: LaunchOptions | None = None) -> None:
         """
         收集运行环境信息并初始化日志系统，同时填充启动器的运行状态字段。
+
+        命令行 --data-dir 在此阶段生效：日志目录等所有数据路径都随之重定向。
         """
-        self.runtime_info = get_runtime_info()
+        self.options = options if options is not None else LaunchOptions()  # 本次运行的命令行启动参数
+        self.runtime_info = get_runtime_info(data_path_override=self.options.data_dir)
         self.app_path: Path = self.runtime_info["app_path"]  # 启动器数据与运行文件所在目录
         self.resource_path: Path = self.runtime_info["resource_path"]  # 打包资源或源码资源所在目录
         self.data_path: Path = self.runtime_info["data_path"]  # 后端持久化数据目录
@@ -124,7 +129,11 @@ class EuoraCraftLauncher:
         if cleared:
             self.logger.info("已清理遗留的启动器更新标记")
 
-        self.context = create_application(self.runtime_info, on_state_ready=self._apply_bootstrap_state)
+        self.context = create_application(
+            self.runtime_info,
+            launch_options=self.options,
+            on_state_ready=self._apply_bootstrap_state,
+        )
         self.config = self.context.state.config
         self.debug = self.context.state.debug
         self.debug_log_level = self._config_log_level()

@@ -19,16 +19,20 @@
 #   - test_resolve_proxy_url_custom_and_none_modes() -> None
 #   - test_none_proxy_mode_sets_no_proxy_env(monkeypatch, tmp_path) -> None
 #   - test_system_proxy_mode_does_not_force_no_proxy(monkeypatch, tmp_path) -> None
+#   - test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_path) -> None
 # ============================================================
 
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 import ECL.application as application_module
+import ECL.services.connector as connector_service_module
 from ECL.application import ApplicationContext, create_application
+from ECL.cli import LaunchOptions
 from ECL.events import EventBus
 
 
@@ -39,6 +43,88 @@ class Closable:
 
     def close(self) -> None:
         self.order.append(self.name)
+
+
+class _FakeHttp:
+    def __init__(self, **_kwargs) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeAccounts:
+    plugin_auth_providers = SimpleNamespace()
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def microsoft_login_config(self) -> dict:
+        return {"available": False}
+
+    def current_account(self) -> None:
+        return None
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeStartupUpdate:
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def start(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeGame:
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.instance_compatibility = SimpleNamespace()
+        self.launch_hooks = SimpleNamespace()
+        self.crash_extensions = SimpleNamespace()
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeConnector:
+    available = True
+    easytier_available = False
+    easytier_version = ""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _FakePluginManager:
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.init_kwargs: dict[str, Any] = {}
+
+    def initialize(self, *_args, **kwargs) -> None:
+        self.init_kwargs = kwargs
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeDevChannel:
+    def __init__(self, **_kwargs) -> None:
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def install_frontend_handlers(self, _handlers: Any) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 
 def test_application_context_closes_resources_in_reverse_dependency_order() -> None:
@@ -295,3 +381,54 @@ def test_system_proxy_mode_does_not_force_no_proxy(monkeypatch, tmp_path: Path) 
     # system 模式不应主动把 NO_PROXY 置为 *（保持系统代理可用）
     assert os.environ.get("NO_PROXY") == ""
     assert os.environ.get("no_proxy") == ""
+
+
+def test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_path: Path) -> None:
+    """命令行启动参数应叠加到生效配置、关闭插件自动启用，并在配置更新后保持粘滞。"""
+    monkeypatch.setattr(application_module.httpx, "Client", _FakeHttp)
+    monkeypatch.setattr(application_module, "AccountManager", _FakeAccounts)
+    monkeypatch.setattr(application_module, "StartupUpdateService", _FakeStartupUpdate)
+    monkeypatch.setattr(application_module, "GameService", _FakeGame)
+    monkeypatch.setattr(application_module, "PluginManager", _FakePluginManager)
+    monkeypatch.setattr(application_module, "DevChannelService", _FakeDevChannel)
+    monkeypatch.setattr(connector_service_module, "ConnectorService", _FakeConnector)
+    # 环境变量声明 debug=false、日志级别 error，命令行参数应优先于二者
+    monkeypatch.setenv("ECL_CONFIG_LAUNCHER_DEBUG", "false")
+    monkeypatch.setenv("ECL_CONFIG_LAUNCHER_DEBUG_LOG_LEVEL", "error")
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+
+    options = LaunchOptions(
+        debug=True,
+        log_level="debug",
+        enable_dev_channel=True,
+        disable_plugins=True,
+        frontend_dist="http://localhost:5173",
+    )
+    context = create_application(
+        {
+            "app_path": tmp_path,
+            "resource_path": tmp_path,
+            "data_path": tmp_path / "ECL_data",
+            "is_frozen": False,
+        },
+        launch_options=options,
+    )
+    try:
+        assert context.state.launch_options is options
+        assert context.state.config["launcher"]["debug"] is True
+        assert context.state.config["launcher"]["debug_log_level"] == "debug"
+        assert context.state.config["launcher"]["dev_channel"] is True
+        assert context.state.config["tauri"]["frontenddist"] == "http://localhost:5173"
+        assert context.state.debug is True
+        plugins = context.plugins
+        assert plugins.init_kwargs["auto_enable"] is False
+        assert isinstance(context.dev_channel, _FakeDevChannel)
+        assert context.dev_channel.started is True
+
+        # 任意设置变更后，会话级覆盖不应被清除（粘滞语义）
+        context.events.emit("config:updated", "launcher", {"debug": False})
+        assert context.state.config["launcher"]["debug"] is True
+        assert context.state.debug is True
+    finally:
+        context.close()

@@ -38,6 +38,7 @@ from ECL.api.models import (
     ProcessStopRequest,
 )
 from ECL.application import ApplicationContext
+from ECL.cli import apply_launch_overrides
 from ECL.game import AuthException, NetException
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
@@ -557,7 +558,8 @@ class _FrontendState:
             self.emit_to_frontend(event, payload)
 
     def _get_effective_config(self) -> dict[str, Any]:
-        # 合并持久化配置与运行时覆盖，构造前端可见的有效配置。
+        # 合并持久化配置与运行时覆盖，构造前端可见的有效配置；
+        # 命令行启动参数在此兜底叠加，使界面展示的即会话实际生效值。
         config = dict(self.config.get_config())
         launcher_config = dict(config.get("launcher") or {})
         runtime_config = (self.launcher.config or {}).get("launcher") or {}
@@ -565,7 +567,7 @@ class _FrontendState:
         launcher_config["debug"] = bool(self.launcher.debug)
         launcher_config["debug_log_level"] = getattr(self.launcher, "debug_log_level", None) or "info"
         config["launcher"] = launcher_config
-        return config
+        return apply_launch_overrides(config, getattr(self.launcher, "launch_options", None))
 
     @staticmethod
     def _normalize_authlib_server_url(value: Any) -> str | None:

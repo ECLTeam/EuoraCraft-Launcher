@@ -47,9 +47,11 @@ class RuntimeInfo(TypedDict):
     data_path: Path
 
 
-def get_runtime_info() -> RuntimeInfo:
+def get_runtime_info(data_path_override: Path | None = None) -> RuntimeInfo:
     """
     获取当前运行环境的信息。
+
+    :param data_path_override: 命令行 --data-dir 指定的数据目录，优先于 ECL_DATA_PATH 环境变量
     :return: 是否冻结打包，以及应用、资源与持久化数据目录路径
     """
     is_frozen = bool(getattr(sys, "frozen", False)) or _is_nuitka_build()
@@ -68,9 +70,12 @@ def get_runtime_info() -> RuntimeInfo:
         app_path = Path(__file__).resolve().parent.parent.parent
         resource_path = app_path
     # 外部工具（如插件开发工具箱）通过该环境变量将数据目录重定向到沙箱位置，
-    # 使开发版启动器与正式安装完全隔离。
-    env_data_path = os.environ.get("ECL_DATA_PATH")
-    data_path = Path(env_data_path).expanduser().resolve() if env_data_path else app_path / "ECL_data"
+    # 使开发版启动器与正式安装完全隔离；命令行参数优先于该环境变量。
+    if data_path_override is not None:
+        data_path = Path(data_path_override).expanduser().resolve()
+    else:
+        env_data_path = os.environ.get("ECL_DATA_PATH")
+        data_path = Path(env_data_path).expanduser().resolve() if env_data_path else app_path / "ECL_data"
     return {
         "is_frozen": is_frozen,
         "app_path": app_path,

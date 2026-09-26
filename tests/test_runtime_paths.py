@@ -8,6 +8,7 @@
 # 公开接口：
 #   - test_frozen_runtime_separates_executable_and_resource_paths(tmp_path, monkeypatch) -> None
 #   - test_data_path_env_override_redirects_sandbox_directory(tmp_path, monkeypatch) -> None
+#   - test_data_path_cli_override_takes_precedence_over_env(tmp_path, monkeypatch) -> None
 #   - test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None
 #   - test_plugin_install_targets_data_path(tmp_path) -> None
 # ============================================================
@@ -44,6 +45,18 @@ def test_data_path_env_override_redirects_sandbox_directory(tmp_path, monkeypatc
 
     assert runtime_info["data_path"] == sandbox_path.resolve()
     assert runtime_info["data_path"] != runtime_info["app_path"] / "ECL_data"
+
+
+def test_data_path_cli_override_takes_precedence_over_env(tmp_path, monkeypatch) -> None:
+    """命令行 --data-dir 对应的覆盖参数应优先于 ECL_DATA_PATH 环境变量。"""
+    env_sandbox_path = tmp_path / "env-sandbox"
+    cli_sandbox_path = tmp_path / "cli-sandbox"
+    monkeypatch.setenv("ECL_DATA_PATH", str(env_sandbox_path))
+
+    runtime_info = get_runtime_info(data_path_override=cli_sandbox_path)
+
+    assert runtime_info["data_path"] == cli_sandbox_path.resolve()
+    assert runtime_info["data_path"] != env_sandbox_path.resolve()
 
 
 def test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None:
