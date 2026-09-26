@@ -20,6 +20,7 @@
 #   - test_none_proxy_mode_sets_no_proxy_env(monkeypatch, tmp_path) -> None
 #   - test_system_proxy_mode_does_not_force_no_proxy(monkeypatch, tmp_path) -> None
 #   - test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_path) -> None
+#   - test_composition_skips_single_instance_when_disabled(monkeypatch, tmp_path) -> None
 # ============================================================
 
 import os
@@ -125,6 +126,23 @@ class _FakeDevChannel:
 
     def close(self) -> None:
         pass
+
+
+class _FakeSingleInstance:
+    def __init__(self, **_kwargs) -> None:
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _fake_single_instance_service(monkeypatch):
+    """组合根默认会启动单实例监听；测试统一替换为可断言的假实现。"""
+    monkeypatch.setattr(application_module, "SingleInstanceService", _FakeSingleInstance)
 
 
 def test_application_context_closes_resources_in_reverse_dependency_order() -> None:
@@ -425,6 +443,8 @@ def test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_pa
         assert plugins.init_kwargs["auto_enable"] is False
         assert isinstance(context.dev_channel, _FakeDevChannel)
         assert context.dev_channel.started is True
+        assert isinstance(context.single_instance, _FakeSingleInstance)
+        assert context.single_instance.started is True
 
         # 任意设置变更后，会话级覆盖不应被清除（粘滞语义）
         context.events.emit("config:updated", "launcher", {"debug": False})
@@ -432,3 +452,52 @@ def test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_pa
         assert context.state.debug is True
     finally:
         context.close()
+
+
+def test_composition_skips_single_instance_when_disabled(monkeypatch, tmp_path: Path) -> None:
+    """launcher.single_instance 关闭时组合根不应构造单实例服务。"""
+
+    class FakeConfigStore:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def get_config(self, *_args) -> dict:
+            return {"launcher": {"single_instance": False}}
+
+    class FakeEnvironment:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def apply_to_config(self, config: dict) -> dict:
+            return config
+
+        def get_value(self, _key: str) -> None:
+            return None
+
+    class StopComposition:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("stop after http client")
+
+    monkeypatch.setattr(application_module, "ConfigStore", FakeConfigStore)
+    monkeypatch.setattr(application_module, "Environment", FakeEnvironment)
+    monkeypatch.setattr(application_module.httpx, "Client", StopComposition)
+
+    created_services: list[_FakeSingleInstance] = []
+
+    def _tracking_start(self) -> None:
+        self.started = True
+        created_services.append(self)
+
+    monkeypatch.setattr(_FakeSingleInstance, "start", _tracking_start)
+
+    with pytest.raises(RuntimeError, match="stop after http client"):
+        create_application(
+            {
+                "app_path": tmp_path,
+                "resource_path": tmp_path,
+                "data_path": tmp_path / "ECL_data",
+                "is_frozen": False,
+            }
+        )
+
+    assert created_services == []

@@ -159,6 +159,11 @@ class Adapter:
             "accounts:microsoft_login_status",
             lambda data: api.focus_window() if data.get("focus") else None,
         )
+        # 单实例互斥：后续启动进程发来的置前请求经事件总线转为主窗口激活。
+        bus.subscribe(
+            "launcher:focus_request",
+            lambda _payload: api.focus_window(),
+        )
         bus.subscribe(
             "plugin:disabled",
             lambda plugin: api.close_plugin_windows(plugin.name),

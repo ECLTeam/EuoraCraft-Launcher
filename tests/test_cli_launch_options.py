@@ -16,6 +16,12 @@
 #   - test_parse_rejects_unknown_log_level() -> None
 #   - test_version_flag_prints_version_and_exits(capsys) -> None
 #   - test_help_flag_prints_usage_and_exits(capsys) -> None
+#   - test_parse_quick_launch_targets() -> None
+#   - test_parse_world_target_allows_spaces() -> None
+#   - test_parse_server_requires_launch() -> None
+#   - test_parse_world_requires_launch() -> None
+#   - test_parse_server_and_world_mutually_exclusive() -> None
+#   - test_parse_server_rejects_whitespace() -> None
 #   - test_apply_overrides_none_returns_copy_without_changes() -> None
 #   - test_apply_overrides_does_not_mutate_input_config() -> None
 #   - test_apply_overrides_applies_all_sections() -> None
@@ -121,8 +127,59 @@ def test_help_flag_prints_usage_and_exits(capsys) -> None:
         "--disable-plugins",
         "--frontend-dist",
         "--dev-channel",
+        "--launch",
+        "--server",
+        "--world",
     ):
         assert argument in output
+
+
+def test_parse_quick_launch_targets() -> None:
+    """--launch 与 --server 应成对解析并保留原始取值。"""
+    options = parse_launch_options(["--launch", "Foo", "--server", "127.0.0.1:25565"])
+
+    assert options.launch_target == "Foo"
+    assert options.server_target == "127.0.0.1:25565"
+    assert options.world_target is None
+
+
+def test_parse_world_target_allows_spaces() -> None:
+    """--world 的世界 ID 允许包含空格（对应存档目录名）。"""
+    options = parse_launch_options(["--launch", "Foo", "--world", "New World"])
+
+    assert options.world_target == "New World"
+
+
+def test_parse_server_requires_launch() -> None:
+    """--server 缺少 --launch 时应以用法错误退出。"""
+    with pytest.raises(SystemExit) as exc_info:
+        parse_launch_options(["--server", "127.0.0.1:25565"])
+
+    assert exc_info.value.code == 2
+
+
+def test_parse_world_requires_launch() -> None:
+    """--world 缺少 --launch 时应以用法错误退出。"""
+    with pytest.raises(SystemExit) as exc_info:
+        parse_launch_options(["--world", "New World"])
+
+    assert exc_info.value.code == 2
+
+
+def test_parse_server_and_world_mutually_exclusive() -> None:
+    """--server 与 --world 不能同时使用。"""
+    with pytest.raises(SystemExit) as exc_info:
+        parse_launch_options(["--launch", "Foo", "--server", "a:1", "--world", "w"])
+
+    assert exc_info.value.code == 2
+
+
+def test_parse_server_rejects_whitespace() -> None:
+    """--server 的地址不允许包含空白字符。"""
+    with pytest.raises(SystemExit) as exc_info:
+        parse_launch_options(["--launch", "Foo", "--server", "bad address"])
+
+    assert exc_info.value.code == 2
 
 
 def test_apply_overrides_none_returns_copy_without_changes() -> None:

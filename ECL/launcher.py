@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
@@ -27,6 +28,7 @@ from ECL.cli import LaunchOptions
 from ECL.common import __version__, __version_type__, get_runtime_info
 from ECL.services.app_update import clear_stale_pending_update
 from ECL.services.maintenance import apply_pending_debug_maintenance
+from ECL.services.single_instance import probe_running_instance
 from ECL.utils import configure_logging
 from ECL.utils.logging import resolve_log_level
 
@@ -45,11 +47,16 @@ class EuoraCraftLauncher:
     :func:`create_application` 构造，本类仅负责初始化、运行与关闭的调度。
     """
 
+    # 类级默认：允许测试经 object.__new__ 构造实例而不触发单实例移交语义。
+    _handed_over = False
+
     def __init__(self, options: LaunchOptions | None = None) -> None:
         """
         收集运行环境信息并初始化日志系统，同时填充启动器的运行状态字段。
 
         命令行 --data-dir 在此阶段生效：日志目录等所有数据路径都随之重定向。
+        初始化日志系统之前会先探测单实例：同一数据目录已有主实例运行时，
+        本进程请求其窗口置前并跳过日志等一切初始化，随后在 run() 中退出。
         """
         self.options = options if options is not None else LaunchOptions()  # 本次运行的命令行启动参数
         self.runtime_info = get_runtime_info(data_path_override=self.options.data_dir)
@@ -64,6 +71,13 @@ class EuoraCraftLauncher:
         self.config: dict[str, Any] = {}  # 已应用环境变量的启动配置
         self.context: ApplicationContext | None = None  # 已构造的后端应用上下文
         self._shutdown_complete = False  # 关闭流程是否已完成（用于幂等）
+        # 单实例探测必须先于日志系统：移交成功时不创建日志文件，避免与主实例竞争轮转句柄。
+        self._handed_over = probe_running_instance(self.data_path, sys.argv)
+        if self._handed_over:
+            self.logging = None  # 移交进程不初始化日志系统
+            self.logger = logging.getLogger("EuoraCraft_Launcher")  # 无处理器的兜底日志器
+            print("EuoraCraft 启动器已在运行，已请求激活已运行的窗口。")
+            return
         self.logging = configure_logging(self.data_path)  # 日志系统实例
         self.logger = self.logging.get_logger("EuoraCraft_Launcher")  # 启动器专用日志器
         self.logger.debug(
@@ -80,6 +94,9 @@ class EuoraCraftLauncher:
 
         :return: 本次运行的结果退出码（LauncherExitCode 枚举值）
         """
+        if self._handed_over:
+            # 同一数据目录已有主实例：置前请求已送达，本进程立即退出。
+            return LauncherExitCode.SUCCESS
         self.logger.info("正在启动 EuoraCraft Launcher V%s", self.launcher_version)
         try:
             self._initialize()
@@ -184,7 +201,8 @@ class EuoraCraftLauncher:
             self.context.close()
             self.context = None
         self.logger.debug("启动器后端已关闭")
-        self.logging.shutdown()
+        if self.logging is not None:
+            self.logging.shutdown()
 
     def _on_config_updated(self, section: str, data: Any) -> None:
         # 同步启动器镜像状态，并即时应用配置的控制台日志级别。

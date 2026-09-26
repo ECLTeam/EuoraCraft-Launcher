@@ -43,6 +43,7 @@ from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
 from ECL.services.processes import ProcessService
+from ECL.services.single_instance import SingleInstanceService
 from ECL.services.updates import StartupUpdateService
 from ECL.services.wardrobe import WardrobeStore
 from ECL.utils import ConfigStore, Environment
@@ -262,6 +263,7 @@ class ApplicationContext:
     processes: ProcessService
     background_media: BackgroundMediaService | None = None
     startup_update: StartupUpdateService | None = None
+    single_instance: SingleInstanceService | None = None  # 按配置启动的单实例互斥监听
     dev_channel: DevChannelService | None = None  # 按需启动的开发者通道，未开启时为 None
     _closed: bool = field(default=False, init=False, repr=False, compare=False)
     _close_lock: RLock = field(default_factory=RLock, init=False, repr=False, compare=False)
@@ -278,6 +280,7 @@ class ApplicationContext:
             logger.debug("开始关闭后台服务")
             # 开发者通道先于插件关闭，避免通道继续处理请求时依赖已被释放。
             resources: tuple[Any, ...] = (
+                self.single_instance,
                 self.dev_channel,
                 self.plugins,
                 self.processes,
@@ -345,6 +348,17 @@ def create_application(
     try:
         logger.debug("正在创建共享 HTTP 客户端")
         launcher_config = state.config.get("launcher") or {}
+        # 单实例监听最先创建（关闭时最后释放），写入发现文件供后续启动进程探测。
+        single_instance: SingleInstanceService | None = None
+        if bool(launcher_config.get("single_instance", True)):
+            logger.debug("正在启动单实例监听")
+            single_instance = SingleInstanceService(
+                events=events,
+                data_path=state.data_path,
+                launcher_version=state.launcher_version,
+            )
+            created.append(single_instance)
+            single_instance.start()
         disable_ssl_verify = bool(launcher_config.get("disable_ssl_verify", False))
         request_timeout = _network_timeout(launcher_config.get("request_timeout", 15))
         request_retries = _network_retries(launcher_config.get("request_retries", 2))
@@ -504,6 +518,7 @@ def create_application(
         processes=processes,
         background_media=background_media,
         startup_update=startup_update,
+        single_instance=single_instance,
         dev_channel=dev_channel,
     )
 

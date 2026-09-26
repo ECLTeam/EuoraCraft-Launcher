@@ -42,6 +42,8 @@ default_config: dict[str, Any] = {
         "request_retries": 2,
         # 开发者通道：向插件开发工具箱暴露本地 WebSocket 服务。
         "dev_channel": False,
+        # 单实例互斥：同一数据目录仅允许一个主实例，重复启动时激活已运行窗口。
+        "single_instance": True,
     },
     "game": {
         "minecraft_paths": [],

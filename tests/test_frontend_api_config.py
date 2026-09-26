@@ -92,6 +92,8 @@
 #   - test_wardrobe_apply_skin_uploads_internal_texture_without_base64_body(tmp_path) -> None
 #   - test_debug_maintenance_requires_debug_mode(tmp_path) -> None
 #   - test_debug_maintenance_schedules_allowed_action(tmp_path) -> None
+#   - test_frontend_ready_dispatches_cli_launch_once(tmp_path, monkeypatch) -> None
+#   - test_frontend_ready_cli_launch_failure_emits_popup(tmp_path) -> None
 # ============================================================
 
 import asyncio
@@ -139,6 +141,7 @@ files_module = import_module("ECL.api.files")
 ConfigStore = import_module("ECL.utils").ConfigStore
 EventBus = import_module("ECL.events").EventBus
 AccountError = import_module("ECL.services.accounts").AccountError
+LaunchOptions = import_module("ECL.cli").LaunchOptions
 command_handlers = import_module("ECL.api.registry").command_handlers
 _guarded_call = import_module("ECL.api.bridge")._guarded_call
 
@@ -419,6 +422,7 @@ def test_launcher_config_excludes_runtime_metadata(tmp_path) -> None:
         "request_timeout": 15,
         "request_retries": 2,
         "dev_channel": False,
+        "single_instance": True,
     }
 
 
@@ -1391,3 +1395,64 @@ def test_debug_maintenance_schedules_allowed_action(tmp_path) -> None:
     assert result["data"]["action"] == "clear_plugins"
     assert result["data"]["restart_required"] is True
     assert (api.data_path / ".pending_debug_maintenance.json").is_file()
+
+
+def test_frontend_ready_dispatches_cli_launch_once(tmp_path, monkeypatch) -> None:
+    """主窗口就绪后应恰好派发一次命令行快捷启动，body 携带配置运行参数。"""
+    import ECL.api.bridge as bridge_module
+
+    api = _build_api(tmp_path)
+    api.launcher.launch_options = LaunchOptions(launch_target="Foo")
+    resolved_roots: list = []
+    monkeypatch.setattr(
+        bridge_module,
+        "candidate_roots",
+        lambda _config: resolved_roots,
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "resolve_launch_target",
+        lambda _target, _roots: (Path("/games/mc"), "Foo"),
+    )
+    recorded: list[dict[str, Any]] = []
+
+    async def fake_game_launch(body: dict[str, Any]) -> dict[str, Any]:
+        recorded.append(body)
+        return {"success": True, "data": {"instanceId": "i1"}}
+
+    monkeypatch.setattr(api, "game_launch", fake_game_launch)
+    webview = FakeWebviewWindow()
+
+    async def scenario() -> None:
+        await api.frontend_ready({}, webview)
+        await api.frontend_ready({}, webview)  # 窗口刷新重复就绪不应重复派发
+        assert api._cli_launch_task is not None
+        await api._cli_launch_task
+
+    asyncio.run(scenario())
+
+    assert len(recorded) == 1
+    body = recorded[0]
+    assert body["version_id"] == "Foo"
+    assert body["game_path"] == str(Path("/games/mc"))
+    assert body["memory"] == 4096  # 来自生效配置的 game.memory_size 默认值
+    assert body["lock_memory"] is False
+    assert body["process_priority"] == "normal"
+
+
+def test_frontend_ready_cli_launch_failure_emits_popup(tmp_path) -> None:
+    """快捷启动目标解析失败时应发出弹窗事件且不抛出异常。"""
+    api = _build_api(tmp_path)
+    api.launcher.launch_options = LaunchOptions(launch_target="Missing")
+    popups: list[dict[str, Any]] = []
+    api.emit_popup_to_frontend = lambda payload: popups.append(payload)  # type: ignore[method-assign]
+    webview = FakeWebviewWindow()
+
+    async def scenario() -> None:
+        await api.frontend_ready({}, webview)
+        assert api._cli_launch_task is not None
+        await api._cli_launch_task
+
+    asyncio.run(scenario())
+
+    assert any(popup.get("id") == "cli-launch-failed" for popup in popups)

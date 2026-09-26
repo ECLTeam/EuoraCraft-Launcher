@@ -34,6 +34,8 @@ class LaunchOptions:
 
     所有参数仅在本次运行内生效，不写入 setting.json；数据目录在运行时信息
     解析阶段单独消费，其余参数经 :func:`apply_launch_overrides` 叠加到配置。
+    ``launch_target``/``server_target``/``world_target`` 为一次性动作参数，
+    在前端就绪后由调度层消费，不参与配置覆盖。
     """
 
     data_dir: Path | None = None  # --data-dir 指定的数据目录，None 表示沿用默认解析
@@ -42,6 +44,9 @@ class LaunchOptions:
     disable_plugins: bool = False  # --disable-plugins 是否跳过插件的加载与启用
     frontend_dist: str | None = None  # --frontend-dist 指定的前端资源来源
     enable_dev_channel: bool = False  # --dev-channel 是否开启开发者通道
+    launch_target: str | None = None  # --launch 指向的实例（版本名或实例目录）
+    server_target: str | None = None  # --server 指定的快捷进入服务器地址
+    world_target: str | None = None  # --world 指定的快捷进入世界 ID
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -95,7 +100,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="开启开发者通道（供插件开发工具箱连接）",
     )
+    parser.add_argument(
+        "--launch",
+        metavar="实例",
+        help="快捷启动实例，取值为版本名或 <游戏根>/versions/<版本名> 目录",
+    )
+    parser.add_argument(
+        "--server",
+        metavar="地址[:端口]",
+        help="配合 --launch 使用：启动后直连该服务器",
+    )
+    parser.add_argument(
+        "--world",
+        metavar="世界ID",
+        help="配合 --launch 使用：启动后快速进入该世界",
+    )
     return parser
+
+
+def _validate_quick_target(parser: argparse.ArgumentParser, flag: str, value: str | None) -> str | None:
+    # 校验 --server/--world 的取值；服务器地址不允许空白，世界 ID 允许空格。
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned or "\0" in cleaned:
+        parser.error(f"{flag} 的取值不能为空")
+    if flag == "--server" and any(char.isspace() for char in cleaned):
+        parser.error(f"{flag} 的取值不能包含空白字符: {cleaned}")
+    return cleaned
 
 
 def _resolve_data_dir(parser: argparse.ArgumentParser, raw: str | None) -> Path | None:
@@ -133,6 +165,10 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
     """
     parser = build_arg_parser()
     args = parser.parse_args(list(argv))
+    if (args.server or args.world) and not args.launch:
+        parser.error("--server/--world 需要与 --launch 同时使用")
+    if args.server and args.world:
+        parser.error("--server 与 --world 不能同时使用")
     return LaunchOptions(
         data_dir=_resolve_data_dir(parser, args.data_dir),
         debug=bool(args.debug),
@@ -140,6 +176,9 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         disable_plugins=bool(args.disable_plugins),
         frontend_dist=_resolve_frontend_dist(parser, args.frontend_dist),
         enable_dev_channel=bool(args.dev_channel),
+        launch_target=args.launch.strip() if args.launch else None,
+        server_target=_validate_quick_target(parser, "--server", args.server),
+        world_target=_validate_quick_target(parser, "--world", args.world),
     )
 
 

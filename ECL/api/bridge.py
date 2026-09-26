@@ -42,6 +42,7 @@ from ECL.cli import apply_launch_overrides
 from ECL.game import AuthException, NetException
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
+from ECL.services.game.launch_target import candidate_roots, resolve_launch_target
 from ECL.services.maintenance import DebugMaintenanceError
 from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger
@@ -364,6 +365,8 @@ class _FrontendState:
         self._webviews: dict[str, WebviewWindow] = {}
         self._window_metadata: dict[str, dict[str, Any]] = {}
         self._plugins_frontend_ready = False
+        self._cli_launch_dispatched = False  # 命令行快捷启动是否已派发（每次进程运行至多一次）
+        self._cli_launch_task: asyncio.Task[None] | None = None  # 持有任务引用，避免被垃圾回收
         self._main_window_event_bound = False
         self._pending_frontend_events: list[tuple[str, Any]] = []
         self._pending_error_presentations: dict[str, dict[str, Any]] = {}
@@ -873,5 +876,75 @@ class _FrontendState:
             startup_update_result = self.startup_update.result()
             if startup_update_result is not None:
                 self.emit_to_frontend("update:check_completed", startup_update_result)
+        if window_type == "main" and not self._cli_launch_dispatched:
+            self._cli_launch_dispatched = True
+            launch_options = getattr(self.launcher, "launch_options", None)
+            if launch_options is not None and getattr(launch_options, "launch_target", None):
+                # 前端就绪后派发命令行快捷启动，保证启动进度事件可完整送达界面。
+                self._cli_launch_task = asyncio.create_task(self._run_cli_launch())
         self.logger.info("前端加载完成")
         return {"success": True}
+
+    async def _run_cli_launch(self) -> None:
+        """
+        处理命令行快捷启动目标。
+
+        解析 ``--launch`` 指向的实例并复用 ``game_launch`` 完成启动，与用户
+        在界面点击「启动」按钮的行为保持一致；解析或启动过程中的任何失败都
+        以弹窗事件呈现，不阻断启动器运行。
+
+        :raises None: 本方法不向调用方抛出异常，全部失败均转为弹窗事件
+        """
+        options = getattr(self.launcher, "launch_options", None)
+        target = str(getattr(options, "launch_target", "") or "").strip()
+        try:
+            game_config = self._get_effective_config().get("game") or {}
+            game_path, version_id = resolve_launch_target(target, candidate_roots(game_config))
+            # game_launch 不从配置兜底 memory 等字段（平时由前端显式传入），
+            # CLI 调度需与前端行为对齐，从生效配置显式带入。
+            body: dict[str, Any] = {
+                "version_id": version_id,
+                "game_path": str(game_path),
+                "memory": int(game_config.get("memory_size", default_config["game"]["memory_size"])),
+                "lock_memory": bool(game_config.get("lock_memory", False)),
+                "process_priority": str(game_config.get("process_priority", "normal")),
+            }
+            server_target = str(getattr(options, "server_target", "") or "")
+            world_target = str(getattr(options, "world_target", "") or "")
+            if server_target:
+                body["quick_target"] = {"type": "server", "address": server_target}
+            elif world_target:
+                body["quick_target"] = {"type": "world", "world_id": world_target}
+        except GameServiceError as exc:
+            self.logger.warning("快捷启动目标解析失败: target=%s, code=%s", target, exc.error_code)
+            self.emit_popup_to_frontend({"id": "cli-launch-failed", "title": "快捷启动失败", "content": str(exc)})
+            return
+        except Exception:
+            self.logger.exception("快捷启动目标解析出现意外错误: target=%s", target)
+            self.emit_popup_to_frontend(
+                {
+                    "id": "cli-launch-failed",
+                    "title": "快捷启动失败",
+                    "content": f"无法解析快捷启动目标：{target}",
+                }
+            )
+            return
+        self.logger.info("正在通过命令行启动实例: version=%s, path=%s", version_id, game_path)
+        try:
+            response = await self.game_launch(body)
+        except Exception:
+            self.logger.exception("命令行启动实例失败: version=%s", version_id)
+            self.emit_popup_to_frontend(
+                {
+                    "id": "cli-launch-failed",
+                    "title": "快捷启动失败",
+                    "content": f"启动实例 {version_id} 失败，请导出日志排查。",
+                }
+            )
+            return
+        if not isinstance(response, dict) or response.get("success") is not True:
+            message = str((response or {}).get("message") or "未知错误")
+            self.logger.warning("命令行启动实例被拒绝: version=%s, message=%s", version_id, message)
+            self.emit_popup_to_frontend({"id": "cli-launch-failed", "title": "快捷启动失败", "content": message})
+            return
+        self.logger.info("命令行实例启动流程完成: version=%s", version_id)
