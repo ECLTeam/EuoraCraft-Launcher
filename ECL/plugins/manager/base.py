@@ -6,6 +6,8 @@
 # 文件作用：插件管理器内部共享基类与工具。
 # ============================================================
 
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,6 +24,8 @@ from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
 from ECL.utils import get_logger
+
+from .install_transaction import recover_plugin_install_transactions
 
 if TYPE_CHECKING:
     pass
@@ -111,6 +115,9 @@ class _PluginState:
         self._plugin_config_dir = self._data_path / "plugin_config"
         self._plugin_config_dir.mkdir(parents=True, exist_ok=True)
         self._plugin_state_path = self._data_path / "plugin_state.json"
+        failed_installs = set(recover_plugin_install_transactions(self._data_path, self._plugin_dir))
+        if failed_installs:
+            self.logger.error("插件安装恢复失败，启动时跳过这些用户插件: %s", sorted(failed_installs))
         self.logger.info(
             "正在初始化插件框架: user_dir=%s, system_dir=%s",
             self._plugin_dir,
@@ -124,7 +131,11 @@ class _PluginState:
             self.events.subscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
             self._event_handlers_registered = True
 
-        candidates = self._collect_candidates(self._plugin_dir, is_system=False)
+        candidates = [
+            candidate
+            for candidate in self._collect_candidates(self._plugin_dir, is_system=False)
+            if candidate["name"] not in failed_installs
+        ]
         candidates.extend(
             self._collect_candidates(self._resource_path / "resources" / "system_plugins", is_system=True)
         )
@@ -137,7 +148,7 @@ class _PluginState:
         self._candidate_map = {c["name"]: c for c in candidates}
         # 禁用状态只属于当前仍安装的插件；插件目录被删除后不应留下幽灵列表项。
         system_plugins = {candidate["name"] for candidate in candidates if candidate["is_system"]}
-        self._prune_plugin_state(set(self._candidate_map), non_disableable_plugins=system_plugins)
+        self._prune_plugin_state(set(self._candidate_map) | failed_installs, non_disableable_plugins=system_plugins)
         self._dependency_resolution = self._resolve_candidate_dependencies(candidates)
         self.logger.debug(
             "插件依赖解析完成: load_order=%s, errors=%d",

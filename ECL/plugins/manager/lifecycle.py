@@ -18,16 +18,24 @@
 #       - close() -> None — 按依赖拓扑的逆序卸载已加载插件并解除框架事件订阅。
 # ============================================================
 
+from __future__ import annotations
+
 import json
 import re
 import shutil
 from pathlib import Path
 from typing import Any
 
-from ECL.plugins.dependencies import parse_dependency, parse_version
+from ECL.plugins.dependencies import DependencyResolution, parse_dependency, parse_version
+from ECL.plugins.environment_pool import _exclusive_lock
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult
+from .install_transaction import (
+    PluginInstallTransaction,
+    PluginInstallTransactionError,
+    recover_plugin_install_transactions,
+)
 
 
 class PluginLifecycle(_PluginState):
@@ -199,6 +207,13 @@ class PluginLifecycle(_PluginState):
 
         :param name: 插件名称
         """
+        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None:
+            return PluginActionResult(str(name), PluginAction.UNINSTALL, "invalid", "插件名包含非法字符")
+        journal_path = self._data_path / "plugin_install_transactions" / f"{name}.json"
+        if journal_path.exists():
+            failed = recover_plugin_install_transactions(self._data_path, self._plugin_dir)
+            if name in failed or journal_path.exists():
+                return PluginActionResult(name, PluginAction.UNINSTALL, "failed", "插件安装事务尚未完成，暂不能卸载")
         candidate = self._candidate_map.get(name)
         if candidate is None:
             return PluginActionResult(name, PluginAction.UNINSTALL, "not_found", f"插件不存在: {name}")
@@ -264,48 +279,189 @@ class PluginLifecycle(_PluginState):
 
     def install(self, source_path: str) -> PluginActionResult:
         """
-        安装插件。
+        从目录安装插件，失败时恢复旧代码与启用状态。
+
+        源内容先复制到发现目录之外；目录切换由恢复日志保护，完成加载与启用
+        验证后才提交。此兼容安装路径仍在宿主进程执行插件代码，不提供依赖隔离。
 
         :param source_path: 待安装插件的源目录
+        :return: 安装结果；失败时旧插件尽可能保持可用
         """
+        if not isinstance(source_path, str) or not source_path.strip():
+            return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件源目录路径无效")
         source = Path(source_path)
         if not source.is_dir():
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件源目录不存在")
         metadata_path = source / "plugin.json"
         if not metadata_path.is_file():
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单不存在")
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单不是有效的 UTF-8 JSON")
+        if not isinstance(metadata, dict):
+            return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单必须是对象")
         target_name = metadata.get("name")
-        if not target_name:
-            return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单缺少 name")
-        # 插件名即目标目录名，限制为安全字符，防止 "../x" 等名字越出插件根目录
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(target_name)):
+        if not isinstance(target_name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", target_name):
             return PluginActionResult(str(target_name), PluginAction.INSTALL, "invalid", "插件名包含非法字符")
-        target_dir = self._plugin_dir / str(target_name)
-        # 覆盖安装前先卸载已加载的旧实例：重复安装即同步最新代码（插件工具箱
-        # 热重载依赖该语义），否则 _load_plugin 会因插件重复而跳过、_enable 随即拒绝。
-        if target_name in self._plugins:
-            unloaded = self.unload(target_name, _persist_state=False)
-            if not unloaded.success:
-                return PluginActionResult(target_name, PluginAction.INSTALL, "failed", unloaded.message)
-        # 用 shutil.copytree 复制整个插件目录，覆盖已存在的
-
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
-        shutil.copytree(source, target_dir)
-        self._load_plugin(target_dir, target_dir / "plugin.json", is_system=False)
-        if target_name not in self._plugins:
-            reason = self._plugin_errors.get(target_name)
-            return PluginActionResult(target_name, PluginAction.INSTALL, "failed", reason or "插件加载失败")
+        if self._candidate_map.get(target_name, {}).get("is_system", False):
+            return PluginActionResult(target_name, PluginAction.INSTALL, "forbidden", "不能覆盖系统插件")
+        metadata_error = self._install_metadata_error(metadata)
+        if metadata_error is not None:
+            return PluginActionResult(target_name, PluginAction.INSTALL, "invalid", metadata_error)
         if not self._are_dependencies_satisfied(metadata):
-            self.logger.warning("插件 %s 依赖未满足，仅加载不启用", target_name)
-            self.unload(target_name)
             return PluginActionResult(target_name, PluginAction.INSTALL, "failed", "插件依赖未满足")
-        enabled, reason = self._enable(target_name)
-        if not enabled:
-            return PluginActionResult(target_name, PluginAction.INSTALL, "failed", reason)
-        self.events.emit("plugin:installed", target_name)
-        return PluginActionResult(target_name, PluginAction.INSTALL, "installed")
+
+        transaction = PluginInstallTransaction(self._data_path, self._plugin_dir, target_name)
+        try:
+            with _exclusive_lock(transaction.lock_path):
+                if transaction.journal_path.exists():
+                    return PluginActionResult(target_name, PluginAction.INSTALL, "failed", "旧安装事务尚未恢复")
+                transaction.stage(source)
+                return self._install_staged_plugin(transaction, metadata)
+        except (OSError, PluginInstallTransactionError) as exc:
+            self.logger.exception("插件 %s 安装事务失败", target_name)
+            return PluginActionResult(target_name, PluginAction.INSTALL, "failed", str(exc))
+
+    @staticmethod
+    def _install_metadata_error(metadata: dict[str, Any]) -> str | None:
+        """
+        在卸载旧实例前校验目录插件的稳定清单字段，避免无效输入造成状态变更。
+        """
+        if not isinstance(metadata.get("version", "0.0.0"), str) or not isinstance(
+            metadata.get("entry_point", "main:Plugin"), str
+        ):
+            return "插件版本或入口无效"
+        permissions = metadata.get("permissions", [])
+        if not isinstance(permissions, list) or any(not isinstance(item, dict) for item in permissions):
+            return "插件权限声明必须是对象数组"
+        dependencies = metadata.get("dependencies", {})
+        if not isinstance(dependencies, dict) or any(
+            not isinstance(dep_name, str)
+            or not isinstance(dep_value, (str, dict))
+            or (isinstance(dep_value, dict) and not isinstance(dep_value.get("version", ""), str))
+            for dep_name, dep_value in dependencies.items()
+        ):
+            return "插件间依赖必须是对象"
+        return None
+
+    def _install_staged_plugin(
+        self, transaction: PluginInstallTransaction, metadata: dict[str, Any]
+    ) -> PluginActionResult:
+        """
+        切换已暂存目录，验证新实例，必要时恢复旧实例及注册状态。
+        """
+        name = transaction.name
+        previous_candidate = self._candidate_map.get(name)
+        if previous_candidate is None and transaction.target_path.is_dir():
+            previous_metadata_path = transaction.target_path / "plugin.json"
+            if previous_metadata_path.is_file():
+                try:
+                    previous_metadata = json.loads(previous_metadata_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    previous_metadata = None
+                if isinstance(previous_metadata, dict):
+                    previous_candidate = {
+                        "name": name,
+                        "plugin_dir": transaction.target_path,
+                        "metadata_path": previous_metadata_path,
+                        "metadata": previous_metadata,
+                        "is_system": False,
+                    }
+        previous_status = self._status.get(name)
+        previous_error = self._plugin_errors.get(name)
+        previous_resolution = self._dependency_resolution
+        was_loaded = name in self._plugins
+        was_disabled = name in self._disabled_plugins
+        candidate = {
+            "name": name,
+            "plugin_dir": transaction.target_path,
+            "metadata_path": transaction.target_path / "plugin.json",
+            "metadata": metadata,
+            "is_system": False,
+        }
+        try:
+            if was_loaded and not self.unload(name, _persist_state=False).success:
+                raise PluginInstallTransactionError("旧插件无法卸载")
+            transaction.begin()
+            self._candidate_map[name] = candidate
+            self._plugin_errors.pop(name, None)
+            if was_disabled:
+                self._status[name] = "disabled"
+                self._permission_manager.register_plugin_permissions(name, metadata.get("permissions", []))
+            else:
+                self._load_plugin(transaction.target_path, candidate["metadata_path"], is_system=False)
+                if name not in self._plugins or name in self._plugin_errors:
+                    raise PluginInstallTransactionError(self._plugin_errors.get(name, "插件加载失败"))
+                enabled, reason = self._enable(name)
+                if not enabled:
+                    raise PluginInstallTransactionError(reason or "插件启用失败")
+            self._dependency_resolution = self._resolve_candidate_dependencies(list(self._candidate_map.values()))
+            if not transaction.commit():
+                self.logger.warning("插件 %s 已安装，旧版备份将在下次启动时清理", name)
+            try:
+                self.events.emit("plugin:installed", name)
+            except Exception:
+                self.logger.exception("插件 %s 安装完成，但安装事件通知失败", name)
+            return PluginActionResult(name, PluginAction.INSTALL, "installed")
+        except Exception as exc:
+            self.logger.exception("插件 %s 安装失败，尝试恢复旧版", name)
+            self._rollback_staged_plugin(
+                transaction,
+                previous_candidate,
+                previous_status,
+                previous_error,
+                previous_resolution,
+                was_loaded,
+                was_disabled,
+            )
+            return PluginActionResult(name, PluginAction.INSTALL, "failed", str(exc))
+
+    def _rollback_staged_plugin(
+        self,
+        transaction: PluginInstallTransaction,
+        previous_candidate: dict[str, Any] | None,
+        previous_status: str | None,
+        previous_error: str | None,
+        previous_resolution: DependencyResolution,
+        was_loaded: bool,
+        was_disabled: bool,
+    ) -> None:
+        """
+        卸载未提交的新实例并恢复旧版；恢复失败时保留日志供启动恢复。
+        """
+        name = transaction.name
+        if name in self._plugins:
+            self.unload(name, _persist_state=False)
+        if transaction.journal_path.exists():
+            transaction.rollback()
+        elif transaction.stage_path.exists():
+            shutil.rmtree(transaction.stage_path)
+        self._candidate_map.pop(name, None)
+        self._status.pop(name, None)
+        self._plugin_errors.pop(name, None)
+        self._permission_manager.unregister_plugin(name)
+        self._dependency_resolution = previous_resolution
+        if previous_candidate is not None:
+            self._candidate_map[name] = previous_candidate
+        if was_disabled:
+            self._disabled_plugins.add(name)
+            self._status[name] = "disabled"
+            if previous_candidate is not None:
+                self._permission_manager.register_plugin_permissions(
+                    name, previous_candidate["metadata"].get("permissions", [])
+                )
+        elif was_loaded:
+            old_metadata_path = transaction.target_path / "plugin.json"
+            self._load_plugin(transaction.target_path, old_metadata_path, is_system=False)
+            if name not in self._plugins:
+                raise PluginInstallTransactionError("旧版目录已恢复，但旧插件加载失败")
+            if previous_status == "enabled":
+                enabled, reason = self._enable(name)
+                if not enabled:
+                    raise PluginInstallTransactionError(f"旧版目录已恢复，但旧插件启用失败: {reason}")
+        if previous_error is not None:
+            self._plugin_errors[name] = previous_error
 
     def _are_dependencies_satisfied(self, metadata: dict[str, Any]) -> bool:
         # 检查插件元数据中的依赖是否已被当前加载的插件满足。
