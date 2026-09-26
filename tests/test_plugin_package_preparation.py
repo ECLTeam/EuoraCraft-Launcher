@@ -13,6 +13,7 @@ import pytest
 from ECL.plugins.package_archive import build_plugin_package
 from ECL.plugins.package_preparation import PluginPackagePreparer, PluginPreparationError, current_plugin_target
 from ECL.plugins.runtime_assets import PluginRuntimeAsset, PluginRuntimePaths, load_plugin_runtime_asset
+from ECL.plugins.worker_process import PluginWorkerProcess
 
 
 def _package(tmp_path: Path, *, dependencies: list[str] | None = None, lock: bytes | None = None) -> Path:
@@ -32,7 +33,7 @@ def _package(tmp_path: Path, *, dependencies: list[str] | None = None, lock: byt
 
 
 def _preparer(tmp_path: Path) -> PluginPackagePreparer:
-    asset = PluginRuntimeAsset("pr-test", "0" * 64, "python/python.exe", "uv.exe")
+    asset = PluginRuntimeAsset("pr-test", "0" * 64, 1, "python/python.exe", "uv.exe", "worker.py")
     return PluginPackagePreparer(tmp_path / "data", asset)
 
 
@@ -118,7 +119,7 @@ def test_prepare_connects_verified_package_runtime_and_environment(tmp_path: Pat
 
     def fake_runtime(asset, *, offline_pack=None):
         calls.append((asset, offline_pack))
-        return PluginRuntimePaths(tmp_path / "runtime", python_path, uv_path)
+        return PluginRuntimePaths(tmp_path / "runtime", python_path, uv_path, tmp_path / "worker.py")
 
     def fake_environment(spec, *, allow_network=False):
         calls.append((spec, allow_network))
@@ -153,7 +154,9 @@ def test_failed_environment_keeps_previous_package_version(tmp_path: Path, monke
     (old_path / "main.py").write_text("old", encoding="utf-8")
 
     def fake_runtime(asset, *, offline_pack=None):
-        return PluginRuntimePaths(tmp_path / "runtime", tmp_path / "python.exe", tmp_path / "uv.exe")
+        return PluginRuntimePaths(
+            tmp_path / "runtime", tmp_path / "python.exe", tmp_path / "uv.exe", tmp_path / "worker.py"
+        )
 
     def fail_environment(spec, *, allow_network=False):
         raise RuntimeError("模拟依赖安装失败")
@@ -198,7 +201,10 @@ def test_offline_package_preparation_with_release_runtime(tmp_path: Path) -> Non
         json.dumps({"name": "offline-demo", "version": "1.0.0", "pythonDependencies": ["ecl-preparation-demo==1.0.0"]}),
         encoding="utf-8",
     )
-    (source_path / "main.py").write_text("class Plugin: pass\n", encoding="utf-8")
+    (source_path / "main.py").write_text(
+        "import ecl_preparation_demo\nclass Plugin:\n    def read(self):\n        return ecl_preparation_demo.VALUE\n",
+        encoding="utf-8",
+    )
     target_tag = current_plugin_target()
     wheel_path = _wheel(source_path / "wheels" / target_tag)
     lock_path = source_path / "locks" / f"{target_tag}.txt"
@@ -217,4 +223,7 @@ def test_offline_package_preparation_with_release_runtime(tmp_path: Path) -> Non
         timeout=30,
     ).strip()
     assert version == "isolated"
+    runtime_paths = preparer.runtime_store.ensure(load_plugin_runtime_asset(Path(manifest)))
+    with PluginWorkerProcess(result.python_path, runtime_paths.worker_path, result.code_path) as worker:
+        assert worker.call("read") == "isolated"
     assert not (tmp_path / "data" / "plugins" / "offline-demo").exists()

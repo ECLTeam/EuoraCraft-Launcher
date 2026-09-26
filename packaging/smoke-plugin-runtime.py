@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import tempfile
 from pathlib import Path
 
 from ECL.plugins.environment_pool import PluginEnvironmentPool, PluginEnvironmentSpec
 from ECL.plugins.runtime_assets import PluginRuntimeStore, load_plugin_runtime_asset
+from ECL.plugins.worker_process import PluginWorkerProcess
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,7 +61,19 @@ def main(argv: list[str] | None = None) -> int:
         worker_version = subprocess.check_output([str(worker_python), "--version"], text=True, timeout=20).strip()
         if worker_version != python_version:
             raise RuntimeError(f"插件虚拟环境 Python 版本不匹配: {worker_version}")
-        print(f"插件运行时冒烟通过: {python_version}, {uv_version}, {worker_python}")
+        plugin_path = Path(temporary_directory) / "smoke_plugin"
+        plugin_path.mkdir()
+        (plugin_path / "plugin.json").write_text(
+            json.dumps({"name": "smoke", "entry_point": "main:Plugin"}), encoding="utf-8"
+        )
+        (plugin_path / "main.py").write_text(
+            "import os\nclass Plugin:\n    def identity(self):\n        return os.getpid()\n", encoding="utf-8"
+        )
+        with PluginWorkerProcess(worker_python, paths.worker_path, plugin_path) as worker:
+            worker_pid = worker.call("identity")
+        if not isinstance(worker_pid, int) or worker_pid <= 0:
+            raise RuntimeError("插件 Worker 未能返回独立进程标识")
+        print(f"插件运行时冒烟通过: {python_version}, {uv_version}, Worker PID {worker_pid}")
     return 0
 
 

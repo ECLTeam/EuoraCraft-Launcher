@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：从固定版本的受管 CPython 与 uv 构建插件专用运行时发行资产。
+# 文件作用：从固定 CPython、uv 和 Worker 脚本构建插件专用运行时发行资产。
 #
 # 公开接口：
 #   - main(argv) -> int — 构建运行时 ZIP 与可嵌入启动器的固定哈希清单。
@@ -97,12 +97,16 @@ def _managed_python(uv_path: Path, install_path: Path, python_version: str) -> t
     return distribution_path, python_path.relative_to(distribution_path)
 
 
-def _write_archive(archive_path: Path, distribution_path: Path, python_relpath: Path, uv_path: Path) -> tuple[str, str]:
+def _write_archive(
+    archive_path: Path, distribution_path: Path, python_relpath: Path, uv_path: Path
+) -> tuple[str, str, str]:
     """
-    将便携 CPython 和独立 uv 写入确定路径，返回归档内两个可执行文件路径。
+    将便携 CPython、独立 uv 与纯标准库 Worker 写入确定路径。
     """
     python_name = (Path("python") / python_relpath).as_posix()
     uv_name = (Path("uv") / uv_path.name).as_posix()
+    worker_name = "worker.py"
+    worker_path = Path(__file__).with_name("plugin_worker.py")
     files = sorted(
         entry
         for entry in distribution_path.rglob("*")
@@ -126,7 +130,12 @@ def _write_archive(archive_path: Path, distribution_path: Path, python_relpath: 
         uv_entry.external_attr = (stat.S_IFREG | (uv_path.stat().st_mode & 0o777)) << 16
         with uv_path.open("rb") as source, archive.open(uv_entry, "w") as target:
             shutil.copyfileobj(source, target, copy_chunk_bytes)
-    return python_name, uv_name
+        worker_entry = zipfile.ZipInfo(worker_name, date_time=(1980, 1, 1, 0, 0, 0))
+        worker_entry.compress_type = zipfile.ZIP_DEFLATED
+        worker_entry.external_attr = (stat.S_IFREG | 0o644) << 16
+        with worker_path.open("rb") as source, archive.open(worker_entry, "w") as target:
+            shutil.copyfileobj(source, target, copy_chunk_bytes)
+    return python_name, uv_name, worker_name
 
 
 def _sha256(archive_path: Path) -> str:
@@ -174,7 +183,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             distribution_path, python_relpath = _managed_python(uv_path, working_path / "managed", args.python_version)
         temporary_archive = working_path / "plugin-runtime.zip"
-        python_name, uv_name = _write_archive(temporary_archive, distribution_path, python_relpath, uv_path)
+        python_name, uv_name, worker_name = _write_archive(
+            temporary_archive, distribution_path, python_relpath, uv_path
+        )
         digest = _sha256(temporary_archive)
         os_tag = platform.system().lower()
         machine_tag = platform.machine().lower().replace("amd64", "x86_64")
@@ -194,8 +205,10 @@ def main(argv: list[str] | None = None) -> int:
         manifest = {
             "runtime_id": runtime_id,
             "sha256": digest,
+            "archive_size_bytes": archive_path.stat().st_size,
             "python_relpath": python_name,
             "uv_relpath": uv_name,
+            "worker_relpath": worker_name,
             "download_url": download_url,
         }
         manifest_path = args.manifest.resolve()

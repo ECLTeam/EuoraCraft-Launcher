@@ -16,6 +16,7 @@ def _runtime_pack(archive_path: Path, *, extra_name: str | None = None) -> bytes
         archive.writestr("python/bin", b"python-binary")
         archive.writestr("uv/", b"")
         archive.writestr("uv/bin", b"uv-binary")
+        archive.writestr("worker.py", b"print('worker')\n")
         if extra_name is not None:
             archive.writestr(extra_name, b"unexpected")
     return archive_path.read_bytes()
@@ -25,8 +26,10 @@ def _asset(content: bytes, *, download_url: str | None = None) -> PluginRuntimeA
     return PluginRuntimeAsset(
         runtime_id="cpython-3.12-test",
         sha256=hashlib.sha256(content).hexdigest(),
+        archive_size_bytes=len(content),
         python_relpath="python/bin",
         uv_relpath="uv/bin",
+        worker_relpath="worker.py",
         download_url=download_url,
     )
 
@@ -44,6 +47,7 @@ def test_imports_offline_pack_and_reuses_ready_runtime(tmp_path: Path) -> None:
     assert first.root_path == tmp_path / "data" / "plugin_runtimes" / asset.runtime_id
     assert first.python_path.read_bytes() == b"python-binary"
     assert first.uv_path.read_bytes() == b"uv-binary"
+    assert first.worker_path.read_bytes() == b"print('worker')\n"
     archive_path.unlink()
     assert store.ensure(asset) == first
 
@@ -69,8 +73,10 @@ def test_downloads_fixed_asset_and_rejects_unexpected_bytes(tmp_path: Path) -> N
     wrong_asset = PluginRuntimeAsset(
         runtime_id="wrong-runtime",
         sha256="0" * 64,
+        archive_size_bytes=len(content),
         python_relpath="python/bin",
         uv_relpath="uv/bin",
+        worker_relpath="worker.py",
         download_url="https://example.test/runtime.zip",
     )
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
@@ -100,6 +106,25 @@ def test_rejects_oversized_offline_pack_before_extract(tmp_path: Path, monkeypat
     content = _runtime_pack(archive_path)
     monkeypatch.setattr("ECL.plugins.runtime_assets.max_runtime_archive_bytes", 5)
     store = PluginRuntimeStore(tmp_path / "data")
-    with pytest.raises(PluginRuntimeError, match="大小上限"):
+    with pytest.raises(PluginRuntimeError, match="大小"):
         store.ensure(_asset(content), offline_pack=archive_path)
     assert not (tmp_path / "data" / "plugin_runtimes" / "cpython-3.12-test").exists()
+
+
+def test_rejects_runtime_asset_with_wrong_recorded_size(tmp_path: Path) -> None:
+    """
+    固定资产清单的大小与摘要必须同时匹配离线包。
+    """
+    archive_path = tmp_path / "runtime.zip"
+    content = _runtime_pack(archive_path)
+    asset = _asset(content)
+    wrong_size = PluginRuntimeAsset(
+        runtime_id=asset.runtime_id,
+        sha256=asset.sha256,
+        archive_size_bytes=len(content) + 1,
+        python_relpath=asset.python_relpath,
+        uv_relpath=asset.uv_relpath,
+        worker_relpath=asset.worker_relpath,
+    )
+    with pytest.raises(PluginRuntimeError, match="SHA-256 不匹配"):
+        PluginRuntimeStore(tmp_path / "data").ensure(wrong_size, offline_pack=archive_path)

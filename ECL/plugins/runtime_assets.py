@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：下载或导入固定哈希的插件专用 Python 运行时资产并持久化解包。
+# 文件作用：下载或导入固定哈希的插件专用 Python、uv 与 Worker 资产并持久化解包。
 #
 # 公开接口：
 #   - class PluginRuntimeError — 运行时资产获取或校验失败。
@@ -56,8 +56,10 @@ class PluginRuntimeAsset:
 
     runtime_id: str
     sha256: str
+    archive_size_bytes: int
     python_relpath: str
     uv_relpath: str
+    worker_relpath: str
     download_url: str | None = None
 
 
@@ -70,6 +72,7 @@ class PluginRuntimePaths:
     root_path: Path
     python_path: Path
     uv_path: Path
+    worker_path: Path
 
 
 def _asset_relpath(raw_path: str) -> Path:
@@ -86,12 +89,18 @@ def _asset_relpath(raw_path: str) -> Path:
     return Path(*parts)
 
 
-def _validate_asset(asset: PluginRuntimeAsset) -> tuple[Path, Path]:
+def _validate_asset(asset: PluginRuntimeAsset) -> tuple[Path, Path, Path]:
     if safe_component_pattern.fullmatch(asset.runtime_id) is None:
         raise PluginRuntimeError("运行时版本标识无效")
     if len(asset.sha256) != 64 or any(character not in "0123456789abcdef" for character in asset.sha256):
         raise PluginRuntimeError("运行时资产 SHA-256 无效")
-    return _asset_relpath(asset.python_relpath), _asset_relpath(asset.uv_relpath)
+    if (
+        not isinstance(asset.archive_size_bytes, int)
+        or isinstance(asset.archive_size_bytes, bool)
+        or not 0 < asset.archive_size_bytes <= max_runtime_archive_bytes
+    ):
+        raise PluginRuntimeError("运行时资产大小无效")
+    return _asset_relpath(asset.python_relpath), _asset_relpath(asset.uv_relpath), _asset_relpath(asset.worker_relpath)
 
 
 def load_plugin_runtime_asset(manifest_path: Path) -> PluginRuntimeAsset:
@@ -110,8 +119,18 @@ def load_plugin_runtime_asset(manifest_path: Path) -> PluginRuntimeAsset:
         raise PluginRuntimeError("插件运行时资产清单不可读取") from exc
     if not isinstance(parsed, dict):
         raise PluginRuntimeError("插件运行时资产清单必须是对象")
-    required = {"runtime_id", "sha256", "python_relpath", "uv_relpath", "download_url"}
-    if set(parsed) != required or any(not isinstance(parsed[key], str) for key in required - {"download_url"}):
+    required = {
+        "runtime_id",
+        "sha256",
+        "archive_size_bytes",
+        "python_relpath",
+        "uv_relpath",
+        "worker_relpath",
+        "download_url",
+    }
+    if set(parsed) != required or any(
+        not isinstance(parsed[key], str) for key in required - {"download_url", "archive_size_bytes"}
+    ):
         raise PluginRuntimeError("插件运行时资产清单字段无效")
     download_url = parsed["download_url"]
     if download_url is not None and (not isinstance(download_url, str) or not download_url.startswith("https://")):
@@ -121,7 +140,7 @@ def load_plugin_runtime_asset(manifest_path: Path) -> PluginRuntimeAsset:
     return asset
 
 
-def _verify_archive(archive_path: Path, expected_sha256: str) -> None:
+def _verify_archive(archive_path: Path, expected_sha256: str, expected_size: int) -> None:
     """
     在解包前流式校验固定摘要和压缩包大小。
     """
@@ -136,7 +155,7 @@ def _verify_archive(archive_path: Path, expected_sha256: str) -> None:
                 digest.update(chunk)
     except OSError as exc:
         raise PluginRuntimeError("运行时资产不可读取") from exc
-    if digest.hexdigest() != expected_sha256:
+    if size != expected_size or digest.hexdigest() != expected_sha256:
         raise PluginRuntimeError("运行时资产 SHA-256 不匹配")
 
 
@@ -252,19 +271,20 @@ class PluginRuntimeStore:
         :return: 可用于创建插件环境的 Python 与 uv 路径
         :raises PluginRuntimeError: 资产缺失、哈希不符或解包失败时抛出
         """
-        python_relpath, uv_relpath = _validate_asset(asset)
+        python_relpath, uv_relpath, worker_relpath = _validate_asset(asset)
         root_path = self.runtimes_path / asset.runtime_id
         python_path = root_path / python_relpath
         uv_path = root_path / uv_relpath
+        worker_path = root_path / worker_relpath
         ready_path = root_path / "ready.json"
         with _exclusive_lock(self.runtimes_path / f"{asset.runtime_id}.lock"):
-            if ready_path.is_file() and python_path.is_file() and uv_path.is_file():
+            if ready_path.is_file() and python_path.is_file() and uv_path.is_file() and worker_path.is_file():
                 try:
                     ready = json.loads(ready_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     ready = {}
                 if ready.get("sha256") == asset.sha256:
-                    return PluginRuntimePaths(root_path, python_path, uv_path)
+                    return PluginRuntimePaths(root_path, python_path, uv_path, worker_path)
             if root_path.exists():
                 shutil.rmtree(root_path)
             archive_path = self.runtimes_path / f".{asset.runtime_id}.{uuid4().hex}.zip"
@@ -279,15 +299,15 @@ class PluginRuntimeStore:
                             target.write(chunk)
                 else:
                     self._download(asset, archive_path)
-                _verify_archive(archive_path, asset.sha256)
+                _verify_archive(archive_path, asset.sha256, asset.archive_size_bytes)
                 root_path.mkdir(parents=True)
                 _extract_runtime(archive_path, root_path)
-                if not python_path.is_file() or not uv_path.is_file():
-                    raise PluginRuntimeError("运行时资产缺少 Python 或 uv 可执行文件")
+                if not python_path.is_file() or not uv_path.is_file() or not worker_path.is_file():
+                    raise PluginRuntimeError("运行时资产缺少 Python、uv 或 Worker 入口")
                 ready_partial = root_path / f"ready.{uuid4().hex}.partial"
                 ready_partial.write_text(json.dumps({"sha256": asset.sha256}), encoding="utf-8")
                 ready_partial.replace(ready_path)
-                return PluginRuntimePaths(root_path, python_path, uv_path)
+                return PluginRuntimePaths(root_path, python_path, uv_path, worker_path)
             except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
                 if root_path.exists():
                     shutil.rmtree(root_path)
