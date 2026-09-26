@@ -63,6 +63,7 @@ class PluginPackagePreflight:
     wheel_count: int
     has_target_lock: bool
     unverified_source: bool = True
+    runtime_ready: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +287,7 @@ class PluginPackagePreparer:
             tuple(str(requirement) for requirement in dependencies),
             len(wheel_names),
             has_target_lock,
+            runtime_ready=self.runtime_store.ready_paths(self.runtime_asset) is not None,
         )
 
     def prepare(
@@ -295,6 +297,7 @@ class PluginPackagePreparer:
         confirm_unverified_source: bool,
         allow_network: bool = False,
         offline_runtime_pack: Path | None = None,
+        expected_package: PluginPackageInfo | None = None,
     ) -> PluginPreparedPackage:
         """
         显式确认后准备代码、运行时和完整锁定依赖，但不激活插件。
@@ -303,8 +306,9 @@ class PluginPackagePreparer:
 
         :param archive_path: 再次完整校验的本地插件包
         :param confirm_unverified_source: 用户对无签名来源警告的显式确认
-        :param allow_network: 是否允许缺失的锁定 wheel 联网下载
+        :param allow_network: 是否允许缺失的运行时和锁定 wheel 联网下载
         :param offline_runtime_pack: 可选的匹配哈希运行时离线包
+        :param expected_package: 可选的先前预检结果；不一致时在解包前拒绝
         :return: 可供 Worker 验证与生命周期激活的未激活安装结果
         :raises PluginPreparationError: 未确认来源或依赖契约无效时抛出
         """
@@ -312,7 +316,15 @@ class PluginPackagePreparer:
             raise PluginPreparationError("安装无签名插件前必须确认来源未验证")
         preflight = self.inspect(archive_path)
         package = preflight.package
+        if expected_package is not None and package != expected_package:
+            raise PluginPreparationError("插件包在预检后发生变化")
         package_root = self.data_path / "plugin_packages" / package.name
+        if (
+            package_root.parent.is_symlink()
+            or package_root.is_symlink()
+            or not package_root.resolve().is_relative_to(self.data_path.resolve())
+        ):
+            raise PluginPreparationError("插件版本目录超出数据目录")
         code_path = package_root / f"pkg-{package.manifest_sha256[:20]}"
         with _exclusive_lock(self.data_path / "plugin_packages" / f"{package.name}.lock"):
             created = False
@@ -325,7 +337,15 @@ class PluginPackagePreparer:
             else:
                 verify_prepared_code(code_path, package.manifest_sha256)
             try:
-                runtime = self.runtime_store.ensure(self.runtime_asset, offline_pack=offline_runtime_pack)
+                if (
+                    not allow_network
+                    and offline_runtime_pack is None
+                    and self.runtime_store.ready_paths(self.runtime_asset) is None
+                ):
+                    raise PluginPreparationError("插件运行时尚未就绪，需要允许联网或提供离线运行时包")
+                runtime = self.runtime_store.ensure(
+                    self.runtime_asset, offline_pack=offline_runtime_pack, allow_network=allow_network
+                )
                 lock_path = code_path / "locks" / f"{self.target_tag}.txt"
                 if not preflight.has_target_lock:
                     empty_lock = self.data_path / "plugin_cache" / "empty.lock"

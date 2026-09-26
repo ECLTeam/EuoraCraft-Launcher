@@ -98,6 +98,35 @@ def test_pointer_write_failure_preserves_old_worker(tmp_path: Path, monkeypatch:
         store.close()
 
 
+@pytest.mark.parametrize("changed_field", ["enabled", "manifest_sha256"])
+def test_activation_rejects_out_of_band_pointer_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed_field: str
+) -> None:
+    """
+    另一进程修改活动指针后，本进程不得用过期 Worker 状态覆盖它。
+    """
+    data_path = tmp_path / "data"
+    store = _store(data_path, monkeypatch)
+    first = _prepared(tmp_path, data_path, "1.0.0")
+    second = _prepared(tmp_path, data_path, "2.0.0")
+    try:
+        old = store.activate(first)
+        pointer_path = data_path / "plugin_packages" / "demo" / "active.json"
+        altered = json.loads(pointer_path.read_text(encoding="utf-8"))
+        altered[changed_field] = (
+            False
+            if changed_field == "enabled"
+            else altered["manifest_sha256"][:-1] + ("0" if altered["manifest_sha256"][-1] != "0" else "1")
+        )
+        pointer_path.write_text(json.dumps(altered), encoding="utf-8")
+        with pytest.raises(PluginPackageActivationError, match="其他进程修改"):
+            store.activate(second)
+        assert json.loads(pointer_path.read_text(encoding="utf-8"))[changed_field] == altered[changed_field]
+        assert old.worker is not None and old.worker.call("version") == "1.0.0"
+    finally:
+        store.close()
+
+
 def test_successful_update_reaps_old_worker_and_restores_new_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

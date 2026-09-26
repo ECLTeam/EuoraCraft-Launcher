@@ -52,6 +52,7 @@ class PluginPackageActivation:
 
     name: str
     version: str
+    manifest_sha256: str
     code_path: Path
     environment_key: str
     enabled: bool
@@ -189,6 +190,30 @@ class PluginPackageActivationStore:
             worker.enable()
         return worker
 
+    def _validated_previous_activation(self, name: str, pointer_path: Path) -> PluginPackageActivation | None:
+        """
+        确认磁盘指针仍引用本进程恢复的旧版本，拒绝跨进程覆盖。
+        """
+        old = self._active_by_name.get(name)
+        if not pointer_path.exists() and not pointer_path.is_symlink():
+            if old is not None:
+                raise PluginPackageActivationError("插件活动指针已被其他进程删除")
+            return None
+        if old is None:
+            raise PluginPackageActivationError("已有插件活动版本尚未恢复，不能覆盖")
+        current = _ActiveRecord.from_path(pointer_path, name)
+        if (
+            current.manifest_sha256 != old.manifest_sha256
+            or self._code_path(name, current.manifest_sha256) != old.code_path
+            or current.version != old.version
+            or current.environment_key != old.environment_key
+            or current.enabled != old.enabled
+            or current.runtime_id != self.runtime_asset.runtime_id
+            or current.target_tag != current_plugin_target()
+        ):
+            raise PluginPackageActivationError("插件活动指针已被其他进程修改")
+        return old
+
     def activate(self, prepared: PluginPreparedPackage, *, enabled: bool = True) -> PluginPackageActivation:
         """
         验证准备结果并切换活动指针，失败时保留旧 Worker 与旧指针。
@@ -216,8 +241,7 @@ class PluginPackageActivationStore:
         pointer_path = self._pointer_path(package.name)
         code_path = self._code_path(package.name, package.manifest_sha256)
         with self._lock, _exclusive_lock(pointer_path.with_suffix(".lock")):
-            if pointer_path.exists() and package.name not in self._active_by_name:
-                raise PluginPackageActivationError("已有插件活动版本尚未恢复，不能覆盖")
+            old = self._validated_previous_activation(package.name, pointer_path)
             candidate: PluginWorkerProcess | None = None
             try:
                 if prepared.code_path.resolve() != code_path.resolve():
@@ -242,9 +266,14 @@ class PluginPackageActivationStore:
                 if candidate is not None:
                     candidate.close()
                 raise PluginPackageActivationError(f"插件激活失败: {exc}") from exc
-            old = self._active_by_name.get(package.name)
             active = PluginPackageActivation(
-                package.name, package.version, code_path, record.environment_key, enabled, candidate
+                package.name,
+                package.version,
+                package.manifest_sha256,
+                code_path,
+                record.environment_key,
+                enabled,
+                candidate,
             )
             self._active_by_name[package.name] = active
             if old is not None and old.worker is not None:
@@ -287,7 +316,7 @@ class PluginPackageActivationStore:
             ) as exc:
                 raise PluginPackageActivationError(f"插件恢复失败: {exc}") from exc
             active = PluginPackageActivation(
-                name, record.version, code_path, record.environment_key, record.enabled, worker
+                name, record.version, record.manifest_sha256, code_path, record.environment_key, record.enabled, worker
             )
             self._active_by_name[name] = active
             return active
@@ -311,6 +340,8 @@ class PluginPackageActivationStore:
             record = _ActiveRecord.from_path(pointer_path, name)
             if (
                 record.enabled != active.enabled
+                or record.manifest_sha256 != active.manifest_sha256
+                or record.version != active.version
                 or record.environment_key != active.environment_key
                 or record.runtime_id != self.runtime_asset.runtime_id
                 or record.target_tag != current_plugin_target()
@@ -362,6 +393,8 @@ class PluginPackageActivationStore:
             record = _ActiveRecord.from_path(pointer_path, name)
             if (
                 not record.enabled
+                or record.manifest_sha256 != active.manifest_sha256
+                or record.version != active.version
                 or record.environment_key != active.environment_key
                 or record.runtime_id != self.runtime_asset.runtime_id
                 or record.target_tag != current_plugin_target()

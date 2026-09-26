@@ -14,6 +14,7 @@
 #       - plugin_unload(body) -> dict[str, Any] — 卸载并删除用户插件。
 #       - plugin_reload(body) -> dict[str, Any] — 重新加载插件。
 #       - plugin_install(body) -> dict[str, Any] — 安装插件。
+#       - plugin_package_inspect(body) -> dict[str, Any] — 只读预检本地归档及当前目标依赖。
 #       - plugin_get_routes(body) -> dict[str, Any] — 获取插件路由。
 #       - plugin_get_slots(body) -> dict[str, Any] — 获取插件插槽。
 #       - plugin_get_vue_slots(body) -> dict[str, Any] — 获取插件 Vue 插槽。
@@ -26,10 +27,14 @@
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import asdict
 from typing import Any
 
 from ECL.api.contracts import failure
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
+from ECL.plugins.package_archive import PluginPackageError
+from ECL.plugins.package_preparation import PluginPreparationError
+from ECL.plugins.runtime_assets import PluginRuntimeError
 
 from .bridge import _FrontendState
 
@@ -122,10 +127,37 @@ class PluginHandlers(_FrontendState):
         :param body: 经过边界校验的 IPC 请求数据
         """
         plugin_path = body.get("plugin_path")
-        result = self.plugins.install(plugin_path)
+        if not isinstance(plugin_path, str) or not plugin_path.strip():
+            return failure("插件路径无效", "PLUGIN_INSTALL_FAILED")
+        if plugin_path.lower().endswith(".eclplugin"):
+            result = await asyncio.to_thread(
+                self.plugins.install,
+                plugin_path,
+                confirm_unverified_source=body.get("confirm_unverified_source") is True,
+                allow_network=body.get("allow_network") is True,
+                offline_runtime_pack=body.get("offline_runtime_pack"),
+            )
+        else:
+            result = self.plugins.install(plugin_path)
         if not result.success:
             return failure(result.message or "安装插件失败", "PLUGIN_INSTALL_FAILED")
         return {"success": True}
+
+    async def plugin_package_inspect(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        在用户确认安装前校验归档并返回当前目标的来源与依赖摘要。
+
+        :param body: 包含本地 `.eclplugin` 路径的 IPC 请求
+        :return: 可供确认界面展示的预检信息
+        """
+        plugin_path = body.get("plugin_path")
+        if not isinstance(plugin_path, str) or not plugin_path.strip():
+            return failure("插件包路径无效", "PLUGIN_PACKAGE_INSPECT_FAILED")
+        try:
+            preflight = await asyncio.to_thread(self.plugins.inspect_package, plugin_path)
+        except (OSError, PluginPackageError, PluginPreparationError, PluginRuntimeError) as exc:
+            return failure(str(exc), "PLUGIN_PACKAGE_INSPECT_FAILED")
+        return {"success": True, "data": asdict(preflight)}
 
     async def plugin_get_routes(self, body: dict[str, Any]) -> dict[str, Any]:
         """

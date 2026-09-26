@@ -64,6 +64,26 @@ def test_ready_runtime_query_never_downloads(tmp_path: Path) -> None:
     assert not store.runtimes_path.exists()
 
 
+def test_offline_ensure_never_requests_missing_runtime(tmp_path: Path) -> None:
+    """
+    缺少缓存时，离线安装即使拿到 HTTPS 地址也不能发起网络请求。
+    """
+    archive_path = tmp_path / "runtime.zip"
+    content = _runtime_pack(archive_path)
+    requested_urls: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, content=content)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        store = PluginRuntimeStore(tmp_path / "data", http_client=client)
+        asset = _asset(content, download_url="https://example.test/runtime.zip")
+        with pytest.raises(PluginRuntimeError, match="离线模式不允许下载"):
+            store.ensure(asset, allow_network=False)
+    assert requested_urls == []
+
+
 def test_downloads_fixed_asset_and_rejects_unexpected_bytes(tmp_path: Path) -> None:
     """
     在线下载只接受启动器固定摘要指定的资产字节。

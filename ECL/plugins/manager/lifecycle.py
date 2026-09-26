@@ -293,19 +293,36 @@ class PluginLifecycle(_PluginState):
         enabled, reason = self._enable(name)
         return PluginActionResult(name, PluginAction.RELOAD, "enabled" if enabled else "failed", reason)
 
-    def install(self, source_path: str) -> PluginActionResult:
+    def install(
+        self,
+        source_path: str,
+        *,
+        confirm_unverified_source: bool = False,
+        allow_network: bool = False,
+        offline_runtime_pack: str | None = None,
+    ) -> PluginActionResult:
         """
-        从目录安装插件，失败时恢复旧代码与启用状态。
+        从目录或归档安装插件，失败时保留旧版代码与启用状态。
 
-        源内容先复制到发现目录之外；目录切换由恢复日志保护，完成加载与启用
-        验证后才提交。此兼容安装路径仍在宿主进程执行插件代码，不提供依赖隔离。
+        归档必须显式确认来源未验证，并在独立 Worker 验证后激活。兼容目录
+        安装路径仍在宿主进程执行插件代码，不提供依赖隔离。
 
-        :param source_path: 待安装插件的源目录
+        :param source_path: 待安装插件的本地归档或源目录
+        :param confirm_unverified_source: 是否确认归档来源未验证
+        :param allow_network: 是否允许补齐运行时和依赖
+        :param offline_runtime_pack: 可选的运行时离线包路径
         :return: 安装结果；失败时旧插件尽可能保持可用
         """
         if not isinstance(source_path, str) or not source_path.strip():
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件源目录路径无效")
         source = Path(source_path)
+        if source.suffix.lower() == ".eclplugin":
+            return self.install_package(
+                source_path,
+                confirm_unverified_source=confirm_unverified_source,
+                allow_network=allow_network,
+                offline_runtime_pack=offline_runtime_pack,
+            )
         if not source.is_dir():
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件源目录不存在")
         metadata_path = source / "plugin.json"

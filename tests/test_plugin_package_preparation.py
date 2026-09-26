@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -97,6 +98,58 @@ def test_prepare_requires_explicit_unverified_source_confirmation(tmp_path: Path
     assert not (tmp_path / "data").exists()
 
 
+def test_prepare_rejects_changed_package_before_extract(tmp_path: Path) -> None:
+    """
+    预检后归档身份变化不能创建任何版本代码目录。
+    """
+    archive_path = _package(tmp_path)
+    preparer = _preparer(tmp_path)
+    inspected = preparer.inspect(archive_path)
+    with pytest.raises(PluginPreparationError, match="预检后发生变化"):
+        preparer.prepare(
+            archive_path,
+            confirm_unverified_source=True,
+            expected_package=replace(inspected.package, version="2.0.0"),
+        )
+    assert not (tmp_path / "data" / "plugin_packages").exists()
+
+
+def test_prepare_offline_rejects_missing_runtime_without_download(tmp_path: Path, monkeypatch) -> None:
+    """
+    未允许联网且没有离线运行时包时，绝不隐式请求运行时。
+    """
+    archive_path = _package(tmp_path)
+    preparer = _preparer(tmp_path)
+
+    def fail_ensure(_asset, *, offline_pack=None):
+        raise AssertionError("不应下载运行时")
+
+    monkeypatch.setattr(preparer.runtime_store, "ensure", fail_ensure)
+    with pytest.raises(PluginPreparationError, match="需要允许联网"):
+        preparer.prepare(archive_path, confirm_unverified_source=True)
+    assert not (tmp_path / "data" / "plugin_packages" / "demo").exists() or not list(
+        (tmp_path / "data" / "plugin_packages" / "demo").glob("pkg-*")
+    )
+
+
+def test_prepare_rejects_symlinked_package_root(tmp_path: Path) -> None:
+    """
+    数据目录里的符号链接不能把解包目标重定向到目录外。
+    """
+    archive_path = _package(tmp_path)
+    packages_path = tmp_path / "data" / "plugin_packages"
+    packages_path.parent.mkdir()
+    outside_path = tmp_path / "outside"
+    outside_path.mkdir()
+    try:
+        packages_path.symlink_to(outside_path, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("当前环境不允许创建目录符号链接")
+    with pytest.raises(PluginPreparationError, match="超出数据目录"):
+        _preparer(tmp_path).prepare(archive_path, confirm_unverified_source=True)
+    assert not (outside_path / "demo").exists()
+
+
 def test_inspect_rejects_lock_that_omits_direct_dependency(tmp_path: Path) -> None:
     """
     锁文件必须实际覆盖 plugin.json 声明的直接依赖版本。
@@ -117,7 +170,7 @@ def test_prepare_connects_verified_package_runtime_and_environment(tmp_path: Pat
     uv_path = tmp_path / "runtime" / "uv.exe"
     calls = []
 
-    def fake_runtime(asset, *, offline_pack=None):
+    def fake_runtime(asset, *, offline_pack=None, allow_network=True):
         calls.append((asset, offline_pack))
         return PluginRuntimePaths(tmp_path / "runtime", python_path, uv_path, tmp_path / "worker.py")
 
@@ -128,6 +181,11 @@ def test_prepare_connects_verified_package_runtime_and_environment(tmp_path: Pat
         return tmp_path / "venv" / "python.exe"
 
     monkeypatch.setattr(preparer.runtime_store, "ensure", fake_runtime)
+    monkeypatch.setattr(
+        preparer.runtime_store,
+        "ready_paths",
+        lambda _asset: PluginRuntimePaths(tmp_path / "runtime", python_path, uv_path, tmp_path / "worker.py"),
+    )
     monkeypatch.setattr(preparer.environment_pool, "ensure", fake_environment)
     result = preparer.prepare(archive_path, confirm_unverified_source=True)
 
@@ -153,7 +211,7 @@ def test_failed_environment_keeps_previous_package_version(tmp_path: Path, monke
     old_path.mkdir(parents=True)
     (old_path / "main.py").write_text("old", encoding="utf-8")
 
-    def fake_runtime(asset, *, offline_pack=None):
+    def fake_runtime(asset, *, offline_pack=None, allow_network=True):
         return PluginRuntimePaths(
             tmp_path / "runtime", tmp_path / "python.exe", tmp_path / "uv.exe", tmp_path / "worker.py"
         )
@@ -162,6 +220,13 @@ def test_failed_environment_keeps_previous_package_version(tmp_path: Path, monke
         raise RuntimeError("模拟依赖安装失败")
 
     monkeypatch.setattr(preparer.runtime_store, "ensure", fake_runtime)
+    monkeypatch.setattr(
+        preparer.runtime_store,
+        "ready_paths",
+        lambda _asset: PluginRuntimePaths(
+            tmp_path / "runtime", tmp_path / "python.exe", tmp_path / "uv.exe", tmp_path / "worker.py"
+        ),
+    )
     monkeypatch.setattr(preparer.environment_pool, "ensure", fail_environment)
     with pytest.raises(RuntimeError, match="模拟依赖安装失败"):
         preparer.prepare(archive_path, confirm_unverified_source=True)

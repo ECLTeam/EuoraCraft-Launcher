@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ECL.plugins.environment_pool import PluginEnvironmentError, _exclusive_lock
@@ -22,7 +24,9 @@ from ECL.plugins.package_activation import (
     PluginPackageActivationStore,
     plugin_name_pattern,
 )
-from ECL.plugins.runtime_assets import PluginRuntimeError, load_plugin_runtime_asset
+from ECL.plugins.package_archive import PluginPackageError
+from ECL.plugins.package_preparation import PluginPackagePreflight, PluginPackagePreparer, PluginPreparationError
+from ECL.plugins.runtime_assets import PluginRuntimeAsset, PluginRuntimeError, load_plugin_runtime_asset
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult
@@ -40,6 +44,155 @@ class PluginPackages(_PluginState):
     归档插件不会进入宿主 `_plugins` 或目录发现流程；Worker SDK 注册项迁移完成前，
     命令、设置及其他扩展点仍不可作为已兼容能力对外承诺。
     """
+
+    def _package_asset(self) -> PluginRuntimeAsset:
+        manifest_path = self._resource_path / "resources" / "plugin_runtime_manifest.json"
+        return load_plugin_runtime_asset(manifest_path)
+
+    def inspect_package(self, source_path: str) -> PluginPackagePreflight:
+        """
+        预检本地归档及当前目标依赖，不下载资产或执行插件代码。
+
+        :param source_path: 本地 `.eclplugin` 文件路径
+        :return: 已校验的归档信息与未验证来源标记
+        :raises PluginPreparationError: 路径或依赖契约不满足要求时抛出
+        """
+        if not isinstance(source_path, str) or not source_path.strip():
+            raise PluginPreparationError("插件包路径无效")
+        archive_path = Path(source_path)
+        if archive_path.suffix.lower() != ".eclplugin" or not archive_path.is_file():
+            raise PluginPreparationError("请选择有效的 .eclplugin 文件")
+        return PluginPackagePreparer(self._data_path, self._package_asset()).inspect(archive_path)
+
+    def install_package(
+        self,
+        source_path: str,
+        *,
+        confirm_unverified_source: bool,
+        allow_network: bool = False,
+        offline_runtime_pack: str | None = None,
+    ) -> PluginActionResult:
+        """
+        显式确认后准备并激活归档；失败时保留已提交的旧版本。
+
+        安装可能下载运行时和依赖，异步调用方必须放到后台线程。历史版本和共享
+        环境暂不清理；文件安装界面与 Worker 扩展点代理另行接入。
+
+        :param source_path: 本地 `.eclplugin` 文件路径
+        :param confirm_unverified_source: 用户是否确认无签名来源警告
+        :param allow_network: 是否允许联网补齐缺失的运行时和依赖
+        :param offline_runtime_pack: 可选的插件专用运行时离线包路径
+        :return: 安装结果；失败时包含可显示的原因
+        """
+        if confirm_unverified_source is not True:
+            return PluginActionResult("", PluginAction.INSTALL, "invalid", "安装无签名插件前必须确认来源未验证")
+        if not isinstance(allow_network, bool) or (
+            offline_runtime_pack is not None and not isinstance(offline_runtime_pack, str)
+        ):
+            return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件安装参数无效")
+        try:
+            preflight = self.inspect_package(source_path)
+        except (OSError, PluginPackageError, PluginPreparationError, PluginRuntimeError) as exc:
+            return PluginActionResult("", PluginAction.INSTALL, "invalid", str(exc))
+        return self._install_preflight_package(
+            Path(source_path), preflight, allow_network=allow_network, offline_runtime_pack=offline_runtime_pack
+        )
+
+    def _install_preflight_package(
+        self,
+        archive_path: Path,
+        preflight: PluginPackagePreflight,
+        *,
+        allow_network: bool,
+        offline_runtime_pack: str | None,
+    ) -> PluginActionResult:
+        """
+        在管理器锁下完成版本准备与原子激活，失败时清理未提交的新代码。
+        """
+        name = preflight.package.name
+        install_lock_path = self._data_path / "plugin_packages" / f"{name}.install.lock"
+        try:
+            with _exclusive_lock(install_lock_path), self._package_lock:
+                return self._install_preflight_package_locked(
+                    archive_path,
+                    preflight,
+                    allow_network=allow_network,
+                    offline_runtime_pack=offline_runtime_pack,
+                )
+        except (OSError, PluginEnvironmentError) as exc:
+            return PluginActionResult(name, PluginAction.INSTALL, "failed", str(exc))
+
+    def _install_preflight_package_locked(
+        self,
+        archive_path: Path,
+        preflight: PluginPackagePreflight,
+        *,
+        allow_network: bool,
+        offline_runtime_pack: str | None,
+    ) -> PluginActionResult:
+        name = preflight.package.name
+        pointer_path = self._data_path / "plugin_packages" / name / "active.json"
+        if (pointer_path.exists() or pointer_path.is_symlink()) and name not in self._package_entries:
+            return PluginActionResult(name, PluginAction.INSTALL, "failed", "现有归档活动指针尚未恢复")
+        if name in self._candidate_map:
+            candidate = self._candidate_map[name]
+            reason = "不能覆盖系统插件" if candidate.get("is_system", False) else "同名目录插件已安装"
+            return PluginActionResult(name, PluginAction.INSTALL, "forbidden", reason)
+        if name in self._package_conflicts or self._package_entries.get(name, {}).get("status") == "error":
+            return PluginActionResult(name, PluginAction.INSTALL, "failed", "现有归档活动指针无法恢复，请先处理")
+        code_path = self._data_path / "plugin_packages" / name / f"pkg-{preflight.package.manifest_sha256[:20]}"
+        code_existed = code_path.exists()
+        pointer_existed = pointer_path.exists() or pointer_path.is_symlink()
+        store = self._package_store
+        created_store = False
+        try:
+            asset = self._package_asset()
+            if store is not None and store.runtime_asset != asset:
+                raise PluginRuntimeError("插件运行时资产已变化，请重启启动器")
+            preparer = PluginPackagePreparer(self._data_path, asset)
+            prepared = preparer.prepare(
+                archive_path,
+                confirm_unverified_source=True,
+                allow_network=allow_network,
+                offline_runtime_pack=Path(offline_runtime_pack) if offline_runtime_pack else None,
+                expected_package=preflight.package,
+            )
+            if not pointer_existed and (pointer_path.exists() or pointer_path.is_symlink()):
+                raise PluginPackageActivationError("安装期间出现新的归档活动指针，请重试")
+            if store is None:
+                store = PluginPackageActivationStore(self._data_path, asset)
+                created_store = True
+            previous = store.restore(name)
+            active = store.activate(prepared, enabled=previous.enabled if previous is not None else True)
+        except (
+            OSError,
+            PluginEnvironmentError,
+            PluginPackageError,
+            PluginPackageActivationError,
+            PluginPreparationError,
+            PluginRuntimeError,
+        ) as exc:
+            if created_store and store is not None:
+                store.close()
+            if (
+                not code_existed
+                and not pointer_path.exists()
+                and not code_path.is_symlink()
+                and code_path.is_dir()
+                and code_path.resolve().is_relative_to(self._data_path.resolve())
+            ):
+                try:
+                    shutil.rmtree(code_path)
+                except OSError:
+                    self.logger.exception("插件 %s 安装失败后无法清理未激活代码", name)
+            return PluginActionResult(name, PluginAction.INSTALL, "failed", str(exc))
+        self._package_store = store
+        self._set_package_entry(active)
+        try:
+            self.events.emit("plugin:installed", name)
+        except Exception:
+            self.logger.exception("归档插件 %s 已安装，但事件通知失败", name)
+        return PluginActionResult(name, PluginAction.INSTALL, "installed")
 
     def is_package_plugin(self, name: str) -> bool:
         """
@@ -105,9 +258,8 @@ class PluginPackages(_PluginState):
         restorable_names = names - self._package_conflicts - system_names
         if not restorable_names:
             return names
-        manifest_path = self._resource_path / "resources" / "plugin_runtime_manifest.json"
         try:
-            asset = load_plugin_runtime_asset(manifest_path)
+            asset = self._package_asset()
         except PluginRuntimeError as exc:
             for name in sorted(restorable_names):
                 self._package_error(name, str(exc))

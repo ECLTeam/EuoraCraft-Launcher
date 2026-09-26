@@ -20,6 +20,8 @@
 #   - test_plugin_reload_forwards_and_reports_missing(tmp_path) -> None
 #   - test_plugin_reload_requires_name(service) -> None
 #   - test_plugin_install_returns_installed_name(tmp_path) -> None
+#   - test_plugin_archive_install_forwards_confirmation(tmp_path) -> None
+#   - test_plugin_inspect_reports_unverified_source(tmp_path) -> None
 #   - test_plugin_call_command_returns_result(tmp_path) -> None
 #   - test_logs_subscribe_returns_history_and_pushes_live(service) -> None
 #   - test_events_subscribe_filters_whitelist_and_forwards(service) -> None
@@ -58,6 +60,8 @@ from websockets.exceptions import ConnectionClosed
 
 from ECL.events import EventBus
 from ECL.plugins import PluginAction, PluginActionResult
+from ECL.plugins.package_archive import PluginPackageInfo
+from ECL.plugins.package_preparation import PluginPackagePreflight
 from ECL.services.dev_channel import DevChannelService
 from ECL.utils.logging import LoggingPolicy
 
@@ -297,6 +301,59 @@ async def test_plugin_install_returns_installed_name(tmp_path) -> None:
             reply = await _request(websocket, 7, "plugin.install", {"path": str(tmp_path / "src")})
             assert reply["ok"] is True
             assert reply["data"] == {"name": "demo"}
+        finally:
+            await websocket.close()
+    finally:
+        service.close()
+
+
+async def test_plugin_archive_install_forwards_confirmation(tmp_path) -> None:
+    """
+    Dev Channel 把归档确认和联网选项交给同一安装服务。
+    """
+    plugins = Mock()
+    plugins.install.return_value = _action_result("demo", PluginAction.INSTALL, "installed")
+    service = _make_service(tmp_path, plugins=plugins)
+    service.start()
+    try:
+        websocket = await _authed_client(service)
+        try:
+            reply = await _request(
+                websocket,
+                8,
+                "plugin.install",
+                {"path": str(tmp_path / "demo.eclplugin"), "confirm_unverified_source": True, "allow_network": True},
+            )
+            assert reply["ok"] is True and reply["data"] == {"name": "demo"}
+            plugins.install.assert_called_once_with(
+                str(tmp_path / "demo.eclplugin"),
+                confirm_unverified_source=True,
+                allow_network=True,
+                offline_runtime_pack=None,
+            )
+        finally:
+            await websocket.close()
+    finally:
+        service.close()
+
+
+async def test_plugin_inspect_reports_unverified_source(tmp_path) -> None:
+    """
+    开发者通道可在安装前读取无签名预检摘要。
+    """
+    plugins = Mock()
+    plugins.inspect_package.return_value = PluginPackagePreflight(
+        PluginPackageInfo("demo", "1.0.0", "a" * 64, 2, 123), "windows-x86_64-cp312", (), 0, False
+    )
+    service = _make_service(tmp_path, plugins=plugins)
+    service.start()
+    try:
+        websocket = await _authed_client(service)
+        try:
+            reply = await _request(websocket, 9, "plugin.inspect", {"path": str(tmp_path / "demo.eclplugin")})
+            assert reply["ok"] is True
+            assert reply["data"]["unverified_source"] is True
+            assert reply["data"]["package"]["name"] == "demo"
         finally:
             await websocket.close()
     finally:

@@ -219,6 +219,7 @@ class IpcCommandRegistry:
         "plugin_unload",
         "plugin_reload",
         "plugin_install",
+        "plugin_package_inspect",
         "plugin_get_routes",
         "plugin_get_slots",
         "plugin_get_vue_slots",

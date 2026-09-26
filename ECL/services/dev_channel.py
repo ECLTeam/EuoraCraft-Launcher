@@ -29,7 +29,7 @@ import threading
 from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
@@ -182,6 +182,7 @@ class DevChannelService:
             "plugin.reload": self._method_plugin_reload,
             "plugin.unload": self._method_plugin_unload,
             "plugin.install": self._method_plugin_install,
+            "plugin.inspect": self._method_plugin_inspect,
             "plugin.call_command": self._method_plugin_call_command,
             "plugin.get_settings": self._method_plugin_get_settings,
             "logs.subscribe": self._method_logs_subscribe,
@@ -783,15 +784,33 @@ class DevChannelService:
         self._run_plugin_action(name, lambda: self._plugins.unload(name))
         return {"name": name}
 
-    def _method_plugin_install(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
-        # 从本地目录安装插件。
+    async def _method_plugin_install(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+        # 目录安装保持兼容；归档准备和激活在线程中完成。
         source_path = self._require_param_str(params, "path")
-        result = self._plugins.install(source_path)
+        if source_path.lower().endswith(".eclplugin"):
+            result = await asyncio.to_thread(
+                self._plugins.install,
+                source_path,
+                confirm_unverified_source=params.get("confirm_unverified_source") is True,
+                allow_network=params.get("allow_network") is True,
+                offline_runtime_pack=params.get("offline_runtime_pack"),
+            )
+        else:
+            result = self._plugins.install(source_path)
         if not result.success:
             if result.status == "not_found":
                 raise DevChannelError("PLUGIN_NOT_FOUND", result.message or "插件不存在")
             raise DevChannelError("INTERNAL_ERROR", result.message or f"插件安装失败: {source_path}")
         return {"name": result.plugin_name}
+
+    async def _method_plugin_inspect(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+        # 只读归档预检，不下载运行时或运行插件代码。
+        source_path = self._require_param_str(params, "path")
+        try:
+            preflight = await asyncio.to_thread(self._plugins.inspect_package, source_path)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise DevChannelError("INVALID_PARAMS", str(exc)) from exc
+        return asdict(preflight)
 
     def _method_plugin_call_command(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 调用插件命令，命令执行失败按内部错误返回。

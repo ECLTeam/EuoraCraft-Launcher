@@ -283,7 +283,17 @@ class PluginRuntimeStore:
             return None
         return paths if isinstance(ready, dict) and ready.get("sha256") == asset.sha256 else None
 
-    def ensure(self, asset: PluginRuntimeAsset, *, offline_pack: Path | None = None) -> PluginRuntimePaths:
+    @staticmethod
+    def _require_runtime_source(offline_pack: Path | None, allow_network: bool) -> None:
+        """
+        缓存失效时在任何下载或清理操作前确认用户允许的资产来源。
+        """
+        if offline_pack is None and not allow_network:
+            raise PluginRuntimeError("插件运行时未缓存，离线模式不允许下载")
+
+    def ensure(
+        self, asset: PluginRuntimeAsset, *, offline_pack: Path | None = None, allow_network: bool = True
+    ) -> PluginRuntimePaths:
         """
         下载或离线导入固定哈希的运行时，并复用已就绪版本。
 
@@ -292,6 +302,7 @@ class PluginRuntimeStore:
 
         :param asset: 启动器发行流程固定的资产元信息和 SHA-256
         :param offline_pack: 可选的本地离线运行时包；提供时不尝试联网
+        :param allow_network: 缓存失效且无离线包时是否允许联网获取运行时
         :return: 可用于创建插件环境的 Python 与 uv 路径
         :raises PluginRuntimeError: 资产缺失、哈希不符或解包失败时抛出
         """
@@ -309,6 +320,7 @@ class PluginRuntimeStore:
                     ready = {}
                 if ready.get("sha256") == asset.sha256:
                     return PluginRuntimePaths(root_path, python_path, uv_path, worker_path)
+            self._require_runtime_source(offline_pack, allow_network)
             if root_path.exists():
                 shutil.rmtree(root_path)
             archive_path = self.runtimes_path / f".{asset.runtime_id}.{uuid4().hex}.zip"

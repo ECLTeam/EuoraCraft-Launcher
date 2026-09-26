@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -15,32 +16,160 @@ from ECL.plugins import PluginManager
 from ECL.plugins.manager.contracts import PluginAction, PluginActionResult
 from ECL.plugins.package_activation import PluginPackageActivationStore
 from ECL.plugins.package_archive import build_plugin_package, extract_plugin_package
-from ECL.plugins.package_preparation import PluginPackagePreflight, PluginPreparedPackage, current_plugin_target
+from ECL.plugins.package_preparation import (
+    PluginPackagePreflight,
+    PluginPackagePreparer,
+    PluginPreparedPackage,
+    current_plugin_target,
+)
 from ECL.plugins.runtime_assets import PluginRuntimeAsset
 
 
-def _prepared_package(tmp_path: Path, data_path: Path) -> PluginPreparedPackage:
-    source_path = tmp_path / "source"
+def _prepared_package(
+    tmp_path: Path, data_path: Path, version: str = "1.0.0", *, fails_enable: bool = False
+) -> PluginPreparedPackage:
+    source_path = tmp_path / f"source-{version}"
     source_path.mkdir()
     (source_path / "plugin.json").write_text(
-        json.dumps({"name": "demo", "title": "归档示例", "version": "1.0.0", "entry_point": "main:Plugin"}),
+        json.dumps({"name": "demo", "title": "归档示例", "version": version, "entry_point": "main:Plugin"}),
         encoding="utf-8",
     )
     (source_path / "main.py").write_text(
         "import os\n"
         "class Plugin:\n"
         "    def on_enable(self):\n"
-        "        self.enabled = True\n"
-        "    def pid(self):\n"
+        + ("        raise RuntimeError('enable failed')\n" if fails_enable else "        self.enabled = True\n")
+        + "    def pid(self):\n"
         "        return os.getpid()\n",
         encoding="utf-8",
     )
-    archive_path = tmp_path / "demo.eclplugin"
+    archive_path = tmp_path / f"demo-{version}.eclplugin"
     package = build_plugin_package(source_path, archive_path)
     code_path = data_path / "plugin_packages" / "demo" / f"pkg-{package.manifest_sha256[:20]}"
     assert extract_plugin_package(archive_path, code_path) == package
     preflight = PluginPackagePreflight(package, current_plugin_target(), (), 0, False)
     return PluginPreparedPackage(preflight, code_path, Path(sys.executable), "a" * 64)
+
+
+def test_package_install_commits_worker_after_explicit_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    正式安装入口只在明确确认后提交归档活动指针，插件留在 Worker。
+    """
+    data_path = tmp_path / "data"
+    asset = PluginRuntimeAsset("test-runtime", "0" * 64, 1, "python", "uv", "worker.py")
+    resource_path = _resource_path(tmp_path, asset)
+    prepared = _prepared_package(tmp_path, data_path)
+    archive_path = tmp_path / "demo-1.0.0.eclplugin"
+    _ready_worker_paths(monkeypatch)
+    monkeypatch.setattr(PluginPackagePreparer, "prepare", lambda *_args, **_kwargs: prepared)
+    framework = PluginManager()
+    framework.initialize(data_path, resource_path)
+    try:
+        assert not framework.install(str(archive_path)).success
+        assert not (prepared.code_path.parent / "active.json").exists()
+        preflight = framework.inspect_package(str(archive_path))
+        assert preflight.unverified_source and preflight.package.name == "demo" and not preflight.runtime_ready
+        result = framework.install(str(archive_path), confirm_unverified_source=True)
+        assert result.success
+        assert framework.list_plugins()[0]["status"] == "enabled"
+        active = framework._package_store.restore("demo")
+        assert active is not None and active.worker is not None
+        assert active.worker.call("pid") != os.getpid()
+        assert "ecl_worker_plugin_main" not in sys.modules
+    finally:
+        framework.close()
+
+
+def test_failed_package_update_keeps_committed_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    新版本的启用钩子失败后，旧版活动指针和 Worker 仍可调用。
+    """
+    data_path = tmp_path / "data"
+    asset = PluginRuntimeAsset("test-runtime", "0" * 64, 1, "python", "uv", "worker.py")
+    resource_path = _resource_path(tmp_path, asset)
+    first = _prepared_package(tmp_path, data_path)
+    second = _prepared_package(tmp_path, data_path, "2.0.0", fails_enable=True)
+    _ready_worker_paths(monkeypatch)
+    monkeypatch.setattr(
+        PluginPackagePreparer, "prepare", lambda _self, path, **_kwargs: first if "1.0.0" in str(path) else second
+    )
+    framework = PluginManager()
+    framework.initialize(data_path, resource_path)
+    try:
+        assert framework.install(str(tmp_path / "demo-1.0.0.eclplugin"), confirm_unverified_source=True).success
+        store = framework._package_store
+        assert store is not None
+        active = store.restore("demo")
+        assert active is not None and active.worker is not None
+        pointer_path = data_path / "plugin_packages" / "demo" / "active.json"
+        previous_pointer = pointer_path.read_bytes()
+
+        result = framework.install(str(tmp_path / "demo-2.0.0.eclplugin"), confirm_unverified_source=True)
+        assert not result.success and "enable failed" in result.message
+        assert pointer_path.read_bytes() == previous_pointer
+        assert active.worker.call("pid") != os.getpid()
+        assert framework.list_plugins()[0]["version"] == "1.0.0"
+    finally:
+        framework.close()
+
+
+def test_failed_first_install_removes_uncommitted_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    首次安装的 Worker 启用失败后，不留下活动指针或未提交代码。
+    """
+    data_path = tmp_path / "data"
+    asset = PluginRuntimeAsset("test-runtime", "0" * 64, 1, "python", "uv", "worker.py")
+    resource_path = _resource_path(tmp_path, asset)
+    prepared = _prepared_package(tmp_path, data_path, fails_enable=True)
+    archive_path = tmp_path / "demo-1.0.0.eclplugin"
+    shutil.rmtree(prepared.code_path)
+    _ready_worker_paths(monkeypatch)
+
+    def prepare(_self: PluginPackagePreparer, _path: Path, **_kwargs: object) -> PluginPreparedPackage:
+        extract_plugin_package(archive_path, prepared.code_path)
+        return prepared
+
+    monkeypatch.setattr(PluginPackagePreparer, "prepare", prepare)
+    framework = PluginManager()
+    framework.initialize(data_path, resource_path)
+    try:
+        result = framework.install(str(archive_path), confirm_unverified_source=True)
+        assert not result.success and "enable failed" in result.message
+        assert not prepared.code_path.exists()
+        assert not (prepared.code_path.parent / "active.json").exists()
+        assert framework.list_plugins() == []
+    finally:
+        framework.close()
+
+
+def test_package_update_preserves_disabled_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    更新已禁用归档时只验证新版加载，不意外启用插件。
+    """
+    data_path = tmp_path / "data"
+    asset = PluginRuntimeAsset("test-runtime", "0" * 64, 1, "python", "uv", "worker.py")
+    resource_path = _resource_path(tmp_path, asset)
+    first = _prepared_package(tmp_path, data_path)
+    second = _prepared_package(tmp_path, data_path, "2.0.0")
+    _ready_worker_paths(monkeypatch)
+    monkeypatch.setattr(
+        PluginPackagePreparer,
+        "prepare",
+        lambda _self, path, **_kwargs: first if "1.0.0" in str(path) else second,
+    )
+    framework = PluginManager()
+    framework.initialize(data_path, resource_path)
+    try:
+        assert framework.install(str(tmp_path / "demo-1.0.0.eclplugin"), confirm_unverified_source=True).success
+        assert framework.disable("demo").success
+        assert framework.install(str(tmp_path / "demo-2.0.0.eclplugin"), confirm_unverified_source=True).success
+        assert framework.list_plugins()[0]["status"] == "disabled"
+        active = framework._package_store.restore("demo")
+        assert active is not None and active.version == "2.0.0" and active.worker is None
+    finally:
+        framework.close()
 
 
 def _resource_path(tmp_path: Path, asset: PluginRuntimeAsset) -> Path:
@@ -177,3 +306,39 @@ def test_package_ipc_runs_worker_action_outside_event_loop() -> None:
     caller_thread = get_ident()
     assert asyncio.run(handler.plugin_enable({"plugin_name": "demo"})) == {"success": True}
     assert len(called_threads) == 1 and called_threads[0] != caller_thread
+
+
+def test_package_inspect_and_install_ipc_run_outside_event_loop(tmp_path: Path) -> None:
+    """
+    归档预检和安装的文件、网络及进程调用均不阻塞正式 IPC 事件循环。
+    """
+    preflight = _prepared_package(tmp_path, tmp_path / "data").preflight
+    called_threads: list[int] = []
+
+    class PackageActions:
+        def inspect_package(self, source_path: str) -> PluginPackagePreflight:
+            called_threads.append(get_ident())
+            assert source_path.endswith(".eclplugin")
+            return preflight
+
+        def install(self, source_path: str, **options: object) -> PluginActionResult:
+            called_threads.append(get_ident())
+            assert source_path.endswith(".eclplugin")
+            assert options == {
+                "confirm_unverified_source": True,
+                "allow_network": True,
+                "offline_runtime_pack": None,
+            }
+            return PluginActionResult("demo", PluginAction.INSTALL, "installed")
+
+    handler = PluginHandlers.__new__(PluginHandlers)
+    handler.plugins = PackageActions()
+    caller_thread = get_ident()
+    archive_path = str(tmp_path / "demo-1.0.0.eclplugin")
+    inspected = asyncio.run(handler.plugin_package_inspect({"plugin_path": archive_path}))
+    assert inspected["success"] and inspected["data"]["unverified_source"] is True
+    installed = asyncio.run(
+        handler.plugin_install({"plugin_path": archive_path, "confirm_unverified_source": True, "allow_network": True})
+    )
+    assert installed == {"success": True}
+    assert len(called_threads) == 2 and all(thread != caller_thread for thread in called_threads)
