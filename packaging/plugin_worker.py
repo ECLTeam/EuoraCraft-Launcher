@@ -20,6 +20,8 @@ from contextlib import suppress
 from multiprocessing.connection import Client, Connection
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 max_frame_bytes = 1024**2
 protocol_version = 1
 identifier_pattern = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")

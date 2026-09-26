@@ -1,6 +1,6 @@
 # `.eclplugin` 归档格式 v1
 
-`.eclplugin` 是无签名的 ZIP 归档，不是加密文件。当前实现提供作者侧制作命令、完整性预检、依赖锁检查和未激活安装准备；插件管理器的 Worker 运行与正式安装入口仍按[实施方案](plugin-dependency-isolation-installation-plan.md)接入。不要把归档哈希误认为作者身份认证。
+`.eclplugin` 是无签名的 ZIP 归档，不是加密文件。当前实现提供作者侧制作命令、完整性预检、依赖锁检查、独立环境准备，以及 Worker 验证后的版本化活动指针与重启恢复服务。正式安装入口、插件管理器注册项和界面仍按[实施方案](plugin-dependency-isolation-installation-plan.md)接入，用户目前不能通过插件页安装归档。不要把归档哈希误认为作者身份认证。
 
 ## 文件结构
 

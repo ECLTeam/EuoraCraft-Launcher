@@ -10,6 +10,7 @@
 #   - class PluginPackagePreflight — 不执行代码的归档预检结果。
 #   - class PluginPreparedPackage — 已准备但尚未激活的代码和环境。
 #   - current_plugin_target() — 返回当前平台的插件锁文件目标标签。
+#   - verify_prepared_code(code_path, expected_manifest_hash) — 复核已解包插件代码。
 #   - class PluginPackagePreparer — 预检并准备插件归档。
 # ============================================================
 
@@ -21,7 +22,7 @@ import platform
 import shutil
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -163,9 +164,26 @@ def _validate_lock(lock_bytes: bytes) -> dict[str, Version]:
     return versions_by_name
 
 
-def _verify_existing_code(code_path: Path, expected_manifest_hash: str) -> None:
+def _prepared_file_path(code_path: Path, root_path: Path, relative_path: str) -> Path:
     """
-    只复用与已验证归档逐文件一致的旧准备目录，不覆盖可能正在运行的代码。
+    将已验证清单中的路径约束在代码版本目录内，拒绝路径穿越与符号链接逃逸。
+    """
+    path_parts = PurePosixPath(relative_path).parts
+    if not path_parts or relative_path.startswith("/") or any(part in {"", ".", ".."} for part in path_parts):
+        raise PluginPreparationError("已准备插件清单路径越界")
+    file_path = code_path.joinpath(*path_parts)
+    if not file_path.resolve().is_relative_to(root_path):
+        raise PluginPreparationError("已准备插件文件路径越界")
+    return file_path
+
+
+def verify_prepared_code(code_path: Path, expected_manifest_hash: str) -> None:
+    """
+    逐文件复核已准备代码，避免复用或恢复时加载被修改的目录。
+
+    :param code_path: 数据目录下已解包的插件版本目录
+    :param expected_manifest_hash: 预检通过的归档清单 SHA-256
+    :raises PluginPreparationError: 目录文件与清单不符或无法读取时抛出
     """
     manifest_path = code_path / "package-manifest.json"
     try:
@@ -173,8 +191,16 @@ def _verify_existing_code(code_path: Path, expected_manifest_hash: str) -> None:
         if hashlib.sha256(manifest_bytes).hexdigest() != expected_manifest_hash:
             raise PluginPreparationError("已准备插件的归档清单不匹配")
         records = json.loads(manifest_bytes)["files"]
+        if not isinstance(records, list):
+            raise PluginPreparationError("已准备插件清单文件列表无效")
+        expected_paths = {"package-manifest.json"}
+        root_path = code_path.resolve()
         for record in records:
-            file_path = code_path.joinpath(*record["path"].split("/"))
+            relative_path = record["path"]
+            if not isinstance(relative_path, str):
+                raise PluginPreparationError("已准备插件清单路径无效")
+            file_path = _prepared_file_path(code_path, root_path, relative_path)
+            expected_paths.add(relative_path)
             digest = hashlib.sha256()
             size = 0
             with file_path.open("rb") as source:
@@ -183,6 +209,12 @@ def _verify_existing_code(code_path: Path, expected_manifest_hash: str) -> None:
                     digest.update(chunk)
             if size != record["size"] or digest.hexdigest() != record["sha256"]:
                 raise PluginPreparationError(f"已准备插件文件发生变化: {record['path']}")
+        entries = tuple(code_path.rglob("*"))
+        if any(entry.is_symlink() for entry in entries):
+            raise PluginPreparationError("已准备插件目录包含符号链接")
+        actual_paths = {entry.relative_to(code_path).as_posix() for entry in entries if entry.is_file()}
+        if actual_paths != expected_paths:
+            raise PluginPreparationError("已准备插件目录包含额外或缺失文件")
     except (OSError, KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, PluginPreparationError):
             raise
@@ -291,7 +323,7 @@ class PluginPackagePreparer:
                     shutil.rmtree(code_path)
                     raise PluginPreparationError("预检后插件归档发生变化")
             else:
-                _verify_existing_code(code_path, package.manifest_sha256)
+                verify_prepared_code(code_path, package.manifest_sha256)
             try:
                 runtime = self.runtime_store.ensure(self.runtime_asset, offline_pack=offline_runtime_pack)
                 lock_path = code_path / "locks" / f"{self.target_tag}.txt"

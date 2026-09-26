@@ -163,6 +163,27 @@ class PluginEnvironmentPool:
         lock_bytes = self._lock_bytes(spec)
         return self._key_from_bytes(spec, lock_bytes)
 
+    def ready_python(self, environment_key: str) -> Path | None:
+        """
+        只查询已标记就绪的环境，不在启动恢复时创建或覆盖虚拟环境。
+
+        :param environment_key: 完整依赖锁计算出的 SHA-256 环境键
+        :return: 可用环境的 Python 路径；标记或文件缺失时返回 None
+        :raises PluginEnvironmentError: 环境键不符合路径边界时抛出
+        """
+        if len(environment_key) != 64 or any(character not in "0123456789abcdef" for character in environment_key):
+            raise PluginEnvironmentError("插件环境键无效")
+        root_path = self.environments_path / environment_key
+        ready_path = root_path / "ready.json"
+        python_path = _venv_python(root_path / "venv")
+        if not ready_path.is_file() or not python_path.is_file():
+            return None
+        try:
+            ready = json.loads(ready_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        return python_path if isinstance(ready, dict) and ready.get("environment_key") == environment_key else None
+
     def _lock_bytes(self, spec: PluginEnvironmentSpec) -> bytes:
         try:
             lock_bytes = Path(spec.lock_path).read_bytes()

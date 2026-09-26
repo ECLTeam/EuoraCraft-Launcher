@@ -259,6 +259,30 @@ class PluginRuntimeStore:
         except (OSError, httpx.HTTPError) as exc:
             raise PluginRuntimeError("运行时资产下载失败") from exc
 
+    def ready_paths(self, asset: PluginRuntimeAsset) -> PluginRuntimePaths | None:
+        """
+        只查询已校验的运行时，不在插件恢复流程中触发下载或解包。
+
+        :param asset: 启动器内嵌的固定运行时资产描述
+        :return: 已就绪路径；标记或文件缺失时返回 None
+        :raises PluginRuntimeError: 资产描述不符合路径边界时抛出
+        """
+        python_relpath, uv_relpath, worker_relpath = _validate_asset(asset)
+        root_path = self.runtimes_path / asset.runtime_id
+        ready_path = root_path / "ready.json"
+        paths = PluginRuntimePaths(
+            root_path, root_path / python_relpath, root_path / uv_relpath, root_path / worker_relpath
+        )
+        if not ready_path.is_file() or not all(
+            path.is_file() for path in (paths.python_path, paths.uv_path, paths.worker_path)
+        ):
+            return None
+        try:
+            ready = json.loads(ready_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return None
+        return paths if isinstance(ready, dict) and ready.get("sha256") == asset.sha256 else None
+
     def ensure(self, asset: PluginRuntimeAsset, *, offline_pack: Path | None = None) -> PluginRuntimePaths:
         """
         下载或离线导入固定哈希的运行时，并复用已就绪版本。

@@ -52,17 +52,19 @@ class PluginWorkerProcess:
     任何协议或超时失败都会关闭子进程，避免复用状态未知的 Worker。
     """
 
-    def __init__(self, python_path: Path, worker_path: Path, code_path: Path) -> None:
+    def __init__(self, python_path: Path, worker_path: Path, code_path: Path, working_path: Path | None = None) -> None:
         """
         指定已准备的 venv Python、随运行时发布的 Worker 脚本和插件代码。
 
         :param python_path: 插件环境池返回的 Python 可执行文件
         :param worker_path: 固定哈希运行时中已校验的 Worker 脚本
         :param code_path: 已校验但尚未激活的插件代码目录
+        :param working_path: 插件进程工作目录；未提供时兼容使用代码目录
         """
         self.python_path = Path(python_path)
         self.worker_path = Path(worker_path)
         self.code_path = Path(code_path)
+        self.working_path = Path(working_path) if working_path is not None else self.code_path
         self._connection: Connection | None = None
         self._process: subprocess.Popen[bytes] | None = None
         self._request_id = 0
@@ -80,6 +82,10 @@ class PluginWorkerProcess:
             raise PluginWorkerError("Worker 已启动")
         if not self.python_path.is_file() or not self.worker_path.is_file() or not self.code_path.is_dir():
             raise PluginWorkerError("Worker 启动文件或插件代码不存在")
+        try:
+            self.working_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise PluginWorkerError("Worker 工作目录无法创建") from exc
         family = "AF_PIPE" if os.name == "nt" else "AF_UNIX"
         address = (
             rf"\\.\pipe\ecl-plugin-{uuid4().hex}"
@@ -115,7 +121,7 @@ class PluginWorkerProcess:
                     "--authkey",
                     authkey.hex(),
                 ],
-                cwd=self.code_path,
+                cwd=self.working_path,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

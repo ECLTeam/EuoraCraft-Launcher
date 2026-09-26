@@ -121,6 +121,8 @@ def test_offline_install_shares_exact_lock_and_isolates_conflicts(tmp_path: Path
 
     assert first_python == same_python
     assert first_python != second_python
+    assert pool.ready_python(pool.environment_key(_spec(first_lock))) == first_python
+    assert pool.ready_python(pool.environment_key(_spec(second_lock))) == second_python
     assert _installed_version(first_python) == "1.0.0"
     assert _installed_version(second_python) == "2.0.0"
 
@@ -139,6 +141,9 @@ def test_bad_hash_does_not_activate_environment(tmp_path: Path) -> None:
     with pytest.raises(PluginEnvironmentError, match="uv 依赖安装失败"):
         pool.ensure(spec)
     assert not (pool.environments_path / pool.environment_key(spec) / "ready.json").exists()
+    assert pool.ready_python(pool.environment_key(spec)) is None
+    with pytest.raises(PluginEnvironmentError, match="环境键无效"):
+        pool.ready_python("../outside")
 
 
 def test_empty_lock_reuses_one_environment(tmp_path: Path) -> None:

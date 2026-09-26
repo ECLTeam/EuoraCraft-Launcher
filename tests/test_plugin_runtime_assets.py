@@ -44,12 +44,24 @@ def test_imports_offline_pack_and_reuses_ready_runtime(tmp_path: Path) -> None:
     store = PluginRuntimeStore(tmp_path / "data")
 
     first = store.ensure(asset, offline_pack=archive_path)
+    assert store.ready_paths(asset) == first
     assert first.root_path == tmp_path / "data" / "plugin_runtimes" / asset.runtime_id
     assert first.python_path.read_bytes() == b"python-binary"
     assert first.uv_path.read_bytes() == b"uv-binary"
     assert first.worker_path.read_bytes() == b"print('worker')\n"
     archive_path.unlink()
     assert store.ensure(asset) == first
+
+
+def test_ready_runtime_query_never_downloads(tmp_path: Path) -> None:
+    """
+    启动恢复查询缺失的运行时只返回 None，不触发下载。
+    """
+    archive_path = tmp_path / "runtime.zip"
+    asset = _asset(_runtime_pack(archive_path), download_url="https://example.test/runtime.zip")
+    store = PluginRuntimeStore(tmp_path / "data")
+    assert store.ready_paths(asset) is None
+    assert not store.runtimes_path.exists()
 
 
 def test_downloads_fixed_asset_and_rejects_unexpected_bytes(tmp_path: Path) -> None:
