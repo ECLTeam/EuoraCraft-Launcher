@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -28,7 +29,7 @@ from ECL.utils import get_logger
 from .install_transaction import recover_plugin_install_transactions
 
 if TYPE_CHECKING:
-    pass
+    from ECL.plugins.package_activation import PluginPackageActivationStore
 
 
 class _PluginState:
@@ -95,6 +96,10 @@ class _PluginState:
         self._plugin_state_path: Path | None = None  # plugin_state.json 的路径
         # 候选插件映射，用于在启用被禁用的插件时按需加载
         self._candidate_map: dict[str, dict[str, Any]] = {}
+        self._package_store: PluginPackageActivationStore | None = None
+        self._package_entries: dict[str, dict[str, Any]] = {}
+        self._package_conflicts: set[str] = set()
+        self._package_lock = RLock()
         # 插件实例化/启用失败的详细错误信息，供前端展示
         self._plugin_errors: dict[str, str] = {}
         # 前端是否已就绪；就绪后新启用的插件需要单独补调 on_frontend_ready
@@ -131,14 +136,20 @@ class _PluginState:
             self.events.subscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
             self._event_handlers_registered = True
 
+        user_candidates = self._collect_candidates(self._plugin_dir, is_system=False)
+        system_candidates = self._collect_candidates(
+            self._resource_path / "resources" / "system_plugins", is_system=True
+        )
+        system_plugins = {candidate["name"] for candidate in system_candidates}
+        package_names = self._restore_package_plugins(
+            {candidate["name"] for candidate in user_candidates}, system_plugins
+        )
         candidates = [
             candidate
-            for candidate in self._collect_candidates(self._plugin_dir, is_system=False)
-            if candidate["name"] not in failed_installs
+            for candidate in user_candidates
+            if candidate["name"] not in failed_installs and candidate["name"] not in package_names
         ]
-        candidates.extend(
-            self._collect_candidates(self._resource_path / "resources" / "system_plugins", is_system=True)
-        )
+        candidates.extend(system_candidates)
         self.logger.debug(
             "插件发现完成: candidates=%d, disabled=%d, user_dir=%s",
             len(candidates),
@@ -147,8 +158,9 @@ class _PluginState:
         )
         self._candidate_map = {c["name"]: c for c in candidates}
         # 禁用状态只属于当前仍安装的插件；插件目录被删除后不应留下幽灵列表项。
-        system_plugins = {candidate["name"] for candidate in candidates if candidate["is_system"]}
-        self._prune_plugin_state(set(self._candidate_map) | failed_installs, non_disableable_plugins=system_plugins)
+        self._prune_plugin_state(
+            set(self._candidate_map) | failed_installs | package_names, non_disableable_plugins=system_plugins
+        )
         self._dependency_resolution = self._resolve_candidate_dependencies(candidates)
         self.logger.debug(
             "插件依赖解析完成: load_order=%s, errors=%d",

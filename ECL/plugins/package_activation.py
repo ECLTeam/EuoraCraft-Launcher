@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import RLock
 
@@ -85,6 +85,8 @@ class _ActiveRecord:
 
     @classmethod
     def from_path(cls, pointer_path: Path, expected_name: str) -> _ActiveRecord:
+        if pointer_path.is_symlink():
+            raise PluginPackageActivationError("插件活动指针不能是符号链接")
         try:
             payload = json.loads(pointer_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -289,6 +291,101 @@ class PluginPackageActivationStore:
             )
             self._active_by_name[name] = active
             return active
+
+    def set_enabled(self, name: str, enabled: bool) -> PluginPackageActivation:
+        """
+        原子持久化归档插件启用状态，并在需要时切换 Worker。
+
+        启用失败保留禁用指针；禁用先提交指针，再回收 Worker，避免重启时意外启用。
+
+        :param name: 已恢复的归档插件名称
+        :param enabled: 目标启用状态
+        :return: 更新后的活动版本
+        :raises PluginPackageActivationError: 指针、代码或 Worker 状态不一致时抛出
+        """
+        pointer_path = self._pointer_path(name)
+        with self._lock, _exclusive_lock(pointer_path.with_suffix(".lock")):
+            active = self._active_by_name.get(name)
+            if active is None or not pointer_path.is_file():
+                raise PluginPackageActivationError("归档插件尚未恢复")
+            record = _ActiveRecord.from_path(pointer_path, name)
+            if (
+                record.enabled != active.enabled
+                or record.environment_key != active.environment_key
+                or record.runtime_id != self.runtime_asset.runtime_id
+                or record.target_tag != current_plugin_target()
+            ):
+                raise PluginPackageActivationError("归档插件活动状态已被其他进程修改")
+            if active.enabled == enabled:
+                return active
+            candidate: PluginWorkerProcess | None = None
+            try:
+                if enabled:
+                    self._verify_code(active.code_path, record)
+                    python_path, worker_path = self._ready_worker_paths(record.environment_key)
+                    candidate = self._start_worker(python_path, worker_path, active.code_path, True)
+                atomic_write_text(pointer_path, replace(record, enabled=enabled).to_json())
+            except (
+                OSError,
+                PluginEnvironmentError,
+                PluginPreparationError,
+                PluginRuntimeError,
+                PluginWorkerError,
+            ) as exc:
+                if candidate is not None:
+                    candidate.close()
+                raise PluginPackageActivationError(f"归档插件状态切换失败: {exc}") from exc
+            updated = replace(active, enabled=enabled, worker=candidate)
+            self._active_by_name[name] = updated
+            if active.worker is not None:
+                try:
+                    active.worker.close()
+                except OSError:
+                    self.logger.exception("归档插件已禁用，但 Worker 关闭失败: %s", name)
+            return updated
+
+    def reload(self, name: str) -> PluginPackageActivation:
+        """
+        在相同活动版本上验证新 Worker 后替换旧 Worker。
+
+        失败时旧进程继续运行，不改变持久活动指针。
+
+        :param name: 已启用的归档插件名称
+        :return: 持有新 Worker 的活动版本
+        :raises PluginPackageActivationError: 插件未启用或新 Worker 验证失败时抛出
+        """
+        pointer_path = self._pointer_path(name)
+        with self._lock, _exclusive_lock(pointer_path.with_suffix(".lock")):
+            active = self._active_by_name.get(name)
+            if active is None or not active.enabled or active.worker is None:
+                raise PluginPackageActivationError("归档插件未启用")
+            record = _ActiveRecord.from_path(pointer_path, name)
+            if (
+                not record.enabled
+                or record.environment_key != active.environment_key
+                or record.runtime_id != self.runtime_asset.runtime_id
+                or record.target_tag != current_plugin_target()
+            ):
+                raise PluginPackageActivationError("归档插件活动状态已被其他进程修改")
+            try:
+                self._verify_code(active.code_path, record)
+                python_path, worker_path = self._ready_worker_paths(record.environment_key)
+                candidate = self._start_worker(python_path, worker_path, active.code_path, True)
+            except (
+                OSError,
+                PluginEnvironmentError,
+                PluginPreparationError,
+                PluginRuntimeError,
+                PluginWorkerError,
+            ) as exc:
+                raise PluginPackageActivationError(f"归档插件重载失败: {exc}") from exc
+            updated = replace(active, worker=candidate)
+            self._active_by_name[name] = updated
+            try:
+                active.worker.close()
+            except OSError:
+                self.logger.exception("归档插件已重载，但旧 Worker 关闭失败: %s", name)
+            return updated
 
     def uninstall(self, name: str) -> bool:
         """

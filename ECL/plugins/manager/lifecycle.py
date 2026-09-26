@@ -60,6 +60,8 @@ class PluginLifecycle(_PluginState):
 
         :param name: 插件名称
         """
+        if name in self._package_entries:
+            return self._enable_package(name)
         enabled, reason = self._enable(name)
         return PluginActionResult(
             plugin_name=name,
@@ -117,6 +119,8 @@ class PluginLifecycle(_PluginState):
         :param name: 插件名称
         :param _persist_state: 是否将状态变化写入持久化文件
         """
+        if name in self._package_entries:
+            return self._disable_package(name)
         plugin = self._plugins.get(name)
         if plugin is not None and getattr(plugin, "is_system", False) is True:
             return PluginActionResult(name, PluginAction.DISABLE, "forbidden", "系统插件不能禁用")
@@ -164,6 +168,8 @@ class PluginLifecycle(_PluginState):
         :param name: 插件名称
         :param _persist_state: 是否将状态变化写入持久化文件
         """
+        if name in self._package_entries:
+            return PluginActionResult(name, PluginAction.UNLOAD, "failed", "归档插件请使用禁用或卸载")
         plugin = self._plugins.get(name)
         if plugin is None:
             reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
@@ -209,6 +215,14 @@ class PluginLifecycle(_PluginState):
         """
         if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None:
             return PluginActionResult(str(name), PluginAction.UNINSTALL, "invalid", "插件名包含非法字符")
+        if name in self._package_entries:
+            return self._uninstall_package(name)
+        return self._uninstall_directory(name)
+
+    def _uninstall_directory(self, name: str) -> PluginActionResult:
+        """
+        删除普通目录插件；调用方已排除归档指针和非法名称。
+        """
         journal_path = self._data_path / "plugin_install_transactions" / f"{name}.json"
         if journal_path.exists():
             failed = recover_plugin_install_transactions(self._data_path, self._plugin_dir)
@@ -257,6 +271,8 @@ class PluginLifecycle(_PluginState):
 
         :param name: 插件名称
         """
+        if name in self._package_entries:
+            return self._reload_package(name)
         plugin = self._plugins.get(name)
         if plugin is None:
             reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
@@ -304,6 +320,14 @@ class PluginLifecycle(_PluginState):
         target_name = metadata.get("name")
         if not isinstance(target_name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", target_name):
             return PluginActionResult(str(target_name), PluginAction.INSTALL, "invalid", "插件名包含非法字符")
+        if target_name in self._package_entries:
+            return PluginActionResult(target_name, PluginAction.INSTALL, "forbidden", "同名归档插件已安装")
+        return self._install_directory(source, target_name, metadata)
+
+    def _install_directory(self, source: Path, target_name: str, metadata: dict[str, Any]) -> PluginActionResult:
+        """
+        校验普通目录插件元数据并在恢复日志保护下完成安装。
+        """
         if self._candidate_map.get(target_name, {}).get("is_system", False):
             return PluginActionResult(target_name, PluginAction.INSTALL, "forbidden", "不能覆盖系统插件")
         metadata_error = self._install_metadata_error(metadata)
@@ -518,6 +542,7 @@ class PluginLifecycle(_PluginState):
         """
         按依赖拓扑的逆序卸载已加载插件并解除框架事件订阅。
         """
+        self._close_packages()
         loaded_plugins = set(self._plugins)
         plugin_names = [name for name in reversed(self._dependency_resolution.load_order) if name in loaded_plugins]
         plugin_names.extend([name for name in reversed(list(self._plugins.keys())) if name not in plugin_names])

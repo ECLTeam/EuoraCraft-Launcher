@@ -170,6 +170,53 @@ def test_disabled_update_does_not_run_enable_hook(tmp_path: Path, monkeypatch: p
     restored_store.close()
 
 
+def test_enabled_state_round_trip_persists_without_rebuilding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    启停更新活动指针，并在禁用后回收 Worker。
+    """
+    data_path = tmp_path / "data"
+    prepared = _prepared(tmp_path, data_path, "1.0.0")
+    store = _store(data_path, monkeypatch)
+    try:
+        assert store.activate(prepared, enabled=False).worker is None
+        enabled = store.set_enabled("demo", True)
+        assert enabled.worker is not None and enabled.worker._process is not None
+        process = enabled.worker._process
+        assert enabled.worker.call("version") == "1.0.0"
+        disabled = store.set_enabled("demo", False)
+        assert disabled.worker is None and process.poll() is not None
+        pointer_path = data_path / "plugin_packages" / "demo" / "active.json"
+        assert json.loads(pointer_path.read_text(encoding="utf-8"))["enabled"] is False
+    finally:
+        store.close()
+    restored_store = _store(data_path, monkeypatch)
+    assert restored_store.restore("demo") is not None
+    assert restored_store.restore("demo").worker is None
+    restored_store.close()
+
+
+def test_reload_failure_keeps_old_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    重载的新进程无法启动时不关闭仍可用的旧进程。
+    """
+    data_path = tmp_path / "data"
+    store = _store(data_path, monkeypatch)
+    prepared = _prepared(tmp_path, data_path, "1.0.0")
+    active = store.activate(prepared)
+    assert active.worker is not None
+
+    def fail_start(_python_path: Path, _worker_path: Path, _code_path: Path, _enabled: bool) -> None:
+        raise OSError("cannot start")
+
+    monkeypatch.setattr(store, "_start_worker", fail_start)
+    try:
+        with pytest.raises(PluginPackageActivationError, match="cannot start"):
+            store.reload("demo")
+        assert active.worker.call("version") == "1.0.0"
+    finally:
+        store.close()
+
+
 def test_restore_rejects_bad_pointer_and_missing_ready_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -191,6 +238,28 @@ def test_restore_rejects_bad_pointer_and_missing_ready_environment(
     pointer_path.write_text(valid_pointer, encoding="utf-8")
     monkeypatch.setattr(restored_store.environment_pool, "ready_python", lambda _key: None)
     with pytest.raises(PluginPackageActivationError, match="尚未就绪"):
+        restored_store.restore("demo")
+
+
+def test_restore_rejects_symlinked_activity_pointer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    活动指针不能通过符号链接引用外部文件。
+    """
+    data_path = tmp_path / "data"
+    prepared = _prepared(tmp_path, data_path, "1.0.0")
+    store = _store(data_path, monkeypatch)
+    store.activate(prepared)
+    store.close()
+    pointer_path = data_path / "plugin_packages" / "demo" / "active.json"
+    external_path = tmp_path / "external-pointer.json"
+    external_path.write_bytes(pointer_path.read_bytes())
+    pointer_path.unlink()
+    try:
+        pointer_path.symlink_to(external_path)
+    except (OSError, NotImplementedError):
+        pytest.skip("当前环境不允许创建文件符号链接")
+    restored_store = _store(data_path, monkeypatch)
+    with pytest.raises(PluginPackageActivationError, match="符号链接"):
         restored_store.restore("demo")
 
 

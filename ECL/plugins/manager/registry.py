@@ -8,6 +8,7 @@
 # 公开接口：
 #   - class PluginRegistry — 负责插件注册与扩展点收集，涵盖路由、设置、命令与 Vue 注入等条目。
 #       - get_plugin(name) -> Plugin | None — 获取插件。
+#       - get_plugin_metadata(name) -> dict | None — 获取目录或归档插件的清单元数据。
 #       - subscribe_event(plugin, event, handler) -> None — 统一注册插件的事件订阅，自动以插件名作为所有者标识。
 #       - list_plugins() -> list[dict[str, Any]] — 获取插件列表。
 #       - get_routes() -> list[dict[str, Any]] — 获取插件路由列表。
@@ -103,6 +104,19 @@ class PluginRegistry(_PluginState):
         """
         return self._plugins.get(name)
 
+    def get_plugin_metadata(self, name: str) -> dict[str, Any] | None:
+        """
+        读取已加载目录插件或已恢复归档插件的元数据，不导入归档代码。
+
+        :param name: 插件名称
+        :return: 清单副本；插件不存在时返回 None
+        """
+        plugin = self._plugins.get(name)
+        if plugin is not None:
+            return dict(plugin.metadata)
+        metadata = self._package_metadata(name)
+        return metadata
+
     def subscribe_event(self, plugin: Plugin, event: str, handler: Any) -> None:
         """
         统一注册插件的事件订阅，自动以插件名作为所有者标识。
@@ -172,6 +186,17 @@ class PluginRegistry(_PluginState):
                     self._plugin_errors.get(name),
                     permissions=[p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
                     is_system=candidate.get("is_system", False),
+                )
+            )
+        with self._package_lock:
+            package_entries = tuple((name, dict(entry)) for name, entry in sorted(self._package_entries.items()))
+        for name, package_entry in package_entries:
+            result.append(
+                _plugin_entry(
+                    name,
+                    package_entry["metadata"],
+                    package_entry["status"],
+                    package_entry["error"],
                 )
             )
         return result
