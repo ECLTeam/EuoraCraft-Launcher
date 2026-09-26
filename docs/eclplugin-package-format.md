@@ -1,6 +1,6 @@
 # `.eclplugin` 归档格式 v1
 
-`.eclplugin` 是无签名的 ZIP 归档，不是加密文件。当前实现提供作者侧制作命令、完整性预检、依赖锁检查、独立环境准备，以及 Worker 验证后的版本化活动指针。插件管理器可在启动时恢复已提交的归档，并提供列表、信息、启用、禁用、重载和卸载；后端 IPC 与 Dev Channel 已支持预检和显式确认后的归档安装/更新。插件页文件选择、安装进度与 Worker SDK 扩展点代理仍按[实施方案](plugin-dependency-isolation-installation-plan.md)接入，用户目前不能通过插件页安装归档。不要把归档哈希误认为作者身份认证。
+`.eclplugin` 是无签名的 ZIP 归档，不是加密文件。当前实现提供作者侧制作命令、完整性预检、依赖锁检查、独立环境准备，以及 Worker 验证后的版本化活动指针。插件管理器可在启动时恢复已提交的归档，并提供列表、信息、启用、禁用、重载和卸载；后端 IPC 与 Dev Channel 已支持预检和显式确认后的归档安装/更新。插件页可选择 `.eclplugin` 文件，展示预检结果，并在用户确认来源未验证后安装；安装期间仅显示等待状态，进度与取消协议、Worker SDK 扩展点代理仍按[实施方案](plugin-dependency-isolation-installation-plan.md)接入。不要把归档哈希误认为作者身份认证。
 
 后端可用 `plugin_package_inspect` 预检本地文件，再经 `plugin_install` 传入 `plugin_path`、`confirm_unverified_source: true`、`allow_network` 及可选的 `offline_runtime_pack` 安装。Dev Channel 对应 `plugin.inspect` 与 `plugin.install`，路径字段为 `path`。未允许联网时，只复用已缓存运行时或显式提供的离线运行时包，并从包内 wheels 与共享缓存安装锁定依赖。
 
@@ -30,7 +30,7 @@ sample.eclplugin
 }
 ```
 
-文件路径使用相对 POSIX 格式。归档不接受符号链接、显式目录条目、路径穿越、大小写折叠后重名、加密条目或 `package-signature.json`。本版没有签名或验签能力；安装界面接入后将统一显示“来源未验证”。
+文件路径使用相对 POSIX 格式。归档不接受符号链接、显式目录条目、路径穿越、大小写折叠后重名、加密条目或 `package-signature.json`。本版没有签名或验签能力；安装界面会警告来源未验证，并要求用户显式确认。
 
 ## Python 依赖锁
 
@@ -43,7 +43,7 @@ example-core==2.1.0 --hash=sha256:<64 位小写十六进制摘要>
 example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 ```
 
-哈希必须对应最终 wheel 文件，而非解包后内容。`wheels/<target>/` 只允许 `.whl` 文件，缺少的 wheel 在用户允许联网时由环境池按锁定哈希补齐；不允许联网时只用包内 wheel、共享缓存及已缓存或显式提供的离线运行时包。当前制作命令不会替作者解析依赖或生成锁，作者需先准备完整锁和目标 wheel。后端安装事务已接入，插件页的文件选择与确认流程仍未接入。
+哈希必须对应最终 wheel 文件，而非解包后内容。`wheels/<target>/` 只允许 `.whl` 文件，缺少的 wheel 在用户允许联网时由环境池按锁定哈希补齐；不允许联网时只用包内 wheel、共享缓存及已缓存或显式提供的离线运行时包。当前制作命令不会替作者解析依赖或生成锁，作者需先准备完整锁和目标 wheel。插件页可切换是否联网；当前目标运行时缺失时，也可选择离线运行时包。
 
 ## 制作与检查
 

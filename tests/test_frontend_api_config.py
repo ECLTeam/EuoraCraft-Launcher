@@ -773,6 +773,34 @@ def test_select_file_modpack_purpose_filters_modpack_extensions(tmp_path, monkey
     assert calls == [{"add_filter": ("文件", ["zip", "mrpack"]), "set_title": "选择整合包"}]
 
 
+@pytest.mark.parametrize(
+    ("purpose", "extensions", "title"),
+    [
+        ("plugin-package", ["eclplugin"], "选择插件包"),
+        ("plugin-runtime-pack", ["zip"], "选择插件运行时离线包"),
+    ],
+)
+def test_select_file_plugin_purposes_use_specific_filters(
+    tmp_path, monkeypatch, purpose: str, extensions: list[str], title: str
+) -> None:
+    """
+    插件归档与运行时离线包使用各自的原生文件过滤器。
+    """
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class FakePickDialog:
+        def blocking_pick_file(self, **options):
+            calls.append(options)
+            return str(tmp_path / "selected")
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakePickDialog()))
+    result = asyncio.run(api.select_file({"purpose": purpose}))
+    assert result["success"] is True
+    assert calls == [{"add_filter": ("文件", extensions), "set_title": title}]
+
+
 def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 
