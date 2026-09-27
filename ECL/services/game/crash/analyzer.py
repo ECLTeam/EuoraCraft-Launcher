@@ -372,41 +372,58 @@ class CrashAnalyzer:
         return evidence
 
     @staticmethod
-    def _parameters(code: str, evidence: list[str]) -> dict[str, Any]:
+    def _parameters(evidence: list[str]) -> dict[str, Any]:
         joined = "\n".join(evidence)
-        result: dict[str, Any] = {}
         jar_names = sorted(set(re.findall(r"[\w .+@()\[\]-]+\.jar", joined, re.IGNORECASE)))
         if jar_names:
-            result["files"] = [name.strip() for name in jar_names[:8]]
-        if code == "world.block_failure":
-            match = re.search(r"(?:Block|ticking block)[^\n]{0,80}", joined, re.IGNORECASE)
-            if match:
-                result["block"] = match.group(0).strip()
-        elif code == "world.entity_failure":
-            match = re.search(r"(?:Entity|ticking entity)[^\n]{0,100}", joined, re.IGNORECASE)
-            if match:
-                result["entity"] = match.group(0).strip()
-        return result
+            return {"files": [name.strip() for name in jar_names[:8]]}
+        return {}
+
+    def _rule_parameters(self, rule: CrashRule, text: str, evidence: list[str]) -> dict[str, Any]:
+        # 提取规则声明的命名捕获组参数；多行模式无法按行匹配证据，这里回退取
+        # 命中片段的首行，保证此类规则也能进入结果并携带可读证据。
+        if not rule.parameter_groups:
+            return {}
+        parameters: dict[str, Any] = {}
+        for pattern in rule.patterns:
+            match = pattern.search(text)
+            if match is None:
+                continue
+            groups = match.groupdict()
+            for group, key in rule.parameter_groups.items():
+                if key in parameters:
+                    continue
+                value = groups.get(group)
+                if isinstance(value, str) and value.strip():
+                    parameters[key] = " ".join(value.strip().split())[: CrashAnalysisPolicy.max_evidence_length]
+            if not evidence:
+                first_line = " ".join(match.group(0).splitlines()[0].split())
+                normalized = first_line[: CrashAnalysisPolicy.max_evidence_length]
+                if normalized:
+                    evidence.append(normalized)
+        return parameters
 
     def _match_rules(self, text: str) -> list[dict[str, Any]]:
-        matches: list[tuple[CrashRule, list[str]]] = []
+        matches: list[tuple[CrashRule, list[str], dict[str, Any]]] = []
         for rule in CrashRuleCatalog.rules:
             evidence: list[str] = []
             for pattern in rule.patterns:
                 evidence.extend(item for item in self._evidence(text, pattern) if item not in evidence)
+            parameters = self._parameters(evidence)
+            parameters.update(self._rule_parameters(rule, text, evidence))
             if evidence:
-                matches.append((rule, evidence[:3]))
+                matches.append((rule, evidence[:3], parameters))
         if not matches:
             return []
-        selected_priority = min(rule.priority for rule, _ in matches)
+        selected_priority = min(rule.priority for rule, _, _ in matches)
         return [
             {
                 "code": rule.code,
                 "confidence": rule.confidence,
                 "evidence": evidence,
-                "parameters": self._parameters(rule.code, evidence),
+                "parameters": parameters,
             }
-            for rule, evidence in matches
+            for rule, evidence, parameters in matches
             if rule.priority == selected_priority
         ]
 
