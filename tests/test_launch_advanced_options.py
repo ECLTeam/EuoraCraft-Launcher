@@ -12,6 +12,8 @@
 #   - test_apply_wrapper_replaces_placeholder() -> None
 #   - test_apply_wrapper_prefixes_without_placeholder() -> None
 #   - test_apply_wrapper_empty_returns_command() -> None
+#   - test_split_command_lines_drops_blanks_and_strips() -> None
+#   - test_split_command_lines_keeps_shell_connectors_in_one_line() -> None
 #   - test_render_window_title_expands_placeholders() -> None
 #   - test_render_window_title_keeps_unknown_placeholders() -> None
 #   - test_render_window_title_empty_template() -> None
@@ -23,10 +25,16 @@
 #   - test_launch_applies_wrapper_env_title_and_visibility(tmp_path, monkeypatch) -> None
 #   - test_launch_visibility_none_emits_nothing(tmp_path, monkeypatch) -> None
 #   - test_launch_triggers_post_exit_command(tmp_path, monkeypatch) -> None
+#   - test_run_pre_launch_command_executes_each_line_in_order(tmp_path, monkeypatch) -> None
+#   - test_run_pre_launch_command_stops_on_intermediate_failure(tmp_path, monkeypatch) -> None
+#   - test_run_pre_launch_command_shares_total_timeout(tmp_path, monkeypatch) -> None
+#   - test_run_post_exit_command_continues_after_failure(tmp_path, monkeypatch) -> None
+#   - test_run_post_exit_command_stops_remaining_on_timeout(tmp_path, monkeypatch) -> None
 # ============================================================
 
 import asyncio
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -37,9 +45,9 @@ from pydantic import ValidationError
 
 from ECL.api.models import LaunchRequest
 from ECL.events import EventBus
-from ECL.services.game import GameService
+from ECL.services.game import GameService, GameServiceError
 from ECL.services.game import launch as launch_module
-from ECL.services.game.launch import _apply_wrapper, _parse_env_vars, _render_window_title
+from ECL.services.game.launch import _apply_wrapper, _parse_env_vars, _render_window_title, _split_command_lines
 from ECL.utils.config import default_config
 
 
@@ -78,6 +86,18 @@ def test_apply_wrapper_empty_returns_command() -> None:
     """包装命令为空时原样返回命令。"""
     assert _apply_wrapper("", "java") == "java"
     assert _apply_wrapper("   ", "java") == "java"
+
+
+def test_split_command_lines_drops_blanks_and_strips() -> None:
+    """多行命令应逐行拆分、去除首尾空白并忽略空行。"""
+    assert _split_command_lines("  echo A \n\n\techo B\n   ") == ["echo A", "echo B"]
+    assert _split_command_lines("") == []
+    assert _split_command_lines("   \n  \n") == []
+
+
+def test_split_command_lines_keeps_shell_connectors_in_one_line() -> None:
+    """同一行内的 shell 连接符不应被拆分为多条命令。"""
+    assert _split_command_lines("echo A && echo B\necho C") == ["echo A && echo B", "echo C"]
 
 
 def test_render_window_title_expands_placeholders() -> None:
@@ -330,3 +350,91 @@ def test_launch_triggers_post_exit_command(tmp_path, monkeypatch) -> None:
     instances.options["exit_callback"](0, "1.21.1")
     assert done.wait(5)
     assert recorded == [("echo bye", str(game_path / "versions" / "1.21.1"), 0)]
+
+
+def _patch_subprocess_run(monkeypatch, outcomes):
+    """替换 launch 模块的 subprocess.run，记录调用参数并按序返回预设结果。"""
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        outcome = outcomes[len(calls) - 1]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return SimpleNamespace(
+            stdout=outcome.get("stdout", ""),
+            stderr=outcome.get("stderr", ""),
+            returncode=outcome.get("returncode", 0),
+        )
+
+    monkeypatch.setattr(launch_module.subprocess, "run", fake_run)
+    return calls
+
+
+def test_run_pre_launch_command_executes_each_line_in_order(tmp_path, monkeypatch) -> None:
+    """启动前命令应按行逐条执行，并沿用同一工作目录与 shell 语义。"""
+    service, _instances, _game_path, _java_path = _make_launch_service(tmp_path, monkeypatch, EventBus())
+    calls = _patch_subprocess_run(monkeypatch, [{"stdout": "A"}, {"stdout": "B"}])
+
+    service._run_pre_launch_command("echo A\necho B", tmp_path)
+
+    assert [call[0] for call in calls] == ["echo A", "echo B"]
+    assert all(call[1]["cwd"] == tmp_path for call in calls)
+    assert all(call[1]["shell"] is True for call in calls)
+
+
+def test_run_pre_launch_command_stops_on_intermediate_failure(tmp_path, monkeypatch) -> None:
+    """中间某条命令非零退出时应立即取消启动，后续命令不再执行。"""
+    service, _instances, _game_path, _java_path = _make_launch_service(tmp_path, monkeypatch, EventBus())
+    calls = _patch_subprocess_run(
+        monkeypatch,
+        [{"returncode": 0}, {"returncode": 5, "stderr": "boom"}, {"returncode": 0}],
+    )
+
+    with pytest.raises(GameServiceError, match="第 2 条执行失败，退出码: 5") as raised:
+        service._run_pre_launch_command("echo A\necho B\necho C", tmp_path)
+
+    assert raised.value.error_code == "PRE_LAUNCH_COMMAND_FAILED"
+    assert [call[0] for call in calls] == ["echo A", "echo B"]
+
+
+def test_run_pre_launch_command_shares_total_timeout(tmp_path, monkeypatch) -> None:
+    """多条命令共享总超时预算：单条额度不超过上限，且随时间推移逐条递减。"""
+    service, _instances, _game_path, _java_path = _make_launch_service(tmp_path, monkeypatch, EventBus())
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(launch_module, "monotonic", lambda: clock["now"])
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        clock["now"] += 5
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(launch_module.subprocess, "run", fake_run)
+
+    service._run_pre_launch_command("echo A\necho B", tmp_path)
+
+    assert [call[1]["timeout"] for call in calls] == [60.0, 55.0]
+
+
+def test_run_post_exit_command_continues_after_failure(tmp_path, monkeypatch) -> None:
+    """后退出命令某条失败时应记录日志并继续执行后续命令。"""
+    service, _instances, _game_path, _java_path = _make_launch_service(tmp_path, monkeypatch, EventBus())
+    calls = _patch_subprocess_run(monkeypatch, [{"returncode": 1}, {"returncode": 0}])
+
+    service._run_post_exit_command("echo A\necho B", tmp_path, 0)
+
+    assert [call[0] for call in calls] == ["echo A", "echo B"]
+
+
+def test_run_post_exit_command_stops_remaining_on_timeout(tmp_path, monkeypatch) -> None:
+    """后退出命令某条超时时应放弃剩余命令且不抛出异常。"""
+    service, _instances, _game_path, _java_path = _make_launch_service(tmp_path, monkeypatch, EventBus())
+    calls = _patch_subprocess_run(
+        monkeypatch,
+        [subprocess.TimeoutExpired("echo A", 60), {"returncode": 0}],
+    )
+
+    service._run_post_exit_command("echo A\necho B", tmp_path, 0)
+
+    assert [call[0] for call in calls] == ["echo A"]

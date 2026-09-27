@@ -88,6 +88,25 @@ def _apply_wrapper(wrapper: str, command: str) -> str:
     return f"{normalized} {command}"
 
 
+def _split_command_lines(text: str) -> list[str]:
+    """
+    把多行命令文本拆分为逐条命令。
+
+    按行拆分并去除首尾空白，空行忽略；同一行内的 ``&&``、``&`` 等 shell 连接符
+    保持原样交由 shell 处理。Windows 下 shell 只会执行多行文本的首行，其余行被
+    静默丢弃，逐行拆分是该平台差异的规避手段。
+
+    :param text: 用户配置的原始命令文本
+    :return: 按出现顺序排列的命令列表，无有效命令时为空列表
+    """
+    commands: list[str] = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            commands.append(stripped)
+    return commands
+
+
 def _render_window_title(template: str, *, instance: str, version: str, account: str) -> str:
     """
     渲染游戏窗口标题模板。
@@ -319,69 +338,85 @@ class LaunchCoordinator(_GameState):
 
     def _run_pre_launch_command(self, command: str, working_directory: Path) -> None:
         """
-        在游戏工作目录执行用户配置的启动前命令，并将失败转换为稳定错误。
+        在游戏工作目录逐条执行用户配置的启动前命令，并将失败转换为稳定错误。
 
-        命令受固定超时限制，输出只写入启动器日志；超时、无法创建进程与非零退出
-        码都会转换为明确的游戏服务错误。
+        命令按行拆分后按顺序执行，所有命令共享固定的总超时预算，避免行数放大
+        等待时间；任意一条超时、无法创建进程或返回非零退出码都会立即取消启动。
+        输出只写入启动器日志。
         """
-        normalized = command.strip()
-        if not normalized:
+        commands = _split_command_lines(command)
+        if not commands:
             return
-        try:
-            completed = subprocess.run(
-                normalized,
-                cwd=working_directory,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=self.pre_launch_command_timeout_seconds,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise GameServiceError("启动前命令执行超时", "PRE_LAUNCH_COMMAND_TIMEOUT") from exc
-        except OSError as exc:
-            raise GameServiceError(f"启动前命令无法执行: {exc}", "PRE_LAUNCH_COMMAND_FAILED") from exc
-        output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
-        if output:
-            self.logger.info("启动前命令输出:\n%s", output)
-        if completed.returncode != 0:
-            raise GameServiceError(f"启动前命令执行失败，退出码: {completed.returncode}", "PRE_LAUNCH_COMMAND_FAILED")
+        deadline = monotonic() + self.pre_launch_command_timeout_seconds
+        for index, item in enumerate(commands, start=1):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise GameServiceError("启动前命令执行超时", "PRE_LAUNCH_COMMAND_TIMEOUT")
+            try:
+                completed = subprocess.run(
+                    item,
+                    cwd=working_directory,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=remaining,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise GameServiceError("启动前命令执行超时", "PRE_LAUNCH_COMMAND_TIMEOUT") from exc
+            except OSError as exc:
+                raise GameServiceError(f"启动前命令无法执行: {exc}", "PRE_LAUNCH_COMMAND_FAILED") from exc
+            output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+            if output:
+                self.logger.info("启动前命令第 %s 条输出:\n%s", index, output)
+            if completed.returncode != 0:
+                raise GameServiceError(
+                    f"启动前命令第 {index} 条执行失败，退出码: {completed.returncode}",
+                    "PRE_LAUNCH_COMMAND_FAILED",
+                )
 
     def _run_post_exit_command(self, command: str, working_directory: Path, exit_code: int) -> None:
         """
-        在游戏退出后于实例工作目录执行用户配置的后退出命令。
+        在游戏退出后于实例工作目录逐条执行用户配置的后退出命令。
 
-        在独立后台线程内运行：无论退出码如何都执行；超时、无法创建进程与
-        非零退出码仅记录日志，不影响退出结算与崩溃分析流程。
+        在独立后台线程内运行：无论退出码如何都执行；命令按行拆分并共享总超时
+        预算，某条无法创建进程或返回非零退出码时记录日志并继续执行后续命令，
+        超时则放弃剩余命令，均不影响退出结算与崩溃分析流程。
         """
-        normalized = command.strip()
-        if not normalized:
+        commands = _split_command_lines(command)
+        if not commands:
             return
-        try:
-            completed = subprocess.run(
-                normalized,
-                cwd=working_directory,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=self.post_exit_command_timeout_seconds,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except subprocess.TimeoutExpired:
-            self.logger.warning("后退出命令执行超时，已放弃")
-            return
-        except OSError as exc:
-            self.logger.warning("后退出命令无法执行: %s", exc)
-            return
-        output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
-        if output:
-            self.logger.info("后退出命令输出:\n%s", output)
-        if completed.returncode != 0:
-            self.logger.warning("后退出命令执行失败，退出码: %s", completed.returncode)
+        deadline = monotonic() + self.post_exit_command_timeout_seconds
+        for index, item in enumerate(commands, start=1):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                self.logger.warning("后退出命令执行超时，已放弃剩余命令")
+                return
+            try:
+                completed = subprocess.run(
+                    item,
+                    cwd=working_directory,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=remaining,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                self.logger.warning("后退出命令第 %s 条执行超时，已放弃剩余命令", index)
+                return
+            except OSError as exc:
+                self.logger.warning("后退出命令第 %s 条无法执行: %s", index, exc)
+                continue
+            output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+            if output:
+                self.logger.info("后退出命令第 %s 条输出:\n%s", index, output)
+            if completed.returncode != 0:
+                self.logger.warning("后退出命令第 %s 条执行失败，退出码: %s", index, completed.returncode)
 
     @classmethod
     def _normalize_renderer(cls, value: Any) -> str:
