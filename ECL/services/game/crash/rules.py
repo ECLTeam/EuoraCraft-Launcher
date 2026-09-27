@@ -35,6 +35,7 @@ class CrashRule:
     :param patterns: 依次尝试的日志匹配模式，大小写不敏感
     :param parameter_groups: 正则命名捕获组到 ``parameters`` 键的映射；
         命中后提取组值写入原因参数，未声明的命名组被忽略
+    :param mod_hint_keys: ``parameters`` 中需要送入 Mod 索引反查肇事模组的键
     """
 
     code: str
@@ -42,6 +43,7 @@ class CrashRule:
     priority: int
     patterns: tuple[re.Pattern[str], ...]
     parameter_groups: Mapping[str, str] = _EMPTY_GROUPS
+    mod_hint_keys: tuple[str, ...] = ()
 
 
 def _patterns(*values: str) -> tuple[re.Pattern[str], ...]:
@@ -59,6 +61,18 @@ class CrashRuleCatalog:
     合并为携带多个模式的单条原因。新增规则时必须同步补充前端各语言的
     ``error.crash.reasons`` 文案、本目录完整性测试与代表样例日志单测。
     """
+
+    confidence_levels = ("certain", "likely", "possible")
+
+    @classmethod
+    def confidence_rank(cls, confidence: Confidence) -> int:
+        """
+        返回置信度档位的排序权重，数值越小越可信。
+
+        :param confidence: 置信度档位
+        :return: 排序权重
+        """
+        return cls.confidence_levels.index(confidence)
 
     rules = (
         CrashRule(
@@ -246,6 +260,7 @@ class CrashRuleCatalog:
                 r"found a duplicate mod (?P<name>.+) at (?P<path>.+)",
             ),
             MappingProxyType({"name": "name", "path": "path"}),
+            ("name",),
         ),
         CrashRule(
             "mod.optifine_duplicate",
@@ -266,6 +281,7 @@ class CrashRuleCatalog:
                 r"could not resolve valid mod collection \(at: (?P<sourcemod>.+?) requires (?P<destmod>.+)\)",
             ),
             MappingProxyType({"sourcemod": "source_mod", "destmod": "target_mod", "reason": "reason"}),
+            ("source_mod",),
         ),
         CrashRule(
             "mod.incompatible",
@@ -279,6 +295,7 @@ class CrashRuleCatalog:
                 r"found conflicting mods: (?P<sourcemod>.+?) conflicts with (?P<destmod>.+)",
             ),
             MappingProxyType({"sourcemod": "source_mod", "destmod": "conflicting_mod"}),
+            ("source_mod", "conflicting_mod"),
         ),
         CrashRule(
             "mod.mixin_failure",
@@ -320,6 +337,7 @@ class CrashRuleCatalog:
                 r"could not execute entrypoint stage '.+?' due to errors, provided by '(?P<id>.+?)'!",
             ),
             MappingProxyType({"name": "mod_name", "id": "mod_id"}),
+            ("mod_id",),
         ),
         CrashRule(
             "mod.loader_reported",
@@ -368,6 +386,7 @@ class CrashRuleCatalog:
                 r"java\.lang\.illegalaccesserror: tried to access class (?P<accessed>[\w.$]+) from class (?P<accessor>[\w.$]+)",
             ),
             MappingProxyType({"class": "class", "accessed": "accessed_class", "accessor": "accessor_class"}),
+            ("class", "accessed_class", "accessor_class"),
         ),
         CrashRule(
             "resource.render_failure",

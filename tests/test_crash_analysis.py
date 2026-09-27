@@ -164,8 +164,83 @@ def test_stack_fallback_maps_package_to_fabric_mod_metadata(tmp_path: Path) -> N
             "confidence": "possible",
             "evidence": ["dev.example.crasher"],
             "parameters": {"mods": ["Example Display Name"]},
+            "mods": ["Example Display Name"],
+            "packages": ["dev.example.crasher"],
         }
     ]
+
+
+def test_rule_matches_gain_mod_attribution(tmp_path: Path) -> None:
+    game_path, version_path = _game(tmp_path)
+    mods_path = version_path / "mods"
+    mods_path.mkdir()
+    with ZipFile(mods_path / "example.jar", "w") as archive:
+        archive.writestr("fabric.mod.json", json.dumps({"id": "example", "name": "Example Display Name"}))
+    source = tmp_path / "latest.log"
+    source.write_text("LoaderExceptionModCrash: Caught exception from Example (example)", encoding="utf-8")
+    analyzer = CrashAnalyzer(tmp_path / "data")
+    try:
+        result = analyzer.analyze_file(source, game_path, "Test")
+    finally:
+        analyzer.close()
+
+    reason = result["reasons"][0]
+    assert reason["code"] == "mod.initialization_failure"
+    assert reason["parameters"]["mod_id"] == "example"
+    assert reason["mods"] == ["Example Display Name"]
+
+
+def test_reasons_are_ordered_and_capped(tmp_path: Path) -> None:
+    game_path, _ = _game(tmp_path)
+    source = tmp_path / "latest.log"
+    source.write_text(
+        "\n".join(
+            [
+                "Could not save crash report",
+                "Mixin apply failed example.mixin.json",
+                "Failed loading config file common.toml",
+                "Mod loading has failed",
+                "OptiFine is not compatible with Forge",
+                "java.lang.OutOfMemoryError: Java heap space",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    analyzer = CrashAnalyzer(tmp_path / "data")
+    try:
+        result = analyzer.analyze_file(source, game_path, "Test")
+    finally:
+        analyzer.close()
+
+    codes = [reason["code"] for reason in result["reasons"]]
+    assert len(codes) == 5
+    assert codes[0] == "memory.out_of_memory"
+    assert "game.crash_report" not in codes
+
+
+def test_stack_companion_appended_when_rules_match(tmp_path: Path) -> None:
+    game_path, version_path = _game(tmp_path)
+    mods_path = version_path / "mods"
+    mods_path.mkdir()
+    with ZipFile(mods_path / "example.jar", "w") as archive:
+        archive.writestr("fabric.mod.json", json.dumps({"id": "example", "name": "Example Display Name"}))
+        archive.writestr("dev/example/crasher/Entrypoint.class", b"class bytes are not inspected")
+    source = tmp_path / "latest.log"
+    source.write_text(
+        "java.lang.OutOfMemoryError: Java heap space\nat dev.example.crasher.Entrypoint.initialize(Entrypoint.java:42)",
+        encoding="utf-8",
+    )
+    analyzer = CrashAnalyzer(tmp_path / "data")
+    try:
+        result = analyzer.analyze_file(source, game_path, "Test")
+    finally:
+        analyzer.close()
+
+    assert [reason["code"] for reason in result["reasons"]] == [
+        "memory.out_of_memory",
+        "stack.suspected_mod",
+    ]
+    assert result["reasons"][1]["mods"] == ["Example Display Name"]
 
 
 def test_report_is_session_only_and_removed_on_close(tmp_path: Path) -> None:

@@ -119,13 +119,13 @@ def test_named_group_samples_extract_parameters(
 ) -> None:
     analyzer = CrashAnalyzer(tmp_path / "data")
     try:
-        matches = analyzer._match_rules(text)
+        reasons = analyzer._collect_reasons(text)
     finally:
         analyzer.close()
 
-    assert matches and matches[0]["code"] == expected_code
+    assert reasons and reasons[0]["code"] == expected_code
     for key, value in expected_parameters.items():
-        assert matches[0]["parameters"][key] == value
+        assert reasons[0]["parameters"][key] == value
 
 
 def test_multiline_pattern_produces_evidence_and_reason_parameter(tmp_path: Path) -> None:
@@ -136,10 +136,10 @@ def test_multiline_pattern_produces_evidence_and_reason_parameter(tmp_path: Path
     )
     analyzer = CrashAnalyzer(tmp_path / "data")
     try:
-        matches = analyzer._match_rules(text)
+        reasons = analyzer._collect_reasons(text)
     finally:
         analyzer.close()
 
-    assert matches and matches[0]["code"] == "loader.forge_error_screen"
-    assert matches[0]["parameters"]["reason"] == "java.lang.RuntimeException: boom"
-    assert matches[0]["evidence"][0].startswith("An exception was thrown")
+    assert reasons and reasons[0]["code"] == "loader.forge_error_screen"
+    assert reasons[0]["parameters"]["reason"] == "java.lang.RuntimeException: boom"
+    assert reasons[0]["evidence"][0].startswith("An exception was thrown")

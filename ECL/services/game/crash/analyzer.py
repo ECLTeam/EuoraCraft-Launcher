@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：崩溃分析器：日志读取、规则匹配、堆栈兜底与插件富化编排。
+# 文件作用：崩溃分析器：日志读取、规则匹配、堆栈归因与插件富化编排。
 #
 # 公开接口：
 #   - class CrashAnalysisPolicy — 分析过程的资源限制与脱敏规则。
@@ -36,7 +36,9 @@ from ECL.plugins.crash_extensions import CrashAnalysisContext, CrashAnalysisExte
 from ECL.utils import get_logger
 
 from ..base import GameServiceError
+from .mod_index import CrashModIndex
 from .rules import CrashRule, CrashRuleCatalog
+from .stacks import CrashStackAnalyzer, CrashStackSummary
 
 
 @dataclass
@@ -68,20 +70,7 @@ class CrashAnalysisPolicy:
         re.compile(r"(?i)(authorization\s*:\s*bearer\s+)(\S+)"),
         re.compile(r"(?i)((?:access[_-]?token|client[_-]?token|password|session)\s*[:=]\s*)([^\s,;]+)"),
     )
-    ignored_stack_prefixes = (
-        "java.",
-        "javax.",
-        "jdk.",
-        "sun.",
-        "com.mojang.",
-        "net.minecraft.",
-        "net.minecraftforge.",
-        "net.fabricmc.",
-        "org.spongepowered.",
-        "org.lwjgl.",
-        "com.google.",
-        "org.apache.",
-    )
+    max_report_reasons = 5
 
 
 class CrashAnalyzer:
@@ -110,6 +99,8 @@ class CrashAnalyzer:
         )
         self.session_path = Path(self._temporary.name)
         self._reports: dict[str, _ReportRecord] = {}
+        self._mod_index = CrashModIndex()
+        self._stack_analyzer = CrashStackAnalyzer()
         self._lock = RLock()
         self._closed = False
 
@@ -403,7 +394,7 @@ class CrashAnalyzer:
                     evidence.append(normalized)
         return parameters
 
-    def _match_rules(self, text: str) -> list[dict[str, Any]]:
+    def _match_rules(self, text: str) -> list[tuple[CrashRule, list[str], dict[str, Any]]]:
         matches: list[tuple[CrashRule, list[str], dict[str, Any]]] = []
         for rule in CrashRuleCatalog.rules:
             evidence: list[str] = []
@@ -413,99 +404,67 @@ class CrashAnalyzer:
             parameters.update(self._rule_parameters(rule, text, evidence))
             if evidence:
                 matches.append((rule, evidence[:3], parameters))
-        if not matches:
-            return []
-        selected_priority = min(rule.priority for rule, _, _ in matches)
-        return [
-            {
+        return matches
+
+    def _collect_reasons(self, combined: str) -> list[dict[str, Any]]:
+        # 规则命中按优先级与置信度排序并限量输出；堆栈分析常驻执行，规则
+        # 命中时仅作为伴随证据追加，未命中时保持兜底主因语义。
+        summary = self._stack_analyzer.analyze(combined)
+        ordered = self._order_reasons(self._match_rules(combined))
+        if ordered:
+            if len(ordered) < CrashAnalysisPolicy.max_report_reasons:
+                companion = self._stack_reason(summary)
+                if companion is not None:
+                    ordered.append(companion)
+            return ordered
+        stack_reason = self._stack_reason(summary)
+        return [stack_reason] if stack_reason else []
+
+    def _order_reasons(self, matches: list[tuple[CrashRule, list[str], dict[str, Any]]]) -> list[dict[str, Any]]:
+        # 排序键为 (priority, confidence)，同键保持目录声明顺序；归因线索
+        # 逐一送 Mod 索引反查，命中时在原因上补充 mods 字段。
+        ordered = sorted(
+            matches,
+            key=lambda item: (item[0].priority, CrashRuleCatalog.confidence_rank(item[0].confidence)),
+        )
+        reasons: list[dict[str, Any]] = []
+        for rule, evidence, parameters in ordered:
+            reason: dict[str, Any] = {
                 "code": rule.code,
                 "confidence": rule.confidence,
                 "evidence": evidence,
                 "parameters": parameters,
             }
-            for rule, evidence, parameters in matches
-            if rule.priority == selected_priority
-        ]
-
-    @staticmethod
-    def _stack_candidates(text: str) -> list[str]:
-        candidates: list[str] = []
-        for match in re.finditer(r"\bat\s+([A-Za-z_$][\w$]*(?:\.[\w$]+){2,})", text):
-            class_name = match.group(1)
-            if class_name.startswith(CrashAnalysisPolicy.ignored_stack_prefixes):
-                continue
-            package = ".".join(class_name.split(".")[:3])
-            if package not in candidates:
-                candidates.append(package)
-            if len(candidates) == 12:
+            hints = [str(parameters[key]) for key in rule.mod_hint_keys if key in parameters]
+            if hints:
+                mods = self._mod_index.resolve(hints)
+                if mods:
+                    reason["mods"] = list(mods)
+            reasons.append(reason)
+            if len(reasons) == CrashAnalysisPolicy.max_report_reasons:
                 break
-        return candidates
+        return reasons
 
-    @staticmethod
-    def _mod_display_name(archive: ZipFile, fallback: str) -> str:
-        try:
-            if "fabric.mod.json" in archive.namelist():
-                metadata = json.loads(archive.read("fabric.mod.json")[: 512 * 1024].decode("utf-8", errors="replace"))
-                if isinstance(metadata, dict):
-                    name = metadata.get("name") or metadata.get("id")
-                    if isinstance(name, str) and name.strip():
-                        return name.strip()[:120]
-            for metadata_name in ("META-INF/neoforge.mods.toml", "META-INF/mods.toml"):
-                if metadata_name not in archive.namelist():
-                    continue
-                content = archive.read(metadata_name)[: 512 * 1024].decode("utf-8", errors="replace")
-                match = re.search(r'(?m)^\s*(?:displayName|modId)\s*=\s*["\']([^"\']+)', content)
-                if match:
-                    return match.group(1).strip()[:120]
-        except (BadZipFile, KeyError, OSError, UnicodeError, json.JSONDecodeError):
-            pass
-        return fallback
-
-    @staticmethod
-    def _mod_package_map(mods_dirs: list[Path]) -> dict[str, str]:
-        mapping: dict[str, str] = {}
-        for mods_dir in mods_dirs:
-            if not mods_dir.is_dir():
-                continue
-            for jar in mods_dir.iterdir():
-                if not jar.is_file() or jar.suffix.casefold() != ".jar":
-                    continue
-                try:
-                    with ZipFile(jar) as archive:
-                        display_name = CrashAnalyzer._mod_display_name(archive, jar.stem)
-                        names = archive.namelist()
-                        for name in names[:5000]:
-                            if not name.endswith(".class") or name.startswith(
-                                ("net/minecraft/", "java/", "com/mojang/")
-                            ):
-                                continue
-                            parts = PurePosixPath(name).parts
-                            if len(parts) >= 4:
-                                mapping.setdefault(".".join(parts[:3]), display_name)
-                except (BadZipFile, OSError):
-                    continue
-        return mapping
-
-    def _stack_reason(self, text: str, game_path: Path, game_directory: Path) -> dict[str, Any] | None:
-        candidates = self._stack_candidates(text)
-        if not candidates:
+    def _stack_reason(self, summary: CrashStackSummary) -> dict[str, Any] | None:
+        if not summary.packages:
             return None
-        package_map = self._mod_package_map([game_path / "mods", game_directory / "mods"])
-        mods = sorted(
-            {name for package in candidates for prefix, name in package_map.items() if package.startswith(prefix)}
-        )
-        if mods:
+        attribution = self._mod_index.resolve_frames(frame.class_name for frame in summary.frames)
+        packages = list(summary.packages[:8])
+        if attribution.mods:
             return {
                 "code": "stack.suspected_mod",
                 "confidence": "possible",
-                "evidence": candidates[:5],
-                "parameters": {"mods": mods[:8]},
+                "evidence": packages[:5],
+                "parameters": {"mods": list(attribution.mods)},
+                "mods": list(attribution.mods),
+                "packages": packages,
             }
         return {
             "code": "stack.suspected_component",
             "confidence": "possible",
-            "evidence": candidates[:5],
-            "parameters": {"packages": candidates[:8]},
+            "evidence": packages[:5],
+            "parameters": {"packages": packages},
+            "packages": packages,
         }
 
     def _analyze_text(self, texts: list[str], game_path: Path, game_directory: Path) -> list[dict[str, Any]]:
@@ -516,12 +475,10 @@ class CrashAnalyzer:
                 + "\n"
                 + combined[-(CrashAnalysisPolicy.max_analysis_chars // 2) :]
             )
-        reasons = self._match_rules(combined)
+        self._mod_index.refresh([game_path / "mods", game_directory / "mods"], texts)
+        reasons = self._collect_reasons(combined)
         if reasons:
             return reasons
-        stack_reason = self._stack_reason(combined, game_path, game_directory)
-        if stack_reason:
-            return [stack_reason]
         code = "unknown.no_logs" if not combined.strip() else "unknown.unclassified"
         return [{"code": code, "confidence": "possible", "evidence": [], "parameters": {}}]
 
@@ -575,6 +532,8 @@ class CrashAnalyzer:
         for reason in reasons:
             readable.append(f"- {reason['code']} ({reason['confidence']})")
             readable.extend(f"  {line}" for line in reason["evidence"])
+            if reason.get("mods"):
+                readable.append(f"  Mods: {', '.join(reason['mods'])}")
         (report_dir / "analysis.txt").write_text("\n".join(readable), encoding="utf-8")
         with self._lock:
             if self._closed:
