@@ -43,7 +43,7 @@ def _applier(tmp_path, *, is_frozen=True, version_type="release", platform="win3
 def _asset(name: str, *, size: int = 0) -> dict:
     return {
         "name": name,
-        "browser_download_url": f"https://github.com/ECLteam/euoracraft/releases/download/v1.4.2/{name}",
+        "browser_download_url": f"https://github.com/ECLTeam/euoracraft/releases/download/v1.4.2/{name}",
         "size": size,
     }
 

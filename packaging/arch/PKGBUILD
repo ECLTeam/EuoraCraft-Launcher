@@ -9,7 +9,7 @@ pkgver=1.0.0
 pkgrel=1
 pkgdesc="基于 PyTauri 的 Minecraft 启动器（EuoraCraft Launcher）"
 arch=('x86_64')
-url="https://github.com/ECLteam/EuoraCraft-Launcher"
+url="https://github.com/ECLTeam/EuoraCraft-Launcher"
 license=('MIT')
 depends=(
     'gtk3'
@@ -22,7 +22,7 @@ depends=(
 source=(
     "euoracraft-launcher.desktop"
     "euoracraft-launcher.png"
-    "euoracraft-launcher::https://github.com/ECLteam/EuoraCraft-Launcher/releases/download/${_tag}/EuoraCraft-Launcher-Arch-X64-${_tag}"
+    "euoracraft-launcher::https://github.com/ECLTeam/EuoraCraft-Launcher/releases/download/${_tag}/EuoraCraft-Launcher-Arch-X64-${_tag}"
 )
 sha256sums=('SKIP' 'SKIP' 'SKIP')
 

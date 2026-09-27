@@ -8,4 +8,4 @@
 	branch = main
 [submodule "ECL/services/florolding"]
 	path = ECL/services/florolding
-	url = https://github.com/ECLteam/Florolding
+	url = https://github.com/ECLTeam/Florolding

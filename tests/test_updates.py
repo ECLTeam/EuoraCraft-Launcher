@@ -55,7 +55,7 @@ def _release(tag: str, *, prerelease: bool = False, body: str = "更新说明") 
     return {
         "tag_name": tag,
         "prerelease": prerelease,
-        "html_url": f"https://github.com/ECLteam/EuoraCraft-Launcher/releases/tag/{tag}",
+        "html_url": f"https://github.com/ECLTeam/EuoraCraft-Launcher/releases/tag/{tag}",
         "body": body,
     }
 

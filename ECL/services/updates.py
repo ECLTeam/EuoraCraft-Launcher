@@ -122,7 +122,7 @@ class UpdateChecker:
     :param version_type: 当前版本类型（alpha / beta / rc / release）
     """
 
-    releases_api = "https://api.github.com/repos/ECLteam/EuoraCraft-Launcher/releases"
+    releases_api = "https://api.github.com/repos/ECLTeam/EuoraCraft-Launcher/releases"
     releases_per_page = 50
     request_timeout_seconds = 10.0
     prerelease_order = {"alpha": 0, "beta": 1, "rc": 2}
