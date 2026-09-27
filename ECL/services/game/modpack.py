@@ -282,6 +282,49 @@ def _parse_curseforge_plan(root: Path) -> ModpackPlan:
     )
 
 
+# 整合包格式特征文件 -> 格式标签，按序判定。
+_pack_format_markers = (
+    ("modrinth.index.json", "mrpack"),
+    ("manifest.json", "curseforge"),
+    ("mcbbs.packmeta", "mcbbs"),
+    ("modpack.json", "hmcl"),
+    ("mmc-pack.json", "multimc"),
+    ("ecl-pack.json", "ecl-legacy"),
+)
+
+# MCBBS 附加组件与 MultiMC 组件 uid -> ECL 加载器类型（HMCL 组件 uid 体系）。
+_component_loader_uids = {
+    "net.minecraftforge": "forge",
+    "net.fabricmc.fabric-loader": "fabric",
+    "net.neoforged": "neoforge",
+    "org.quiltmc.quilt-loader": "quilt",
+}
+
+
+def _detect_pack_layout(root: Path) -> tuple[Path, str]:
+    """
+    按清单特征识别格式，返回 (清单所在目录, 格式标签)。
+
+    兼容压缩包内单层目录包裹的发行包（MultiMC/HMCL 导出常见）：根目录
+    无法命中特征时，若恰有一个子目录且其内命中特征，则以该子目录为准。
+    """
+    if not root.is_dir():
+        return root, "unknown"
+    for marker, tag in _pack_format_markers:
+        if (root / marker).is_file():
+            return root, tag
+    try:
+        children = [child for child in root.iterdir() if child.is_dir()]
+    except OSError:
+        return root, "unknown"
+    if len(children) == 1:
+        nested = children[0]
+        for marker, tag in _pack_format_markers:
+            if (nested / marker).is_file():
+                return nested, tag
+    return root, "unknown"
+
+
 def detect_pack_format(root: Path) -> str:
     """
     按内容特征识别整合包格式标签。
@@ -289,22 +332,128 @@ def detect_pack_format(root: Path) -> str:
     :param root: 已解压的整合包内容根目录
     :return: mrpack / curseforge / mcbbs / hmcl / multimc / ecl-legacy / unknown
     """
-    if (root / "modrinth.index.json").is_file():
-        return "mrpack"
-    if (root / "manifest.json").is_file():
-        return "curseforge"
-    if (root / "mcbbs.packmeta").is_file():
-        return "mcbbs"
-    if (root / "modpack.json").is_file():
-        return "hmcl"
-    if (root / "mmc-pack.json").is_file():
-        return "multimc"
-    if (root / "ecl-pack.json").is_file():
-        return "ecl-legacy"
-    return "unknown"
+    return _detect_pack_layout(root)[1]
 
 
-_supported_plan_formats = frozenset({"mrpack", "curseforge"})
+def _parse_mcbbs_plan(root: Path) -> ModpackPlan:
+    # 解析 mcbbs.packmeta：版本与加载器来自 addons（HMCL 组件 uid 体系），
+    # 文件清单仅支持 CurseForge 条目（projectID/fileID），其余类型记录警告跳过。
+    warnings: list[str] = []
+    manifest = _read_json_file(root / "mcbbs.packmeta")
+    addons = manifest.get("addons") if isinstance(manifest.get("addons"), list) else []
+    minecraft_version = ""
+    loader_type = "vanilla"
+    loader_version: str | None = None
+    for addon in addons:
+        if not isinstance(addon, dict):
+            continue
+        addon_id = str(addon.get("id") or "").strip()
+        addon_version = str(addon.get("version") or "").strip()
+        if addon_id == "net.minecraft":
+            minecraft_version = addon_version
+        elif addon_id in _component_loader_uids:
+            loader_type = _component_loader_uids[addon_id]
+            loader_version = addon_version or None
+        elif addon_id and addon_id != "org.lwjgl3":
+            warnings.append(f"忽略 MCBBS 附加组件: {addon_id}")
+    if not minecraft_version:
+        raise GameServiceError("MCBBS 整合包缺少 Minecraft 组件声明", "INVALID_PACK_ARCHIVE")
+    entries: list[PackFileEntry] = []
+    raw_files = manifest.get("files") if isinstance(manifest.get("files"), list) else []
+    for raw in raw_files:
+        if not isinstance(raw, dict):
+            continue
+        project_id = raw.get("projectID")
+        file_id = raw.get("fileID")
+        if not isinstance(project_id, int) or not isinstance(file_id, int):
+            warnings.append(f"忽略暂不支持的 MCBBS 文件条目: {raw!r}")
+            continue
+        entries.append(
+            PackFileEntry(
+                target_relative="mods/",
+                env_client="optional" if raw.get("force") is False else "required",
+                project_id=str(project_id),
+                file_id=str(file_id),
+            )
+        )
+    overrides = root / "overrides"
+    return ModpackPlan(
+        format_name="mcbbs",
+        pack_name=str(manifest.get("name") or root.name),
+        summary=str(manifest.get("description") or ""),
+        minecraft_version=minecraft_version,
+        loader_type=loader_type,
+        loader_version=loader_version,
+        files=tuple(entries),
+        overrides_dir=overrides if overrides.is_dir() else None,
+        warnings=tuple(warnings),
+    )
+
+
+def _parse_hmcl_plan(root: Path) -> ModpackPlan:
+    # 解析 HMCL 自有格式 modpack.json：仅声明 gameVersion 与 minecraft/ 覆盖目录，
+    # 不含加载器信息，与 PCL 的解析行为保持一致（按原版基础版本安装）。
+    manifest = _read_json_file(root / "modpack.json")
+    minecraft_version = str(manifest.get("gameVersion") or "").strip()
+    if not minecraft_version:
+        raise GameServiceError("HMCL 整合包缺少 gameVersion 声明", "INVALID_PACK_ARCHIVE")
+    overrides = root / "minecraft"
+    return ModpackPlan(
+        format_name="hmcl",
+        pack_name=str(manifest.get("name") or root.name),
+        summary=str(manifest.get("description") or ""),
+        minecraft_version=minecraft_version,
+        files=(),
+        overrides_dir=overrides if overrides.is_dir() else None,
+    )
+
+
+def _parse_multimc_plan(root: Path) -> ModpackPlan:
+    # 解析 MultiMC mmc-pack.json：从 components 提取 Minecraft 与加载器版本，
+    # 不移植其 patch 合并引擎，改为按解析结果重装基础版本（needs_reinstall_loader）。
+    warnings: list[str] = []
+    manifest = _read_json_file(root / "mmc-pack.json")
+    components = manifest.get("components") if isinstance(manifest.get("components"), list) else []
+    minecraft_version = ""
+    loader_type = "vanilla"
+    loader_version: str | None = None
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        uid = str(component.get("uid") or "").strip()
+        version = component.get("version")
+        version_text = str(version).strip() if isinstance(version, str) else ""
+        if uid == "net.minecraft":
+            minecraft_version = version_text
+        elif uid in _component_loader_uids:
+            loader_type = _component_loader_uids[uid]
+            loader_version = version_text or None
+        elif uid and uid != "org.lwjgl3":
+            warnings.append(f"忽略 MultiMC 组件: {uid}")
+    if not minecraft_version:
+        raise GameServiceError("MultiMC 整合包缺少 Minecraft 组件版本", "INVALID_PACK_ARCHIVE")
+    overrides = next((root / name for name in ("minecraft", ".minecraft") if (root / name).is_dir()), None)
+    instance_cfg = root / "instance.cfg"
+    pack_name = root.name
+    if instance_cfg.is_file():
+        for line in instance_cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "name" and value.strip():
+                pack_name = value.strip()
+                break
+    return ModpackPlan(
+        format_name="multimc",
+        pack_name=pack_name,
+        minecraft_version=minecraft_version,
+        loader_type=loader_type,
+        loader_version=loader_version,
+        overrides_dir=overrides,
+        needs_reinstall_loader=True,
+        warnings=tuple(warnings),
+    )
+
+
+_supported_plan_formats = frozenset({"mrpack", "curseforge", "mcbbs", "hmcl", "multimc"})
 
 
 def build_pack_plan(root: Path) -> ModpackPlan:
@@ -317,17 +466,21 @@ def build_pack_plan(root: Path) -> ModpackPlan:
     """
     if not root.is_dir():
         raise GameServiceError("整合包内容目录不存在", "INVALID_PACK_ARCHIVE")
-    detected = detect_pack_format(root)
+    pack_root, detected = _detect_pack_layout(root)
     if detected == "mrpack":
-        return _parse_modrinth_plan(root)
+        return _parse_modrinth_plan(pack_root)
     if detected == "curseforge":
-        return _parse_curseforge_plan(root)
+        return _parse_curseforge_plan(pack_root)
+    if detected == "mcbbs":
+        return _parse_mcbbs_plan(pack_root)
+    if detected == "hmcl":
+        return _parse_hmcl_plan(pack_root)
+    if detected == "multimc":
+        return _parse_multimc_plan(pack_root)
     if detected == "ecl-legacy":
         # ECL 旧包整体即实例内容，由导入编排按旧流程处理，不走统一计划。
         raise GameServiceError("ECL 旧格式整合包由导入编排直接处理", "INVALID_PACK_ARCHIVE")
-    if detected == "unknown":
-        raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
-    raise GameServiceError(f"暂不支持该整合包格式: {detected}", "INVALID_PACK_ARCHIVE")
+    raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
 
 
 def _file_digest(path: Path, algorithm: str) -> str:
@@ -440,9 +593,9 @@ class ModpackCoordinator(_GameState):
         with tempfile.TemporaryDirectory(prefix="ecl-pack-import-", dir=target.instance_path.parent) as temp_dir:
             extracted = Path(temp_dir)
             safe_extract_zip(archive_path, extracted)
-            detected = detect_pack_format(extracted)
+            layout_root, detected = _detect_pack_layout(extracted)
             if detected == "ecl-legacy":
-                return self._import_legacy_ecl_pack(extracted, target, context)
+                return self._import_legacy_ecl_pack(layout_root, target, context)
             if detected == "unknown":
                 raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
             plan = build_pack_plan(extracted)

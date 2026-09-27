@@ -31,6 +31,12 @@
 #   - test_export_pack_degrades_without_curseforge_key(tmp_path, monkeypatch) -> None
 #   - test_modpack_online_install_rejects_invalid_source() -> None
 #   - test_modpack_online_install_downloads_and_imports(tmp_path, monkeypatch) -> None
+#   - test_parse_mcbbs_plan(tmp_path) -> None
+#   - test_parse_mcbbs_missing_minecraft_raises(tmp_path) -> None
+#   - test_parse_hmcl_plan(tmp_path) -> None
+#   - test_parse_hmcl_missing_game_version_raises(tmp_path) -> None
+#   - test_parse_multimc_plan(tmp_path) -> None
+#   - test_detect_wrapped_single_directory(tmp_path) -> None
 # ============================================================
 
 import hashlib
@@ -623,6 +629,126 @@ def test_curseforge_fingerprint_chunk_boundaries(tmp_path, monkeypatch) -> None:
     large = tmp_path / "large.bin"
     large.write_bytes(data)
     assert small_hash == curseforge_fingerprint(large)
+
+
+# ---------- MCBBS / HMCL / MultiMC 格式 ----------
+
+
+def test_parse_mcbbs_plan(tmp_path) -> None:
+    """MCBBS 清单应从 addons 提取版本与加载器，文件清单仅保留 CurseForge 条目。"""
+    root = tmp_path / "pack"
+    root.mkdir()
+    (root / "overrides").mkdir()
+    _write_json(
+        root / "mcbbs.packmeta",
+        {
+            "manifestType": "minecraftModpack",
+            "name": "MCBBS Pack",
+            "description": "desc",
+            "addons": [
+                {"id": "net.minecraft", "version": "1.20.1"},
+                {"id": "net.minecraftforge", "version": "47.3.0"},
+                {"id": "custom.ui", "version": "1"},
+            ],
+            "files": [
+                {"projectID": 1, "fileID": 11, "force": True},
+                {"projectID": 2, "fileID": 22, "force": False},
+                {"path": "local.bin", "hash": "abc"},
+            ],
+        },
+    )
+
+    plan = build_pack_plan(root)
+
+    assert plan.format_name == "mcbbs"
+    assert plan.pack_name == "MCBBS Pack"
+    assert plan.minecraft_version == "1.20.1"
+    assert (plan.loader_type, plan.loader_version) == ("forge", "47.3.0")
+    assert [(entry.project_id, entry.env_client) for entry in plan.files] == [("1", "required"), ("2", "optional")]
+    assert plan.overrides_dir == root / "overrides"
+    assert any("custom.ui" in warning for warning in plan.warnings)
+    assert len(plan.warnings) == 2
+
+
+def test_parse_mcbbs_missing_minecraft_raises(tmp_path) -> None:
+    """缺少 Minecraft 组件的 MCBBS 清单应拒绝解析。"""
+    root = tmp_path / "pack"
+    root.mkdir()
+    _write_json(root / "mcbbs.packmeta", {"addons": [{"id": "net.minecraftforge", "version": "1"}]})
+    with pytest.raises(GameServiceError) as error:
+        build_pack_plan(root)
+    assert error.value.error_code == "INVALID_PACK_ARCHIVE"
+
+
+def test_parse_hmcl_plan(tmp_path) -> None:
+    """HMCL 格式应读取 gameVersion 并以 minecraft/ 为 overrides。"""
+    root = tmp_path / "pack"
+    root.mkdir()
+    (root / "minecraft").mkdir()
+    _write_json(root / "modpack.json", {"name": "HMCL Pack", "gameVersion": "1.21.1"})
+
+    plan = build_pack_plan(root)
+
+    assert plan.format_name == "hmcl"
+    assert plan.minecraft_version == "1.21.1"
+    assert plan.loader_type == "vanilla"
+    assert plan.files == ()
+    assert plan.overrides_dir == root / "minecraft"
+
+
+def test_parse_hmcl_missing_game_version_raises(tmp_path) -> None:
+    """缺少 gameVersion 的 HMCL 包应拒绝解析。"""
+    root = tmp_path / "pack"
+    root.mkdir()
+    _write_json(root / "modpack.json", {"name": "HMCL Pack"})
+    with pytest.raises(GameServiceError) as error:
+        build_pack_plan(root)
+    assert error.value.error_code == "INVALID_PACK_ARCHIVE"
+
+
+def test_parse_multimc_plan(tmp_path) -> None:
+    """MultiMC 组件应映射版本与加载器，实例名取自 instance.cfg。"""
+    root = tmp_path / "pack"
+    root.mkdir()
+    (root / "minecraft").mkdir()
+    (root / "instance.cfg").write_text("InstanceType=OneSix\nname=MMC Pack\n", encoding="utf-8")
+    _write_json(
+        root / "mmc-pack.json",
+        {
+            "formatVersion": 1,
+            "components": [
+                {"uid": "org.lwjgl3"},
+                {"uid": "net.minecraft", "version": "1.20.1"},
+                {"uid": "net.minecraftforge", "version": "47.3.0"},
+                {"uid": "custom.component", "version": "1"},
+            ],
+        },
+    )
+
+    plan = build_pack_plan(root)
+
+    assert plan.format_name == "multimc"
+    assert plan.pack_name == "MMC Pack"
+    assert plan.minecraft_version == "1.20.1"
+    assert (plan.loader_type, plan.loader_version) == ("forge", "47.3.0")
+    assert plan.overrides_dir == root / "minecraft"
+    assert plan.needs_reinstall_loader is True
+    assert any("custom.component" in warning for warning in plan.warnings)
+
+
+def test_detect_wrapped_single_directory(tmp_path) -> None:
+    """压缩包内单层目录包裹的格式应能识别并以该目录为解析根。"""
+    root = tmp_path / "extracted"
+    inner = root / "My MMC Instance"
+    inner.mkdir(parents=True)
+    (inner / "minecraft").mkdir()
+    _write_json(inner / "mmc-pack.json", {"components": [{"uid": "net.minecraft", "version": "1.20.1"}]})
+
+    assert detect_pack_format(root) == "multimc"
+    plan = build_pack_plan(root)
+    assert plan.format_name == "multimc"
+    assert plan.minecraft_version == "1.20.1"
+    assert plan.overrides_dir == inner / "minecraft"
 
 
 def _fake_online_post(modrinth_versions: dict, curseforge_matches: list | None = None):
