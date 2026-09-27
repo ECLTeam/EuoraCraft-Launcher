@@ -84,6 +84,7 @@
 <a href="https://github.com/ECLTeam/EuoraCraft-Launcher.Core/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ECLTeam/EuoraCraft-Launcher.Core" />
 </a>
+
 ---
 
 ## 致谢
