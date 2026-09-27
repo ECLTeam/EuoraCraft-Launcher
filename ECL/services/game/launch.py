@@ -18,20 +18,23 @@
 #       - stop_instance(instance_id) -> None — 通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
 # ============================================================
 
+import ctypes
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from threading import Event
-from time import monotonic, time
+from threading import Event, Thread
+from time import monotonic, sleep, time
 from typing import Any
 from uuid import uuid4
 
 import httpx
+import psutil
 from anyio import to_thread
 
 from ECL.game import LaunchConfig
@@ -97,8 +100,121 @@ def _render_window_title(template: str, *, instance: str, version: str, account:
     return rendered.replace("{instance}", instance).replace("{version}", version).replace("{account}", account)
 
 
+def _collect_game_pids(process: Any) -> set[int]:
+    """
+    收集游戏进程自身与其子进程树的全部 PID。
+
+    部分加载器会经由中间进程拉起真正的游戏窗口，按进程树匹配窗口归属；
+    进程查询失败时退化为仅保留直接 PID。
+    """
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int):
+        return set()
+    try:
+        parent = psutil.Process(pid)
+    except (psutil.Error, OSError):
+        return {pid}
+    pids = {parent.pid}
+    try:
+        for child in parent.children(recursive=True):
+            pids.add(child.pid)
+    except (psutil.Error, OSError):
+        pass
+    return pids
+
+
+def _process_alive(process: Any) -> bool:
+    # 游戏进程已退出时不再重试窗口改写。
+    try:
+        return process.poll() is None
+    except (OSError, AttributeError, psutil.Error):
+        return False
+
+
+def _rename_window_title_win32(pids: set[int], title: str) -> bool:
+    """
+    枚举可见顶层窗口，把属于游戏进程树的第一个窗口标题改写为目标文本。
+
+    Minecraft 主窗口是该进程树唯一的可见顶层窗口；未找到匹配窗口时返回
+    False，由调用方稍后重试。
+    """
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    matched: list[int] = []
+
+    def _on_window(handle: Any, _param: Any) -> bool:
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(handle, ctypes.byref(owner))
+        if owner.value in pids and user32.IsWindowVisible(handle):
+            matched.append(handle)
+            return False
+        return True
+
+    callback = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)(_on_window)
+    user32.EnumWindows(callback, 0)
+    return bool(matched) and bool(user32.SetWindowTextW(matched[0], title))
+
+
+def _rename_window_title_xdotool(pids: set[int], title: str) -> bool:
+    """
+    通过 xdotool 按进程 PID 搜索可见窗口并改写名称。
+
+    xdotool 未安装或执行失败（无 X 显示等）时放弃改写并返回 False，
+    避免无意义的持续重试。
+    """
+    if shutil.which("xdotool") is None:
+        return False
+    for pid in sorted(pids):
+        result = subprocess.run(
+            ["xdotool", "search", "--onlyvisible", "--pid", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False
+        window_ids = result.stdout.split()
+        if not window_ids:
+            continue
+        for window_id in window_ids[:1]:
+            subprocess.run(
+                ["xdotool", "set_window_name", window_id, title],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        return True
+    return False
+
+
+def _select_title_renamer() -> Any:
+    # 按平台选择窗口标题改写实现，独立成函数便于测试注入。
+    return _rename_window_title_win32 if sys.platform == "win32" else _rename_window_title_xdotool
+
+
+def _rewrite_game_window_title(process: Any, title: str, timeout_seconds: float = 60.0) -> bool:
+    """
+    等待游戏主窗口出现并将其标题改写为渲染后的模板文本。
+
+    每 0.5 秒重试一次，直到改写成功、游戏进程退出或超时；在无事件循环的
+    后台线程中运行。返回是否成功改写。
+    """
+    renamer = _select_title_renamer()
+    deadline = monotonic() + timeout_seconds
+    while monotonic() < deadline:
+        if not _process_alive(process):
+            return False
+        if renamer(_collect_game_pids(process), title):
+            return True
+        sleep(0.5)
+    return False
+
+
 class LaunchCoordinator(_GameState):
     pre_launch_command_timeout_seconds = 60
+    post_exit_command_timeout_seconds = 60
     mesa_loader_windows_version = "26.0.4"
     _renderer_agents = {
         "default": None,
@@ -239,6 +355,40 @@ class LaunchCoordinator(_GameState):
             self.logger.info("启动前命令输出:\n%s", output)
         if completed.returncode != 0:
             raise GameServiceError(f"启动前命令执行失败，退出码: {completed.returncode}", "PRE_LAUNCH_COMMAND_FAILED")
+
+    def _run_post_exit_command(self, command: str, working_directory: Path, exit_code: int) -> None:
+        """
+        在游戏退出后于实例工作目录执行用户配置的后退出命令。
+
+        在独立后台线程内运行：无论退出码如何都执行；超时、无法创建进程与
+        非零退出码仅记录日志，不影响退出结算与崩溃分析流程。
+        """
+        normalized = command.strip()
+        if not normalized:
+            return
+        try:
+            completed = subprocess.run(
+                normalized,
+                cwd=working_directory,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.post_exit_command_timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            self.logger.warning("后退出命令执行超时，已放弃")
+            return
+        except OSError as exc:
+            self.logger.warning("后退出命令无法执行: %s", exc)
+            return
+        output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+        if output:
+            self.logger.info("后退出命令输出:\n%s", output)
+        if completed.returncode != 0:
+            self.logger.warning("后退出命令执行失败，退出码: %s", completed.returncode)
 
     @classmethod
     def _normalize_renderer(cls, value: Any) -> str:
@@ -452,6 +602,11 @@ class LaunchCoordinator(_GameState):
         prefer_high_performance_gpu: Any = False,
         use_java_exe: Any = False,
         disable_crash_analysis: Any = False,
+        wrapper_command: Any = "",
+        post_exit_command: Any = "",
+        env_vars: Any = "",
+        window_title: Any = "",
+        launcher_visibility: Any = "none",
     ) -> dict[str, str]:
         """
         检查游戏文件并启动实例。
@@ -474,6 +629,11 @@ class LaunchCoordinator(_GameState):
         :param prefer_high_performance_gpu: 是否在 Windows 中登记 Java 的高性能 GPU 偏好
         :param use_java_exe: 是否在 Windows 中将 javaw.exe 替换为 java.exe
         :param disable_crash_analysis: 是否禁止本次运行异常退出后的自动崩溃分析
+        :param wrapper_command: 包裹 java 命令的包装命令；含 {} 占位符时替换为完整命令，否则前缀拼接
+        :param post_exit_command: 游戏进程退出后在实例工作目录执行的命令
+        :param env_vars: 多行 KEY=VALUE 自定义环境变量；优先级低于插件提供的变量
+        :param window_title: 游戏窗口标题模板（{instance}/{version}/{account}）；为空时不修改
+        :param launcher_visibility: 游戏启动成功后的启动器行为: none / minimize / quit
         """
         version_name = self._normalize_version_name(body.get("version_id"))
         path = self._normalize_game_path(game_path)
@@ -503,6 +663,15 @@ class LaunchCoordinator(_GameState):
         window_width = self._normalize_positive_int(width, 854, 320, 16384, "窗口宽度")
         window_height = self._normalize_positive_int(height, 480, 240, 16384, "窗口高度")
         fullscreen_enabled = bool(fullscreen)
+        normalized_visibility = str(launcher_visibility or "none").strip().casefold()
+        if normalized_visibility not in {"none", "minimize", "quit"}:
+            raise GameServiceError("启动器可见性设置无效", "INVALID_GAME_OPTION")
+        user_env, env_warnings = _parse_env_vars(str(env_vars or ""))
+        for warning in env_warnings:
+            self.logger.warning("自定义环境变量: %s", warning)
+        wrapper_text = str(wrapper_command or "").strip()
+        post_exit_text = str(post_exit_command or "").strip()
+        title_template = str(window_title or "").strip()
         custom_jvm_args = self._normalize_string_list(jvm_args, "JVM 参数")
         custom_game_args = self._normalize_string_list(game_args, "游戏参数")
         lock_memory_enabled = bool(lock_memory)
@@ -748,6 +917,9 @@ class LaunchCoordinator(_GameState):
                 jvm_args=list(custom_jvm_args),
                 game_args=list(custom_game_args),
             )
+            # 用户自定义环境变量先于插件钩子注入：插件 env 保持覆写语义。
+            if user_env:
+                launch_context.env = {**user_env, **launch_context.env}
             self.launch_hooks.prepare(launch_context)
             if renderer_agent is not None:
                 launch_context.jvm_args.insert(0, renderer_agent)
@@ -775,6 +947,7 @@ class LaunchCoordinator(_GameState):
                 else:
                     formatted_args = shlex.join(launch_context.game_args)
                 command = f"{command} {formatted_args}"
+            command = _apply_wrapper(wrapper_text, command)
             self._emit_launch_progress("args_built", "启动参数生成完成", 84)
             if cancel_event.is_set():
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
@@ -805,11 +978,19 @@ class LaunchCoordinator(_GameState):
                 def on_instance_exit(code: int, name: str) -> None:
                     self._handle_instance_exit(run_token, code, name)
                     self.launch_hooks.on_exit(launch_context)
+                    if post_exit_text:
+                        # 后退出命令在独立线程执行，避免阻塞退出结算与崩溃分析。
+                        Thread(
+                            target=self._run_post_exit_command,
+                            args=(post_exit_text, launch_context.working_directory or game_directory, code),
+                            name=f"ECL-PostExit-{run_token[:8]}",
+                            daemon=True,
+                        ).start()
 
                 # 插件 env 是覆写/追加语义，必须合并进父进程环境后再传给子进程，
                 # 否则游戏进程会丢失 PATH/SystemRoot 等系统变量导致启动失败。
                 instance_env = {**os.environ, **launch_context.env} if launch_context.env else None
-                instance_id, _process = self.instances.create_instance(
+                instance_id, process = self.instances.create_instance(
                     instance_name=version_name,
                     instance_type="Minecraft",
                     args=command,
@@ -843,6 +1024,23 @@ class LaunchCoordinator(_GameState):
             else:
                 self._emit_instance_change(run, "started")
             self._emit_launch_progress("launched", f"{version_name} 已启动", 100)
+            if title_template:
+                mc_version = str(version_info.get("VanillaVersion") or version_name)
+                title_text = _render_window_title(
+                    title_template,
+                    instance=version_name,
+                    version=mc_version,
+                    account=str(credentials.get("player_name") or ""),
+                )
+                if title_text:
+                    Thread(
+                        target=_rewrite_game_window_title,
+                        args=(process, title_text),
+                        name=f"ECL-WindowTitle-{run_token[:8]}",
+                        daemon=True,
+                    ).start()
+            if normalized_visibility != "none":
+                self.events.emit("launcher:visibility", {"action": normalized_visibility})
             return {
                 "instanceId": instance_id,
                 "versionId": version_name,

@@ -17,12 +17,28 @@
 #   - test_render_window_title_empty_template() -> None
 #   - test_default_config_contains_advanced_launch_options() -> None
 #   - test_launch_request_visibility_rejects_unknown_action() -> None
+#   - test_rewrite_window_title_gives_up_when_process_dead(monkeypatch) -> None
+#   - test_rewrite_window_title_invokes_platform_renamer(monkeypatch) -> None
+#   - test_rename_window_title_win32_returns_false_without_match() -> None
+#   - test_launch_applies_wrapper_env_title_and_visibility(tmp_path, monkeypatch) -> None
+#   - test_launch_visibility_none_emits_nothing(tmp_path, monkeypatch) -> None
+#   - test_launch_triggers_post_exit_command(tmp_path, monkeypatch) -> None
 # ============================================================
+
+import asyncio
+import os
+import sys
+import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from ECL.api.models import LaunchRequest
+from ECL.events import EventBus
+from ECL.services.game import GameService
+from ECL.services.game import launch as launch_module
 from ECL.services.game.launch import _apply_wrapper, _parse_env_vars, _render_window_title
 from ECL.utils.config import default_config
 
@@ -118,3 +134,197 @@ def test_launch_request_visibility_rejects_unknown_action() -> None:
     assert request.env_vars == ""
     assert request.window_title == ""
     assert request.launcher_visibility == "none"
+
+
+# ---------- 窗口标题改写 ----------
+
+
+class _DeadProcess:
+    pid = 5
+
+    def poll(self):
+        return 0
+
+
+class _AliveProcess:
+    pid = 7
+
+    def poll(self):
+        return None
+
+
+def test_rewrite_window_title_gives_up_when_process_dead(monkeypatch) -> None:
+    """游戏进程已退出时应立即放弃，不调用平台改写实现。"""
+    called = []
+    monkeypatch.setattr(launch_module, "_select_title_renamer", lambda: lambda pids, title: called.append(1))
+    assert launch_module._rewrite_game_window_title(_DeadProcess(), "T", timeout_seconds=1) is False
+    assert called == []
+
+
+def test_rewrite_window_title_invokes_platform_renamer(monkeypatch) -> None:
+    """平台改写实现应收到进程树 PID 集合与渲染后的标题。"""
+    seen = []
+    monkeypatch.setattr(launch_module, "_select_title_renamer", lambda: lambda pids, title: seen.append((pids, title)) or True)
+    assert launch_module._rewrite_game_window_title(_AliveProcess(), "T") is True
+    assert len(seen) == 1
+    pids, title = seen[0]
+    assert title == "T"
+    assert 7 in pids
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="仅 Windows 调用 user32")
+def test_rename_window_title_win32_returns_false_without_match() -> None:
+    """无匹配进程窗口时应返回 False 而不报错。"""
+    assert launch_module._rename_window_title_win32({99999999}, "T") is False
+
+
+# ---------- 启动链路集成 ----------
+
+
+class _FakeAccounts:
+    def current_account(self):
+        return {"id": "offline", "type": "offline"}
+
+    async def get_launch_credentials(self):
+        return {
+            "player_name": "Steve",
+            "uuid": "0123456789abcdef0123456789abcdef",
+            "user_type": "legacy",
+            "access_token": "None",
+        }
+
+
+class _FakeProcess:
+    def __init__(self):
+        self.running = True
+        self.pid = 24680
+
+    def poll(self):
+        return None if self.running else 0
+
+
+class _FakeInstances:
+    def __init__(self):
+        self.options = None
+
+    def create_instance(self, **options):
+        self.options = options
+        return "mc-1", _FakeProcess()
+
+    def get_instances_info(self):
+        return []
+
+
+def _make_launch_service(tmp_path, monkeypatch, event_bus):
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.1"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.1.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    instances = _FakeInstances()
+    service = GameService(
+        _FakeAccounts(),
+        search_factory=lambda _path: SimpleNamespace(search_minecraft=lambda: {}),
+        instances_manager=instances,
+        command_builder=lambda _config: "java -jar cmd",
+        event_bus=event_bus,
+        enable_version_watcher=False,
+    )
+    service.logger = SimpleNamespace(
+        debug=lambda *a, **k: None,
+        info=lambda *a, **k: None,
+        warning=lambda *a, **k: None,
+        error=lambda *a, **k: None,
+        exception=lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+    )
+    return service, instances, game_path, java_path
+
+
+def test_launch_applies_wrapper_env_title_and_visibility(tmp_path, monkeypatch) -> None:
+    """启动应应用 wrapper 前缀、注入用户环境变量、发射可见性事件并启动标题改写。"""
+    visibility_events = []
+    event_bus = EventBus()
+    event_bus.subscribe("launcher:visibility", visibility_events.append)
+    service, instances, game_path, java_path = _make_launch_service(tmp_path, monkeypatch, event_bus)
+
+    title_calls = []
+    monkeypatch.setattr(
+        launch_module,
+        "_select_title_renamer",
+        lambda: lambda pids, title: title_calls.append((tuple(sorted(pids)), title)) or True,
+    )
+
+    result = asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.1"},
+            game_path=game_path,
+            java_path=java_path,
+            wrapper_command="wrap {}",
+            env_vars="FOO=1",
+            post_exit_command="echo bye",
+            window_title="{instance}|{version}|{account}",
+            launcher_visibility="quit",
+        )
+    )
+    assert result["instanceId"] == "mc-1"
+
+    args = instances.options["args"]
+    assert args.startswith("wrap java -jar cmd")
+    env = instances.options["env"]
+    assert env["FOO"] == "1"
+    # 系统环境变量必须保留，仅追加用户自定义项
+    assert env.get("PATH") == os.environ.get("PATH")
+    assert visibility_events == [{"action": "quit"}]
+
+    deadline = time.time() + 5
+    while not title_calls and time.time() < deadline:
+        time.sleep(0.05)
+    assert len(title_calls) == 1
+    _, title = title_calls[0]
+    assert title == "1.21.1|1.21.1|Steve"
+
+
+def test_launch_visibility_none_emits_nothing(tmp_path, monkeypatch) -> None:
+    """默认可见性不应发射事件，空 wrapper 不改变命令。"""
+    visibility_events = []
+    event_bus = EventBus()
+    event_bus.subscribe("launcher:visibility", visibility_events.append)
+    service, instances, game_path, java_path = _make_launch_service(tmp_path, monkeypatch, event_bus)
+
+    asyncio.run(service.launch_instance({"version_id": "1.21.1"}, game_path=game_path, java_path=java_path))
+
+    assert instances.options["args"] == "java -jar cmd"
+    assert instances.options["env"] is None
+    assert visibility_events == []
+
+
+def test_launch_triggers_post_exit_command(tmp_path, monkeypatch) -> None:
+    """游戏退出回调应触发后退出命令，并带上实例工作目录与退出码。"""
+    recorded = []
+    done = threading.Event()
+    service, instances, game_path, java_path = _make_launch_service(tmp_path, monkeypatch, EventBus())
+
+    def fake_post_exit(command, working_directory, code):
+        recorded.append((command, str(working_directory), code))
+        done.set()
+
+    monkeypatch.setattr(service, "_run_post_exit_command", fake_post_exit)
+
+    asyncio.run(
+        service.launch_instance(
+            {"version_id": "1.21.1"},
+            game_path=game_path,
+            java_path=java_path,
+            post_exit_command="echo bye",
+        )
+    )
+    assert not recorded
+    instances.options["exit_callback"](0, "1.21.1")
+    assert done.wait(5)
+    assert recorded == [("echo bye", str(game_path / "versions" / "1.21.1"), 0)]

@@ -34,6 +34,9 @@ class FrontendEventPolicy:
         "accounts_microsoft_login_status": [("accounts:microsoft_login_status", lambda data: data)],
         "launcher:popup": [("launcher:popup", lambda payload: payload if isinstance(payload, dict) else None)],
         "launcher:notify": [("launcher:notify", lambda payload: payload)],
+        "launcher:visibility": [
+            ("launcher:visibility", lambda payload: payload if isinstance(payload, dict) else None)
+        ],
         "game:install_progress": [("game:install_progress", lambda payload: payload)],
         "update:progress": [("update:progress", lambda payload: payload)],
         "update:check_completed": [("update:check_completed", lambda payload: payload)],

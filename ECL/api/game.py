@@ -488,6 +488,12 @@ class GameHandlers(_FrontendState):
             values["height"] = game_config.get("game_height", default_config["game"]["game_height"])
         if "fullscreen" not in request.model_fields_set:
             values["fullscreen"] = bool(game_config.get("fullscreen", default_config["game"]["fullscreen"]))
+        # 启动高级选项：前端未显式提供（实例覆盖为空）时回退到全局游戏设置。
+        if "launcher_visibility" not in request.model_fields_set:
+            values["launcher_visibility"] = str(game_config.get("launcher_visibility") or "none")
+        for advanced_key in ("wrapper_command", "post_exit_command", "env_vars", "window_title"):
+            if advanced_key not in request.model_fields_set:
+                values[advanced_key] = str(game_config.get(advanced_key) or "")
         values["jvm_args"] = [
             *self._global_jvm_args(game_config.get("jvm_args")),
             *values.get("jvm_args", []),
