@@ -12,9 +12,24 @@
 from __future__ import annotations
 
 import argparse
+import io
+import sys
 from pathlib import Path
 
 from ECL.plugins.package_archive import PluginPackageError, build_plugin_package
+
+
+def _force_utf8_output() -> None:
+    """
+    把标准输出与标准错误切换为 UTF-8，避免 ANSI 代码页控制台无法编码中文。
+
+    GitHub 的 Windows 运行器与部分本地终端以 ANSI 代码页（如 cp1252）作为标准流
+    编码，中文 print、帮助与错误提示会直接抛出 UnicodeEncodeError；本身已是
+    UTF-8 的环境重配为幂等操作，被替换的非 TextIOWrapper 流则跳过。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     :param argv: 可选的命令行参数；缺省时从当前进程读取
     :return: 成功为 0，归档制作失败为 1
     """
+    _force_utf8_output()
     parser = argparse.ArgumentParser(description="制作未签名的 EuoraCraft 插件归档")
     parser.add_argument("source", type=Path, help="包含 plugin.json 的插件源目录")
     parser.add_argument("output", type=Path, help="输出 .eclplugin 文件")

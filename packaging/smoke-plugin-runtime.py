@@ -12,14 +12,29 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from ECL.plugins.environment_pool import PluginEnvironmentPool, PluginEnvironmentSpec
 from ECL.plugins.runtime_assets import PluginRuntimeStore, load_plugin_runtime_asset
 from ECL.plugins.worker_process import PluginWorkerProcess
+
+
+def _force_utf8_output() -> None:
+    """
+    把标准输出与标准错误切换为 UTF-8，避免 ANSI 代码页控制台无法编码中文。
+
+    GitHub 的 Windows 运行器与部分本地终端以 ANSI 代码页（如 cp1252）作为标准流
+    编码，中文 print 与 argparse 帮助会直接抛出 UnicodeEncodeError 使冒烟失败；
+    本身已是 UTF-8 的环境重配为幂等操作，被替换的非 TextIOWrapper 流则跳过。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     :param argv: 可选命令行参数；缺省时从当前进程读取
     :return: 成功为 0，任一验证失败直接抛出并使 CI 失败
     """
+    _force_utf8_output()
     parser = argparse.ArgumentParser(description="验证插件专用运行时资产")
     parser.add_argument("--asset-dir", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
