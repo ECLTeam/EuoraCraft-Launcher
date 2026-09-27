@@ -77,7 +77,7 @@ class CrashRule:
 | 新增原因码 | TOO_MANY_MODS…ID_LIMIT、MOD_NAME、INSTALL_MIXINBOOTSTRAP + FABRIC_VERSION_0_12、OPTIFINE_REPEAT_INSTALLATION、FILE_ALREADY_EXISTS、MACOS_FAILED_TO_FIND_SERVICE_PORT、MAC_JDK_8U261、RTSS_FOREST_SODIUM、FORGE_ERROR | `mod.id_limit_exceeded`、`mod.invalid_module_name`、`mod.mixin_bootstrap_missing`、`mod.optifine_duplicate`、`files.already_exists`、`graphics.macos_glfw`、`java.mac_jdk_legacy`、`graphics.rtss_sodium`、`loader.forge_error_screen` |
 | 不移植 | OPENJ9/JDK_9/JVM_32BIT/OPENGL_NOT_SUPPORTED/GRAPHICS_DRIVER/OUT_OF_MEMORY/DEBUG_CRASH/GL_OPERATION_FAILURE/MOD_FILES_ARE_DECOMPRESSED 等 | ECL 现有规则已覆盖且表达更完整 |
 
-最终规则条目约 55-60（30 现有 + 10 新码 + 增补/拆分条目），新码共 10 个。每个新码需在前端 6 语言补 `error.crash.reasons.<code_下划线化>`（title + 2 条 suggestions）。所有移植正则在 Python `re` 语义下逐条校验（命名组须写作 `(?P<name>…)`，Java 风格 `(?<name>…)` 不被 `re` 支持），并以代表样例日志做单测。
+最终规则目录为 38 条规则、113 个匹配模式（28 条现有规则 + 10 条新码；HMCL 的多条同域正则在 ECL 合并为单条原因的多个模式，故条目数低于早期估算），新码共 10 个。每个新码需在前端 6 语言补 `error.crash.reasons.<code_下划线化>`（title + 2 条 suggestions）。所有移植正则在 Python `re` 语义下逐条校验（命名组须写作 `(?P<name>…)`，Java 风格 `(?<name>…)` 不被 `re` 支持），并以代表样例日志做单测。
 
 ## 5. 堆栈分析器（stacks.py）
 
@@ -159,7 +159,7 @@ CI 最低标准：`ruff check ECL tests`、`ruff format --check ECL tests`、相
 | 2 | `feat: 崩溃规则目录支持命名捕获组并移植 HMCL 精选规则` | rules.py 升级 + 10 新码 + parameters 参数化 + 后端单测 |
 | 3 | `feat: 崩溃分析新增三源 Mod 索引与堆栈分析器升级` | stacks.py / mod_index.py + 归因字段 + 聚合排序 + 单测 |
 | 4 | `refactor: 启动崩溃检测与调度拆分为 crash capture 模块` | capture.py + launch.py 瘦身 + 崩溃链路回归 |
-| 5 | `feat: 前端展示崩溃 Mod 归因并补全新原因码文案` | 6 语言 i18n + 类型 + ErrorModal + `pnpm check`/`pnpm build` + 实机验证 |
+| 5 | `feat: 前端展示崩溃 Mod 归因并补全新原因码文案` | 6 语言 i18n + 类型 + ErrorModal + 规则文案一致性测试 + `pnpm check`/`pnpm build`；GUI 交互走查由用户抽查 |
 
 ## 12. 风险与前置条件
 

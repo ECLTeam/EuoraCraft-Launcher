@@ -7,12 +7,14 @@
 #
 # 公开接口：
 #   - test_catalog_codes_are_unique_and_groups_declared() -> None
+#   - test_all_rule_codes_have_localized_copy() -> None
 #   - test_named_group_samples_extract_parameters(tmp_path, text, expected_code, expected_parameters) -> None
 #   - test_multiline_pattern_produces_evidence_and_reason_parameter(tmp_path) -> None
 # ============================================================
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,16 @@ def test_catalog_codes_are_unique_and_groups_declared() -> None:
         declared = set(rule.parameter_groups)
         available = {name for pattern in rule.patterns for name in pattern.groupindex}
         assert declared <= available, f"规则 {rule.code} 声明了未定义的命名捕获组"
+
+
+def test_all_rule_codes_have_localized_copy() -> None:
+    locales_root = Path(__file__).resolve().parents[1] / "frontend" / "src" / "i18n" / "locales"
+
+    for locale_path in sorted(locales_root.glob("*.json")):
+        data = json.loads(locale_path.read_text(encoding="utf-8"))
+        reasons = data["error"]["crash"]["reasons"]
+        missing = [rule.code for rule in CrashRuleCatalog.rules if rule.code.replace(".", "_") not in reasons]
+        assert missing == [], f"{locale_path.name} 缺少原因文案: {missing}"
 
 
 @pytest.mark.parametrize(
