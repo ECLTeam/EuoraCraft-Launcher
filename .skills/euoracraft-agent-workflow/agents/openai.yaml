@@ -1,4 +1,0 @@
-display_name: EuoraCraft Agent Workflow
-short_description: 强制 inspect→plan→code→test→commit→document 六步工作流，防止 vibe coding
-policy:
-  allow_implicit_invocation: true

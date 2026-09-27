@@ -1,4 +1,0 @@
-interface:
-  display_name: "EuoraCraft 后端规范"
-  short_description: "统一 EuoraCraft 后端结构、中文注释、依赖注入、生命周期与测试规范"
-  default_prompt: "Use $maintain-euoracraft-backend to review and improve this project backend consistently."

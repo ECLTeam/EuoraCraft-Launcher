@@ -96,3 +96,6 @@ docs/junsi-dev-docs
 
 /.zcode/
 .pytest_tmp/
+
+# 本地 AI 技能目录
+.skills/
