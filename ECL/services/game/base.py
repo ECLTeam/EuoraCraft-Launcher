@@ -48,7 +48,7 @@ from .operations import GameOperationManager
 from .version_stats import VersionStatsStore
 
 if TYPE_CHECKING:
-    from .crash_analysis import CrashAnalyzer
+    from .crash.analyzer import CrashAnalyzer
     from .schematics import SchematicSession
 
 ApiClientFactory = Callable[[ApiUrlConfig], BaseApiClient]
@@ -173,7 +173,7 @@ class _GameState:
         self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._server_status_lock = RLock()
         self._schematic_sessions: dict[str, SchematicSession] = {}
-        from .crash_analysis import CrashAnalyzer
+        from .crash.analyzer import CrashAnalyzer
 
         self._crash_analyzer: CrashAnalyzer = CrashAnalyzer(self._data_path, extensions=self.crash_extensions)
         self._crash_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ECL-CrashAnalyzer")

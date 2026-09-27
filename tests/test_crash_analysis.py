@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：针对 crash_analysis 模块的自动化测试。
+# 文件作用：针对 crash 子包分析器的自动化测试。
 #
 # 公开接口：
 #   - test_manual_analysis_matches_structured_rules(tmp_path, line, expected_code) -> None
@@ -24,8 +24,8 @@ from zipfile import ZipFile
 import pytest
 
 from ECL.services.game import GameServiceError
-from ECL.services.game import crash_analysis as crash_analysis_module
-from ECL.services.game.crash_analysis import CrashAnalyzer
+from ECL.services.game.crash import analyzer as crash_analyzer_module
+from ECL.services.game.crash.analyzer import CrashAnalyzer
 
 
 def _game(tmp_path: Path) -> tuple[Path, Path]:
@@ -131,7 +131,7 @@ def test_archive_rejects_nested_archives_and_binary_files(tmp_path: Path) -> Non
 
 def test_manual_file_rejects_oversize_input(tmp_path: Path, monkeypatch) -> None:
     game_path, _ = _game(tmp_path)
-    monkeypatch.setattr(crash_analysis_module.CrashAnalysisPolicy, "max_source_bytes", 32)
+    monkeypatch.setattr(crash_analyzer_module.CrashAnalysisPolicy, "max_source_bytes", 32)
     source = tmp_path / "oversize.log"
     source.write_text("x" * 64, encoding="utf-8")
     analyzer = CrashAnalyzer(tmp_path / "data")
