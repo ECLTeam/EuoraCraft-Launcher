@@ -91,6 +91,7 @@ class ResourceCatalogPolicy:
         "resourcepack": "resourcepack",
         "shaderpack": "shader",
         "datapack": "datapack",
+        "modpack": "modpack",
     }
 
     # CurseForge 分类 classId 映射，用于只搜索对应资源类型
@@ -100,6 +101,7 @@ class ResourceCatalogPolicy:
         "shaderpack": 6552,
         "datapack": 6945,
         "world": 17,
+        "modpack": 4471,
     }
 
     curseforge_web_paths = {
@@ -108,6 +110,7 @@ class ResourceCatalogPolicy:
         "shaderpack": "shaders",
         "datapack": "data-packs",
         "world": "worlds",
+        "modpack": "modpacks",
     }
 
     # CurseForge 排序 sortField 映射；默认按人气排序（2=Popularity）

@@ -29,6 +29,8 @@
 #   - test_curseforge_fingerprint_chunk_boundaries(tmp_path, monkeypatch) -> None
 #   - test_export_pack_resolves_online_mods(tmp_path, monkeypatch) -> None
 #   - test_export_pack_degrades_without_curseforge_key(tmp_path, monkeypatch) -> None
+#   - test_modpack_online_install_rejects_invalid_source() -> None
+#   - test_modpack_online_install_downloads_and_imports(tmp_path, monkeypatch) -> None
 # ============================================================
 
 import hashlib
@@ -527,6 +529,67 @@ def test_import_unknown_format_fails(tmp_path) -> None:
 
     assert state["status"] == "failed"
     assert state["errorCode"] == "INVALID_PACK_ARCHIVE"
+
+
+# ---------- 在线整合包安装 ----------
+
+
+def test_modpack_online_install_rejects_invalid_source() -> None:
+    """不支持的在线来源应同步拒绝。"""
+    service = _build_pack_service(_pack_downloader_factory({}))
+    with pytest.raises(GameServiceError) as error:
+        service.install_modpack_online("ftb", "1", "2", "game", "Y")
+    assert error.value.error_code == "INVALID_RESOURCE_SOURCE"
+
+
+def test_modpack_online_install_downloads_and_imports(tmp_path, monkeypatch) -> None:
+    """在线安装应下载包文件后走统一导入编排，装配继承实例。"""
+    game_path = tmp_path / ".minecraft"
+    _make_base_version(game_path, "1.21.1")
+    mod_bytes = b"online-mod"
+    index = {
+        "name": "Online Demo",
+        "dependencies": {"minecraft": "1.21.1"},
+        "files": [
+            {
+                "path": "mods/online.jar",
+                "hashes": {"sha1": hashlib.sha1(mod_bytes).hexdigest()},
+                "downloads": ["https://example.com/online.jar"],
+            }
+        ],
+    }
+    pack_zip = tmp_path / "demo.mrpack"
+    _make_pack_zip(pack_zip, {"modrinth.index.json": json.dumps(index).encode(), "overrides/config/a.txt": b"1"})
+    pack_bytes = pack_zip.read_bytes()
+
+    service = _build_pack_service(_pack_downloader_factory({"https://example.com/online.jar": mod_bytes}))
+    monkeypatch.setattr(
+        service,
+        "_select_online_file",
+        lambda *_args: {"filename": "demo.mrpack", "url": "https://example.com/pack.mrpack"},
+    )
+
+    captured = {}
+
+    def fake_download(url, temp, filename, task_id=None):
+        captured["url"] = url
+        Path(temp).write_bytes(pack_bytes)
+
+    monkeypatch.setattr(service, "_download_online_file", fake_download)
+
+    state = _await_operation(
+        service,
+        service.install_modpack_online("modrinth", "proj-1", "ver-1", game_path, "Online"),
+    )
+
+    assert state["status"] == "completed", state
+    assert captured["url"] == "https://example.com/pack.mrpack"
+    result = state["result"]
+    assert result["format"] == "mrpack"
+    assert result["baseVersion"] == "1.21.1"
+    instance = game_path / "versions" / "Online"
+    assert (instance / "mods" / "online.jar").read_bytes() == mod_bytes
+    assert (instance / "config" / "a.txt").read_bytes() == b"1"
 
 
 # ---------- CurseForge 指纹与导出反查 ----------

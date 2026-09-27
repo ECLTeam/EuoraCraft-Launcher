@@ -16,6 +16,7 @@
 #       - game_instance_clone(body) -> ApiResponse
 #       - game_instance_import(body) -> ApiResponse
 #       - game_instance_export(body) -> ApiResponse
+#       - game_modpack_online_install(body) -> ApiResponse
 #       - game_instance_files_check(body) -> ApiResponse
 #       - game_instance_files_repair(body) -> ApiResponse
 #       - game_instance_delete(body) -> ApiResponse
@@ -82,6 +83,7 @@ from ECL.api.models import (
     InstancePackExportRequest,
     InstancePackImportRequest,
     InstanceTarget,
+    ModpackOnlineInstallRequest,
     OperationRequest,
     OptionsPatchRequest,
     ResourceDeleteRequest,
@@ -226,6 +228,20 @@ class WorkspaceHandlers(_FrontendState):
             body,
             lambda request: self.game.export_instance_pack(
                 request.game_path, request.version_id, request.output_path, request.pack_format
+            ),
+        )
+
+    @_ipc_handler("MODPACK_ONLINE_INSTALL_FAILED")
+    async def game_modpack_online_install(self, body: dict[str, Any]) -> ApiResponse:
+        return await self._validated_call(
+            ModpackOnlineInstallRequest,
+            body,
+            lambda request: self.game.install_modpack_online(
+                request.source,
+                request.project_id,
+                request.file_id,
+                request.game_path,
+                request.new_version_id,
             ),
         )
 

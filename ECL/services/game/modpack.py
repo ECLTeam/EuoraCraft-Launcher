@@ -9,6 +9,9 @@
 #   - class PackFileEntry — 整合包内单个待下载文件条目（路径/直链/哈希/环境适用性）。
 #   - class ModpackPlan — 归一后的整合包安装计划（版本、加载器、文件清单、overrides）。
 #   - class ModpackCoordinator — 导入编排协调器：识别解析、自动安装基础版本、下载校验与实例装配。
+#       - import_instance_pack(game_path, source_path, new_version_id) -> dict[str, str] — 本地整合包导入长任务。
+#       - install_modpack_online(source, project_id, file_id, game_path, new_version_id) -> dict[str, str] — 下载在线整合包并装配为全新实例。
+#       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
 #   - detect_pack_format(root) -> str — 按内容特征识别整合包格式标签。
 #   - build_pack_plan(root) -> ModpackPlan — 解析指定格式并输出统一安装计划。
 # ============================================================
@@ -50,6 +53,9 @@ _curseforge_loader_prefixes = {
     "neoforge": "neoforge",
     "quilt": "quilt",
 }
+
+# 在线整合包安装支持的来源。
+_online_pack_sources = frozenset({"modrinth", "curseforge"})
 
 # CurseForge 指纹归一化时跳过的字节（空白字符），与 murmur2 分块读取粒度。
 _fingerprint_skipped_bytes = frozenset({0x09, 0x0A, 0x0D, 0x20})
@@ -419,21 +425,85 @@ class ModpackCoordinator(_GameState):
         target.instance_path.parent.mkdir(parents=True, exist_ok=True)
 
         def worker(context: OperationContext) -> dict[str, Any]:
-            with tempfile.TemporaryDirectory(prefix="ecl-pack-import-", dir=target.instance_path.parent) as temp_dir:
-                extracted = Path(temp_dir)
-                safe_extract_zip(source, extracted)
-                detected = detect_pack_format(extracted)
-                if detected == "ecl-legacy":
-                    return self._import_legacy_ecl_pack(extracted, target, context)
-                if detected == "unknown":
-                    raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
-                plan = build_pack_plan(extracted)
-                context.progress(8, f"已识别整合包：{plan.pack_name}（{plan.format_name}）")
-                result = self._install_plan_into_instance(plan, target, context)
-                context.progress(98, "整合包导入完成")
-                return result
+            return self._import_archive_worker(source, target, context)
 
         return self._game_operations.submit("instance_import", worker)
+
+    def _import_archive_worker(
+        self, archive_path: Path, target: ResolvedInstanceTarget, context: OperationContext
+    ) -> dict[str, Any]:
+        """
+        解压整合包压缩包并按识别结果装配实例，本地导入与在线安装共用。
+
+        :raises GameServiceError: 格式无法识别或解析失败时抛出
+        """
+        with tempfile.TemporaryDirectory(prefix="ecl-pack-import-", dir=target.instance_path.parent) as temp_dir:
+            extracted = Path(temp_dir)
+            safe_extract_zip(archive_path, extracted)
+            detected = detect_pack_format(extracted)
+            if detected == "ecl-legacy":
+                return self._import_legacy_ecl_pack(extracted, target, context)
+            if detected == "unknown":
+                raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
+            plan = build_pack_plan(extracted)
+            context.progress(8, f"已识别整合包：{plan.pack_name}（{plan.format_name}）")
+            result = self._install_plan_into_instance(plan, target, context)
+            context.progress(98, "整合包导入完成")
+            return result
+
+    def install_modpack_online(
+        self,
+        source: Any,
+        project_id: Any,
+        file_id: Any,
+        game_path: Any,
+        new_version_id: Any,
+    ) -> dict[str, str]:
+        """
+        下载在线整合包文件并按统一导入编排装配为全新实例。
+
+        Modrinth 按 ``file_id``（版本 ID）获取主文件；CurseForge 按
+        ``project_id/file_id`` 经文件详情接口解析直链。下载与装配在同一
+        长任务内完成，进度与取消语义与本地导入一致。
+
+        :param source: 在线来源（modrinth/curseforge）
+        :param project_id: 整合包项目 ID
+        :param file_id: 整合包文件或版本 ID
+        :param game_path: Minecraft 游戏根目录
+        :param new_version_id: 新实例的版本目录名
+        :return: 长任务句柄（operationId 与初始状态）
+        :raises GameServiceError: 来源不支持、ID 缺失或目标实例已存在时抛出
+        """
+        normalized_source = str(source or "").strip().casefold()
+        if normalized_source not in _online_pack_sources:
+            raise GameServiceError("不支持的在线整合包来源", "INVALID_RESOURCE_SOURCE")
+        target = self.resolve_instance(game_path, new_version_id)
+        if target.instance_path.exists():
+            raise GameServiceError("目标实例已存在", "INSTANCE_ALREADY_EXISTS")
+        target.instance_path.parent.mkdir(parents=True, exist_ok=True)
+        pack_project_id = str(project_id or "").strip()
+        pack_file_id = str(file_id or "").strip()
+        if not pack_project_id or not pack_file_id:
+            raise GameServiceError("整合包项目或文件 ID 缺失", "PACK_ONLINE_FILE_INVALID")
+
+        def worker(context: OperationContext) -> dict[str, Any]:
+            context.progress(2, "正在获取整合包文件信息")
+            # _select_online_file 来自 ResourceCoordinator：Modrinth 取版本主文件，
+            # CurseForge 经文件详情接口解析直链与哈希。
+            selected = self._select_online_file(normalized_source, pack_project_id, pack_file_id)
+            filename = str(selected.get("filename") or "")
+            pure = PurePosixPath(filename.replace("\\", "/")) if filename else None
+            if pure is None or len(pure.parts) != 1 or pure.parts[0] in {".", ".."}:
+                raise GameServiceError(f"整合包文件名不安全: {filename}", "PACK_ONLINE_FILE_INVALID")
+            with tempfile.TemporaryDirectory(prefix="ecl-pack-online-", dir=target.instance_path.parent) as temp_dir:
+                archive = Path(temp_dir) / pure.parts[0]
+                context.progress(5, f"正在下载整合包 {filename}")
+                self._download_online_file(str(selected["url"]), archive, filename, task_id=None)
+                context.check_cancelled()
+                context.progress(8, "整合包下载完成，正在识别")
+                return self._import_archive_worker(archive, target, context)
+
+        return self._game_operations.submit("modpack_online_install", worker)
 
     def _import_legacy_ecl_pack(
         self, extracted: Path, target: ResolvedInstanceTarget, context: OperationContext

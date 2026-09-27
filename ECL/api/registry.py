@@ -94,6 +94,7 @@ class IpcCommandRegistry:
         "game_instance_clone",
         "game_instance_import",
         "game_instance_export",
+        "game_modpack_online_install",
         "game_instance_files_check",
         "game_instance_files_repair",
         "game_instance_delete",

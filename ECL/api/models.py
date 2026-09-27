@@ -63,6 +63,7 @@
 #   - class InstanceCloneRequest
 #   - class InstancePackImportRequest
 #   - class InstancePackExportRequest
+#   - class ModpackOnlineInstallRequest
 #   - class OperationRequest
 #   - class WorldRequest
 #   - class WorldPatchData
@@ -494,6 +495,14 @@ class InstancePackImportRequest(RequestModel):
 class InstancePackExportRequest(InstanceTarget):
     output_path: Path
     pack_format: Literal["modrinth"]
+
+
+class ModpackOnlineInstallRequest(RequestModel):
+    source: Literal["modrinth", "curseforge"]
+    project_id: str = Field(min_length=1, max_length=64)
+    file_id: str = Field(min_length=1, max_length=64)
+    game_path: Path
+    new_version_id: str = Field(min_length=1, max_length=255)
 
 
 class OperationRequest(RequestModel):
