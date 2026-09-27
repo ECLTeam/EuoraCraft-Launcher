@@ -59,23 +59,9 @@
 
 ---
 
-## 第三方服务与资源
-
-> 使用 Microsoft/Mojang 登录、游戏下载、社区资源、镜像源或联机服务时，您的设备会直接与相应第三方服务通信。相关内容与服务由各自提供方负责，请遵守其条款、隐私政策和许可证。
-
----
-
 ## 参与贡献
 
 欢迎通过 [Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) 提交问题、功能建议或安全反馈，也欢迎提交 Pull Request。涉及使用与功能的问题，请优先查阅[文档站](https://docs.eclteam.top)。
-
-<div align="center">
-
-<a href="https://github.com/ECLTeam/EuoraCraft-Launcher/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ECLTeam/EuoraCraft-Launcher" alt="Contributors" />
-</a>
-
-</div>
 
 ## 贡献者们
 
@@ -93,6 +79,11 @@
   <img src="https://contrib.rocks/image?repo=ECLTeam/EuoraCraft-Launcher.Frontend" />
 </a>
 
+### <a href="https://github.com/ECLTeam/EuoraCraft-Launcher.Core">EuoraCraft-Launcher.Core</a> 贡献者
+
+<a href="https://github.com/ECLTeam/EuoraCraft-Launcher.Core/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ECLTeam/EuoraCraft-Launcher.Core" />
+</a>
 ---
 
 ## 致谢
