@@ -164,7 +164,9 @@ def test_rewrite_window_title_gives_up_when_process_dead(monkeypatch) -> None:
 def test_rewrite_window_title_invokes_platform_renamer(monkeypatch) -> None:
     """平台改写实现应收到进程树 PID 集合与渲染后的标题。"""
     seen = []
-    monkeypatch.setattr(launch_module, "_select_title_renamer", lambda: lambda pids, title: seen.append((pids, title)) or True)
+    monkeypatch.setattr(
+        launch_module, "_select_title_renamer", lambda: lambda pids, title: seen.append((pids, title)) or True
+    )
     assert launch_module._rewrite_game_window_title(_AliveProcess(), "T") is True
     assert len(seen) == 1
     pids, title = seen[0]
