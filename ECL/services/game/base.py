@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from tempfile import gettempdir
@@ -49,6 +49,7 @@ from .version_stats import VersionStatsStore
 
 if TYPE_CHECKING:
     from .crash.analyzer import CrashAnalyzer
+    from .crash.capture import CrashCapture
     from .schematics import SchematicSession
 
 ApiClientFactory = Callable[[ApiUrlConfig], BaseApiClient]
@@ -83,7 +84,6 @@ class _RunningGame:
     exit_code: int | None = None
     stopping: bool = False
     startup_complete: bool = False
-    crash_marked: bool = False
     crash_analysis_disabled: bool = False
     output_lines: deque[str] = field(default_factory=lambda: deque(maxlen=500))
 
@@ -174,10 +174,11 @@ class _GameState:
         self._server_status_lock = RLock()
         self._schematic_sessions: dict[str, SchematicSession] = {}
         from .crash.analyzer import CrashAnalyzer
+        from .crash.capture import CrashCapture
 
         self._crash_analyzer: CrashAnalyzer = CrashAnalyzer(self._data_path, extensions=self.crash_extensions)
         self._crash_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ECL-CrashAnalyzer")
-        self._crash_futures: set[Future[Any]] = set()
+        self._crash_capture: CrashCapture = CrashCapture(self._crash_analyzer, self.events, self._crash_executor)
         self._closing = False
         self._launch_cancel_event: Event | None = None
         # 版本目录监听状态由唯一后台线程使用，所有共享容器仍受同一把锁保护。
@@ -383,6 +384,7 @@ class _GameState:
         self._version_watch_stop.set()
         with self._lock:
             self._closing = True
+        self._crash_capture.close()
         with self._lock:
             running_tokens = [token for token, run in self._running_games.items() if not run.pending]
         for token in running_tokens:

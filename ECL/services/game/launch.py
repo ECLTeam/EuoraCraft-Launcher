@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：启动协调器：启动流程、进程监视、崩溃候选收集与分析。
+# 文件作用：启动协调器：启动流程、进程监视、崩溃报告查询与导出入口。
 #
 # 公开接口：
 #   - class LaunchCoordinator
@@ -43,6 +43,7 @@ from ECL.services.authlib import AuthlibError
 from ECL.utils.files import atomic_write_text
 
 from .base import GameServiceError, _GameState, _RunningGame
+from .crash.capture import CrashRunSnapshot
 
 if sys.platform == "win32":
     import winreg
@@ -222,14 +223,6 @@ class LaunchCoordinator(_GameState):
         "directx12": "d3d12",
         "vulkan": "zink",
     }
-    crash_log_markers = (
-        "crash report saved to",
-        "this crash report has been saved to",
-        "could not save crash report",
-        "/error]: unable to launch",
-        "an exception was thrown, the game will display an error screen and halt",
-        "exception_access_violation",
-    )
     startup_complete_markers = (
         "sound engine started",
         "openal initialized",
@@ -1091,13 +1084,12 @@ class LaunchCoordinator(_GameState):
         normalized = str(line or "").rstrip("\r\n")
         self.logger.debug("[%s] %s", instance_id, normalized)
         folded = normalized.casefold()
+        self._crash_capture.handle_line(run_token, normalized)
         with self._lock:
             run = self._running_games.get(run_token)
             if run is None:
                 return
             run.output_lines.append(normalized)
-            if any(marker in folded for marker in self.crash_log_markers):
-                run.crash_marked = True
             if any(marker in folded for marker in self.startup_complete_markers):
                 run.startup_complete = True
 
@@ -1131,85 +1123,24 @@ class LaunchCoordinator(_GameState):
         )
         if action != "launcher_closed":
             self._emit_instance_change(run, action)
-        detected_by = self._crash_detection_signals(run, action)
-        if detected_by and not run.crash_analysis_disabled:
-            self._schedule_crash_analysis(run, detected_by)
+        self._crash_capture.finalize(self._crash_snapshot(run_token, run, action))
 
-    @staticmethod
-    def _crash_detection_signals(run: _RunningGame, action: str) -> list[str]:
-        if action != "exited" or run.stopping or run.exit_code is None:
-            return []
-        signals = []
-        if run.exit_code != 0:
-            signals.append("exit_code")
-        if run.crash_marked:
-            signals.append("crash_log")
-        if not run.startup_complete:
-            signals.append("startup_incomplete")
-        return signals
-
-    def _schedule_crash_analysis(self, run: _RunningGame, detected_by: list[str]) -> None:
-        # 将文件收集和规则分析交给 GameService 拥有的后台执行器。
-        with self._lock:
-            if self._closing:
-                return
-        future = self._crash_executor.submit(
-            self._crash_analyzer.analyze_runtime,
+    def _crash_snapshot(self, run_token: str, run: _RunningGame, action: str) -> CrashRunSnapshot:
+        # 汇集崩溃判定所需的运行数据快照；信号判定与调度由崩溃捕获模块负责。
+        return CrashRunSnapshot(
+            run_token=run_token,
+            action=action,
+            instance_id=run.instance_id,
             version_id=run.version_id,
             game_path=run.game_path,
             game_directory=run.game_directory,
             started_wall_time=run.started_wall_time,
-            output_lines=list(run.output_lines),
-            exit_code=int(run.exit_code or 0),
-            detected_by=detected_by,
+            output_lines=tuple(run.output_lines),
+            exit_code=run.exit_code,
+            stopping=run.stopping,
+            startup_complete=run.startup_complete,
+            crash_analysis_disabled=run.crash_analysis_disabled,
         )
-        with self._lock:
-            self._crash_futures.add(future)
-
-        def analysis_done(completed) -> None:
-            with self._lock:
-                self._crash_futures.discard(completed)
-                closing = self._closing
-            if closing or completed.cancelled():
-                return
-            try:
-                result = completed.result()
-            except Exception:
-                error_id = uuid4().hex
-                self.logger.exception(
-                    "Minecraft 崩溃分析失败: version=%s, error_id=%s",
-                    run.version_id,
-                    error_id,
-                )
-                self.events.emit(
-                    "launcher:error",
-                    {
-                        "error_id": error_id,
-                        "title": "Minecraft 实例崩溃",
-                        "message": f"实例“{run.version_id}”异常退出，但崩溃报告生成失败",
-                    },
-                )
-                return
-            report_id = str(result["reportId"])
-            exit_code = result.get("exitCode")
-            self.events.emit(
-                "launcher:error",
-                {
-                    "error_id": report_id,
-                    "title": "Minecraft 实例崩溃",
-                    "message": f"实例“{run.version_id}”异常退出，退出码：{exit_code}",
-                    "kind": "game_crash",
-                    "crash": result,
-                },
-            )
-            self.logger.warning(
-                "Minecraft 崩溃分析完成: version=%s, exit_code=%s, report_id=%s",
-                run.version_id,
-                exit_code,
-                report_id,
-            )
-
-        future.add_done_callback(analysis_done)
 
     def list_crash_candidates(self, game_path: Any, version_id: Any) -> list[dict[str, Any]]:
         """
