@@ -37,6 +37,9 @@
 #   - test_parse_hmcl_missing_game_version_raises(tmp_path) -> None
 #   - test_parse_multimc_plan(tmp_path) -> None
 #   - test_detect_wrapped_single_directory(tmp_path) -> None
+#   - test_build_ftb_plan(tmp_path) -> None
+#   - test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None
+#   - test_search_online_resources_ftb(tmp_path, monkeypatch) -> None
 # ============================================================
 
 import hashlib
@@ -51,7 +54,13 @@ import pytest
 from ECL.events import EventBus
 from ECL.services.game import GameService
 from ECL.services.game import modpack as modpack_module
-from ECL.services.game.modpack import ModpackPlan, build_pack_plan, curseforge_fingerprint, detect_pack_format
+from ECL.services.game.modpack import (
+    ModpackPlan,
+    build_ftb_plan,
+    build_pack_plan,
+    curseforge_fingerprint,
+    detect_pack_format,
+)
 from ECL.utils.errors import GameServiceError
 
 
@@ -540,11 +549,11 @@ def test_import_unknown_format_fails(tmp_path) -> None:
 # ---------- 在线整合包安装 ----------
 
 
-def test_modpack_online_install_rejects_invalid_source() -> None:
+def test_modpack_online_install_rejects_invalid_source(tmp_path) -> None:
     """不支持的在线来源应同步拒绝。"""
     service = _build_pack_service(_pack_downloader_factory({}))
     with pytest.raises(GameServiceError) as error:
-        service.install_modpack_online("ftb", "1", "2", "game", "Y")
+        service.install_modpack_online("unknown", "1", "2", tmp_path / ".minecraft", "Y")
     assert error.value.error_code == "INVALID_RESOURCE_SOURCE"
 
 
@@ -749,6 +758,134 @@ def test_detect_wrapped_single_directory(tmp_path) -> None:
     assert plan.format_name == "multimc"
     assert plan.minecraft_version == "1.20.1"
     assert plan.overrides_dir == inner / "minecraft"
+
+
+# ---------- FTB 在线源 ----------
+
+
+def test_build_ftb_plan() -> None:
+    """FTB 清单应从 targets 提取版本与加载器，逐文件映射并过滤 serveronly。"""
+    info = {"name": "FTB Demo", "synopsis": "demo pack"}
+    manifest = {
+        "status": "success",
+        "targets": [
+            {"name": "minecraft", "version": "1.21.1", "type": "game"},
+            {"name": "neoforge", "version": "21.1.51", "type": "modloader"},
+            {"name": "java", "version": "21.0.4", "type": "runtime"},
+        ],
+        "files": [
+            {"path": "./mods/a.jar", "url": "https://ftb/a.jar", "sha1": "a" * 40, "size": 10, "name": "a.jar"},
+            {"path": "./mods/b.jar", "url": "https://ftb/b.jar", "sha1": "b" * 40, "serveronly": True},
+            {"path": "./config/c.cfg", "url": "https://ftb/c.cfg", "optional": True},
+            {"path": "no-url.bin"},
+        ],
+    }
+
+    plan = build_ftb_plan(info, manifest)
+
+    assert plan.format_name == "ftb"
+    assert plan.pack_name == "FTB Demo"
+    assert plan.minecraft_version == "1.21.1"
+    assert (plan.loader_type, plan.loader_version) == ("neoforge", "21.1.51")
+    assert [(entry.target_relative, entry.env_client) for entry in plan.files] == [
+        ("mods/a.jar", "required"),
+        ("mods/b.jar", "unsupported"),
+        ("config/c.cfg", "optional"),
+    ]
+    assert any("no-url.bin" in warning for warning in plan.warnings)
+
+
+def test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None:
+    """FTB 在线安装应拉取清单、自动安装加载器基础版本并逐文件下载装配。"""
+    game_path = tmp_path / ".minecraft"
+    (game_path / "versions").mkdir(parents=True)
+    created = []
+
+    class FakeGames:
+        def build_neoforged_download_list(self, version_id, loader_version, java_path, save_name):
+            created.append((save_name, loader_version))
+            directory = game_path / "versions" / save_name
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{save_name}.json").write_text("{}", encoding="utf-8")
+            return []
+
+    service = _build_pack_service(
+        _pack_downloader_factory(
+            {
+                "https://ftb.example.com/a.jar": b"ftb-mod",
+                "https://ftb.example.com/c.cfg": b"key=1",
+            }
+        )
+    )
+    monkeypatch.setattr(service, "_context", lambda *_args: SimpleNamespace(games=FakeGames()))
+    monkeypatch.setattr(service, "_resolve_java_path", lambda *_args: "java")
+
+    def fake_get(url, **_kwargs):
+        if url.endswith("/modpack/p1"):
+            payload = {"status": "success", "id": "p1", "name": "FTB Demo", "synopsis": "demo"}
+        else:
+            payload = {
+                "status": "success",
+                "targets": [
+                    {"name": "minecraft", "version": "1.21.1", "type": "game"},
+                    {"name": "neoforge", "version": "21.1.51", "type": "modloader"},
+                ],
+                "files": [
+                    {
+                        "path": "./mods/a.jar",
+                        "url": "https://ftb.example.com/a.jar",
+                        "sha1": hashlib.sha1(b"ftb-mod").hexdigest(),
+                    },
+                    {"path": "./config/c.cfg", "url": "https://ftb.example.com/c.cfg"},
+                    {"path": "./mods/server.jar", "url": "https://ftb.example.com/s.jar", "serveronly": True},
+                ],
+            }
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+
+    monkeypatch.setattr(modpack_module, "_proxied_get", fake_get)
+
+    state = _await_operation(
+        service,
+        service.install_modpack_online("ftb", "p1", "v1", game_path, "FtbPack"),
+    )
+
+    assert state["status"] == "completed", state
+    result = state["result"]
+    assert result["format"] == "ftb"
+    assert result["downloadedFiles"] == 2
+    assert result["skippedFiles"] == 1
+    assert result["baseVersion"] == "neoforge-21.1.51-1.21.1"
+    assert created == [("neoforge-21.1.51-1.21.1", "21.1.51")]
+    instance = game_path / "versions" / "FtbPack"
+    assert (instance / "mods" / "a.jar").read_bytes() == b"ftb-mod"
+    assert (instance / "config" / "c.cfg").read_bytes() == b"key=1"
+    assert not (instance / "mods" / "server.jar").exists()
+    version_json = json.loads((instance / "FtbPack.json").read_text(encoding="utf-8"))
+    assert version_json["inheritsFrom"] == "neoforge-21.1.51-1.21.1"
+
+
+def test_search_online_resources_ftb(tmp_path, monkeypatch) -> None:
+    """FTB 搜索应走专用端点并返回 packs 列表。"""
+    service = _build_pack_service(_pack_downloader_factory({}))
+
+    def fake_get(url, **_kwargs):
+        assert "modpack/search" in url
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"status": "success", "packs": [{"id": 33, "name": "FTB Sky"}], "count": 1},
+        )
+
+    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+
+    result = service.search_online_resources("sky", "", "", source="ftb", resource_type="modpack")
+
+    assert result["source"] == "ftb"
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == 33
+
+    with pytest.raises(GameServiceError) as error:
+        service.search_online_resources("sky", "", "", source="ftb", resource_type="mod")
+    assert error.value.error_code == "INVALID_RESOURCE_TYPE"
 
 
 def _fake_online_post(modrinth_versions: dict, curseforge_matches: list | None = None):

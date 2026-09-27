@@ -10,7 +10,7 @@
 #   - class ModpackPlan — 归一后的整合包安装计划（版本、加载器、文件清单、overrides）。
 #   - class ModpackCoordinator — 导入编排协调器：识别解析、自动安装基础版本、下载校验与实例装配。
 #       - import_instance_pack(game_path, source_path, new_version_id) -> dict[str, str] — 本地整合包导入长任务。
-#       - install_modpack_online(source, project_id, file_id, game_path, new_version_id) -> dict[str, str] — 下载在线整合包并装配为全新实例。
+#       - install_modpack_online(source, project_id, file_id, game_path, new_version_id) -> dict[str, str] — 下载在线整合包并装配为全新实例（Modrinth/CurseForge/FTB）。
 #       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
 #   - detect_pack_format(root) -> str — 按内容特征识别整合包格式标签。
 #   - build_pack_plan(root) -> ModpackPlan — 解析指定格式并输出统一安装计划。
@@ -35,7 +35,7 @@ from ECL.utils import atomic_write_text
 
 from .base import GameServiceError, _GameState
 from .operations import OperationContext
-from .resources import _proxied_post
+from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
 
 # Modrinth mrpack dependencies 键 -> ECL 加载器类型；未收录键忽略并记录警告。
@@ -55,7 +55,15 @@ _curseforge_loader_prefixes = {
 }
 
 # 在线整合包安装支持的来源。
-_online_pack_sources = frozenset({"modrinth", "curseforge"})
+_online_pack_sources = frozenset({"modrinth", "curseforge", "ftb"})
+
+# FTB 版本清单 modloader 目标名 -> ECL 加载器类型。
+_ftb_loader_names = {
+    "forge": "forge",
+    "neoforge": "neoforge",
+    "fabric": "fabric",
+    "quilt": "quilt",
+}
 
 # CurseForge 指纹归一化时跳过的字节（空白字符），与 murmur2 分块读取粒度。
 _fingerprint_skipped_bytes = frozenset({0x09, 0x0A, 0x0D, 0x20})
@@ -551,6 +559,86 @@ def _extract_minecraft_version(version_id: str) -> str:
     return matches[-1].group(0) if matches else version_id
 
 
+def build_ftb_plan(info: dict[str, Any], manifest: dict[str, Any]) -> ModpackPlan:
+    """
+    把 FTB 版本清单归一为统一安装计划。
+
+    FTB 清单不打包压缩包，而是逐文件声明下载地址与哈希；``targets`` 声明
+    游戏与加载器版本，``serveronly`` 文件在客户端导入时跳过。
+
+    :param info: 整合包详情响应（提供包名与简介）
+    :param manifest: 版本清单响应（targets 与 files）
+    :return: 归一化的安装计划
+    :raises GameServiceError: 清单缺少 Minecraft 版本声明时抛出
+    """
+    warnings: list[str] = []
+    minecraft_version, loader_type, loader_version = _extract_ftb_targets(manifest, warnings)
+    if not minecraft_version:
+        raise GameServiceError("FTB 整合包清单缺少 Minecraft 版本", "INVALID_PACK_ARCHIVE")
+    entries: list[PackFileEntry] = []
+    raw_files = manifest.get("files") if isinstance(manifest.get("files"), list) else []
+    for raw in raw_files:
+        if not isinstance(raw, dict):
+            continue
+        entry = _ftb_file_entry(raw, warnings)
+        if entry is not None:
+            entries.append(entry)
+    return ModpackPlan(
+        format_name="ftb",
+        pack_name=str(info.get("name") or manifest.get("name") or "FTB Modpack"),
+        summary=str(info.get("synopsis") or ""),
+        minecraft_version=minecraft_version,
+        loader_type=loader_type,
+        loader_version=loader_version,
+        files=tuple(entries),
+        warnings=tuple(warnings),
+    )
+
+
+def _extract_ftb_targets(manifest: dict[str, Any], warnings: list[str]) -> tuple[str, str, str | None]:
+    # 从 targets 提取 Minecraft 版本与加载器（类型+版本），未知组件记录警告。
+    minecraft_version = ""
+    loader_type = "vanilla"
+    loader_version: str | None = None
+    targets = manifest.get("targets") if isinstance(manifest.get("targets"), list) else []
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        name = str(target.get("name") or "").strip().casefold()
+        version = str(target.get("version") or "").strip()
+        if name == "minecraft" or target.get("type") == "game":
+            minecraft_version = minecraft_version or version
+        elif target.get("type") == "modloader" and name in _ftb_loader_names:
+            loader_type = _ftb_loader_names[name]
+            loader_version = version or None
+        elif name not in {"java"}:
+            warnings.append(f"忽略 FTB 目标组件: {name}")
+    return minecraft_version, loader_type, loader_version
+
+
+def _ftb_file_entry(raw: dict[str, Any], warnings: list[str]) -> PackFileEntry | None:
+    # 把单个 FTB 文件声明转换为下载条目；路径不安全、缺地址或仅服务端时返回 None。
+    relative = _safe_pack_relative_path(str(raw.get("path") or ""), warnings)
+    if relative is None:
+        return None
+    if not raw.get("url"):
+        warnings.append(f"忽略缺少下载地址的 FTB 文件: {raw.get('name') or raw.get('path')}")
+        return None
+    if raw.get("serveronly"):
+        env_client = "unsupported"
+    elif raw.get("optional"):
+        env_client = "optional"
+    else:
+        env_client = "required"
+    return PackFileEntry(
+        target_relative=relative.as_posix(),
+        url=str(raw["url"]),
+        sha1=str(raw["sha1"]) if raw.get("sha1") else None,
+        size=int(raw["size"]) if isinstance(raw.get("size"), int) and raw["size"] >= 0 else None,
+        env_client=env_client,
+    )
+
+
 class ModpackCoordinator(_GameState):
     """
     编排整合包导入：解压识别、基础版本保障、文件下载与实例装配。
@@ -616,10 +704,11 @@ class ModpackCoordinator(_GameState):
         下载在线整合包文件并按统一导入编排装配为全新实例。
 
         Modrinth 按 ``file_id``（版本 ID）获取主文件；CurseForge 按
-        ``project_id/file_id`` 经文件详情接口解析直链。下载与装配在同一
-        长任务内完成，进度与取消语义与本地导入一致。
+        ``project_id/file_id`` 经文件详情接口解析直链；FTB 直接拉取版本
+        清单逐文件下载。下载与装配在同一长任务内完成，进度与取消语义
+        与本地导入一致。
 
-        :param source: 在线来源（modrinth/curseforge）
+        :param source: 在线来源（modrinth/curseforge/ftb）
         :param project_id: 整合包项目 ID
         :param file_id: 整合包文件或版本 ID
         :param game_path: Minecraft 游戏根目录
@@ -640,6 +729,13 @@ class ModpackCoordinator(_GameState):
             raise GameServiceError("整合包项目或文件 ID 缺失", "PACK_ONLINE_FILE_INVALID")
 
         def worker(context: OperationContext) -> dict[str, Any]:
+            if normalized_source == "ftb":
+                # FTB 清单逐文件声明下载地址，无需压缩包，直接归一为统一计划装配。
+                plan = self._fetch_ftb_plan(pack_project_id, pack_file_id)
+                context.progress(8, f"已识别整合包：{plan.pack_name}（FTB）")
+                result = self._install_plan_into_instance(plan, target, context)
+                context.progress(98, "整合包导入完成")
+                return result
             context.progress(2, "正在获取整合包文件信息")
             # _select_online_file 来自 ResourceCoordinator：Modrinth 取版本主文件，
             # CurseForge 经文件详情接口解析直链与哈希。
@@ -657,6 +753,30 @@ class ModpackCoordinator(_GameState):
                 return self._import_archive_worker(archive, target, context)
 
         return self._game_operations.submit("modpack_online_install", worker)
+
+    def _fetch_ftb_plan(self, project_id: str, version_id: str) -> ModpackPlan:
+        """
+        拉取 FTB 整合包详情与版本清单并归一为统一安装计划。
+
+        :param project_id: FTB 整合包 ID
+        :param version_id: FTB 版本 ID
+        :return: 归一化的安装计划
+        :raises GameServiceError: FTB 在线源不可用或清单无效时抛出
+        """
+        headers = {"User-Agent": "EuoraCraft-Launcher/resource-workspace"}
+        base = ResourceCatalogPolicy.ftb_base_url
+        try:
+            info_response = _proxied_get(f"{base}/modpack/{project_id}", headers=headers, timeout=15)
+            info_response.raise_for_status()
+            manifest_response = _proxied_get(f"{base}/modpack/{project_id}/{version_id}", headers=headers, timeout=15)
+            manifest_response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise GameServiceError(f"FTB 在线源不可用：{exc}", "FTB_SOURCE_UNAVAILABLE") from exc
+        info = info_response.json()
+        manifest = manifest_response.json()
+        if not isinstance(manifest, dict) or manifest.get("status") != "success":
+            raise GameServiceError("FTB 整合包清单无效", "FTB_SOURCE_UNAVAILABLE")
+        return build_ftb_plan(info if isinstance(info, dict) else {}, manifest)
 
     def _import_legacy_ecl_pack(
         self, extracted: Path, target: ResolvedInstanceTarget, context: OperationContext

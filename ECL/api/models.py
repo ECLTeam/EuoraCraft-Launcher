@@ -498,7 +498,7 @@ class InstancePackExportRequest(InstanceTarget):
 
 
 class ModpackOnlineInstallRequest(RequestModel):
-    source: Literal["modrinth", "curseforge"]
+    source: Literal["modrinth", "curseforge", "ftb"]
     project_id: str = Field(min_length=1, max_length=64)
     file_id: str = Field(min_length=1, max_length=64)
     game_path: Path
