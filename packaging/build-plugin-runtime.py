@@ -115,11 +115,21 @@ def _write_archive(
         and "site-packages" not in entry.relative_to(distribution_path).parts
         and entry.relative_to(distribution_path).parts[0].casefold() != "include"
     )
+    # Linux 发行树存在仅大小写不同的路径（如 share/terminfo 下的 Eterm/eterm），
+    # 资产必须保证大小写折叠唯一才能在不敏感文件系统上安全解包，故只保留排序在前的条目。
+    seen_folded: set[str] = set()
+    unique_files: list[Path] = []
+    for entry in files:
+        folded = (Path("python") / entry.relative_to(distribution_path)).as_posix().casefold()
+        if folded in seen_folded:
+            continue
+        seen_folded.add(folded)
+        unique_files.append(entry)
     for entry in distribution_path.rglob("*"):
         if entry.is_symlink() and entry.is_dir():
             raise RuntimeError(f"运行时包含不支持的目录符号链接: {entry}")
     with zipfile.ZipFile(archive_path, "w", allowZip64=True) as archive:
-        for source_path in files:
+        for source_path in unique_files:
             name = (Path("python") / source_path.relative_to(distribution_path)).as_posix()
             entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
