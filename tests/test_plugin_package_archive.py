@@ -22,7 +22,8 @@ def _plugin_source(source_path: Path) -> None:
     (source_path / "plugin.json").write_text(
         json.dumps({"name": "sample", "version": "1.0.0", "entry_point": "main:Plugin"}), encoding="utf-8"
     )
-    (source_path / "main.py").write_text("class Plugin: pass\n", encoding="utf-8")
+    # 固定字节写入，避免文本模式换行翻译让清单大小在不同平台不一致。
+    (source_path / "main.py").write_bytes(b"class Plugin: pass\n")
 
 
 def _rewrite_archive(archive_path: Path, replacements: dict[str, bytes]) -> None:
@@ -65,7 +66,8 @@ def test_rejects_changed_file_without_updated_manifest(tmp_path: Path) -> None:
     _plugin_source(source_path)
     archive_path = tmp_path / "sample.eclplugin"
     build_plugin_package(source_path, archive_path)
-    _rewrite_archive(archive_path, {"main.py": b"class Plugin: fail\r\n"})
+    # 篡改内容与原文件等长，确保由哈希校验而非大小校验拦截。
+    _rewrite_archive(archive_path, {"main.py": b"class Plugin: fail\n"})
 
     with pytest.raises(PluginPackageError, match="哈希"):
         inspect_plugin_package(archive_path)
