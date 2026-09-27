@@ -82,7 +82,9 @@ def resolve_launch_target(target: str, roots: Sequence[Path]) -> tuple[Path, str
 
 def _resolve_directory_target(target: str) -> tuple[Path, str]:
     # 目录形态：从 <游戏根>/versions/<版本名> 推导游戏根与版本名。
-    instance_path = Path(target).expanduser()
+    # 尾部分隔符在任意平台都需剥离：POSIX 的 Path 不把 `\` 视为分隔符，
+    # 否则目录名会带上字面反斜杠导致解析失败。
+    instance_path = Path(target.rstrip("/\\")).expanduser()
     resolved = instance_path.resolve()
     version_name = resolved.name
     versions_dir = resolved.parent
