@@ -1,8 +1,8 @@
-# 联机页多页化实施方案（联机 / 工具）
+# 更多页多页化实施方案（联机 / 工具）
 
 > 状态：已实施并验证（pnpm check / pnpm build / 启动器实测均通过）
 > 日期：2026-09-27
-> 已确认决策：工具页**仅放 NAT 检测**且尽量与联机页解耦；EasyTier 由内置库 EasyTier-PyO3 提供，**不存在未安装态**；房间中**允许**切到工具页；连接状态用**父级 provide/inject** 共享。
+> 已确认决策：侧边栏入口与父路由命名为**更多**（`/more`），联机只是其中一个子页提供的功能；工具页**仅放 NAT 检测**且尽量与联机页解耦；EasyTier 由内置库 EasyTier-PyO3 提供，**不存在未安装态**；房间中**允许**切到工具页；连接状态用**父级 provide/inject** 共享。
 
 ## 1. 现状调研
 
@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | 联机页 | 单页 610 行，含 EasyTier 服务卡片、加入房间、创建房间（选实例 → 端口探测 / 手填端口）、启动中、房间态（玩家列表 + 房间信息侧栏）、NAT 检测按钮、流程调试条 | `frontend/src/views/Connect.vue` |
 | 页内菜单组件 | 通用组件，仅依赖 `title` / `icon` / `items`（`path` / `icon` / `label`），设置页同款 | `frontend/src/components/layout/SectionLayout.vue` |
-| 侧边栏激活态 | `route.path === item.path \|\| (item.path !== '/' && route.path.startsWith(item.path))`，故 `/connect/*` 仍高亮「联机」，**无需改动** | `frontend/src/components/layout/SideBar.vue:33` |
+| 侧边栏激活态 | `route.path === item.path \|\| (item.path !== '/' && route.path.startsWith(item.path))`，故 `/more/*` 仍高亮「更多」，**无需改动** | `frontend/src/components/layout/SideBar.vue:33` |
 | 受管滚动 | `route.path.startsWith('/settings')` 时给 `.main-content` 加 `content-managed-scroll`（`overflow: hidden`，由页面自管滚动） | `frontend/src/App.vue:40`、`frontend/src/styles/app.css:111` |
-| 组件 key | 以 `currentRoute.matched[0]?.path` 作 key，故 `/connect/room` ↔ `/connect/tools` 切换**不会重挂父组件** | `frontend/src/App.vue:49` |
+| 组件 key | 以 `currentRoute.matched[0]?.path` 作 key，故 `/more/room` ↔ `/more/tools` 切换**不会重挂父组件** | `frontend/src/App.vue:49` |
 | 连接状态 | `useConnector` 用 `onMounted` / `onUnmounted` 管理状态轮询（2s）、EasyTier 轮询（1s）、端口扫描（1s）三组定时器 | `frontend/src/features/connect/composables/useConnector.ts` |
 | EasyTier 状态 | 后端 `get_easytier_status()` **恒定返回 `installed: True`**，前端安装卡片、下载按钮、进度轮询、`connector_easytier_download` 全部不可达 | `ECL/services/connector.py:413-421` |
 
@@ -24,31 +24,31 @@ NAT 与 EasyTier 下载相关的引用**仅存在于** `Connect.vue`、`Connect.
 
 ### 2.1 路由
 
-`frontend/src/router/index.ts` 中把 `/connect` 由叶子路由改为父路由 + 两个子路由，与 `/settings` 写法保持一致：
+`frontend/src/router/index.ts` 中把原 `/connect` 叶子路由改为 `/more` 父路由 + 两个子路由，与 `/settings` 写法保持一致：
 
 ```ts
 {
-  path: '/connect',
+  path: '/more',
   component: withErrorBoundary(() => import('@/views/Connect.vue')),
-  redirect: '/connect/room',
+  redirect: '/more/room',
   children: [
-    { path: 'room', name: 'connect-room', component: () => import('@/views/connect/ConnectRoomTab.vue') },
-    { path: 'tools', name: 'connect-tools', component: () => import('@/views/connect/ConnectToolsTab.vue') },
+    { path: 'room', name: 'more-room', component: () => import('@/views/connect/ConnectRoomTab.vue') },
+    { path: 'tools', name: 'more-tools', component: () => import('@/views/connect/ConnectToolsTab.vue') },
   ],
 },
 ```
 
-进入 `/connect` 自动落到 `/connect/room`，原有 `/connect` 入口（侧边栏、标题栏菜单）无需改动。
+进入 `/more` 自动落到 `/more/room`；侧边栏与标题栏菜单的入口由 `MENU_ITEMS` 统一定义，改为一处即可同步。
 
 ### 2.2 文件划分
 
 | 文件 | 角色 | 来源 |
 | --- | --- | --- |
-| `frontend/src/views/Connect.vue` | 外壳：`SectionLayout` + 嵌套 `RouterView` + `provide(useConnector)` | 重写（原 610 行内容迁出） |
+| `frontend/src/views/Connect.vue` | 更多页外壳：`SectionLayout` + 嵌套 `RouterView` + `provide(useConnector)` | 重写（原 610 行内容迁出） |
 | `frontend/src/views/connect/ConnectRoomTab.vue` | 联机子页：加入房间、创建房间、启动中、房间态、流程调试条 | 由原 `Connect.vue` 主体迁入 |
 | `frontend/src/views/connect/ConnectToolsTab.vue` | 工具子页：仅 NAT 检测 | 新建 |
 
-子页目录 `views/connect/` 与 `views/settings/` 的既有约定一致。
+子页目录 `views/connect/` 与 `views/settings/` 的既有约定一致；外壳组件沿用 `Connect.vue` 文件名，因为它仍是联机上下文的持有者（`useConnector` 在此 provide）。
 
 ### 2.3 菜单
 
@@ -56,14 +56,14 @@ NAT 与 EasyTier 下载相关的引用**仅存在于** `Connect.vue`、`Connect.
 
 ```ts
 const navItems = computed(() => [
-  { path: '/connect/room', icon: 'wifi', label: t('connect.nav.room') },
-  { path: '/connect/tools', icon: 'activity', label: t('connect.nav.tools') },
+  { path: '/more/room', icon: 'wifi', label: t('connect.nav.room') },
+  { path: '/more/tools', icon: 'activity', label: t('connect.nav.tools') },
 ])
 ```
 
-- 标题取 `t('connect.title')`（「联机」），图标 `wifi`。
+- 侧边栏项与页面标题取 `t('sidebar.more')`（「更多」），图标 `more`（`dots-vertical`，`iconify.ts` 中已注册）；`menu.ts` 中该项为 `{ path: '/more', labelKey: 'sidebar.more', iconName: 'more' }`。
+- 父标题「更多」与子页「联机 / 工具」不再字面重复，工具页也不再被表述为联机专属功能。
 - 工具页图标复用现有 `activity`（`iconify.ts` 中已注册，语义为诊断/脉冲）。若要专用图标，需在 `ICON_MAP` 增加 `tool: 'tool'` 并重跑 `node scripts/gen-tabler-subset.mjs`（`tabler-subset.ts` 为自动生成文件，禁止手改）。
-- 父标题「联机」与首个子页「联机」字面重复。若希望更清晰，可把父标题改为「联机」、首个子页改为「联机房间」，或父标题改为「网络」——**待确认**（见第 9 节）。
 
 ## 3. 状态共享与解耦
 
@@ -104,12 +104,12 @@ provide(CONNECTOR_KEY, connector)
 
 若确认移除，`connect.easyTier.*` 文案键（6 语言）一并删除；后端 `connector_easytier_download` 命令**不在本次范围**内改动。
 
-### 4.2 受管滚动需覆盖 `/connect`
+### 4.2 受管滚动需覆盖 `/more`
 
-`App.vue:40` 的条件由 `route.path.startsWith('/settings')` 改为同时匹配 `/connect`，使 `SectionLayout` 拿到确定高度、由子页自管滚动，与设置页行为一致：
+`App.vue:40` 的条件由 `route.path.startsWith('/settings')` 改为同时匹配 `/more`，使 `SectionLayout` 拿到确定高度、由子页自管滚动，与设置页行为一致：
 
 ```ts
-'content-managed-scroll': route.path.startsWith('/settings') || route.path.startsWith('/connect'),
+'content-managed-scroll': route.path.startsWith('/settings') || route.path.startsWith('/more'),
 ```
 
 ## 5. i18n（6 种语言：zh-CN / zh-TW / en-US / ja-JP / de-DE / ru-RU）
@@ -118,6 +118,7 @@ provide(CONNECTOR_KEY, connector)
 
 | 键 | 中文文案 |
 | --- | --- |
+| `sidebar.more` | 更多（侧边栏项与更多页标题共用） |
 | `connect.nav.room` | 联机 |
 | `connect.nav.tools` | 工具 |
 | `connect.tools.natCardTitle` | NAT 类型检测 |
@@ -130,7 +131,7 @@ provide(CONNECTOR_KEY, connector)
 
 复用现有 `connect.nat.*`（`detect` / 各类型标签 / `ipv6Available` 等）渲染结果。
 
-清理（已执行）：`connect.easyTier.*`（4.1）、`connect.nav` 下未使用键、整个 `connect.entry.*` 块——经检索确认**无任何代码引用**，且 6 语言 `connect.*` 键已校验一致。
+清理（已执行）：`connect.easyTier.*`（4.1）、`connect.nav` 下未使用键、整个 `connect.entry.*` 块、`sidebar.connect` 与 `connect.title`（随 `/more` 重命名一并移除）——经检索确认**无任何代码引用**，且 6 语言 `connect.*` / `sidebar.*` 键已校验一致。
 
 ## 6. 样式与布局
 
@@ -154,16 +155,16 @@ provide(CONNECTOR_KEY, connector)
 1. `cd frontend && pnpm check` 全绿（Prettier / ESLint / vue-tsc / vitest）。
 2. `pnpm build` 通过。
 3. 启动器实测：
-   - 点击侧边栏「联机」进入 `/connect/room`，页内菜单默认选中「联机」；
+   - 点击侧边栏「更多」进入 `/more/room`，页内菜单默认选中「联机」；
    - 切到「工具」子页，NAT 检测可正常发起并展示结果；
    - 建房或加入房间后切到工具页再切回，房间态与玩家列表仍在（父级轮询未中断）；
-   - 侧边栏「联机」在 `/connect/tools` 下仍保持高亮；
+   - 侧边栏「更多」在 `/more/tools` 下仍保持高亮；
    - 无双滚动条、无布局错位，卡片透明度与联机页其余卡片一致。
 4. 后端无改动，但仍需 `python -m ruff check ECL tests` 与相关 pytest 通过（回归确认）。
 
 ## 9. 已确认决策
 
 1. **EasyTier 死代码**：一并清理——移除服务卡片与下载路径、`downloadEasyTier` / `easyTierBusy` / EasyTier 进度轮询、相关 i18n 键与测试；保留 `easyTier.installed` 参与 `serviceReady` 判定。后端 `connector_easytier_download` 命令本次不动。
-2. **菜单与标题文案**：父标题「联机」+ 子页「联机 / 工具」。
+2. **菜单与标题文案**：侧边栏入口与父路由命名为「更多」（`/more`），子页为「联机 / 工具」——工具页不属于联机专属功能，故父级用更中性的「更多」承载。
 3. **工具页图标**：复用现有 `activity`，未新增图标。
 4. **未使用文案键**：一并清理。
