@@ -17,17 +17,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tempfile
+import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from threading import Event, Thread
 from typing import Any
 
+import httpx
+
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError, _GameState
 from .operations import OperationContext
+from .resources import _proxied_post
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
 
 # Modrinth mrpack dependencies 键 -> ECL 加载器类型；未收录键忽略并记录警告。
@@ -45,6 +50,16 @@ _curseforge_loader_prefixes = {
     "neoforge": "neoforge",
     "quilt": "quilt",
 }
+
+# CurseForge 指纹归一化时跳过的字节（空白字符），与 murmur2 分块读取粒度。
+_fingerprint_skipped_bytes = frozenset({0x09, 0x0A, 0x0D, 0x20})
+_fingerprint_chunk_bytes = 1024 * 1024
+_murmur_m = 0x5BD1E995
+_murmur_r = 24
+
+# 匹配 version_id 中最后一个 x.y[.z] 形态的 MC 版本号；取最后一个以兼容
+# "fabric-loader-0.16.14-1.21.5" 这类加载器版本号在前、MC 版本号在后的命名。
+_minecraft_version_pattern = re.compile(r"(\d+)\.(\d+)(?:\.\d+)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +331,65 @@ def _file_digest(path: Path, algorithm: str) -> str:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _murmur2_absorb(h: int, data: bytes) -> tuple[int, bytes]:
+    # 吸收 4 字节整块，返回 (新状态, 不足一块的尾部字节)。
+    i = 0
+    aligned = len(data) - len(data) % 4
+    while i < aligned:
+        k = int.from_bytes(data[i : i + 4], "little")
+        k = (k * _murmur_m) & 0xFFFFFFFF
+        k ^= k >> _murmur_r
+        k = (k * _murmur_m) & 0xFFFFFFFF
+        h = (h * _murmur_m) & 0xFFFFFFFF
+        h ^= k
+        i += 4
+    return h, data[i:]
+
+
+def _murmur2_tail(h: int, tail: bytes) -> int:
+    # MurmurHash2 尾部与最终混淆，语义对齐 SMHasher 参考实现（含 switch 落空）。
+    if len(tail) >= 3:
+        h ^= tail[2] << 16
+    if len(tail) >= 2:
+        h ^= tail[1] << 8
+    if len(tail) >= 1:
+        h ^= tail[0]
+        h = (h * _murmur_m) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * _murmur_m) & 0xFFFFFFFF
+    h ^= h >> 15
+    return h
+
+
+def curseforge_fingerprint(path: Path) -> int:
+    """
+    计算 CurseForge 文件指纹（MurmurHash2 32 位，seed=1）。
+
+    归一化规则与 CurseForge 客户端一致：跳过空白字节（0x09/0x0A/0x0D/0x20），
+    其余字节原样参与。分块流式处理，避免大文件整体载入内存。
+    """
+    filtered_length = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(_fingerprint_chunk_bytes):
+            filtered_length += sum(1 for byte in chunk if byte not in _fingerprint_skipped_bytes)
+    h = (1 ^ filtered_length) & 0xFFFFFFFF
+    carry = b""
+    with path.open("rb") as stream:
+        while chunk := stream.read(_fingerprint_chunk_bytes):
+            filtered = bytes(byte for byte in chunk if byte not in _fingerprint_skipped_bytes)
+            if carry:
+                filtered = carry + filtered
+            h, carry = _murmur2_absorb(h, filtered)
+    if carry:
+        h = _murmur2_tail(h, carry)
+    return h
+
+
+def _extract_minecraft_version(version_id: str) -> str:
+    matches = list(_minecraft_version_pattern.finditer(version_id))
+    return matches[-1].group(0) if matches else version_id
 
 
 class ModpackCoordinator(_GameState):
@@ -632,3 +706,201 @@ class ModpackCoordinator(_GameState):
             staging / f"{target.version_id}.json",
             json.dumps({"id": target.version_id, "inheritsFrom": base_name}, ensure_ascii=False, indent=2),
         )
+
+    # 导出时排除的隐私目录与文件；与导入语义对齐，避免存档/截图随包外泄。
+    _export_private_entries = frozenset({"saves", "screenshots", "logs", "crash-reports", "servers.dat"})
+    _online_lookup_batch_size = 100
+
+    def export_instance_pack(
+        self, game_path: Any, version_id: Any, output_path: Any, pack_format: str
+    ) -> dict[str, Any]:
+        """
+        导出实例为标准 Modrinth 整合包（mrpack）。
+
+        排除隐私目录（存档/截图/日志/崩溃报告/servers.dat）；对 mods 下启用的
+        jar 计算哈希与 CurseForge 指纹，优先经 Modrinth 批量接口、再经 CurseForge
+        指纹接口反查在线来源，命中的模组写入 ``files[]``，其余随 overrides 打包。
+        反查失败或未配置 CurseForge Key 不阻塞导出，以警告记录。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 实例 ID
+        :param output_path: 输出 .mrpack 文件路径
+        :param pack_format: 仅支持 ``modrinth``
+        :return: 长任务句柄（operationId 与初始状态）
+        :raises GameServiceError: 格式不支持时抛出
+        """
+        if pack_format != "modrinth":
+            raise GameServiceError("不支持的整合包格式", "INVALID_PACK_FORMAT")
+        target = self.resolve_instance(game_path, version_id)
+        output = Path(str(output_path)).expanduser().resolve(strict=False)
+
+        def worker(context: OperationContext) -> dict[str, Any]:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            context.progress(5, "正在收集模组指纹")
+            hashed_mods = self._collect_export_mods(target.instance_path)
+            context.progress(18, f"正在反查 {len(hashed_mods)} 个模组的在线来源")
+            online_files, warnings = self._resolve_online_mod_files(hashed_mods, context)
+            temp = output.with_name(f".{output.name}.ecl-tmp")
+            try:
+                with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
+                    files = [path for path in target.instance_path.rglob("*") if path.is_file()]
+                    total = max(len(files), 1)
+                    for index, path in enumerate(files, 1):
+                        context.check_cancelled()
+                        relative = path.relative_to(target.instance_path)
+                        if relative.parts and relative.parts[0] in self._export_private_entries:
+                            continue
+                        if relative.as_posix() in online_files:
+                            continue
+                        archive.write(path, Path("overrides") / relative)
+                        if index % 20 == 0 or index == total:
+                            context.progress(25 + 70 * index / total, "正在导出整合包")
+                    archive.writestr(
+                        "modrinth.index.json",
+                        json.dumps(
+                            {
+                                "formatVersion": 1,
+                                "game": "minecraft",
+                                "versionId": 1,
+                                "name": target.version_id,
+                                "summary": "Exported by ECL",
+                                "files": [online_files[key] for key in sorted(online_files)],
+                                "dependencies": {"minecraft": _extract_minecraft_version(target.version_id)},
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+                context.check_cancelled()
+                temp.replace(output)
+                return {
+                    "path": str(output),
+                    "format": "modrinth",
+                    "onlineFiles": len(online_files),
+                    "warnings": warnings,
+                }
+            finally:
+                temp.unlink(missing_ok=True)
+
+        return self._game_operations.submit("instance_export", worker)
+
+    def _collect_export_mods(self, instance_path: Path) -> list[dict[str, Any]]:
+        # 收集 mods 目录下启用 jar 的哈希与 CurseForge 指纹；禁用模组不参与反查，随 overrides 打包。
+        mods: list[dict[str, Any]] = []
+        mods_dir = instance_path / "mods"
+        if not mods_dir.is_dir():
+            return mods
+        for path in sorted(mods_dir.glob("*.jar")):
+            mods.append(
+                {
+                    "relative": path.relative_to(instance_path).as_posix(),
+                    "path": path,
+                    "sha1": _file_digest(path, "sha1"),
+                    "sha512": _file_digest(path, "sha512"),
+                    "size": path.stat().st_size,
+                    "fingerprint": curseforge_fingerprint(path),
+                }
+            )
+        return mods
+
+    def _resolve_online_mod_files(
+        self, hashed_mods: list[dict[str, Any]], context: OperationContext
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        """
+        把本地模组反查为 mrpack ``files[]`` 在线条目。
+
+        优先 Modrinth 哈希批量接口（sha1 分批），未命中的再走 CurseForge 指纹
+        接口；接口失败或未配置 Key 时记录警告并降级为 overrides 打包。
+
+        :return: (模组相对路径 -> files[] 条目) 与警告列表
+        """
+        resolved: dict[str, dict[str, Any]] = {}
+        warnings: list[str] = []
+        if not hashed_mods:
+            return resolved, warnings
+        try:
+            for start in range(0, len(hashed_mods), self._online_lookup_batch_size):
+                context.check_cancelled()
+                batch = hashed_mods[start : start + self._online_lookup_batch_size]
+                response = _proxied_post(
+                    "https://api.modrinth.com/v2/version_files",
+                    json={"hashes": [mod["sha1"] for mod in batch], "algorithm": "sha1"},
+                    headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+                    timeout=15,
+                )
+                response.raise_for_status()
+                versions = response.json()
+                for mod in batch:
+                    entry = self._modrinth_file_entry(mod, versions)
+                    if entry is not None:
+                        resolved[mod["relative"]] = entry
+        except (httpx.HTTPError, GameServiceError) as exc:
+            warnings.append(f"Modrinth 模组反查失败：{exc}")
+        remaining = [mod for mod in hashed_mods if mod["relative"] not in resolved]
+        if remaining:
+            resolved.update(self._resolve_curseforge_matches(remaining, warnings, context))
+        return resolved, warnings
+
+    @staticmethod
+    def _modrinth_file_entry(mod: dict[str, Any], versions: Any) -> dict[str, Any] | None:
+        # 从批量反查响应中取该模组的主文件；无有效主文件视为未命中。
+        version = versions.get(mod["sha1"]) if isinstance(versions, dict) else None
+        files = version.get("files") if isinstance(version, dict) else None
+        if not isinstance(files, list):
+            return None
+        primary = next((item for item in files if isinstance(item, dict) and item.get("primary")), None)
+        candidate = primary if primary is not None else (files[0] if files and isinstance(files[0], dict) else None)
+        if not isinstance(candidate, dict) or not candidate.get("url"):
+            return None
+        return {
+            "path": mod["relative"],
+            "hashes": {"sha1": mod["sha1"], "sha512": mod["sha512"]},
+            "env": {"client": "required", "server": "required"},
+            "downloads": [str(candidate["url"])],
+            "fileSize": candidate.get("size") if isinstance(candidate.get("size"), int) else mod["size"],
+        }
+
+    def _resolve_curseforge_matches(
+        self, mods: list[dict[str, Any]], warnings: list[str], context: OperationContext
+    ) -> dict[str, dict[str, Any]]:
+        """
+        对 Modrinth 未命中的模组做 CurseForge 指纹批量反查。
+
+        未配置 API Key 或接口失败时记录警告并返回空，不阻塞导出。
+        """
+        resolved: dict[str, dict[str, Any]] = {}
+        try:
+            headers = self._curseforge_headers()
+        except GameServiceError as exc:
+            warnings.append(f"CurseForge 指纹反查已跳过：{exc}")
+            return resolved
+        try:
+            for start in range(0, len(mods), self._online_lookup_batch_size):
+                context.check_cancelled()
+                batch = mods[start : start + self._online_lookup_batch_size]
+                response = _proxied_post(
+                    "https://api.curseforge.com/v1/fingerprints/432",
+                    json={"fingerprints": [mod["fingerprint"] for mod in batch]},
+                    headers=headers,
+                    timeout=15,
+                )
+                response.raise_for_status()
+                data = response.json().get("data") if isinstance(response.json(), dict) else None
+                matches = data.get("exactMatches") if isinstance(data, dict) else None
+                for match in matches or []:
+                    file_info = match.get("file") if isinstance(match, dict) else None
+                    if not isinstance(file_info, dict) or not file_info.get("downloadUrl"):
+                        continue
+                    fingerprint = file_info.get("fileFingerprint")
+                    mod = next((item for item in batch if int(item["fingerprint"]) == int(fingerprint or -1)), None)
+                    if mod is None:
+                        continue
+                    resolved[mod["relative"]] = {
+                        "path": mod["relative"],
+                        "hashes": {"sha1": mod["sha1"], "sha512": mod["sha512"]},
+                        "env": {"client": "required", "server": "required"},
+                        "downloads": [str(file_info["downloadUrl"])],
+                        "fileSize": mod["size"],
+                    }
+        except (httpx.HTTPError, GameServiceError) as exc:
+            warnings.append(f"CurseForge 指纹反查失败：{exc}")
+        return resolved

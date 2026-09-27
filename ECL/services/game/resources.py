@@ -23,8 +23,7 @@
 #       - identify_resource_hash(sha512, curseforge_key=…) -> dict[str, Any] — 用完整文件哈希查询 Modrinth 和 CurseForge，歧义时不猜测来源。
 #       - check_resource_updates(game_path, version_id, resource_type, game_version, loader, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 查询与当前游戏版本和加载器严格兼容的 Modrinth 更新候选。
 #       - update_resource(game_path, version_id, resource_type, resource_id, update, version_isolation=…, world_id=…) -> dict[str, str] — 下载校验更新文件后原子替换，旧文件直接删除。
-#       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
-#       （整合包导入已移交 ModpackCoordinator，见 modpack.py）
+#       （整合包导入导出已移交 ModpackCoordinator，见 modpack.py）
 # ============================================================
 
 from __future__ import annotations
@@ -119,7 +118,6 @@ class ResourceCatalogPolicy:
         "newest": 11,
         "updated": 3,
     }
-    minecraft_version_pattern = re.compile(r"(\d+)\.(\d+)(?:\.\d+)?")
 
 
 class _ModrinthSearchHit(BaseModel):
@@ -195,13 +193,6 @@ def _sha512(path: Path) -> str:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-# 匹配 version_id 中最后一个 x.y[.z] 形态的 MC 版本号；取最后一个以兼容
-# "fabric-loader-0.16.14-1.21.5" 这类加载器版本号在前、MC 版本号在后的命名。
-def _extract_minecraft_version(version_id: str) -> str:
-    matches = list(ResourceCatalogPolicy.minecraft_version_pattern.finditer(version_id))
-    return matches[-1].group(0) if matches else version_id
 
 
 def _safe_json(data: bytes) -> dict[str, Any]:
@@ -1320,58 +1311,3 @@ class ResourceCoordinator:
                 temp.unlink(missing_ok=True)
 
         return self._game_operations.submit("resource_update", worker)
-
-    def export_instance_pack(
-        self,
-        game_path: Any,
-        version_id: Any,
-        output_path: Any,
-        pack_format: str,
-    ) -> dict[str, str]:
-        """
-        导出实例为标准 Modrinth 整合包（mrpack）。
-
-        按 HMCL 导出原则打包：排除隐私目录（存档/截图/日志/崩溃报告/servers.dat），
-        其余实例内容（mods/config/resourcepacks/shaderpacks 等）置于 overrides/ 下，
-        并写入 modrinth.index.json。
-        """
-        target = self.resolve_instance(game_path, version_id)
-        output = Path(str(output_path)).expanduser().resolve(strict=False)
-        if pack_format != "modrinth":
-            raise GameServiceError("不支持的整合包格式", "INVALID_PACK_FORMAT")
-        private = {"saves", "screenshots", "logs", "crash-reports", "servers.dat"}
-
-        def worker(context: OperationContext) -> dict[str, str]:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            temp = output.with_name(f".{output.name}.ecl-tmp")
-            try:
-                with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
-                    files = [path for path in target.instance_path.rglob("*") if path.is_file()]
-                    for index, path in enumerate(files, 1):
-                        relative = path.relative_to(target.instance_path)
-                        if relative.parts and relative.parts[0] in private:
-                            continue
-                        context.check_cancelled()
-                        archive.write(path, Path("overrides") / relative)
-                        context.progress(index * 90 / max(1, len(files)), "正在导出整合包")
-                    archive.writestr(
-                        "modrinth.index.json",
-                        json.dumps(
-                            {
-                                "formatVersion": 1,
-                                "game": "minecraft",
-                                "versionId": 1,
-                                "name": target.version_id,
-                                "summary": "Exported by ECL",
-                                "files": [],
-                                "dependencies": {"minecraft": _extract_minecraft_version(target.version_id)},
-                            },
-                            ensure_ascii=False,
-                        ),
-                    )
-                temp.replace(output)
-                return {"path": str(output), "format": "modrinth"}
-            finally:
-                temp.unlink(missing_ok=True)
-
-        return self._game_operations.submit("instance_export", worker)

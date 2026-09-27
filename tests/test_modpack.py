@@ -24,6 +24,11 @@
 #   - test_import_pack_hash_mismatch_rolls_back(tmp_path) -> None
 #   - test_import_legacy_ecl_pack(tmp_path) -> None
 #   - test_import_unknown_format_fails(tmp_path) -> None
+#   - test_curseforge_fingerprint_matches_reference_vector(tmp_path) -> None
+#   - test_curseforge_fingerprint_skips_whitespace_bytes(tmp_path) -> None
+#   - test_curseforge_fingerprint_chunk_boundaries(tmp_path, monkeypatch) -> None
+#   - test_export_pack_resolves_online_mods(tmp_path, monkeypatch) -> None
+#   - test_export_pack_degrades_without_curseforge_key(tmp_path, monkeypatch) -> None
 # ============================================================
 
 import hashlib
@@ -37,7 +42,8 @@ import pytest
 
 from ECL.events import EventBus
 from ECL.services.game import GameService
-from ECL.services.game.modpack import ModpackPlan, build_pack_plan, detect_pack_format
+from ECL.services.game import modpack as modpack_module
+from ECL.services.game.modpack import ModpackPlan, build_pack_plan, curseforge_fingerprint, detect_pack_format
 from ECL.utils.errors import GameServiceError
 
 
@@ -332,16 +338,19 @@ def _build_pack_service(downloader_factory) -> GameService:
     )
 
 
-def _run_pack_operation(service: GameService, **kwargs) -> dict:
-    result = service.import_instance_pack(**kwargs)
-    operation_id = result["operationId"]
+def _await_operation(service: GameService, submitted: dict) -> dict:
+    operation_id = submitted["operationId"]
     deadline = time.time() + 10
     while time.time() < deadline:
         state = service._game_operations.get(operation_id)
         if state["status"] in {"completed", "failed", "cancelled"}:
             return state
         time.sleep(0.02)
-    raise AssertionError("整合包导入任务超时")
+    raise AssertionError("长任务执行超时")
+
+
+def _run_pack_operation(service: GameService, **kwargs) -> dict:
+    return _await_operation(service, service.import_instance_pack(**kwargs))
 
 
 def _make_pack_zip(path: Path, files: dict[str, bytes]) -> None:
@@ -518,3 +527,152 @@ def test_import_unknown_format_fails(tmp_path) -> None:
 
     assert state["status"] == "failed"
     assert state["errorCode"] == "INVALID_PACK_ARCHIVE"
+
+
+# ---------- CurseForge 指纹与导出反查 ----------
+
+
+def test_curseforge_fingerprint_matches_reference_vector(tmp_path) -> None:
+    """无空白字节的输入应与参考实现（seed=1 MurmurHash2）结果一致。"""
+    data = b"aklerfdhvkore;fhjbgoiwrfgbuio34htgb889rguiyufgvueirefvrvu9vhgg9wygf94u8fgw249fyhuwygf293ghf8h"
+    target = tmp_path / "sample.bin"
+    target.write_bytes(data)
+    assert curseforge_fingerprint(target) == 2672531333
+
+
+def test_curseforge_fingerprint_skips_whitespace_bytes(tmp_path) -> None:
+    """空白字节应被归一化过滤，过滤后与紧凑内容的指纹一致。"""
+    compact = tmp_path / "compact.bin"
+    compact.write_bytes(b"abcdefgh" * 100)
+    spaced = tmp_path / "spaced.bin"
+    spaced.write_bytes(b"ab cd\tef\rgh\n" * 100)
+    assert curseforge_fingerprint(spaced) == curseforge_fingerprint(compact)
+
+
+def test_curseforge_fingerprint_chunk_boundaries(tmp_path, monkeypatch) -> None:
+    """缩小读取块尺寸强制跨块携带字节，结果必须与整块计算一致。"""
+    data = bytes(range(256)) * 40
+    small = tmp_path / "small.bin"
+    small.write_bytes(data)
+    monkeypatch.setattr(modpack_module, "_fingerprint_chunk_bytes", 7)
+    small_hash = curseforge_fingerprint(small)
+    monkeypatch.setattr(modpack_module, "_fingerprint_chunk_bytes", 1024 * 1024)
+    large = tmp_path / "large.bin"
+    large.write_bytes(data)
+    assert small_hash == curseforge_fingerprint(large)
+
+
+def _fake_online_post(modrinth_versions: dict, curseforge_matches: list | None = None):
+    def fake_post(url: str, **_kwargs):
+        payload = modrinth_versions if "modrinth.com" in url else {"data": {"exactMatches": curseforge_matches or []}}
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+
+    return fake_post
+
+
+def _make_instance_with_mods(game_path: Path) -> tuple[Path, bytes, bytes]:
+    instance = game_path / "versions" / "Exported 1.21.1"
+    mods = instance / "mods"
+    mods.mkdir(parents=True, exist_ok=True)
+    (instance / "config").mkdir()
+    (instance / "config" / "opts.txt").write_bytes(b"fov=1\n")
+    (instance / "saves").mkdir()
+    (instance / "saves" / "world.dat").write_bytes(b"world")
+    (instance / "servers.dat").write_bytes(b"servers")
+    mod_a = b"mod-a-online"
+    mod_b = b"mod-b-local"
+    (mods / "a.jar").write_bytes(mod_a)
+    (mods / "b.jar").write_bytes(mod_b)
+    return instance, mod_a, mod_b
+
+
+def test_export_pack_resolves_online_mods(tmp_path, monkeypatch) -> None:
+    """导出应把 Modrinth/CF 命中的模组写入 files[] 并从 overrides 剔除。"""
+    monkeypatch.delenv("CURSEFORGE_API_KEY", raising=False)
+    game_path = tmp_path / ".minecraft"
+    instance, mod_a, _mod_b = _make_instance_with_mods(game_path)
+    service = _build_pack_service(_pack_downloader_factory({}))
+    service._curseforge_api_key = "test-key"
+
+    modrinth_versions = {
+        hashlib.sha1(mod_a).hexdigest(): {
+            "files": [{"primary": True, "url": "https://dl.example.com/a.jar", "size": len(mod_a)}]
+        }
+    }
+
+    def fake_post(url: str, **kwargs):
+        if "modrinth.com" in url:
+            payload = modrinth_versions
+        else:
+            fingerprints = json.loads(json.dumps(kwargs["json"]))["fingerprints"]
+            b_fingerprint = curseforge_fingerprint(instance / "mods" / "b.jar")
+            assert b_fingerprint in fingerprints
+            payload = {
+                "data": {
+                    "exactMatches": [
+                        {
+                            "file": {
+                                "downloadUrl": "https://cf.example.com/b.jar",
+                                "fileFingerprint": b_fingerprint,
+                            }
+                        }
+                    ]
+                }
+            }
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+
+    monkeypatch.setattr(modpack_module, "_proxied_post", fake_post)
+    output = tmp_path / "out.mrpack"
+
+    state = _await_operation(service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth"))
+
+    assert state["status"] == "completed", state
+    result = state["result"]
+    assert result["format"] == "modrinth"
+    assert result["onlineFiles"] == 2
+    assert result["warnings"] == []
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+        index = json.loads(archive.read("modrinth.index.json"))
+    assert "overrides/mods/a.jar" not in names
+    assert "overrides/mods/b.jar" not in names
+    assert "overrides/config/opts.txt" in names
+    assert "overrides/saves/world.dat" not in names
+    assert "overrides/servers.dat" not in names
+    assert index["dependencies"] == {"minecraft": "1.21.1"}
+    assert len(index["files"]) == 2
+    entry_a = next(item for item in index["files"] if item["path"] == "mods/a.jar")
+    assert entry_a["downloads"] == ["https://dl.example.com/a.jar"]
+    assert entry_a["hashes"]["sha1"] == hashlib.sha1(mod_a).hexdigest()
+    assert entry_a["fileSize"] == len(mod_a)
+    entry_b = next(item for item in index["files"] if item["path"] == "mods/b.jar")
+    assert entry_b["downloads"] == ["https://cf.example.com/b.jar"]
+
+
+def test_export_pack_degrades_without_curseforge_key(tmp_path, monkeypatch) -> None:
+    """未配置 CurseForge Key 时导出应降级为 overrides 打包并记录警告。"""
+    monkeypatch.delenv("CURSEFORGE_API_KEY", raising=False)
+    game_path = tmp_path / ".minecraft"
+    _instance, mod_a, _mod_b = _make_instance_with_mods(game_path)
+    service = _build_pack_service(_pack_downloader_factory({}))
+    service._curseforge_api_key = None
+
+    modrinth_versions = {
+        hashlib.sha1(mod_a).hexdigest(): {
+            "files": [{"primary": True, "url": "https://dl.example.com/a.jar", "size": len(mod_a)}]
+        }
+    }
+    monkeypatch.setattr(modpack_module, "_proxied_post", _fake_online_post(modrinth_versions))
+    output = tmp_path / "out.mrpack"
+
+    state = _await_operation(service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth"))
+
+    assert state["status"] == "completed", state
+    result = state["result"]
+    assert result["onlineFiles"] == 1
+    assert any("CurseForge" in warning for warning in result["warnings"])
+    with zipfile.ZipFile(output) as archive:
+        names = set(archive.namelist())
+        index = json.loads(archive.read("modrinth.index.json"))
+    assert "overrides/mods/b.jar" in names
+    assert [item["path"] for item in index["files"]] == ["mods/a.jar"]
