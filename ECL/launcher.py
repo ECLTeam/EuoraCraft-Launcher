@@ -76,7 +76,7 @@ class EuoraCraftLauncher:
         if self._handed_over:
             self.logging = None  # 移交进程不初始化日志系统
             self.logger = logging.getLogger("EuoraCraft_Launcher")  # 无处理器的兜底日志器
-            print("EuoraCraft 启动器已在运行，已请求激活已运行的窗口。")
+            print("EuoraCraft Launcher启动器已在运行，已请求激活已运行的窗口。")
             return
         self.logging = configure_logging(self.data_path)  # 日志系统实例
         self.logger = self.logging.get_logger("EuoraCraft_Launcher")  # 启动器专用日志器

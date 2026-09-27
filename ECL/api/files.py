@@ -82,7 +82,7 @@ class FileHandlers(_FrontendState):
     }
     save_file_options: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
         FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
-        FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft 启动器日志", "EuoraCraft-logs.zip", ["zip"]),
+        FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft Launcher启动器日志", "EuoraCraft-logs.zip", ["zip"]),
         FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
         FileSavePurpose.INSTANCE_EXPORT: ("导出实例整合包", "instance.mrpack", ["mrpack"]),
         FileSavePurpose.SCREENSHOT: (
