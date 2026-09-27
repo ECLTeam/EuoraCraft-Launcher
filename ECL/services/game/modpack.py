@@ -3,23 +3,32 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：整合包格式识别与解析：将各发行格式归一为统一的安装计划模型。
+# 文件作用：整合包格式识别、解析与导入编排：归一为统一计划并装配为可运行实例。
 #
 # 公开接口：
 #   - class PackFileEntry — 整合包内单个待下载文件条目（路径/直链/哈希/环境适用性）。
 #   - class ModpackPlan — 归一后的整合包安装计划（版本、加载器、文件清单、overrides）。
+#   - class ModpackCoordinator — 导入编排协调器：识别解析、自动安装基础版本、下载校验与实例装配。
 #   - detect_pack_format(root) -> str — 按内容特征识别整合包格式标签。
 #   - build_pack_plan(root) -> ModpackPlan — 解析指定格式并输出统一安装计划。
 # ============================================================
 
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass, field
+import shutil
+import tempfile
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
+from threading import Event, Thread
 from typing import Any
 
-from .base import GameServiceError
+from ECL.utils import atomic_write_text
+
+from .base import GameServiceError, _GameState
+from .operations import OperationContext
+from .workspace import ResolvedInstanceTarget, safe_extract_zip
 
 # Modrinth mrpack dependencies 键 -> ECL 加载器类型；未收录键忽略并记录警告。
 _modrinth_loader_keys = {
@@ -298,3 +307,328 @@ def build_pack_plan(root: Path) -> ModpackPlan:
     if detected == "unknown":
         raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
     raise GameServiceError(f"暂不支持该整合包格式: {detected}", "INVALID_PACK_ARCHIVE")
+
+
+def _file_digest(path: Path, algorithm: str) -> str:
+    # 流式计算文件摘要，避免大文件一次性载入内存。
+    digest = hashlib.new(algorithm)
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+class ModpackCoordinator(_GameState):
+    """
+    编排整合包导入：解压识别、基础版本保障、文件下载与实例装配。
+    """
+
+    def import_instance_pack(self, game_path: Any, source_path: Any, new_version_id: Any) -> dict[str, str]:
+        """
+        安全导入整合包并装配为全新实例。
+
+        支持 Modrinth mrpack、CurseForge manifest 包与 ECL 旧格式包：解压识别后
+        自动安装缺失的基础版本与加载器，下载清单声明的模组与文件，经哈希校验
+        后装配为继承基础版本的新实例。全程在 staging 目录进行，失败自动清理。
+
+        :param game_path: Minecraft 游戏根目录
+        :param source_path: 整合包压缩包路径
+        :param new_version_id: 新实例的版本目录名
+        :return: 长任务句柄（operationId 与初始状态）
+        :raises GameServiceError: 目标实例已存在或压缩包不可读时抛出
+        """
+        target = self.resolve_instance(game_path, new_version_id)
+        source = Path(str(source_path)).expanduser().resolve(strict=True)
+        if target.instance_path.exists():
+            raise GameServiceError("目标实例已存在", "INSTANCE_ALREADY_EXISTS")
+        # 解压临时目录与 staging 都落在 versions 目录下，先确保其存在。
+        target.instance_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def worker(context: OperationContext) -> dict[str, Any]:
+            with tempfile.TemporaryDirectory(prefix="ecl-pack-import-", dir=target.instance_path.parent) as temp_dir:
+                extracted = Path(temp_dir)
+                safe_extract_zip(source, extracted)
+                detected = detect_pack_format(extracted)
+                if detected == "ecl-legacy":
+                    return self._import_legacy_ecl_pack(extracted, target, context)
+                if detected == "unknown":
+                    raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
+                plan = build_pack_plan(extracted)
+                context.progress(8, f"已识别整合包：{plan.pack_name}（{plan.format_name}）")
+                result = self._install_plan_into_instance(plan, target, context)
+                context.progress(98, "整合包导入完成")
+                return result
+
+        return self._game_operations.submit("instance_import", worker)
+
+    def _import_legacy_ecl_pack(
+        self, extracted: Path, target: ResolvedInstanceTarget, context: OperationContext
+    ) -> dict[str, Any]:
+        """
+        按 ECL 旧格式流程导入：包内容整体即实例，主版本描述重命名为新实例名。
+
+        保留历史行为：不下载文件、不校验基础版本。
+        """
+        staging = target.instance_path.with_name(f".{target.version_id}.ecl-import")
+        try:
+            shutil.copytree(extracted, staging, ignore=shutil.ignore_patterns("ecl-pack.json"))
+            manifests = list(staging.glob("*.json"))
+            original = next((path for path in manifests if path.name != "ecl-pack.json"), None)
+            if original and original.name != f"{target.version_id}.json":
+                original.rename(staging / f"{target.version_id}.json")
+            context.check_cancelled()
+            staging.replace(target.instance_path)
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        return {
+            "versionId": target.version_id,
+            "path": str(target.instance_path),
+            "format": "ecl-legacy",
+            "downloadedFiles": 0,
+            "skippedFiles": 0,
+            "overridesFiles": 0,
+            "baseVersion": None,
+            "warnings": [],
+        }
+
+    def _install_plan_into_instance(
+        self, plan: ModpackPlan, target: ResolvedInstanceTarget, context: OperationContext
+    ) -> dict[str, Any]:
+        """
+        按统一计划装配实例：解析条目、保障基础版本、下载校验并原子落位。
+
+        全程在 staging 目录进行，任何失败都会清理 staging，不影响既有实例。
+        """
+        if not plan.minecraft_version:
+            raise GameServiceError("整合包缺少 Minecraft 版本声明", "INVALID_PACK_ARCHIVE")
+        staging = target.instance_path.with_name(f".{target.version_id}.ecl-import")
+        try:
+            entries, skipped = self._resolve_pack_entries(plan, context)
+            base_name = self._ensure_pack_base_version(plan, target, context)
+            context.progress(32, f"正在下载 {len(entries)} 个整合包文件")
+            self._download_pack_files(entries, staging, context, 32, 72)
+            context.progress(74, "正在校验下载文件")
+            self._verify_pack_files(entries, staging, context)
+            context.progress(78, "正在复制整合包实例内容")
+            overrides_count = self._copy_pack_overrides(plan, staging, context)
+            self._write_pack_version_json(base_name, target, staging)
+            context.check_cancelled()
+            staging.replace(target.instance_path)
+            return {
+                "versionId": target.version_id,
+                "path": str(target.instance_path),
+                "format": plan.format_name,
+                "downloadedFiles": len(entries),
+                "skippedFiles": skipped,
+                "overridesFiles": overrides_count,
+                "baseVersion": base_name,
+                "warnings": list(plan.warnings),
+            }
+        except Exception:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+    def _resolve_pack_entries(self, plan: ModpackPlan, context: OperationContext) -> tuple[list[PackFileEntry], int]:
+        """
+        过滤客户端不适用的条目，并把 CurseForge 条目解析为可下载的直链。
+
+        CurseForge 条目本身不含直链，逐条调用文件详情接口（必要时回退专用下载
+        地址接口）填充 URL 与哈希；未配置 API Key 时直接报错。
+
+        :return: 待下载条目列表与环境不适用而跳过的数量
+        """
+        entries: list[PackFileEntry] = []
+        skipped = 0
+        total = len(plan.files)
+        for index, entry in enumerate(plan.files, 1):
+            context.check_cancelled()
+            if entry.env_client == "unsupported":
+                skipped += 1
+                continue
+            resolved = entry
+            if plan.format_name == "curseforge":
+                # _fetch_curseforge_file 来自 ResourceCoordinator，经 GameService 聚合后可用。
+                details = self._fetch_curseforge_file(str(entry.project_id), str(entry.file_id))
+                relative = _safe_pack_relative_path(f"mods/{details['filename']}", [])
+                if relative is None:
+                    raise GameServiceError(
+                        f"CurseForge 文件名不安全: {details['filename']}", "PACK_ONLINE_FILE_INVALID"
+                    )
+                hashes = details.get("hashes") or {}
+                resolved = replace(
+                    entry,
+                    url=str(details["url"]),
+                    target_relative=relative.as_posix(),
+                    sha1=hashes.get("sha1"),
+                    sha512=hashes.get("sha512"),
+                )
+                context.progress(8 + 10 * index / max(total, 1), f"正在解析整合包文件 {index}/{total}")
+            elif not entry.url:
+                raise GameServiceError(f"整合包文件缺少下载地址: {entry.target_relative}", "PACK_ONLINE_FILE_INVALID")
+            entries.append(resolved)
+        return entries, skipped
+
+    def _ensure_pack_base_version(
+        self, plan: ModpackPlan, target: ResolvedInstanceTarget, context: OperationContext
+    ) -> str:
+        """
+        保障整合包依赖的基础版本与加载器就绪，返回实例应继承的基础版本名。
+
+        缺失时经同步安装核心自动安装；fabric/quilt 未声明加载器版本时解析
+        当前游戏版本下的最新版本。安装不附带 Fabric API，避免与整合包自带
+        的 API 模组重复。
+
+        :raises GameServiceError: 加载器版本无法解析或安装后基础版本仍缺失时抛出
+        """
+        mc_version = plan.minecraft_version
+        base_name = mc_version
+        loader_version = plan.loader_version
+        if plan.loader_type != "vanilla":
+            if not loader_version:
+                versions = self.loader_versions(plan.loader_type, mc_version)
+                if not versions:
+                    raise GameServiceError(
+                        f"未找到 {plan.loader_type} 在 {mc_version} 下的可用版本",
+                        "PACK_LOADER_VERSION_REQUIRED",
+                    )
+                loader_version = versions[0]
+            base_name = f"{plan.loader_type}-{loader_version}-{mc_version}"
+        base_json = target.instance_path.parent / base_name / f"{base_name}.json"
+        if base_json.is_file():
+            context.progress(30, f"基础版本 {base_name} 已就绪")
+            return base_name
+        context.progress(20, f"正在自动安装基础版本 {base_name}")
+
+        def report(phase: str, message: str, **_details: Any) -> None:
+            context.progress(26, f"安装基础版本：{message}")
+
+        java_path = self._resolve_java_path(None) if plan.loader_type in {"forge", "neoforge"} else None
+        self.install_blocking(
+            task_id=f"pack-base-{context.operation_id[:8]}",
+            version_id=mc_version,
+            save_name=base_name,
+            loader=plan.loader_type,
+            loader_version=loader_version,
+            fabric_api_version=None,
+            game_path=target.game_path,
+            source="official",
+            java_path=java_path,
+            report=report,
+            cancel_event=context.cancel_event,
+            include_fabric_api=False,
+        )
+        if not base_json.is_file():
+            raise GameServiceError(f"基础版本 {base_name} 安装失败", "PACK_BASE_VERSION_MISSING")
+        context.progress(30, f"基础版本 {base_name} 安装完成")
+        return base_name
+
+    def _download_pack_files(
+        self,
+        entries: list[PackFileEntry],
+        staging: Path,
+        context: OperationContext,
+        progress_start: float,
+        progress_end: float,
+    ) -> None:
+        """
+        用共享下载引擎并发下载整合包文件到 staging 目录。
+
+        下载器登记到活跃下载表以便启动器关闭时中止；取消事件由守护线程
+        监听并停止下载器。
+        """
+        if not entries:
+            return
+        download_list: list[tuple[str, Path]] = []
+        for entry in entries:
+            destination = staging.joinpath(*entry.target_relative.split("/"))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            download_list.append((str(entry.url), destination))
+        span = max(progress_end - progress_start, 0.0)
+
+        def emit_progress(done: int, total: int) -> None:
+            if total > 0:
+                context.progress(progress_start + done / total * span, "正在下载整合包文件")
+
+        downloader = self._downloader_factory(download_list, progress_callback=emit_progress)
+        with self._lock:
+            self._active_downloads[context.operation_id] = downloader
+        finished = Event()
+        watcher = Thread(
+            target=self._watch_downloader_cancel,
+            args=(context.cancel_event, finished, downloader),
+            name=f"ECLPackCancel-{context.operation_id[:8]}",
+            daemon=True,
+        )
+        watcher.start()
+        try:
+            self._run_downloader_blocking(downloader, None)
+        finally:
+            finished.set()
+            with self._lock:
+                if self._active_downloads.get(context.operation_id) is downloader:
+                    self._active_downloads.pop(context.operation_id, None)
+            watcher.join(timeout=2)
+
+    def _verify_pack_files(self, entries: list[PackFileEntry], staging: Path, context: OperationContext) -> None:
+        """
+        校验下载文件的 SHA-1/SHA-512，失败集合整体重试一轮后仍失败则报错。
+
+        :raises GameServiceError: 重试后仍有哈希不匹配（PACK_FILE_HASH_MISMATCH）时抛出
+        """
+        failed = self._collect_hash_mismatches(entries, staging)
+        if not failed:
+            return
+        retry_entries = [entry for entry in entries if entry.target_relative in failed]
+        for relative in failed:
+            staging.joinpath(*relative.split("/")).unlink(missing_ok=True)
+        self._download_pack_files(retry_entries, staging, context, 74, 76)
+        remaining = self._collect_hash_mismatches(retry_entries, staging)
+        if remaining:
+            raise GameServiceError(
+                f"有 {len(remaining)} 个整合包文件校验失败，例如 {remaining[0]}",
+                "PACK_FILE_HASH_MISMATCH",
+            )
+
+    @staticmethod
+    def _collect_hash_mismatches(entries: list[PackFileEntry], staging: Path) -> list[str]:
+        # 只校验声明了哈希的条目；文件缺失同样视为校验失败。
+        failed: list[str] = []
+        for entry in entries:
+            if not entry.sha1 and not entry.sha512:
+                continue
+            target = staging.joinpath(*entry.target_relative.split("/"))
+            if not target.is_file():
+                failed.append(entry.target_relative)
+                continue
+            if (entry.sha1 and _file_digest(target, "sha1") != entry.sha1.casefold()) or (
+                entry.sha512 and _file_digest(target, "sha512") != entry.sha512.casefold()
+            ):
+                failed.append(entry.target_relative)
+        return failed
+
+    def _copy_pack_overrides(self, plan: ModpackPlan, staging: Path, context: OperationContext) -> int:
+        """
+        把 overrides 内容复制进 staging，返回复制的文件数；无 overrides 返回 0。
+        """
+        overrides = plan.overrides_dir
+        if overrides is None or not overrides.is_dir():
+            return 0
+        files = [path for path in overrides.rglob("*") if path.is_file()]
+        for index, source in enumerate(files, 1):
+            context.check_cancelled()
+            relative = source.relative_to(overrides)
+            destination = staging / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            if index % 50 == 0 or index == len(files):
+                context.progress(78 + 14 * index / max(len(files), 1), "正在复制整合包实例内容")
+        return len(files)
+
+    @staticmethod
+    def _write_pack_version_json(base_name: str, target: ResolvedInstanceTarget, staging: Path) -> None:
+        # 写入继承基础版本的实例描述，包内自带同名描述时统一覆盖为新实例名。
+        atomic_write_text(
+            staging / f"{target.version_id}.json",
+            json.dumps({"id": target.version_id, "inheritsFrom": base_name}, ensure_ascii=False, indent=2),
+        )

@@ -24,7 +24,7 @@
 #       - check_resource_updates(game_path, version_id, resource_type, game_version, loader, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 查询与当前游戏版本和加载器严格兼容的 Modrinth 更新候选。
 #       - update_resource(game_path, version_id, resource_type, resource_id, update, version_isolation=…, world_id=…) -> dict[str, str] — 下载校验更新文件后原子替换，旧文件直接删除。
 #       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
-#       - import_instance_pack(game_path, source_path, new_version_id) -> dict[str, str] — 安全导入 mrpack、CurseForge ZIP 或 ECL ZIP 的 overrides/实例内容。
+#       （整合包导入已移交 ModpackCoordinator，见 modpack.py）
 # ============================================================
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from ECL.utils.network import download_proxy_url
 
 from .base import GameServiceError
 from .operations import OperationContext
-from .workspace import delete_path, resolve_relative_id, safe_extract_zip
+from .workspace import delete_path, resolve_relative_id
 
 
 def _proxied_get(url: str, **kwargs: Any) -> httpx.Response:
@@ -1375,55 +1375,3 @@ class ResourceCoordinator:
                 temp.unlink(missing_ok=True)
 
         return self._game_operations.submit("instance_export", worker)
-
-    def import_instance_pack(self, game_path: Any, source_path: Any, new_version_id: Any) -> dict[str, str]:
-        """
-        安全导入 mrpack、CurseForge ZIP 或 ECL ZIP 的 overrides/实例内容。
-        """
-        target = self.resolve_instance(game_path, new_version_id)
-        source = Path(str(source_path)).expanduser().resolve(strict=True)
-        if target.instance_path.exists():
-            raise GameServiceError("目标实例已存在", "INSTANCE_ALREADY_EXISTS")
-
-        def worker(context: OperationContext) -> dict[str, str]:
-            with tempfile.TemporaryDirectory(prefix="ecl-pack-import-", dir=target.instance_path.parent) as temp_dir:
-                extracted = Path(temp_dir)
-                safe_extract_zip(source, extracted)
-                if (extracted / "modrinth.index.json").is_file() or (extracted / "manifest.json").is_file():
-                    content = extracted / "overrides"
-                    if (extracted / "modrinth.index.json").is_file():
-                        pack_manifest = json.loads((extracted / "modrinth.index.json").read_text(encoding="utf-8"))
-                        base_version = str((pack_manifest.get("dependencies") or {}).get("minecraft") or "")
-                    else:
-                        pack_manifest = json.loads((extracted / "manifest.json").read_text(encoding="utf-8"))
-                        base_version = str((pack_manifest.get("minecraft") or {}).get("version") or "")
-                    base_json = target.game_path / "versions" / base_version / f"{base_version}.json"
-                    if not base_version or not base_json.is_file():
-                        raise GameServiceError(
-                            f"请先安装整合包所需的基础版本 {base_version or '未知'}",
-                            "PACK_BASE_VERSION_MISSING",
-                        )
-                elif (extracted / "ecl-pack.json").is_file():
-                    content = extracted
-                    base_version = ""
-                else:
-                    raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
-                context.check_cancelled()
-                destination_temp = target.instance_path.with_name(f".{target.version_id}.ecl-import")
-                shutil.copytree(content, destination_temp, ignore=shutil.ignore_patterns("ecl-pack.json"))
-                if base_version:
-                    atomic_write_text(
-                        destination_temp / f"{target.version_id}.json",
-                        json.dumps(
-                            {"id": target.version_id, "inheritsFrom": base_version}, ensure_ascii=False, indent=2
-                        ),
-                    )
-                else:
-                    manifests = list(destination_temp.glob("*.json"))
-                    original = next((path for path in manifests if path.name != "ecl-pack.json"), None)
-                    if original and original.name != f"{target.version_id}.json":
-                        original.rename(destination_temp / f"{target.version_id}.json")
-                destination_temp.replace(target.instance_path)
-                return {"versionId": target.version_id, "path": str(target.instance_path)}
-
-        return self._game_operations.submit("instance_import", worker)

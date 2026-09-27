@@ -337,6 +337,32 @@ class _GameState:
             self.logger.warning("%s 下载失败，尝试从 %s 补全 %d 个文件", source, alternate, len(fallback_entries))
         return fallback_entries
 
+    @staticmethod
+    def _run_downloader_blocking(downloader: Downloader, loop: asyncio.AbstractEventLoop | None) -> None:
+        """
+        在调用线程内同步等待一次下载器运行完成。
+
+        :param downloader: 待运行的下载器
+        :param loop: 传入既有事件循环时把下载协程调度回该循环执行（下载器内部
+            状态与测试替身可能绑定在主循环上）；否则在当前线程新建事件循环执行。
+        """
+        if loop is not None and not loop.is_closed():
+            asyncio.run_coroutine_threadsafe(downloader.run(), loop).result()
+        else:
+            asyncio.run(downloader.run())
+
+    @staticmethod
+    def _watch_downloader_cancel(cancel_event: Event, finished: Event, downloader: Downloader) -> None:
+        """
+        轮询等待取消或完成，取消时立刻停止下载器使阻塞中的下载尽快退出。
+
+        供没有任务取消机制的同步工作线程使用；``finished`` 置位后线程必然退出。
+        """
+        while not finished.wait(timeout=0.2):
+            if cancel_event.is_set():
+                downloader.stop()
+                return
+
     def authlib_login_config(self) -> dict[str, bool]:
         """
         检查 authlib-injector 是否可用；不可用时前端应禁用外置登录。

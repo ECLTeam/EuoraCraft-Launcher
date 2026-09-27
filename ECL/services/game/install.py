@@ -290,6 +290,7 @@ class InstallCoordinator(_GameState):
         report: InstallProgressReporter,
         cancel_event: Event | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
+        include_fabric_api: bool = True,
     ) -> None:
         """
         同步执行一次完整的版本安装：构建下载清单、并发下载、备用源补全。
@@ -311,14 +312,20 @@ class InstallCoordinator(_GameState):
         :param report: 进度上报回调，签名与 ``_emit_install_progress`` 去掉 task_id 一致
         :param cancel_event: 取消信号；为 None 时不检查取消
         :param loop: 可选的既有事件循环，下载协程将在其上执行
+        :param include_fabric_api: fabric 安装是否附带 Fabric API；整合包导入的
+            基础安装应传 False，避免与包内自带的 API 模组重复
         :raises GameServiceError: 下载失败（GAME_DOWNLOAD_FAILED）或取消（INSTALL_CANCELLED）时抛出
         """
         games = self._context(game_path, source).games
         if loader == "vanilla":
             download_list = games.build_minecraft_download_list(version_id, save_name)
         elif loader == "fabric":
-            fabric_api = self._resolve_fabric_api(
-                version_id, fabric_api_version if isinstance(fabric_api_version, str) else None
+            fabric_api = (
+                self._resolve_fabric_api(
+                    version_id, fabric_api_version if isinstance(fabric_api_version, str) else None
+                )
+                if include_fabric_api
+                else None
             )
             download_list = games.build_fabric_download_list(version_id, loader_version, save_name, fabric_api)
         elif loader == "quilt":
@@ -379,7 +386,7 @@ class InstallCoordinator(_GameState):
         watcher: Thread | None = None
         if cancel_event is not None:
             watcher = Thread(
-                target=self._watch_install_cancel,
+                target=self._watch_downloader_cancel,
                 args=(cancel_event, finished, downloader),
                 name=f"ECLInstallCancel-{task_id}",
                 daemon=True,
@@ -418,25 +425,6 @@ class InstallCoordinator(_GameState):
             )
         self.logger.info("版本安装完成: %s", save_name)
         report("done", f"{save_name} 已安装完成", done=1, total=1)
-
-    @staticmethod
-    def _run_downloader_blocking(downloader: Downloader, loop: asyncio.AbstractEventLoop | None) -> None:
-        # 在调用线程内同步等待一次下载器运行完成。
-        # 传入既有事件循环时把协程调度回该循环（保持与异步任务路径一致的执行环境，
-        # 下载器内部状态与测试替身都绑定在主循环上）；否则在工作线程内新建事件循环。
-        if loop is not None and not loop.is_closed():
-            asyncio.run_coroutine_threadsafe(downloader.run(), loop).result()
-        else:
-            asyncio.run(downloader.run())
-
-    @staticmethod
-    def _watch_install_cancel(cancel_event: Event, finished: Event, downloader: Downloader) -> None:
-        # 轮询等待取消或完成；0.2s 间隔相对安装生命周期可忽略。
-        # 取消时立刻停止下载器，使 asyncio.run 所在的工作线程尽快退出。
-        while not finished.wait(timeout=0.2):
-            if cancel_event.is_set():
-                downloader.stop()
-                return
 
     @classmethod
     def _resolve_fabric_api(cls, game_version: str, fabric_api_version: str | None) -> tuple[str, str]:

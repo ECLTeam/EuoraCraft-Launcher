@@ -18,13 +18,25 @@
 #   - test_build_pack_plan_rejects_unknown(tmp_path) -> None
 #   - test_build_pack_plan_rejects_ecl_legacy(tmp_path) -> None
 #   - test_build_pack_plan_rejects_missing_directory(tmp_path) -> None
+#   - test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None
+#   - test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -> None
+#   - test_import_pack_reports_missing_loader_versions(tmp_path, monkeypatch) -> None
+#   - test_import_pack_hash_mismatch_rolls_back(tmp_path) -> None
+#   - test_import_legacy_ecl_pack(tmp_path) -> None
+#   - test_import_unknown_format_fails(tmp_path) -> None
 # ============================================================
 
+import hashlib
 import json
+import time
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from ECL.events import EventBus
+from ECL.services.game import GameService
 from ECL.services.game.modpack import ModpackPlan, build_pack_plan, detect_pack_format
 from ECL.utils.errors import GameServiceError
 
@@ -276,3 +288,233 @@ def test_build_pack_plan_rejects_missing_directory(tmp_path) -> None:
     with pytest.raises(GameServiceError) as error:
         build_pack_plan(tmp_path / "missing")
     assert error.value.error_code == "INVALID_PACK_ARCHIVE"
+
+
+# ---------- 导入编排（ModpackCoordinator） ----------
+
+
+def _pack_downloader_factory(content_by_url: dict[str, bytes], corrupt_urls: set[str] | None = None):
+    class _Downloader:
+        def __init__(self, download_list, progress_callback=None, **_options):
+            self.download_list = list(download_list)
+            self.progress_callback = progress_callback
+            self.completed_entries: set[tuple[str, str]] = set()
+            self.failed_entries: set[tuple[str, str]] = set()
+            self.local_failed_paths: set[str] = set()
+            self.total_bytes = 0
+            self.downloaded_bytes = 0
+            self.use_byte_progress = False
+            self.total_files = len(download_list)
+
+        async def run(self):
+            for url, path in self.download_list:
+                target = Path(path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                content = b"corrupted" if corrupt_urls and url in corrupt_urls else content_by_url.get(url, b"payload")
+                target.write_bytes(content)
+                self.completed_entries.add((url, str(target)))
+            if self.progress_callback:
+                self.progress_callback(len(self.download_list), len(self.download_list))
+
+        def stop(self):
+            return None
+
+    return _Downloader
+
+
+def _build_pack_service(downloader_factory) -> GameService:
+    return GameService(
+        SimpleNamespace(current_account=lambda: None),
+        search_factory=lambda _path: SimpleNamespace(search_minecraft=lambda: {}),
+        downloader_factory=downloader_factory,
+        event_bus=EventBus(),
+        enable_version_watcher=False,
+    )
+
+
+def _run_pack_operation(service: GameService, **kwargs) -> dict:
+    result = service.import_instance_pack(**kwargs)
+    operation_id = result["operationId"]
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        state = service._game_operations.get(operation_id)
+        if state["status"] in {"completed", "failed", "cancelled"}:
+            return state
+        time.sleep(0.02)
+    raise AssertionError("整合包导入任务超时")
+
+
+def _make_pack_zip(path: Path, files: dict[str, bytes]) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+
+
+def _make_base_version(game_path: Path, version: str) -> None:
+    base = game_path / "versions" / version
+    base.mkdir(parents=True, exist_ok=True)
+    (base / f"{version}.json").write_text("{}", encoding="utf-8")
+
+
+def test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None:
+    """mrpack 导入应下载清单文件、跳过客户端不适用条目并装配继承实例。"""
+    game_path = tmp_path / ".minecraft"
+    _make_base_version(game_path, "1.21.1")
+    mod_bytes = b"mod-a-content"
+    url = "https://example.com/a.jar"
+    index = {
+        "formatVersion": 1,
+        "game": "minecraft",
+        "name": "Demo",
+        "dependencies": {"minecraft": "1.21.1"},
+        "files": [
+            {
+                "path": "mods/a.jar",
+                "hashes": {"sha1": hashlib.sha1(mod_bytes).hexdigest()},
+                "downloads": [url],
+                "fileSize": len(mod_bytes),
+            },
+            {
+                "path": "mods/server-only.jar",
+                "downloads": ["https://example.com/s.jar"],
+                "env": {"client": "unsupported", "server": "required"},
+            },
+        ],
+    }
+    pack = tmp_path / "demo.mrpack"
+    _make_pack_zip(
+        pack,
+        {
+            "modrinth.index.json": json.dumps(index).encode(),
+            "overrides/config/opts.txt": b"fov=1\n",
+        },
+    )
+    service = _build_pack_service(_pack_downloader_factory({url: mod_bytes}))
+
+    state = _run_pack_operation(service, game_path=game_path, source_path=pack, new_version_id="Demo Pack")
+
+    assert state["status"] == "completed", state
+    result = state["result"]
+    assert result["format"] == "mrpack"
+    assert result["downloadedFiles"] == 1
+    assert result["skippedFiles"] == 1
+    assert result["baseVersion"] == "1.21.1"
+    instance = game_path / "versions" / "Demo Pack"
+    assert (instance / "mods" / "a.jar").read_bytes() == mod_bytes
+    assert (instance / "config" / "opts.txt").read_bytes() == b"fov=1\n"
+    version_json = json.loads((instance / "Demo Pack.json").read_text(encoding="utf-8"))
+    assert version_json == {"id": "Demo Pack", "inheritsFrom": "1.21.1"}
+    assert not (game_path / "versions" / ".Demo Pack.ecl-import").exists()
+
+
+def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -> None:
+    """加载器整合包缺少基础版本时应自动安装并继承加载器实例名。"""
+    game_path = tmp_path / ".minecraft"
+    (game_path / "versions").mkdir(parents=True)
+    created = []
+
+    class FakeGames:
+        def build_fabric_download_list(self, version_id, loader_version, save_name, fabric_api):
+            created.append((save_name, loader_version, fabric_api))
+            directory = game_path / "versions" / save_name
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{save_name}.json").write_text("{}", encoding="utf-8")
+            return []
+
+    service = _build_pack_service(_pack_downloader_factory({}))
+    monkeypatch.setattr(service, "_context", lambda *_args: SimpleNamespace(games=FakeGames()))
+    index = {
+        "name": "Fabric Demo",
+        "dependencies": {"minecraft": "1.21.1", "fabric-loader": "0.16.14"},
+        "files": [],
+    }
+    pack = tmp_path / "demo.mrpack"
+    _make_pack_zip(
+        pack,
+        {
+            "modrinth.index.json": json.dumps(index).encode(),
+            "overrides/mods/keep.txt": b"x",
+        },
+    )
+
+    state = _run_pack_operation(service, game_path=game_path, source_path=pack, new_version_id="FabricPack")
+
+    assert state["status"] == "completed", state
+    # 整合包基础安装不附带 Fabric API（fabric_api 为 None），避免与包内模组重复
+    assert created == [("fabric-0.16.14-1.21.1", "0.16.14", None)]
+    result = state["result"]
+    assert result["baseVersion"] == "fabric-0.16.14-1.21.1"
+    version_json = json.loads((game_path / "versions" / "FabricPack" / "FabricPack.json").read_text(encoding="utf-8"))
+    assert version_json["inheritsFrom"] == "fabric-0.16.14-1.21.1"
+
+
+def test_import_pack_reports_missing_loader_versions(tmp_path, monkeypatch) -> None:
+    """加载器版本无法解析时应报 PACK_LOADER_VERSION_REQUIRED。"""
+    service = _build_pack_service(_pack_downloader_factory({}))
+    monkeypatch.setattr(service, "loader_versions", lambda *_args: [])
+    index = {"dependencies": {"minecraft": "1.21.1", "quilt-loader": ""}, "files": []}
+    pack = tmp_path / "demo.mrpack"
+    _make_pack_zip(pack, {"modrinth.index.json": json.dumps(index).encode()})
+
+    state = _run_pack_operation(service, game_path=tmp_path / ".minecraft", source_path=pack, new_version_id="Q")
+
+    assert state["status"] == "failed"
+    assert state["errorCode"] == "PACK_LOADER_VERSION_REQUIRED"
+    assert not (tmp_path / ".minecraft" / "versions" / "Q").exists()
+
+
+def test_import_pack_hash_mismatch_rolls_back(tmp_path) -> None:
+    """哈希校验失败（含重试）应报错并清理 staging，不残留半成品实例。"""
+    game_path = tmp_path / ".minecraft"
+    _make_base_version(game_path, "1.21.1")
+    url = "https://example.com/a.jar"
+    index = {
+        "dependencies": {"minecraft": "1.21.1"},
+        "files": [
+            {"path": "mods/a.jar", "hashes": {"sha512": "f" * 128}, "downloads": [url]},
+        ],
+    }
+    pack = tmp_path / "demo.mrpack"
+    _make_pack_zip(pack, {"modrinth.index.json": json.dumps(index).encode()})
+    service = _build_pack_service(_pack_downloader_factory({}, corrupt_urls={url}))
+
+    state = _run_pack_operation(service, game_path=game_path, source_path=pack, new_version_id="BadPack")
+
+    assert state["status"] == "failed"
+    assert state["errorCode"] == "PACK_FILE_HASH_MISMATCH"
+    assert not (game_path / "versions" / "BadPack").exists()
+    assert not (game_path / "versions" / ".BadPack.ecl-import").exists()
+
+
+def test_import_legacy_ecl_pack(tmp_path) -> None:
+    """ECL 旧格式包应按整体实例导入并重命名主版本描述。"""
+    pack = tmp_path / "legacy.zip"
+    _make_pack_zip(
+        pack,
+        {
+            "ecl-pack.json": b"{}",
+            "old-version.json": b"{}",
+            "mods/legacy.jar": b"legacy",
+        },
+    )
+    service = _build_pack_service(_pack_downloader_factory({}))
+
+    state = _run_pack_operation(service, game_path=tmp_path / ".minecraft", source_path=pack, new_version_id="Legacy")
+
+    assert state["status"] == "completed", state
+    instance = tmp_path / ".minecraft" / "versions" / "Legacy"
+    assert (instance / "mods" / "legacy.jar").read_bytes() == b"legacy"
+    assert (instance / "Legacy.json").is_file()
+    assert state["result"]["format"] == "ecl-legacy"
+
+
+def test_import_unknown_format_fails(tmp_path) -> None:
+    """无法识别的压缩包应报 INVALID_PACK_ARCHIVE。"""
+    pack = tmp_path / "mystery.zip"
+    _make_pack_zip(pack, {"readme.txt": b"not a pack"})
+    service = _build_pack_service(_pack_downloader_factory({}))
+
+    state = _run_pack_operation(service, game_path=tmp_path / ".minecraft", source_path=pack, new_version_id="X")
+
+    assert state["status"] == "failed"
+    assert state["errorCode"] == "INVALID_PACK_ARCHIVE"

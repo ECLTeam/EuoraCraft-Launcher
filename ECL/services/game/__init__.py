@@ -14,6 +14,7 @@ from .catalog import CatalogCoordinator
 from .install import InstallCoordinator
 from .instance_options import InstanceOptionsCoordinator
 from .launch import LaunchCoordinator
+from .modpack import ModpackCoordinator
 from .mods import ModCoordinator
 from .profiles import ProfileCoordinator
 from .resources import ResourceCoordinator
@@ -33,6 +34,7 @@ class GameService(
     ScreenshotCoordinator,
     ServerCoordinator,
     ResourceCoordinator,
+    ModpackCoordinator,
     ModCoordinator,
     SchematicCoordinator,
     LaunchCoordinator,
