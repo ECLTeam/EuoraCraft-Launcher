@@ -1,6 +1,6 @@
-# 更多页多页化实施方案（联机 / 工具）
+# 更多页多页化实施方案（联机 / 插件 / 工具）
 
-> 状态：已实施并验证（pnpm check / pnpm build / 启动器实测均通过）
+> 状态：已实施并验证（pnpm check / pnpm build / 启动器实测均通过）；后续已把原独立「插件」页并入更多页，子页扩展为**联机 · 插件 · 工具**（见第 10 节）
 > 日期：2026-09-27
 > 已确认决策：侧边栏入口与父路由命名为**更多**（`/more`），联机只是其中一个子页提供的功能；工具页**仅放 NAT 检测**且尽量与联机页解耦；EasyTier 由内置库 EasyTier-PyO3 提供，**不存在未安装态**；房间中**允许**切到工具页；连接状态用**父级 provide/inject** 共享。
 
@@ -33,6 +33,7 @@ NAT 与 EasyTier 下载相关的引用**仅存在于** `Connect.vue`、`Connect.
   redirect: '/more/room',
   children: [
     { path: 'room', name: 'more-room', component: () => import('@/views/connect/ConnectRoomTab.vue') },
+    { path: 'plugins', name: 'more-plugins', component: withErrorBoundary(() => import('@/views/Plugins.vue')) },
     { path: 'tools', name: 'more-tools', component: () => import('@/views/connect/ConnectToolsTab.vue') },
   ],
 },
@@ -47,6 +48,7 @@ NAT 与 EasyTier 下载相关的引用**仅存在于** `Connect.vue`、`Connect.
 | `frontend/src/views/Connect.vue` | 更多页外壳：`SectionLayout` + 嵌套 `RouterView` + `provide(useConnector)` | 重写（原 610 行内容迁出） |
 | `frontend/src/views/connect/ConnectRoomTab.vue` | 联机子页：加入房间、创建房间、启动中、房间态、流程调试条 | 由原 `Connect.vue` 主体迁入 |
 | `frontend/src/views/connect/ConnectToolsTab.vue` | 工具子页：仅 NAT 检测 | 新建 |
+| `frontend/src/views/Plugins.vue` | 插件子页：由原独立 `/plugins` 页迁入（去掉页内标题，复用外壳菜单） | 复用（见第 10 节） |
 
 子页目录 `views/connect/` 与 `views/settings/` 的既有约定一致；外壳组件沿用 `Connect.vue` 文件名，因为它仍是联机上下文的持有者（`useConnector` 在此 provide）。
 
@@ -57,11 +59,12 @@ NAT 与 EasyTier 下载相关的引用**仅存在于** `Connect.vue`、`Connect.
 ```ts
 const navItems = computed(() => [
   { path: '/more/room', icon: 'wifi', label: t('connect.nav.room') },
+  { path: '/more/plugins', icon: 'puzzle', label: t('connect.nav.plugins') },
   { path: '/more/tools', icon: 'activity', label: t('connect.nav.tools') },
 ])
 ```
 
-- 侧边栏项与页面标题取 `t('sidebar.more')`（「更多」），图标 `more`（`dots-vertical`，`iconify.ts` 中已注册）；`menu.ts` 中该项为 `{ path: '/more', labelKey: 'sidebar.more', iconName: 'more' }`。
+- 侧边栏项与页面标题取 `t('sidebar.more')`（「更多」），图标 `more`（`apps` 九宫格，`iconify.ts` 中已注册）；`menu.ts` 中该项为 `{ path: '/more', labelKey: 'sidebar.more', iconName: 'more' }`。
 - 父标题「更多」与子页「联机 / 工具」不再字面重复，工具页也不再被表述为联机专属功能。
 - 工具页图标复用现有 `activity`（`iconify.ts` 中已注册，语义为诊断/脉冲）。若要专用图标，需在 `ICON_MAP` 增加 `tool: 'tool'` 并重跑 `node scripts/gen-tabler-subset.mjs`（`tabler-subset.ts` 为自动生成文件，禁止手改）。
 
@@ -168,3 +171,14 @@ provide(CONNECTOR_KEY, connector)
 2. **菜单与标题文案**：侧边栏入口与父路由命名为「更多」（`/more`），子页为「联机 / 工具」——工具页不属于联机专属功能，故父级用更中性的「更多」承载。
 3. **工具页图标**：复用现有 `activity`，未新增图标。
 4. **未使用文案键**：一并清理。
+
+## 10. 后续扩展：插件页并入更多页
+
+原「插件」是侧边栏独立叶子路由 `/plugins`；现并入更多页，作为第 2 个子页（顺序 **联机 · 插件 · 工具**）。方案细节见 `docs/plugins-into-more-plan.md`，要点：
+
+- 路由：`/more/plugins`（`more-plugins`）新增为 `/more` 子路由；旧 `/plugins` 改为 `redirect: '/more/plugins'` 以兼容外部或历史入口。
+- 侧边栏：`menu.ts` 移除 `{ path: '/plugins', labelKey: 'sidebar.plugins', iconName: 'puzzle' }`，插件仅从更多页内菜单进入。
+- 页内菜单：`Connect.vue` 的 `navItems` 插入 `{ path: '/more/plugins', icon: 'puzzle', label: t('connect.nav.plugins') }`。
+- 插件页：`Plugins.vue` 去掉工具栏左侧「插件」标题（父级菜单已表明当前位置）；`Plugins.css` 移除根节点 `overflow: auto`、把工具栏网格列由 4 列收敛为 3 列，避免与 `.section-layout__viewport` 形成嵌套滚动。
+- i18n：6 语言新增 `connect.nav.plugins`，删除已无引用的 `sidebar.plugins`。
+- 测试：`Connect.test.ts` 菜单断言由 2 项改为 3 项，并新增插件子页渲染与 `/plugins` 重定向用例。
