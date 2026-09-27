@@ -454,6 +454,16 @@ class LaunchRequest(RequestModel):
     # None 表示由后端读取实例 .ecl/settings.json；显式布尔值仅用于调用方覆盖。
     version_isolation: bool | None = None
     quick_target: Annotated[WorldQuickTarget | ServerQuickTarget, Field(discriminator="type")] | None = None
+    # 包裹 java 命令的包装命令：含 {} 占位符时替换为完整命令，否则作为前缀拼接。
+    wrapper_command: str = ""
+    # 游戏进程退出后在实例目录执行的命令；为空时跳过。
+    post_exit_command: str = ""
+    # 自定义环境变量文本（多行 KEY=VALUE）；优先级低于插件提供的变量。
+    env_vars: str = ""
+    # 游戏主窗口标题模板（{instance}/{version}/{account}）；为空时不修改窗口标题。
+    window_title: str = ""
+    # 游戏启动成功后的启动器行为: none / minimize / quit。
+    launcher_visibility: Literal["none", "minimize", "quit"] = "none"
 
 
 class InstanceTarget(RequestModel):

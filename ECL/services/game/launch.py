@@ -47,6 +47,56 @@ else:
     winreg = None
 
 
+def _parse_env_vars(text: str) -> tuple[dict[str, str], list[str]]:
+    """
+    解析多行 ``KEY=VALUE`` 自定义环境变量文本。
+
+    :param text: 用户配置的原始文本，允许空行与行内首尾空白
+    :return: (变量字典, 警告列表)；缺少 ``=`` 或键为空的行跳过并记录警告，重复键以最后一次为准
+    """
+    variables: dict[str, str] = {}
+    warnings: list[str] = []
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        key, separator, value = stripped.partition("=")
+        key = key.strip()
+        if not separator or not key:
+            warnings.append(f"忽略无效的环境变量行: {stripped!r}")
+            continue
+        variables[key] = value.strip()
+    return variables, warnings
+
+
+def _apply_wrapper(wrapper: str, command: str) -> str:
+    """
+    按包装命令语义拼装最终命令。
+
+    含 ``{}`` 占位符时把占位符替换为完整命令（可多次出现）；否则作为前缀
+    以空格拼接到命令前；包装命令为空时原样返回。
+    """
+    normalized = (wrapper or "").strip()
+    if not normalized:
+        return command
+    if "{}" in normalized:
+        return normalized.replace("{}", command)
+    return f"{normalized} {command}"
+
+
+def _render_window_title(template: str, *, instance: str, version: str, account: str) -> str:
+    """
+    渲染游戏窗口标题模板。
+
+    支持 ``{instance}``/``{version}``/``{account}`` 占位符；未知占位符保留
+    原文不展开，避免用户文本中的花括号触发意外替换；模板为空返回空字符串。
+    """
+    rendered = (template or "").strip()
+    if not rendered:
+        return ""
+    return rendered.replace("{instance}", instance).replace("{version}", version).replace("{account}", account)
+
+
 class LaunchCoordinator(_GameState):
     pre_launch_command_timeout_seconds = 60
     mesa_loader_windows_version = "26.0.4"
