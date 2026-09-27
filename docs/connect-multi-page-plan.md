@@ -176,9 +176,9 @@ provide(CONNECTOR_KEY, connector)
 
 原「插件」是侧边栏独立叶子路由 `/plugins`；现并入更多页，作为第 2 个子页（顺序 **联机 · 插件 · 工具**）。方案细节见 `docs/plugins-into-more-plan.md`，要点：
 
-- 路由：`/more/plugins`（`more-plugins`）新增为 `/more` 子路由；旧 `/plugins` 改为 `redirect: '/more/plugins'` 以兼容外部或历史入口。
+- 路由：`/more/plugins`（`more-plugins`）新增为 `/more` 子路由；原 `/plugins` 叶子路由直接删除，**不保留重定向**（该路径落入通配符路由回到首页）。
 - 侧边栏：`menu.ts` 移除 `{ path: '/plugins', labelKey: 'sidebar.plugins', iconName: 'puzzle' }`，插件仅从更多页内菜单进入。
 - 页内菜单：`Connect.vue` 的 `navItems` 插入 `{ path: '/more/plugins', icon: 'puzzle', label: t('connect.nav.plugins') }`。
 - 插件页：`Plugins.vue` 去掉工具栏左侧「插件」标题（父级菜单已表明当前位置）；`Plugins.css` 移除根节点 `overflow: auto`、把工具栏网格列由 4 列收敛为 3 列，避免与 `.section-layout__viewport` 形成嵌套滚动。
 - i18n：6 语言新增 `connect.nav.plugins`，删除已无引用的 `sidebar.plugins`。
-- 测试：`Connect.test.ts` 菜单断言由 2 项改为 3 项，并新增插件子页渲染与 `/plugins` 重定向用例。
+- 测试：`Connect.test.ts` 菜单断言由 2 项改为 3 项，并新增插件子页渲染用例。

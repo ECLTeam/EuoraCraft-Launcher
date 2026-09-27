@@ -1,8 +1,8 @@
 # 插件页并入「更多」实施方案
 
-> 状态：待确认（尚未实施）
+> 状态：已实施并验证（pnpm check / pnpm build / showcase 与启动器实测均通过）
 > 日期：2026-09-27
-> 已确认决策：页内菜单顺序为**联机 · 插件 · 工具**；侧边栏**不**为「更多」加二级菜单；插件页工具栏**去掉**「插件」标题；旧 `/plugins` **重定向**到 `/more/plugins`。
+> 已确认决策：页内菜单顺序为**联机 · 插件 · 工具**；侧边栏**不**为「更多」加二级菜单；插件页工具栏**去掉**「插件」标题；旧 `/plugins` **不保留重定向**，直接删除该叶子路由（访问将落入通配符路由回到首页）。
 
 ## 1. 现状调研
 
@@ -25,7 +25,7 @@
 
 ### 2.1 路由
 
-`frontend/src/router/index.ts` 把插件页从叶子路由改为 `/more` 的第三个子路由，并为旧路径补一条重定向：
+`frontend/src/router/index.ts` 把插件页从叶子路由改为 `/more` 的第三个子路由，原 `/plugins` 叶子路由直接删除、不保留重定向：
 
 ```ts
 {
@@ -38,10 +38,9 @@
     { path: 'tools', name: 'more-tools', component: () => import('@/views/connect/ConnectToolsTab.vue') },
   ],
 },
-{ path: '/plugins', redirect: '/more/plugins' },
 ```
 
-插件子页保留 `withErrorBoundary`：原叶子路由带该保护，去掉会让插件页失去白屏降级能力，属行为回退。重定向必须位于通配符路由 `/:pathMatch(.*)*` 之前（现有顺序已满足）。
+插件子页保留 `withErrorBoundary`：原叶子路由带该保护，去掉会让插件页失去白屏降级能力，属行为回退。删除 `/plugins` 后，该路径会落入末尾的通配符路由 `/:pathMatch(.*)*`，重定向回首页。
 
 ### 2.2 菜单
 
@@ -63,7 +62,7 @@ const navItems = computed(() => [
 - `Plugins.css`：
   - `.plugins-page` 去掉 `overflow: auto`，滚动交给 `SectionLayout` 视口与 `.plugins-list-body`，消除嵌套滚动；保留 `height: 100%`、`min-height: 0` 与居中宽度
   - `.plugins-toolbar` 网格列改为 `minmax(180px, 280px) auto auto`（3 列）
-  - `@media (max-width: 820px)` 中 `grid-column: 2 / 4` 按 3 列复核，仍成立
+  - `@media (max-width: 820px)` 同步收敛为 2 列 `minmax(160px, 1fr) auto`，筛选项跨列改为 `grid-column: 1 / 3`
 
 ### 2.4 i18n（6 种语言）
 
@@ -74,12 +73,12 @@ const navItems = computed(() => [
 
 ## 3. 实施步骤
 
-1. 路由：新增 `/more/plugins` 子路由，删除 `/plugins` 叶子路由并补重定向
+1. 路由：新增 `/more/plugins` 子路由，删除 `/plugins` 叶子路由
 2. `Connect.vue`：`navItems` 插入插件项（中间位）
 3. `constants/menu.ts`：移除 `/plugins` 项
 4. `Plugins.vue` + `Plugins.css`：去掉工具栏标题、修正网格列与滚动容器
 5. i18n 6 个语言文件：新增 `connect.nav.plugins`、删除 `sidebar.plugins`
-6. 测试：`Connect.test.ts` 更新为 3 项并断言顺序，补 `/more/plugins` 渲染用例；新增 `/plugins` 重定向用例
+6. 测试：`Connect.test.ts` 更新为 3 项并断言顺序，补 `/more/plugins` 渲染用例
 7. 文档：本文件；并在 `connect-multi-page-plan.md` 的子页结构处标注已被本次变更扩展
 
 ## 4. 测试计划
@@ -90,7 +89,6 @@ const navItems = computed(() => [
   - 侧边栏与顶部导航不再出现独立「插件」入口
   - `/more` 页内菜单为 联机 · 插件 · 工具，顺序正确
   - `/more/plugins` 正常渲染插件列表，工具栏无重复标题，滚动只有一层（列表体）
-  - 直接访问 `/plugins` 落到 `/more/plugins`
   - 从插件页切回联机页，房间状态与状态轮询不中断
 - 启动器实测
 
@@ -109,5 +107,5 @@ const navItems = computed(() => [
 - 侧边栏、顶部导航均无独立「插件」入口；「更多」高亮覆盖 `/more/plugins`
 - `/more` 页内菜单为 联机 · 插件 · 工具，切换子页不重挂外壳
 - 插件列表功能（搜索、筛选、启用/禁用、重载、卸载、安装、插件设置）与改动前一致
-- `/plugins` 与 `/more/plugins` 最终都渲染插件页
+- `/plugins` 不再是有效路由，访问会落入通配符路由回到首页
 - `pnpm check` 与 `pnpm build` 全部通过，启动器可正常运行
