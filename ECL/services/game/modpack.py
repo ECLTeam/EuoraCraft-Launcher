@@ -8,6 +8,7 @@
 # 公开接口：
 #   - class PackFileEntry — 整合包内单个待下载文件条目（路径/直链/哈希/环境适用性）。
 #   - class ModpackPlan — 归一后的整合包安装计划（版本、加载器、文件清单、overrides）。
+#   - class ModpackFormatPolicy — 整合包格式解析策略：特征标记与加载器命名映射的唯一归属点。
 #   - class ModpackCoordinator — 导入编排协调器：识别解析、自动安装基础版本、下载校验与实例装配。
 #       - import_instance_pack(game_path, source_path, new_version_id) -> dict[str, str] — 本地整合包导入长任务。
 #       - install_modpack_online(source, project_id, file_id, game_path, new_version_id) -> dict[str, str] — 下载在线整合包并装配为全新实例（Modrinth/CurseForge/FTB）。
@@ -27,6 +28,7 @@ import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from threading import Event, Thread
+from types import MappingProxyType
 from typing import Any
 
 import httpx
@@ -38,32 +40,8 @@ from .operations import OperationContext
 from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
 
-# Modrinth mrpack dependencies 键 -> ECL 加载器类型；未收录键忽略并记录警告。
-_modrinth_loader_keys = {
-    "fabric-loader": "fabric",
-    "quilt-loader": "quilt",
-    "forge": "forge",
-    "neoforge": "neoforge",
-}
-
-# CurseForge modLoaders[].id 前缀 -> ECL 加载器类型。
-_curseforge_loader_prefixes = {
-    "forge": "forge",
-    "fabric": "fabric",
-    "neoforge": "neoforge",
-    "quilt": "quilt",
-}
-
 # 在线整合包安装支持的来源。
 _online_pack_sources = frozenset({"modrinth", "curseforge", "ftb"})
-
-# FTB 版本清单 modloader 目标名 -> ECL 加载器类型。
-_ftb_loader_names = {
-    "forge": "forge",
-    "neoforge": "neoforge",
-    "fabric": "fabric",
-    "quilt": "quilt",
-}
 
 # CurseForge 指纹归一化时跳过的字节（空白字符），与 murmur2 分块读取粒度。
 _fingerprint_skipped_bytes = frozenset({0x09, 0x0A, 0x0D, 0x20})
@@ -74,6 +52,65 @@ _murmur_r = 24
 # 匹配 version_id 中最后一个 x.y[.z] 形态的 MC 版本号；取最后一个以兼容
 # "fabric-loader-0.16.14-1.21.5" 这类加载器版本号在前、MC 版本号在后的命名。
 _minecraft_version_pattern = re.compile(r"(\d+)\.(\d+)(?:\.\d+)?")
+
+
+class ModpackFormatPolicy:
+    """
+    整合包格式解析策略：各发行格式的特征与加载器命名到 ECL 领域模型的映射。
+
+    作为格式解析全部映射表的唯一归属点（规范禁止模块级脱类映射常量），
+    所有容器均为不可变对象；解析函数按需引用，键集变更时同步更新对应解析器。
+    """
+
+    # 格式特征文件 -> 格式标签，按序判定；兼容压缩包内单层目录包裹的发行包。
+    format_markers = (
+        ("modrinth.index.json", "mrpack"),
+        ("manifest.json", "curseforge"),
+        ("mcbbs.packmeta", "mcbbs"),
+        ("modpack.json", "hmcl"),
+        ("mmc-pack.json", "multimc"),
+        ("ecl-pack.json", "ecl-legacy"),
+    )
+
+    # Modrinth mrpack dependencies 键 -> ECL 加载器类型；未收录键忽略并记录警告。
+    modrinth_loader_keys = MappingProxyType(
+        {
+            "fabric-loader": "fabric",
+            "quilt-loader": "quilt",
+            "forge": "forge",
+            "neoforge": "neoforge",
+        }
+    )
+
+    # CurseForge modLoaders[].id 前缀 -> ECL 加载器类型。
+    curseforge_loader_prefixes = MappingProxyType(
+        {
+            "forge": "forge",
+            "fabric": "fabric",
+            "neoforge": "neoforge",
+            "quilt": "quilt",
+        }
+    )
+
+    # MCBBS 附加组件与 MultiMC 组件 uid -> ECL 加载器类型（HMCL 组件 uid 体系）。
+    component_loader_uids = MappingProxyType(
+        {
+            "net.minecraftforge": "forge",
+            "net.fabricmc.fabric-loader": "fabric",
+            "net.neoforged": "neoforge",
+            "org.quiltmc.quilt-loader": "quilt",
+        }
+    )
+
+    # FTB 版本清单 modloader 目标名 -> ECL 加载器类型。
+    ftb_loader_names = MappingProxyType(
+        {
+            "forge": "forge",
+            "neoforge": "neoforge",
+            "fabric": "fabric",
+            "quilt": "quilt",
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +191,7 @@ def _loader_from_modrinth_dependencies(dependencies: dict[str, Any], warnings: l
     for key, value in dependencies.items():
         if key == "minecraft":
             continue
-        mapped = _modrinth_loader_keys.get(str(key).strip().casefold())
+        mapped = ModpackFormatPolicy.modrinth_loader_keys.get(str(key).strip().casefold())
         if mapped is None:
             warnings.append(f"忽略未知的整合包依赖项: {key}")
             continue
@@ -224,7 +261,7 @@ def _loader_from_curseforge_id(value: Any, warnings: list[str]) -> tuple[str, st
     if not raw:
         return "vanilla", None
     prefix, _, version = raw.partition("-")
-    mapped = _curseforge_loader_prefixes.get(prefix.strip().casefold())
+    mapped = ModpackFormatPolicy.curseforge_loader_prefixes.get(prefix.strip().casefold())
     if mapped is None:
         warnings.append(f"忽略未知的 CurseForge 加载器声明: {raw}")
         return "vanilla", None
@@ -290,25 +327,6 @@ def _parse_curseforge_plan(root: Path) -> ModpackPlan:
     )
 
 
-# 整合包格式特征文件 -> 格式标签，按序判定。
-_pack_format_markers = (
-    ("modrinth.index.json", "mrpack"),
-    ("manifest.json", "curseforge"),
-    ("mcbbs.packmeta", "mcbbs"),
-    ("modpack.json", "hmcl"),
-    ("mmc-pack.json", "multimc"),
-    ("ecl-pack.json", "ecl-legacy"),
-)
-
-# MCBBS 附加组件与 MultiMC 组件 uid -> ECL 加载器类型（HMCL 组件 uid 体系）。
-_component_loader_uids = {
-    "net.minecraftforge": "forge",
-    "net.fabricmc.fabric-loader": "fabric",
-    "net.neoforged": "neoforge",
-    "org.quiltmc.quilt-loader": "quilt",
-}
-
-
 def _detect_pack_layout(root: Path) -> tuple[Path, str]:
     """
     按清单特征识别格式，返回 (清单所在目录, 格式标签)。
@@ -318,7 +336,7 @@ def _detect_pack_layout(root: Path) -> tuple[Path, str]:
     """
     if not root.is_dir():
         return root, "unknown"
-    for marker, tag in _pack_format_markers:
+    for marker, tag in ModpackFormatPolicy.format_markers:
         if (root / marker).is_file():
             return root, tag
     try:
@@ -327,7 +345,7 @@ def _detect_pack_layout(root: Path) -> tuple[Path, str]:
         return root, "unknown"
     if len(children) == 1:
         nested = children[0]
-        for marker, tag in _pack_format_markers:
+        for marker, tag in ModpackFormatPolicy.format_markers:
             if (nested / marker).is_file():
                 return nested, tag
     return root, "unknown"
@@ -359,8 +377,8 @@ def _parse_mcbbs_plan(root: Path) -> ModpackPlan:
         addon_version = str(addon.get("version") or "").strip()
         if addon_id == "net.minecraft":
             minecraft_version = addon_version
-        elif addon_id in _component_loader_uids:
-            loader_type = _component_loader_uids[addon_id]
+        elif addon_id in ModpackFormatPolicy.component_loader_uids:
+            loader_type = ModpackFormatPolicy.component_loader_uids[addon_id]
             loader_version = addon_version or None
         elif addon_id and addon_id != "org.lwjgl3":
             warnings.append(f"忽略 MCBBS 附加组件: {addon_id}")
@@ -433,8 +451,8 @@ def _parse_multimc_plan(root: Path) -> ModpackPlan:
         version_text = str(version).strip() if isinstance(version, str) else ""
         if uid == "net.minecraft":
             minecraft_version = version_text
-        elif uid in _component_loader_uids:
-            loader_type = _component_loader_uids[uid]
+        elif uid in ModpackFormatPolicy.component_loader_uids:
+            loader_type = ModpackFormatPolicy.component_loader_uids[uid]
             loader_version = version_text or None
         elif uid and uid != "org.lwjgl3":
             warnings.append(f"忽略 MultiMC 组件: {uid}")
@@ -608,8 +626,8 @@ def _extract_ftb_targets(manifest: dict[str, Any], warnings: list[str]) -> tuple
         version = str(target.get("version") or "").strip()
         if name == "minecraft" or target.get("type") == "game":
             minecraft_version = minecraft_version or version
-        elif target.get("type") == "modloader" and name in _ftb_loader_names:
-            loader_type = _ftb_loader_names[name]
+        elif target.get("type") == "modloader" and name in ModpackFormatPolicy.ftb_loader_names:
+            loader_type = ModpackFormatPolicy.ftb_loader_names[name]
             loader_version = version or None
         elif name not in {"java"}:
             warnings.append(f"忽略 FTB 目标组件: {name}")
