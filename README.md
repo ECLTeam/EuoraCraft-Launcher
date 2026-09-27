@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:f9c440,100:40c9c0&height=200&section=header&text=EuoraCraft%20Launcher&fontSize=50&fontColor=ffffff&fontAlignY=36&desc=Modern%20and%20Extensible%20Minecraft%20Launcher&descAlignY=58&descSize=18&animation=twinkling" width="100%" alt="EuoraCraft Launcher" />
+<!--<img src="https://capsule-render.vercel.app/api?type=waving&color=0:f9c440,100:40c9c0&height=200&section=header&text=EuoraCraft%20Launcher&fontSize=50&fontColor=ffffff&fontAlignY=36&desc=Modern%20and%20Extensible%20Minecraft%20Launcher&descAlignY=58&descSize=18&animation=twinkling" width="100%" alt="EuoraCraft Launcher" />-->
 
-<a href="https://www.eclteam.top"><img src="./resources/img/logo.ico" width="220" alt="EuoraCraft Launcher Logo" /></a>
+<img src="./resources/img/logo.ico" width="320" alt="EuoraCraft Launcher Logo" />
 
 **一个使用 Python 编写的现代化 Minecraft 第三方启动器，支持插件拓展功能，构建出自己的启动器吧**
 
@@ -94,7 +94,7 @@
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:40c9c0,100:f9c440&height=120&section=footer" width="100%" alt="" />
+<!--<img src="https://capsule-render.vercel.app/api?type=waving&color=0:40c9c0,100:f9c440&height=120&section=footer" width="100%" alt="" />-->
 
 **EuoraCraft Launcher** · ECLTeam
 
