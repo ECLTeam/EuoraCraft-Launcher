@@ -65,6 +65,7 @@ frontend/.vite/
 /.plugin_config/
 
 # Logs and temporary files
+/resources/plugin_host_dependencies.json
 *.log
 *.tmp
 *.temp

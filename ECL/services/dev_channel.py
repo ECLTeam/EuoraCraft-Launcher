@@ -747,6 +747,8 @@ class DevChannelService:
                 "error": entry.get("error"),
                 "dependencies": entry.get("dependencies") or {},
                 "isSystem": bool(entry.get("is_system", False)),
+                "pendingRestart": bool(entry.get("pending_restart", False)),
+                "installedVersion": entry.get("installed_version", entry.get("version", "")),
             }
             for entry in self._plugins.list_plugins()
         ]
@@ -760,28 +762,28 @@ class DevChannelService:
             raise DevChannelError("PLUGIN_NOT_FOUND", result.message or f"插件不存在: {name}")
         raise DevChannelError("INTERNAL_ERROR", result.message or f"插件操作失败: {name}")
 
-    def _method_plugin_enable(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+    async def _method_plugin_enable(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 启用指定插件。
         name = self._require_param_str(params, "name")
-        self._run_plugin_action(name, lambda: self._plugins.enable(name))
+        await asyncio.to_thread(self._run_plugin_action, name, lambda: self._plugins.enable(name))
         return {"name": name}
 
-    def _method_plugin_disable(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+    async def _method_plugin_disable(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 禁用指定插件。
         name = self._require_param_str(params, "name")
-        self._run_plugin_action(name, lambda: self._plugins.disable(name))
+        await asyncio.to_thread(self._run_plugin_action, name, lambda: self._plugins.disable(name))
         return {"name": name}
 
-    def _method_plugin_reload(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+    async def _method_plugin_reload(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 重载指定插件，是工具箱热重载的核心入口。
         name = self._require_param_str(params, "name")
-        self._run_plugin_action(name, lambda: self._plugins.reload(name))
+        await asyncio.to_thread(self._run_plugin_action, name, lambda: self._plugins.reload(name))
         return {"name": name}
 
-    def _method_plugin_unload(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
+    async def _method_plugin_unload(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 卸载指定插件。
         name = self._require_param_str(params, "name")
-        self._run_plugin_action(name, lambda: self._plugins.unload(name))
+        await asyncio.to_thread(self._run_plugin_action, name, lambda: self._plugins.unload(name))
         return {"name": name}
 
     async def _method_plugin_install(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
@@ -793,15 +795,14 @@ class DevChannelService:
                 source_path,
                 confirm_unverified_source=params.get("confirm_unverified_source") is True,
                 allow_network=params.get("allow_network") is True,
-                offline_runtime_pack=params.get("offline_runtime_pack"),
             )
         else:
-            result = self._plugins.install(source_path)
+            result = await asyncio.to_thread(self._plugins.install, source_path)
         if not result.success:
             if result.status == "not_found":
                 raise DevChannelError("PLUGIN_NOT_FOUND", result.message or "插件不存在")
             raise DevChannelError("INTERNAL_ERROR", result.message or f"插件安装失败: {source_path}")
-        return {"name": result.plugin_name}
+        return {"name": result.plugin_name, "status": result.status, "message": result.message}
 
     async def _method_plugin_inspect(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 只读归档预检，不下载运行时或运行插件代码。

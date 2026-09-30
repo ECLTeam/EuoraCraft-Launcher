@@ -599,8 +599,6 @@ class FileHandlers(_FrontendState):
             path = await self._pick_path(False, "选择整合包", ["zip", "mrpack"])
         elif request.purpose == FileSelectionPurpose.PLUGIN_PACKAGE:
             path = await self._pick_path(False, "选择插件包", ["eclplugin"])
-        elif request.purpose == FileSelectionPurpose.PLUGIN_RUNTIME_PACK:
-            path = await self._pick_path(False, "选择插件运行时离线包", ["zip"])
         else:
             path = await self._pick_path(False, "选择文件")
         self.logger.info("文件选择结果: %s", path)

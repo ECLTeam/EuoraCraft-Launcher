@@ -781,7 +781,6 @@ def test_select_file_modpack_purpose_filters_modpack_extensions(tmp_path, monkey
     ("purpose", "extensions", "title"),
     [
         ("plugin-package", ["eclplugin"], "选择插件包"),
-        ("plugin-runtime-pack", ["zip"], "选择插件运行时离线包"),
     ],
 )
 def test_select_file_plugin_purposes_use_specific_filters(

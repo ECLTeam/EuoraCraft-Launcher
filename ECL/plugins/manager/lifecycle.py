@@ -77,7 +77,7 @@ class PluginLifecycle(_PluginState):
         if (
             plugin is None
             and name in self._candidate_map
-            and (name in self._disabled_plugins or not self._startup_auto_enable)
+            and (name in self._disabled_plugins or not self._startup_auto_enable or name in self._package_entries)
         ):
             candidate = self._candidate_map[name]
             self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
@@ -123,7 +123,7 @@ class PluginLifecycle(_PluginState):
         :param name: 插件名称
         :param _persist_state: 是否将状态变化写入持久化文件
         """
-        if name in self._package_entries:
+        if _persist_state and name in self._package_entries:
             return self._disable_package(name)
         plugin = self._plugins.get(name)
         if plugin is not None and getattr(plugin, "is_system", False) is True:
@@ -172,8 +172,6 @@ class PluginLifecycle(_PluginState):
         :param name: 插件名称
         :param _persist_state: 是否将状态变化写入持久化文件
         """
-        if name in self._package_entries:
-            return PluginActionResult(name, PluginAction.UNLOAD, "failed", "归档插件请使用禁用或卸载")
         plugin = self._plugins.get(name)
         if plugin is None:
             reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
@@ -303,18 +301,16 @@ class PluginLifecycle(_PluginState):
         *,
         confirm_unverified_source: bool = False,
         allow_network: bool = False,
-        offline_runtime_pack: str | None = None,
     ) -> PluginActionResult:
         """
         从目录或归档安装插件，失败时保留旧版代码与启用状态。
 
-        归档必须显式确认来源未验证，并在独立 Worker 验证后激活。兼容目录
-        安装路径仍在宿主进程执行插件代码，不提供依赖隔离。
+        归档必须显式确认来源未验证，安装后重启加载。所有插件共享宿主解释器，
+        仅归档依赖的安装目录独立，不提供不同版本并行导入。
 
         :param source_path: 待安装插件的本地归档或源目录
         :param confirm_unverified_source: 是否确认归档来源未验证
-        :param allow_network: 是否允许补齐运行时和依赖
-        :param offline_runtime_pack: 可选的运行时离线包路径
+        :param allow_network: 是否允许补齐缺失 wheel
         :return: 安装结果；失败时旧插件尽可能保持可用
         """
         if not isinstance(source_path, str) or not source_path.strip():
@@ -325,7 +321,6 @@ class PluginLifecycle(_PluginState):
                 source_path,
                 confirm_unverified_source=confirm_unverified_source,
                 allow_network=allow_network,
-                offline_runtime_pack=offline_runtime_pack,
             )
         if not source.is_dir():
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件源目录不存在")

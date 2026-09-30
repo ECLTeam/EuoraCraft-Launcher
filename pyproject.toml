@@ -20,6 +20,7 @@ dependencies = [
     "mcstatus>=12.0.0",
     "psutil>=7.2.0",
     "packaging>=23.0",
+    "installer==0.7.0",
     "easytier-pyo3>=0.1.2",
     "websockets>=13.0"
 ]
@@ -57,6 +58,9 @@ dev = [
     "nuitka[onefile]>=4.0",
     "uv==0.12.16"
 ]
+
+[tool.setuptools]
+py-modules = ["ecl_plugin_sdk"]
 
 [tool.setuptools.packages.find]
 where = ["."]

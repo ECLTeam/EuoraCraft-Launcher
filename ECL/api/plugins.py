@@ -25,16 +25,17 @@
 #       - plugin_notify_sidebar_state(body) -> dict[str, Any] — 通知插件侧栏的折叠状态。
 # ============================================================
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
 from ECL.api.contracts import failure
+from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
 from ECL.plugins.package_archive import PluginPackageError
-from ECL.plugins.package_preparation import PluginPreparationError
-from ECL.plugins.runtime_assets import PluginRuntimeError
 
 from .bridge import _FrontendState
 
@@ -46,7 +47,7 @@ class PluginHandlers(_FrontendState):
 
     async def _run_plugin_lifecycle(self, name: str, action: Callable[[str], PluginActionResult]) -> PluginActionResult:
         """
-        归档 Worker 启停可能等待进程，避免在前端 IPC 事件循环中阻塞。
+        归档生命周期包含磁盘校验，避免在前端 IPC 事件循环中阻塞。
         """
         if self.plugins.is_package_plugin(name):
             return await asyncio.to_thread(action, name)
@@ -135,13 +136,12 @@ class PluginHandlers(_FrontendState):
                 plugin_path,
                 confirm_unverified_source=body.get("confirm_unverified_source") is True,
                 allow_network=body.get("allow_network") is True,
-                offline_runtime_pack=body.get("offline_runtime_pack"),
             )
         else:
             result = self.plugins.install(plugin_path)
         if not result.success:
             return failure(result.message or "安装插件失败", "PLUGIN_INSTALL_FAILED")
-        return {"success": True}
+        return {"success": True, "data": {"status": result.status, "message": result.message}}
 
     async def plugin_package_inspect(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -155,7 +155,7 @@ class PluginHandlers(_FrontendState):
             return failure("插件包路径无效", "PLUGIN_PACKAGE_INSPECT_FAILED")
         try:
             preflight = await asyncio.to_thread(self.plugins.inspect_package, plugin_path)
-        except (OSError, PluginPackageError, PluginPreparationError, PluginRuntimeError) as exc:
+        except (OSError, PluginPackageError, PluginDependencyError) as exc:
             return failure(str(exc), "PLUGIN_PACKAGE_INSPECT_FAILED")
         return {"success": True, "data": asdict(preflight)}
 

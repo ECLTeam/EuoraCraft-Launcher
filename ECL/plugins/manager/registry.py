@@ -21,13 +21,13 @@
 #       - call_command(command, params=…, timeout=…) -> Any — 在线程池中调用 ``插件名:命令名``，失败或超时时抛出 ``PluginCommandError``。
 # ============================================================
 
+from __future__ import annotations
+
 import math
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
-from ECL.plugins.package_activation import PluginPackageActivationError
 from ECL.plugins.plugin import Plugin
-from ECL.plugins.worker_process import PluginWorkerCallError, PluginWorkerError
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult, PluginCommandError
@@ -172,7 +172,7 @@ class PluginRegistry(_PluginState):
                 )
             )
         # 补充因依赖错误未被加载的插件条目，便于前端展示
-        loaded_names = set(self._plugins.keys())
+        loaded_names = set(self._plugins.keys()) | set(self._package_entries)
         for name in sorted(self._dependency_resolution.skipped - loaded_names - self._disabled_plugins):
             if self._candidate_map.get(name, {}).get("is_system", False):
                 continue
@@ -217,19 +217,33 @@ class PluginRegistry(_PluginState):
                     is_system=candidate.get("is_system", False),
                 )
             )
+        self._append_package_entries(result)
+        return result
+
+    def _append_package_entries(self, result: list[dict[str, Any]]) -> None:
         with self._package_lock:
             package_entries = tuple((name, dict(entry)) for name, entry in sorted(self._package_entries.items()))
         for name, package_entry in package_entries:
+            if name in self._plugins:
+                continue
             result.append(
                 _plugin_entry(
                     name,
                     package_entry["metadata"],
                     package_entry["status"],
-                    package_entry["error"],
+                    package_entry["error"]
+                    or self._plugin_errors.get(name)
+                    or self._dependency_resolution.errors.get(name),
                     services=package_entry.get("services", []),
                 )
             )
-        return result
+        for entry in result:
+            package_entry = self._package_entries.get(entry["name"])
+            if package_entry is not None:
+                entry["pending_restart"] = bool(package_entry.get("pending_restart"))
+                entry["installed_version"] = package_entry["metadata"].get("version", "")
+                if package_entry.get("error") and not entry.get("error"):
+                    entry["error"] = package_entry["error"]
 
     def get_routes(self) -> list[dict[str, Any]]:
         """
@@ -409,10 +423,17 @@ class PluginRegistry(_PluginState):
         """
         if not isinstance(command, str) or ":" not in command:
             raise PluginCommandError(f"命令格式错误: {command}")
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or not math.isfinite(timeout)
+            or not 0 < timeout <= 120
+            or not isinstance(params, (dict, type(None)))
+            or (isinstance(params, dict) and any(not isinstance(key, str) for key in params))
+        ):
+            raise PluginCommandError("插件命令参数或超时无效")
         plugin_name, cmd_name = command.split(":", 1)
         plugin = self._plugins.get(plugin_name)
-        if plugin is None and self.is_package_plugin(plugin_name):
-            return self._call_package_command(plugin_name, cmd_name, params, timeout)
         if plugin is None or self._status.get(plugin_name) != "enabled":
             raise PluginCommandError(f"插件 {plugin_name} 未启用或不存在")
         handler = plugin._commands.get(cmd_name)
@@ -429,37 +450,3 @@ class PluginRegistry(_PluginState):
         except Exception as exc:
             self.logger.exception("插件 %s 命令 %s 执行失败", plugin_name, cmd_name)
             raise PluginCommandError(f"插件 {plugin_name} 命令 {cmd_name} 执行失败: {exc}") from exc
-
-    def _call_package_command(self, name: str, command: str, params: dict[str, Any] | None, timeout: float) -> object:
-        """
-        通过当前活动版本的 Worker 执行命令，不在宿主导入归档插件代码。
-        """
-        if (
-            not isinstance(timeout, (int, float))
-            or isinstance(timeout, bool)
-            or not math.isfinite(timeout)
-            or not 0 < timeout <= 120
-            or not isinstance(params, (dict, type(None)))
-            or (isinstance(params, dict) and any(not isinstance(key, str) for key in params))
-        ):
-            raise PluginCommandError("插件命令参数或超时无效")
-        with self._package_lock:
-            store = self._package_store
-            entry = self._package_entries.get(name)
-            if store is None or entry is None or entry["status"] != "enabled":
-                raise PluginCommandError(f"插件 {name} 未启用或不存在")
-        try:
-            future = self._command_executor.submit(store.call_command, name, command, params or {}, timeout)
-            return future.result(timeout=timeout + 1)
-        except FutureTimeoutError:
-            future.cancel()
-            raise PluginCommandError(f"插件 {name} 命令 {command} 执行超时") from None
-        except PluginWorkerCallError as exc:
-            raise PluginCommandError(f"插件 {name} 命令 {command} 执行失败: {exc}") from exc
-        except PluginWorkerError as exc:
-            with self._package_lock:
-                if self._package_entries.get(name) is entry:
-                    self._package_error(name, str(exc))
-            raise PluginCommandError(f"插件 {name} 命令 {command} 执行失败: {exc}") from exc
-        except PluginPackageActivationError as exc:
-            raise PluginCommandError(f"插件 {name} 命令 {command} 执行失败: {exc}") from exc

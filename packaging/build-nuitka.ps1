@@ -70,6 +70,9 @@ try {
         Write-Host "已临时精简 PIL 插件：$($pilRemoved -join ', ')"
     }
 
+    & $Py packaging/build-host-dependencies.py
+    if ($LASTEXITCODE -ne 0) { throw "生成宿主依赖清单失败" }
+
     & $Py -m nuitka `
         --mode=onefile `
         --onefile-no-compression `
@@ -80,6 +83,7 @@ try {
         --windows-icon-from-ico=resources/img/logo.ico `
         @upxArgs `
         --include-package=ECL `
+        --include-module=ecl_plugin_sdk `
         --include-package=pytauri `
         --include-package=pytauri_plugins `
         --include-package=pytauri_utils `

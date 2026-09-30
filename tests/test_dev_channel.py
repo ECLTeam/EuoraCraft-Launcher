@@ -300,7 +300,7 @@ async def test_plugin_install_returns_installed_name(tmp_path) -> None:
         try:
             reply = await _request(websocket, 7, "plugin.install", {"path": str(tmp_path / "src")})
             assert reply["ok"] is True
-            assert reply["data"] == {"name": "demo"}
+            assert reply["data"] == {"name": "demo", "status": "installed", "message": ""}
         finally:
             await websocket.close()
     finally:
@@ -324,12 +324,11 @@ async def test_plugin_archive_install_forwards_confirmation(tmp_path) -> None:
                 "plugin.install",
                 {"path": str(tmp_path / "demo.eclplugin"), "confirm_unverified_source": True, "allow_network": True},
             )
-            assert reply["ok"] is True and reply["data"] == {"name": "demo"}
+            assert reply["ok"] is True and reply["data"] == {"name": "demo", "status": "installed", "message": ""}
             plugins.install.assert_called_once_with(
                 str(tmp_path / "demo.eclplugin"),
                 confirm_unverified_source=True,
                 allow_network=True,
-                offline_runtime_pack=None,
             )
         finally:
             await websocket.close()

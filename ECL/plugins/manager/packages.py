@@ -3,371 +3,304 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：将已提交归档插件的 Worker 状态接入插件管理器，不执行宿主插件导入。
+# 文件作用：准备归档磁盘版本并将已安装包接入主进程插件发现与生命周期。
 #
 # 公开接口：
-#   - class PluginPackages — 恢复归档插件并路由其基础生命周期操作。
+#   - class PluginPackages — 归档安装、恢复、冲突检查和重启生效。
 # ============================================================
 
 from __future__ import annotations
 
 import json
-import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ECL.plugins.environment_pool import PluginEnvironmentError, _exclusive_lock
-from ECL.plugins.package_activation import (
-    PluginPackageActivation,
-    PluginPackageActivationError,
-    PluginPackageActivationStore,
-    plugin_name_pattern,
-)
+from ECL.plugins.dependency_lock import PluginDependencyError
+from ECL.plugins.environment_pool import PluginDependencyDirectory, _exclusive_lock
+from ECL.plugins.host_dependencies import HostDependencyPolicy
+from ECL.plugins.package_activation import PluginPackageActivation, PluginPackageActivationStore, plugin_name_pattern
 from ECL.plugins.package_archive import PluginPackageError
-from ECL.plugins.package_preparation import PluginPackagePreflight, PluginPackagePreparer, PluginPreparationError
-from ECL.plugins.runtime_assets import PluginRuntimeAsset, PluginRuntimeError, load_plugin_runtime_asset
+from ECL.plugins.package_preparation import PluginPackagePreflight, PluginPackagePreparer
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult
 
 
-@dataclass(frozen=True, slots=True)
-class _PackageEventRef:
-    name: str
-
-
 class PluginPackages(_PluginState):
     """
-    恢复数据目录中已提交的归档活动指针，并托管其基础生命周期。
+    将归档安装版本与本进程实际加载版本分开管理。
 
-    归档插件不会进入宿主 `_plugins` 或目录发现流程；Worker SDK 注册项迁移完成前，
-    命令、设置及其他扩展点仍不可作为已兼容能力对外承诺。
+    安装只准备文件并提交版本；启动或显式启用才使用宿主加载器，不创建 Worker。
     """
-
-    def _package_asset(self) -> PluginRuntimeAsset:
-        manifest_path = self._resource_path / "resources" / "plugin_runtime_manifest.json"
-        return load_plugin_runtime_asset(manifest_path)
 
     def inspect_package(self, source_path: str) -> PluginPackagePreflight:
         """
-        预检本地归档及当前目标依赖，不下载资产或执行插件代码。
+        校验本地插件归档，不执行代码或联网。
 
-        :param source_path: 本地 `.eclplugin` 文件路径
-        :return: 已校验的归档信息与未验证来源标记
-        :raises PluginPreparationError: 路径或依赖契约不满足要求时抛出
+        :param source_path: .eclplugin 文件路径
+        :return: 当前宿主目标的依赖预检结果
+        :raises PluginDependencyError: 路径或依赖契约无效
         """
         if not isinstance(source_path, str) or not source_path.strip():
-            raise PluginPreparationError("插件包路径无效")
+            raise PluginDependencyError("插件包路径无效")
         archive_path = Path(source_path)
         if archive_path.suffix.lower() != ".eclplugin" or not archive_path.is_file():
-            raise PluginPreparationError("请选择有效的 .eclplugin 文件")
-        return PluginPackagePreparer(self._data_path, self._package_asset()).inspect(archive_path)
+            raise PluginDependencyError("请选择有效的 .eclplugin 文件")
+        return PluginPackagePreparer(self._data_path).inspect(archive_path)
+
+    def _dependency_policy(self) -> HostDependencyPolicy:
+        if self._host_dependency_policy is None:
+            self._host_dependency_policy = HostDependencyPolicy(self._resource_path)
+        return self._host_dependency_policy
 
     def install_package(
-        self,
-        source_path: str,
-        *,
-        confirm_unverified_source: bool,
-        allow_network: bool = False,
-        offline_runtime_pack: str | None = None,
+        self, source_path: str, *, confirm_unverified_source: bool, allow_network: bool = False
     ) -> PluginActionResult:
         """
-        显式确认后准备并激活归档；失败时保留已提交的旧版本。
+        准备并提交归档安装版本，不执行入口，新版本重启后加载。
 
-        安装可能下载运行时和依赖，异步调用方必须放到后台线程。历史版本和共享
-        环境暂不清理；文件安装界面与 Worker 扩展点代理另行接入。
-
-        :param source_path: 本地 `.eclplugin` 文件路径
-        :param confirm_unverified_source: 用户是否确认无签名来源警告
-        :param allow_network: 是否允许联网补齐缺失的运行时和依赖
-        :param offline_runtime_pack: 可选的插件专用运行时离线包路径
-        :return: 安装结果；失败时包含可显示的原因
+        :param source_path: 本地 .eclplugin 路径
+        :param confirm_unverified_source: 是否明确确认无签名来源
+        :param allow_network: 是否允许下载缺失的锁定 wheel
+        :return: 已安装及待重启结果；失败时旧指针保持不变
         """
-        if confirm_unverified_source is not True:
+        if confirm_unverified_source is not True or type(allow_network) is not bool:
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "安装无签名插件前必须确认来源未验证")
-        if not isinstance(allow_network, bool) or (
-            offline_runtime_pack is not None and not isinstance(offline_runtime_pack, str)
-        ):
-            return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件安装参数无效")
         try:
             preflight = self.inspect_package(source_path)
-        except (OSError, PluginPackageError, PluginPreparationError, PluginRuntimeError) as exc:
-            return PluginActionResult("", PluginAction.INSTALL, "invalid", str(exc))
-        return self._install_preflight_package(
-            Path(source_path), preflight, allow_network=allow_network, offline_runtime_pack=offline_runtime_pack
-        )
-
-    def _install_preflight_package(
-        self,
-        archive_path: Path,
-        preflight: PluginPackagePreflight,
-        *,
-        allow_network: bool,
-        offline_runtime_pack: str | None,
-    ) -> PluginActionResult:
-        """
-        在管理器锁下完成版本准备与原子激活，失败时清理未提交的新代码。
-        """
-        name = preflight.package.name
-        install_lock_path = self._data_path / "plugin_packages" / f"{name}.install.lock"
-        try:
-            with _exclusive_lock(install_lock_path), self._package_lock:
-                return self._install_preflight_package_locked(
-                    archive_path,
-                    preflight,
-                    allow_network=allow_network,
-                    offline_runtime_pack=offline_runtime_pack,
-                )
-        except (OSError, PluginEnvironmentError) as exc:
-            return PluginActionResult(name, PluginAction.INSTALL, "failed", str(exc))
-
-    def _install_preflight_package_locked(
-        self,
-        archive_path: Path,
-        preflight: PluginPackagePreflight,
-        *,
-        allow_network: bool,
-        offline_runtime_pack: str | None,
-    ) -> PluginActionResult:
-        name = preflight.package.name
-        pointer_path = self._data_path / "plugin_packages" / name / "active.json"
-        if (pointer_path.exists() or pointer_path.is_symlink()) and name not in self._package_entries:
-            return PluginActionResult(name, PluginAction.INSTALL, "failed", "现有归档活动指针尚未恢复")
-        if name in self._candidate_map:
-            candidate = self._candidate_map[name]
-            reason = "不能覆盖系统插件" if candidate.get("is_system", False) else "同名目录插件已安装"
-            return PluginActionResult(name, PluginAction.INSTALL, "forbidden", reason)
-        if name in self._package_conflicts or self._package_entries.get(name, {}).get("status") == "error":
-            return PluginActionResult(name, PluginAction.INSTALL, "failed", "现有归档活动指针无法恢复，请先处理")
-        code_path = self._data_path / "plugin_packages" / name / f"pkg-{preflight.package.manifest_sha256[:20]}"
-        code_existed = code_path.exists()
-        pointer_existed = pointer_path.exists() or pointer_path.is_symlink()
-        store = self._package_store
-        created_store = False
-        try:
-            asset = self._package_asset()
-            if store is not None and store.runtime_asset != asset:
-                raise PluginRuntimeError("插件运行时资产已变化，请重启启动器")
-            preparer = PluginPackagePreparer(self._data_path, asset)
-            prepared = preparer.prepare(
-                archive_path,
-                confirm_unverified_source=True,
-                allow_network=allow_network,
-                offline_runtime_pack=Path(offline_runtime_pack) if offline_runtime_pack else None,
-                expected_package=preflight.package,
-            )
-            if not pointer_existed and (pointer_path.exists() or pointer_path.is_symlink()):
-                raise PluginPackageActivationError("安装期间出现新的归档活动指针，请重试")
-            if store is None:
-                store = PluginPackageActivationStore(self._data_path, asset)
-                created_store = True
-            previous = store.restore(name)
-            active = store.activate(prepared, enabled=previous.enabled if previous is not None else True)
-        except (
-            OSError,
-            PluginEnvironmentError,
-            PluginPackageError,
-            PluginPackageActivationError,
-            PluginPreparationError,
-            PluginRuntimeError,
-        ) as exc:
-            if created_store and store is not None:
-                store.close()
-            if (
-                not code_existed
-                and not pointer_path.exists()
-                and not code_path.is_symlink()
-                and code_path.is_dir()
-                and code_path.resolve().is_relative_to(self._data_path.resolve())
-            ):
+            name = preflight.package.name
+            with _exclusive_lock(self._data_path / "plugin_packages" / f"{name}.install.lock"), self._package_lock:
+                candidate = self._candidate_map.get(name)
+                if candidate is not None and name not in self._package_entries:
+                    return PluginActionResult(name, PluginAction.INSTALL, "forbidden", "不能覆盖同名目录或系统插件")
+                if name in self._package_conflicts:
+                    return PluginActionResult(name, PluginAction.INSTALL, "failed", "同名目录插件与归档冲突，请先处理")
+                store = self._package_store or PluginPackageActivationStore(self._data_path)
+                previous_error = None
                 try:
-                    shutil.rmtree(code_path)
-                except OSError:
-                    self.logger.exception("插件 %s 安装失败后无法清理未激活代码", name)
-            return PluginActionResult(name, PluginAction.INSTALL, "failed", str(exc))
-        self._package_store = store
-        self._set_package_entry(active)
-        try:
-            self.events.emit("plugin:installed", name)
-        except Exception:
-            self.logger.exception("归档插件 %s 已安装，但事件通知失败", name)
-        return PluginActionResult(name, PluginAction.INSTALL, "installed")
+                    previous = store.restore(name)
+                except PluginDependencyError as exc:
+                    # 显式重装可补齐旧迁移缺失的 wheel，失败前不改旧指针。
+                    previous = None
+                    previous_error = f"旧安装无法恢复，新版本保持禁用，请重启后启用: {exc}"
+                prepared = PluginPackagePreparer(self._data_path).prepare(
+                    Path(source_path),
+                    confirm_unverified_source=True,
+                    allow_network=allow_network,
+                    expected_package=preflight.package,
+                )
+                reason = self._dependency_policy().conflict(prepared.dependency_directory) or previous_error
+                active = store.activate(prepared, enabled=not reason and (previous.enabled if previous else True))
+                self._package_store = store
+                self._set_package_entry(active, status="pending_restart", error=reason)
+                if reason:
+                    self._disabled_plugins.add(name)
+                    self._save_plugin_state()
+                self.events.emit("plugin:installed", name)
+                message = "插件已安装，重启后生效" if not reason else f"插件已安装但保持禁用: {reason}"
+                if prepared.dependency_directory and prepared.dependency_directory.warnings:
+                    message += "; " + "; ".join(prepared.dependency_directory.warnings)
+                return PluginActionResult(name, PluginAction.INSTALL, "installed", message)
+        except (OSError, PluginPackageError, PluginDependencyError) as exc:
+            return PluginActionResult("", PluginAction.INSTALL, "failed", str(exc))
 
     def is_package_plugin(self, name: str) -> bool:
         """
-        判断名称是否属于归档活动指针，供 async IPC 选择后台执行路径。
+        判断名称是否属于已发现归档，供 IPC 调度使用。
 
         :param name: 插件名称
-        :return: 已发现归档活动指针时返回 True
+        :return: 是否存在归档安装条目
         """
         with self._package_lock:
             return name in self._package_entries
 
-    def _discover_package_names(self) -> set[str]:
+    def _set_package_entry(
+        self, active: PluginPackageActivation, *, status: str | None = None, error: str | None = None
+    ) -> None:
+        metadata = json.loads((active.code_path / "plugin.json").read_text(encoding="utf-8"))
+        self._package_entries[active.name] = {
+            "metadata": metadata,
+            "status": status or ("unloaded" if active.enabled else "disabled"),
+            "pending_restart": status == "pending_restart",
+            "error": error,
+            "services": [],
+            "active": active,
+        }
+
+    def _package_error(self, name: str, message: str) -> None:
+        previous = self._package_entries.get(name, {})
+        metadata = previous.get("metadata", {"name": name})
+        self._package_entries[name] = {
+            **previous,
+            "metadata": metadata,
+            "status": "error",
+            "error": message,
+            "services": [],
+        }
+        self.logger.error("归档插件 %s 无法恢复: %s", name, message)
+
+    def _restore_package_plugins(
+        self, user_names: set[str], system_names: set[str], *, check_dependencies: bool = True
+    ) -> set[str]:
         """
-        仅发现具有合法名称与活动指针的普通目录，忽略半成品版本。
+        仅恢复归档文件，整体预检后提供宿主候选项，不执行代码。
+
+        安全模式不登记依赖，手动启用时仍需重新校验。
         """
+        self._package_entries.clear()
+        self._package_candidates.clear()
         package_root = self._data_path / "plugin_packages"
         if package_root.is_symlink() or not package_root.is_dir():
             return set()
-        return {
+        names = {
             entry.name
             for entry in package_root.iterdir()
             if entry.is_dir()
             and not entry.is_symlink()
-            and plugin_name_pattern.fullmatch(entry.name) is not None
+            and plugin_name_pattern.fullmatch(entry.name)
             and (entry / "active.json").is_file()
         }
-
-    def _set_package_entry(self, active: PluginPackageActivation) -> None:
-        """
-        从已验证的版本目录读取显示元数据，不让 UI 依赖宿主插件实例。
-        """
-        try:
-            metadata = json.loads((active.code_path / "plugin.json").read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            metadata = {}
-        self._package_entries[active.name] = {
-            "metadata": metadata if isinstance(metadata, dict) else {},
-            "status": "enabled" if active.enabled else "disabled",
-            "error": None,
-            "services": list(active.worker.commands) if active.worker is not None else [],
-        }
-
-    def _package_error(self, name: str, message: str) -> None:
-        previous = self._package_entries.get(name)
-        metadata = previous["metadata"] if previous is not None else {"name": name}
-        self._package_entries[name] = {"metadata": metadata, "status": "error", "error": message, "services": []}
-        self.logger.error("归档插件 %s 无法恢复: %s", name, message)
-
-    def _restore_package_plugins(
-        self, user_names: set[str], system_names: set[str], *, restore_workers: bool = True
-    ) -> set[str]:
-        """
-        在目录发现前恢复归档 Worker；失败时保留错误状态并阻止宿主回退。
-
-        同名目录插件与归档冲突时两者都不启动，避免误加载未隔离代码。
-
-        :param restore_workers: 是否恢复归档 Worker 进程；--disable-plugins 安全模式下
-            仅完成发现与冲突登记，不启动任何归档插件进程
-        """
-        self._close_packages()
-        self._package_entries.clear()
-        self._package_conflicts.clear()
-        names = self._discover_package_names()
-        if not names:
-            return names
-        self._package_conflicts = names & user_names
-        for name in sorted(self._package_conflicts):
-            self._package_error(name, "同名目录插件与归档插件冲突，请先手动处理")
-        for name in sorted(names & system_names):
-            self.logger.error("归档插件 %s 与系统插件重名，忽略归档活动指针", name)
-        restorable_names = names - self._package_conflicts - system_names
-        if not restorable_names or not restore_workers:
-            return names
-        try:
-            asset = self._package_asset()
-        except PluginRuntimeError as exc:
-            for name in sorted(restorable_names):
-                self._package_error(name, str(exc))
-            return names
-        self._package_store = PluginPackageActivationStore(self._data_path, asset)
-        for name in sorted(restorable_names):
+        self._package_conflicts = names & (user_names | system_names)
+        self._package_store = PluginPackageActivationStore(self._data_path)
+        directories = {}
+        for name in sorted(names - system_names):
+            if name in self._package_conflicts:
+                self._package_error(name, "同名目录插件与归档插件冲突，请先处理")
+                continue
             try:
                 active = self._package_store.restore(name)
-                if active is not None:
-                    self._set_package_entry(active)
-            except (OSError, PluginEnvironmentError, PluginPackageActivationError) as exc:
+                if active is None:
+                    continue
+                self._set_package_entry(active)
+                if not active.enabled:
+                    self._disabled_plugins.add(name)
+                self._package_candidates[name] = {
+                    "name": name,
+                    "plugin_dir": active.code_path,
+                    "metadata_path": active.code_path / "plugin.json",
+                    "metadata": self._package_entries[name]["metadata"],
+                    "is_system": False,
+                }
+                if active.enabled and name not in self._disabled_plugins:
+                    directories[name] = active.dependency_directory
+            except (OSError, PluginDependencyError) as exc:
                 self._package_error(name, str(exc))
+        if check_dependencies and directories:
+            self._check_startup_directories(directories)
         return names
+
+    def _check_startup_directories(self, directories: dict[str, PluginDependencyDirectory | None]) -> None:
+        """
+        在任何用户入口执行前禁用整个冲突组合，而非选择扫描顺序的胜者。
+        """
+        if directories:
+            try:
+                errors = self._dependency_policy().combination_conflicts(directories)
+                for name, reason in errors.items():
+                    self._disabled_plugins.add(name)
+                    self._package_entries[name]["status"] = "disabled"
+                    self._package_entries[name]["error"] = reason
+                    self._plugin_errors[name] = reason
+                if errors:
+                    self._save_plugin_state()
+            except PluginDependencyError as exc:
+                for name in directories:
+                    self._package_candidates.pop(name, None)
+                    self._package_error(name, str(exc))
+
+    def _prepare_package_load(self, name: str) -> None:
+        """
+        在宿主加载入口前复核磁盘版本并登记兼容依赖，不改模块缓存。
+        """
+        if name not in self._package_entries:
+            return
+        entry = self._package_entries[name]
+        if entry.get("pending_restart"):
+            raise PluginDependencyError("插件安装版本待重启，不能在本进程切换")
+        if self._package_store is None:
+            raise PluginDependencyError("归档安装状态尚未恢复")
+        active = self._package_store.restore(name)
+        if active is None:
+            raise PluginDependencyError("归档安装指针不存在")
+        if active.manifest_sha256 != entry["active"].manifest_sha256:
+            raise PluginDependencyError("插件磁盘版本已变化，请重启")
+        entry_modules = {f"plugin_{candidate_name}" for candidate_name in self._candidate_map}
+        if active.dependency_directory and any(
+            package.imports & entry_modules for package in active.dependency_directory.packages
+        ):
+            raise PluginDependencyError("插件依赖与宿主插件入口模块名称冲突")
+        self._dependency_policy().register(active.dependency_directory)
 
     def _enable_package(self, name: str) -> PluginActionResult:
         with self._package_lock:
-            return self._enable_package_locked(name)
-
-    def _enable_package_locked(self, name: str) -> PluginActionResult:
-        store = self._package_store
-        if store is None or name in self._package_conflicts:
-            return PluginActionResult(
-                name, PluginAction.ENABLE, "failed", self._package_entries.get(name, {}).get("error", "归档插件不存在")
-            )
-        try:
-            if store.restore(name) is None:
-                return PluginActionResult(name, PluginAction.ENABLE, "not_found", "归档活动指针不存在")
-            active = store.set_enabled(name, True)
-        except (OSError, PluginEnvironmentError, PluginPackageActivationError) as exc:
-            self._package_error(name, str(exc))
-            return PluginActionResult(name, PluginAction.ENABLE, "failed", str(exc))
-        self._set_package_entry(active)
-        self.events.emit("plugin:enabled", _PackageEventRef(name))
-        return PluginActionResult(name, PluginAction.ENABLE, "enabled")
+            entry = self._package_entries[name]
+            if entry.get("pending_restart") or name in self._package_conflicts:
+                return PluginActionResult(
+                    name, PluginAction.ENABLE, "failed", entry.get("error") or "插件安装版本待重启"
+                )
+            enabled, reason = self._enable(name)
+            if enabled and self._package_store:
+                try:
+                    self._package_store.set_enabled(name, True)
+                except (OSError, PluginDependencyError) as exc:
+                    return PluginActionResult(
+                        name, PluginAction.ENABLE, "failed", f"插件已在内存启用，但下次启动状态保存失败: {exc}"
+                    )
+                entry["status"] = "enabled"
+                entry["error"] = None
+            return PluginActionResult(name, PluginAction.ENABLE, "enabled" if enabled else "failed", reason)
 
     def _disable_package(self, name: str) -> PluginActionResult:
         with self._package_lock:
-            return self._disable_package_locked(name)
-
-    def _disable_package_locked(self, name: str) -> PluginActionResult:
-        store = self._package_store
-        if store is None or name in self._package_conflicts:
-            return PluginActionResult(
-                name, PluginAction.DISABLE, "failed", self._package_entries.get(name, {}).get("error", "归档插件不存在")
-            )
-        try:
-            active = store.set_enabled(name, False)
-        except (OSError, PluginEnvironmentError, PluginPackageActivationError) as exc:
-            return PluginActionResult(name, PluginAction.DISABLE, "failed", str(exc))
-        self._set_package_entry(active)
-        self.events.emit("plugin:disabled", _PackageEventRef(name))
-        return PluginActionResult(name, PluginAction.DISABLE, "disabled")
+            if name in self._plugins and self._status.get(name) == "enabled":
+                result = self.disable(name, _persist_state=False)
+                if not result.success:
+                    return result
+            if self._package_store:
+                try:
+                    self._package_store.set_enabled(name, False)
+                except (OSError, PluginDependencyError) as exc:
+                    return PluginActionResult(
+                        name, PluginAction.DISABLE, "failed", f"插件下次启动禁用状态保存失败: {exc}"
+                    )
+            self._disabled_plugins.add(name)
+            self._save_plugin_state()
+            self._package_entries[name]["status"] = "disabled"
+            return PluginActionResult(name, PluginAction.DISABLE, "disabled")
 
     def _reload_package(self, name: str) -> PluginActionResult:
         with self._package_lock:
-            return self._reload_package_locked(name)
-
-    def _reload_package_locked(self, name: str) -> PluginActionResult:
-        store = self._package_store
-        if store is None or name in self._package_conflicts:
-            return PluginActionResult(
-                name, PluginAction.RELOAD, "failed", self._package_entries.get(name, {}).get("error", "归档插件不存在")
-            )
-        try:
-            active = store.reload(name)
-        except (OSError, PluginEnvironmentError, PluginPackageActivationError) as exc:
-            return PluginActionResult(name, PluginAction.RELOAD, "failed", str(exc))
-        self._set_package_entry(active)
-        return PluginActionResult(name, PluginAction.RELOAD, "enabled")
+            if self._package_entries[name].get("pending_restart"):
+                return PluginActionResult(name, PluginAction.RELOAD, "failed", "插件更新待重启，不能热切换依赖")
+            candidate = self._candidate_map.get(name)
+            if candidate is None:
+                return PluginActionResult(name, PluginAction.RELOAD, "failed", "归档插件尚未恢复")
+            self.unload(name, _persist_state=False)
+            self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
+            enabled, reason = self._enable(name)
+            return PluginActionResult(name, PluginAction.RELOAD, "enabled" if enabled else "failed", reason)
 
     def _uninstall_package(self, name: str) -> PluginActionResult:
         with self._package_lock:
-            return self._uninstall_package_locked(name)
-
-    def _uninstall_package_locked(self, name: str) -> PluginActionResult:
-        if name in self._package_conflicts:
-            return PluginActionResult(name, PluginAction.UNINSTALL, "failed", self._package_entries[name]["error"])
-        try:
-            if self._package_store is not None:
-                self._package_store.uninstall(name)
-            else:
-                pointer_path = self._data_path / "plugin_packages" / name / "active.json"
-                with _exclusive_lock(pointer_path.with_suffix(".lock")):
-                    pointer_path.unlink(missing_ok=True)
-        except (OSError, PluginEnvironmentError, PluginPackageActivationError) as exc:
-            return PluginActionResult(name, PluginAction.UNINSTALL, "failed", str(exc))
-        self._package_entries.pop(name, None)
-        self._disabled_plugins.discard(name)
-        self._save_plugin_state()
-        self.events.emit("plugin:unloaded", name)
-        self.events.emit("plugin:uninstalled", name)
-        return PluginActionResult(name, PluginAction.UNINSTALL, "uninstalled")
+            try:
+                if name in self._plugins:
+                    self.unload(name, _persist_state=False)
+                (self._package_store or PluginPackageActivationStore(self._data_path)).uninstall(name)
+            except (OSError, PluginDependencyError) as exc:
+                return PluginActionResult(name, PluginAction.UNINSTALL, "failed", str(exc))
+            self._package_entries.pop(name, None)
+            self._package_candidates.pop(name, None)
+            self._candidate_map.pop(name, None)
+            self._status.pop(name, None)
+            self._plugin_errors.pop(name, None)
+            self._disabled_plugins.discard(name)
+            self._save_plugin_state()
+            self.events.emit("plugin:uninstalled", name)
+            return PluginActionResult(name, PluginAction.UNINSTALL, "uninstalled")
 
     def _package_metadata(self, name: str) -> dict[str, Any] | None:
-        with self._package_lock:
-            entry = self._package_entries.get(name)
-            return dict(entry["metadata"]) if entry is not None else None
+        entry = self._package_entries.get(name)
+        return dict(entry["metadata"]) if entry else None
 
     def _close_packages(self) -> None:
-        with self._package_lock:
-            if self._package_store is not None:
-                self._package_store.close()
-                self._package_store = None
+        self._package_store = None

@@ -150,7 +150,7 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb dbus-x11
 
       - name: Install Python dependencies
         run: |
@@ -267,26 +267,13 @@ jobs:
               print("No tag detected, keeping existing version.py")
           PY
 
-      - name: Build plugin Python runtime asset
+      - name: Generate host dependency manifest
         shell: bash
-        run: |
-          python packaging/build-plugin-runtime.py \
-            --output-dir build-plugin-runtime \
-            --manifest resources/plugin_runtime_manifest.json
-
-      - name: Smoke test plugin Python runtime asset
-        shell: bash
-        run: |
-          python packaging/smoke-plugin-runtime.py \
-            --asset-dir build-plugin-runtime \
-            --manifest resources/plugin_runtime_manifest.json
+        run: python packaging/build-host-dependencies.py
 
       - name: Smoke test offline plugin dependency installation
         shell: bash
-        env:
-          ECL_PLUGIN_RUNTIME_MANIFEST: resources/plugin_runtime_manifest.json
-          ECL_PLUGIN_RUNTIME_ASSET_DIR: build-plugin-runtime
-        run: python -m pytest tests/test_plugin_package_preparation.py -q
+        run: python -m pytest tests/test_plugin_environment_pool.py tests/test_plugin_package_preparation.py tests/test_plugin_manager_packages.py -q
 
       - name: Build with Nuitka
         if: ${{ runner.os != 'macOS' }}
@@ -325,6 +312,7 @@ jobs:
           fi
           python -m nuitka "${ARGS[@]}" \
             --include-package=ECL \
+            --include-module=ecl_plugin_sdk \
             --include-package=pytauri \
             --include-package=pytauri_plugins \
             --include-package=pytauri_utils \
@@ -344,6 +332,27 @@ jobs:
         shell: bash
         run: |
           python -m PyInstaller --noconfirm --clean "EuoraCraft-Launcher.spec"
+
+      - name: Smoke test packaged plugin directories
+        # 使用最终启动器验证动态安装，而非额外发布插件解释器。
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+        run: |
+          set -euo pipefail
+          python -m pip download --only-binary=:all: --no-deps --dest build/plugin-smoke-wheels xxhash==3.6.0
+          export ECL_PLUGIN_SMOKE_WHEELS="$GITHUB_WORKSPACE/build/plugin-smoke-wheels"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.exe"
+            python -m pytest tests/test_packaged_plugin_directories.py -q
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher.app/Contents/MacOS/EuoraCraft Launcher"
+            python -m pytest tests/test_packaged_plugin_directories.py -q
+          else
+            export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
+            dbus-run-session -- xvfb-run -a python -m pytest tests/test_packaged_plugin_directories.py -q
+          fi
 
       - name: Package artifact
         id: package
@@ -373,20 +382,12 @@ jobs:
           path: ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
           archive: false
 
-      - name: Upload plugin runtime artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: plugin-runtime-${{ matrix.os }}-${{ runner.arch }}
-          path: build-plugin-runtime/plugin-runtime-*.zip
-          archive: false
-
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
-            build-plugin-runtime/plugin-runtime-*.zip
           prerelease: ${{ steps.version_info.outputs.type != 'release' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -484,26 +485,13 @@ jobs:
           uv pip install --python .venv-arch/bin/python -e ".[dev]"
           .venv-arch/bin/python -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version'
 
-      - name: Build plugin Python runtime asset
+      - name: Generate host dependency manifest
         shell: bash
-        run: |
-          .venv-arch/bin/python packaging/build-plugin-runtime.py \
-            --output-dir build-plugin-runtime \
-            --manifest resources/plugin_runtime_manifest.json
-
-      - name: Smoke test plugin Python runtime asset
-        shell: bash
-        run: |
-          .venv-arch/bin/python packaging/smoke-plugin-runtime.py \
-            --asset-dir build-plugin-runtime \
-            --manifest resources/plugin_runtime_manifest.json
+        run: .venv-arch/bin/python packaging/build-host-dependencies.py
 
       - name: Smoke test offline plugin dependency installation
         shell: bash
-        env:
-          ECL_PLUGIN_RUNTIME_MANIFEST: resources/plugin_runtime_manifest.json
-          ECL_PLUGIN_RUNTIME_ASSET_DIR: build-plugin-runtime
-        run: .venv-arch/bin/python -m pytest tests/test_plugin_package_preparation.py -q
+        run: .venv-arch/bin/python -m pytest tests/test_plugin_environment_pool.py tests/test_plugin_package_preparation.py tests/test_plugin_manager_packages.py -q
 
       - name: Inject build secrets
         shell: bash
@@ -562,6 +550,7 @@ jobs:
             --mode=onefile --onefile-no-compression --enable-plugin=upx \
             --assume-yes-for-downloads --output-dir=build-nuitka \
             --include-package=ECL \
+            --include-module=ecl_plugin_sdk \
             --include-package=pytauri \
             --include-package=pytauri_plugins \
             --include-package=pytauri_utils \
@@ -599,6 +588,17 @@ jobs:
             echo "Arch 产物异常退出，status=$status" >&2
             exit 1
           fi
+
+      - name: Smoke test Arch plugin directories
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+        run: |
+          .venv-arch/bin/python -m pip download --only-binary=:all: --no-deps --dest build/plugin-smoke-wheels xxhash==3.6.0
+          export ECL_PLUGIN_SMOKE_WHEELS="$GITHUB_WORKSPACE/build/plugin-smoke-wheels"
+          export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
+          dbus-run-session -- xvfb-run -a .venv-arch/bin/python -m pytest tests/test_packaged_plugin_directories.py -q
 
       - name: Prepare source for PKGBUILD
         working-directory: packaging/arch
@@ -655,13 +655,6 @@ jobs:
           path: EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}
           archive: false
 
-      - name: Upload Arch plugin runtime as artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: plugin-runtime-arch-x64
-          path: build-plugin-runtime/plugin-runtime-*.zip
-          archive: false
-
   publish-arch:
     name: Publish Arch-x64
     if: startsWith(github.ref, 'refs/tags/v')
@@ -682,12 +675,6 @@ jobs:
           name: EuoraCraft-Launcher-Arch-X64-${{ github.ref_name }}
           path: release-assets
 
-      - name: Download Arch plugin runtime
-        uses: actions/download-artifact@v8
-        with:
-          name: plugin-runtime-arch-x64
-          path: release-assets
-
       - name: Upload Arch artifacts to Release
         shell: bash
         env:
@@ -696,15 +683,10 @@ jobs:
         run: |
           PKG_FILE="release-assets/${{ needs.build-arch-pkg.outputs.package_artifact }}"
           ARCH_BIN="release-assets/EuoraCraft-Launcher-Arch-X64-$TAG"
-          RUNTIME_FILES=(release-assets/plugin-runtime-*.zip)
           [ -f "$PKG_FILE" ] || { echo "未找到 Arch 主包：$PKG_FILE" >&2; exit 1; }
           [ -f "$ARCH_BIN" ] || { echo "未找到 Arch 二进制：$ARCH_BIN" >&2; exit 1; }
-          [ "${#RUNTIME_FILES[@]}" -eq 1 ] && [ -f "${RUNTIME_FILES[0]}" ] || {
-            echo "未找到唯一的 Arch 插件运行时资产" >&2
-            exit 1
-          }
-          echo "uploading $PKG_FILE, $ARCH_BIN and ${RUNTIME_FILES[0]} to $TAG"
+          echo "uploading $PKG_FILE and $ARCH_BIN to $TAG"
           # 本发布 Job 未 checkout 仓库，必须显式指定目标仓库，避免 gh 调用 git 推断仓库失败。
-          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" "${RUNTIME_FILES[0]}" \
+          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

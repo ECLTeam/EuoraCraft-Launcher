@@ -1,4 +1,6 @@
-# 插件依赖隔离与 `.eclplugin` 安装实施方案（实施中）
+# 插件依赖隔离与 `.eclplugin` 安装实施方案（历史）
+
+本文件保留旧 Worker/venv 设计记录，已由 [主进程安装目录隔离方案](plugin-install-directory-isolation-plan.md) 替代，不代表当前实现。
 
 ## 1. 决策与边界
 

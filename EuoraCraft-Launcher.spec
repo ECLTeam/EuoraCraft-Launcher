@@ -5,6 +5,8 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
+from ECL.plugins.host_dependencies import build_host_dependency_manifest
+
 SPEC_DIR = Path(SPECPATH).resolve()
 
 APP_NAME = "EuoraCraft Launcher"
@@ -73,6 +75,7 @@ def _ensure_datasets_exist() -> None:
 
 
 _ensure_datasets_exist()
+build_host_dependency_manifest(SPEC_DIR / "resources" / "plugin_host_dependencies.json")
 
 
 def _collect_msvc_runtime() -> list[tuple[str, str]]:
@@ -106,6 +109,7 @@ datas = [
 
 binaries = _wheel_binaries + _plugin_binaries + _collect_msvc_runtime()
 hiddenimports = [
+    "ecl_plugin_sdk",
     "importlib_metadata",
     "pytauri",
     "pytauri.ffi",

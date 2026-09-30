@@ -20,6 +20,7 @@ from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.plugins.connector import ConnectorExtensionRegistry
 from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.dependencies import DependencyResolution
+from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.plugins.permissions import PermissionManager
@@ -100,6 +101,8 @@ class _PluginState:
         self._candidate_map: dict[str, dict[str, Any]] = {}
         self._package_store: PluginPackageActivationStore | None = None
         self._package_entries: dict[str, dict[str, Any]] = {}
+        self._package_candidates: dict[str, dict[str, Any]] = {}
+        self._host_dependency_policy: HostDependencyPolicy | None = None
         self._package_conflicts: set[str] = set()
         self._package_lock = RLock()
         # 插件实例化/启用失败的详细错误信息，供前端展示
@@ -148,7 +151,7 @@ class _PluginState:
         )
         system_plugins = {candidate["name"] for candidate in system_candidates}
         package_names = self._restore_package_plugins(
-            {candidate["name"] for candidate in user_candidates}, system_plugins, restore_workers=auto_enable
+            {candidate["name"] for candidate in user_candidates}, system_plugins, check_dependencies=auto_enable
         )
         candidates = [
             candidate
@@ -156,6 +159,7 @@ class _PluginState:
             if candidate["name"] not in failed_installs and candidate["name"] not in package_names
         ]
         candidates.extend(system_candidates)
+        candidates.extend(self._package_candidates.values())
         self.logger.debug(
             "插件发现完成: candidates=%d, disabled=%d, user_dir=%s",
             len(candidates),

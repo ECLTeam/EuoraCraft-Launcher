@@ -188,7 +188,6 @@ class FileSelectionPurpose(StrEnum):
     RESOURCE_FILES = "resource-files"
     MODPACK = "modpack"
     PLUGIN_PACKAGE = "plugin-package"
-    PLUGIN_RUNTIME_PACK = "plugin-runtime-pack"
     WORLD_IMPORT = "world-import"
 
 
