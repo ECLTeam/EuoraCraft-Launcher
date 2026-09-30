@@ -69,6 +69,26 @@ class PluginWorkerProcess:
         self._process: subprocess.Popen[bytes] | None = None
         self._request_id = 0
         self._request_lock = threading.Lock()
+        self.commands: tuple[str, ...] = ()
+
+    def _set_commands(self, result: object) -> None:
+        """
+        只接受有界、无重复的命令清单，避免把异常 Worker 响应暴露给宿主。
+        """
+        if not isinstance(result, dict) or set(result) != {"commands"}:
+            raise PluginWorkerError("Worker 命令清单协议无效")
+        names = result["commands"]
+        if (
+            not isinstance(names, list)
+            or len(names) > 256
+            or any(
+                not isinstance(name, str) or not name or name != name.strip() or ":" in name or len(name) > 128
+                for name in names
+            )
+            or len(set(names)) != len(names)
+        ):
+            raise PluginWorkerError("Worker 命令清单协议无效")
+        self.commands = tuple(names)
 
     def start(self) -> None:
         """
@@ -134,7 +154,7 @@ class PluginWorkerProcess:
             ):
                 raise PluginWorkerError("Worker 未能在限定时间内连接")
             self._connection = accepted[0]
-            self._request({"op": "load", "code_path": str(self.code_path)})
+            self._set_commands(self._request({"op": "load", "code_path": str(self.code_path)}))
         except (OSError, PluginWorkerError) as exc:
             self.close()
             if isinstance(exc, PluginWorkerError):
@@ -206,6 +226,33 @@ class PluginWorkerProcess:
             self.close()
             raise
 
+    def call_command(self, name: str, params: dict[str, object], timeout: float = request_timeout_seconds) -> object:
+        """
+        调用 Worker 握手时公布的命令，拒绝任意方法名和禁用状态。
+
+        :param name: 已登记的插件内命令名称
+        :param params: JSON 对象形式的命令参数
+        :param timeout: 有界的 Worker 响应等待秒数
+        :return: 可编码为 JSON 的命令结果
+        :raises PluginWorkerError: 命令未登记、通信异常或超时时抛出
+        """
+        if name not in self.commands:
+            raise PluginWorkerError(f"插件命令未注册: {name}")
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or not math.isfinite(timeout)
+            or not 0 < timeout <= 120
+        ):
+            raise PluginWorkerError("Worker 超时必须在 0 到 120 秒之间")
+        try:
+            return self._request({"op": "command", "command": name, "params": params}, timeout)
+        except PluginWorkerCallError:
+            raise
+        except PluginWorkerError:
+            self.close()
+            raise
+
     def enable(self) -> None:
         """
         在 Worker 中启用已加载插件，运行其 `on_enable` 钩子。
@@ -215,7 +262,7 @@ class PluginWorkerProcess:
         :raises PluginWorkerError: 钩子失败或通信失效时抛出
         """
         try:
-            self._request({"op": "enable"})
+            self._set_commands(self._request({"op": "enable"}))
         except PluginWorkerError:
             self.close()
             raise
@@ -244,6 +291,7 @@ class PluginWorkerProcess:
         process = self._process
         self._connection = None
         self._process = None
+        self.commands = ()
         if connection is not None:
             try:
                 if process is not None and process.poll() is None:

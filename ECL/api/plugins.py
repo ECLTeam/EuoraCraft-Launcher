@@ -199,7 +199,7 @@ class PluginHandlers(_FrontendState):
         """
         command = body.get("command")
         try:
-            result = self.plugins.call_command(command, body.get("params", {}))
+            result = await asyncio.to_thread(self.plugins.call_command, command, body.get("params", {}))
         except PluginCommandError as exc:
             return {"success": False, "message": str(exc), "errorCode": "PLUGIN_COMMAND_FAILED"}
         return {"success": True, "data": result}

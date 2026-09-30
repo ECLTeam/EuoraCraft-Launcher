@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import RLock
+from time import monotonic
 
 from ECL.plugins.environment_pool import PluginEnvironmentError, PluginEnvironmentPool, _exclusive_lock
 from ECL.plugins.package_preparation import (
@@ -27,7 +28,7 @@ from ECL.plugins.package_preparation import (
     verify_prepared_code,
 )
 from ECL.plugins.runtime_assets import PluginRuntimeAsset, PluginRuntimeError, PluginRuntimeStore
-from ECL.plugins.worker_process import PluginWorkerError, PluginWorkerProcess
+from ECL.plugins.worker_process import PluginWorkerCallError, PluginWorkerError, PluginWorkerProcess
 from ECL.utils import atomic_write_text, get_logger
 
 plugin_name_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
@@ -347,7 +348,7 @@ class PluginPackageActivationStore:
                 or record.target_tag != current_plugin_target()
             ):
                 raise PluginPackageActivationError("归档插件活动状态已被其他进程修改")
-            if active.enabled == enabled:
+            if active.enabled == enabled and (not enabled or active.worker is not None):
                 return active
             candidate: PluginWorkerProcess | None = None
             try:
@@ -388,7 +389,7 @@ class PluginPackageActivationStore:
         pointer_path = self._pointer_path(name)
         with self._lock, _exclusive_lock(pointer_path.with_suffix(".lock")):
             active = self._active_by_name.get(name)
-            if active is None or not active.enabled or active.worker is None:
+            if active is None or not active.enabled:
                 raise PluginPackageActivationError("归档插件未启用")
             record = _ActiveRecord.from_path(pointer_path, name)
             if (
@@ -414,11 +415,50 @@ class PluginPackageActivationStore:
                 raise PluginPackageActivationError(f"归档插件重载失败: {exc}") from exc
             updated = replace(active, worker=candidate)
             self._active_by_name[name] = updated
-            try:
-                active.worker.close()
-            except OSError:
-                self.logger.exception("归档插件已重载，但旧 Worker 关闭失败: %s", name)
+            if active.worker is not None:
+                try:
+                    active.worker.close()
+                except OSError:
+                    self.logger.exception("归档插件已重载，但旧 Worker 关闭失败: %s", name)
             return updated
+
+    def call_command(self, name: str, command: str, params: dict[str, object], timeout: float) -> object:
+        """
+        在当前已启用 Worker 中执行已登记命令，保持生命周期切换的串行顺序。
+
+        命令自身抛错不会破坏 Worker；通信故障会撤销内存中的进程引用，
+        但保留磁盘活动指针，供重启后重新恢复。
+
+        :param name: 归档插件名称
+        :param command: 插件内命令名称
+        :param params: JSON 对象形式的参数
+        :param timeout: 有界的 Worker 调用超时
+        :return: 命令返回的 JSON 值
+        :raises PluginPackageActivationError: 插件未启用或命令未登记时抛出
+        :raises PluginWorkerError: Worker 调用或通信失败时抛出
+        """
+        deadline = monotonic() + timeout
+        if not self._lock.acquire(timeout=timeout):
+            raise PluginPackageActivationError("等待归档插件状态超时")
+        try:
+            active = self._active_by_name.get(name)
+            if active is None or not active.enabled or active.worker is None:
+                raise PluginPackageActivationError("归档插件未启用")
+            worker = active.worker
+            if command not in worker.commands:
+                raise PluginPackageActivationError(f"插件命令未注册: {command}")
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise PluginPackageActivationError("等待归档插件状态超时")
+            try:
+                return worker.call_command(command, params, timeout=remaining)
+            except PluginWorkerCallError:
+                raise
+            except PluginWorkerError:
+                self._active_by_name[name] = replace(active, worker=None)
+                raise
+        finally:
+            self._lock.release()
 
     def uninstall(self, name: str) -> bool:
         """

@@ -20,6 +20,9 @@ from contextlib import suppress
 from multiprocessing.connection import Client, Connection
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ecl_plugin_sdk import Plugin as SdkPlugin
+
 sys.dont_write_bytecode = True
 
 max_frame_bytes = 1024**2
@@ -84,6 +87,19 @@ def _dispatch_call(plugin: object, request: dict[str, object]) -> object:
     return getattr(plugin, method_name)(*args, **kwargs)
 
 
+def _dispatch_command(plugin: object, request: dict[str, object]) -> object:
+    command = request.get("command")
+    params = request.get("params")
+    if (
+        not isinstance(plugin, SdkPlugin)
+        or not isinstance(command, str)
+        or not isinstance(params, dict)
+        or any(not isinstance(key, str) for key in params)
+    ):
+        raise ValueError("Worker 命令参数无效")
+    return plugin.invoke_command(command, params)
+
+
 def _call_hook(plugin: object, hook_name: str) -> None:
     hook = getattr(plugin, hook_name, None)
     if hook is not None:
@@ -95,30 +111,35 @@ class _WorkerState:
         self.plugin: object | None = None
         self.enabled = False
 
+    def _load(self, raw_path: object) -> dict[str, list[str]]:
+        """
+        加载插件并运行 on_load，只有成功后才公布命令清单。
+        """
+        if self.plugin is not None:
+            raise ValueError("插件已加载")
+        if not isinstance(raw_path, str):
+            raise ValueError("插件代码路径无效")
+        candidate = _load_plugin(Path(raw_path))
+        try:
+            _call_hook(candidate, "on_load")
+        except Exception:
+            with suppress(Exception):
+                _call_hook(candidate, "on_unload")
+            raise
+        self.plugin = candidate
+        return {"commands": candidate.command_names() if isinstance(candidate, SdkPlugin) else []}
+
     def dispatch(self, request: dict[str, object]) -> object:
         operation = request.get("op")
         if operation == "load":
-            if self.plugin is not None:
-                raise ValueError("插件已加载")
-            raw_path = request.get("code_path")
-            if not isinstance(raw_path, str):
-                raise ValueError("插件代码路径无效")
-            candidate = _load_plugin(Path(raw_path))
-            try:
-                _call_hook(candidate, "on_load")
-            except Exception:
-                with suppress(Exception):
-                    _call_hook(candidate, "on_unload")
-                raise
-            self.plugin = candidate
-            return None
+            return self._load(request.get("code_path"))
         if self.plugin is None:
             raise ValueError("插件尚未加载")
         if operation == "enable":
             if not self.enabled:
                 _call_hook(self.plugin, "on_enable")
                 self.enabled = True
-            return None
+            return {"commands": self.plugin.command_names() if isinstance(self.plugin, SdkPlugin) else []}
         if operation == "disable":
             if self.enabled:
                 _call_hook(self.plugin, "on_disable")
@@ -126,6 +147,10 @@ class _WorkerState:
             return None
         if operation == "call":
             return _dispatch_call(self.plugin, request)
+        if operation == "command":
+            if not self.enabled:
+                raise ValueError("插件未启用")
+            return _dispatch_command(self.plugin, request)
         raise ValueError("未知 Worker 操作")
 
     def close(self) -> None:

@@ -70,6 +70,43 @@ def test_plugin_exception_does_not_destroy_healthy_worker(tmp_path: Path) -> Non
             worker.call("_private")
 
 
+def test_worker_sdk_only_exposes_registered_commands(tmp_path: Path) -> None:
+    """
+    SDK 命令可在独立进程调用，普通公开方法不会成为插件命令。
+    """
+    code_path = tmp_path / "plugin"
+    code_path.mkdir()
+    (code_path / "plugin.json").write_text('{"name":"demo","entry_point":"main:Plugin"}', encoding="utf-8")
+    (code_path / "main.py").write_text(
+        "import os\n"
+        "from ecl_plugin_sdk import Plugin as BasePlugin\n"
+        "class Plugin(BasePlugin):\n"
+        "    @BasePlugin.on_command('echo')\n"
+        "    def echo(self, value):\n"
+        "        return {'value': value, 'pid': os.getpid()}\n"
+        "    def on_load(self):\n"
+        "        self.register_command('double', lambda value: value * 2)\n"
+        "    def hidden(self):\n"
+        "        return 'not a command'\n",
+        encoding="utf-8",
+    )
+    with PluginWorkerProcess(Path(sys.executable), _worker_script(), code_path) as worker:
+        assert worker.commands == ("double", "echo")
+        with pytest.raises(PluginWorkerCallError, match="未启用"):
+            worker.call_command("echo", {"value": "before enable"})
+        worker.enable()
+        result = worker.call_command("echo", {"value": "ok"})
+        assert result == {"value": "ok", "pid": result["pid"]}
+        assert result["pid"] != os.getpid()
+        assert worker.call_command("double", {"value": 3}) == 6
+        with pytest.raises(PluginWorkerError, match="未注册"):
+            worker.call_command("hidden", {})
+        assert worker.call_command("double", {"value": 4}) == 8
+        worker.disable()
+        with pytest.raises(PluginWorkerCallError, match="未启用"):
+            worker.call_command("echo", {"value": "disabled"})
+
+
 def test_worker_timeout_terminates_child(tmp_path: Path) -> None:
     """
     阻塞插件方法超时后不能继续占用 Worker 子进程。

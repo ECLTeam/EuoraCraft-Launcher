@@ -13,7 +13,7 @@ import pytest
 
 from ECL.api.plugins import PluginHandlers
 from ECL.plugins import PluginManager
-from ECL.plugins.manager.contracts import PluginAction, PluginActionResult
+from ECL.plugins.manager.contracts import PluginAction, PluginActionResult, PluginCommandError
 from ECL.plugins.package_activation import PluginPackageActivationStore
 from ECL.plugins.package_archive import build_plugin_package, extract_plugin_package
 from ECL.plugins.package_preparation import (
@@ -26,7 +26,12 @@ from ECL.plugins.runtime_assets import PluginRuntimeAsset
 
 
 def _prepared_package(
-    tmp_path: Path, data_path: Path, version: str = "1.0.0", *, fails_enable: bool = False
+    tmp_path: Path,
+    data_path: Path,
+    version: str = "1.0.0",
+    *,
+    fails_enable: bool = False,
+    with_commands: bool = False,
 ) -> PluginPreparedPackage:
     source_path = tmp_path / f"source-{version}"
     source_path.mkdir()
@@ -34,15 +39,26 @@ def _prepared_package(
         json.dumps({"name": "demo", "title": "归档示例", "version": version, "entry_point": "main:Plugin"}),
         encoding="utf-8",
     )
-    (source_path / "main.py").write_text(
+    plugin_source = (
         "import os\n"
-        "class Plugin:\n"
-        "    def on_enable(self):\n"
+        + ("from ecl_plugin_sdk import Plugin as BasePlugin\n" if with_commands else "")
+        + ("class Plugin(BasePlugin):\n" if with_commands else "class Plugin:\n")
+        + "    def on_enable(self):\n"
         + ("        raise RuntimeError('enable failed')\n" if fails_enable else "        self.enabled = True\n")
         + "    def pid(self):\n"
-        "        return os.getpid()\n",
-        encoding="utf-8",
+        + "        return os.getpid()\n"
+        + (
+            "    @BasePlugin.on_command('echo')\n"
+            "    def echo(self, value):\n"
+            "        return {'value': value, 'pid': os.getpid()}\n"
+            "    @BasePlugin.on_command('crash')\n"
+            "    def crash(self):\n"
+            "        os._exit(11)\n"
+            if with_commands
+            else ""
+        )
     )
+    (source_path / "main.py").write_text(plugin_source, encoding="utf-8")
     archive_path = tmp_path / f"demo-{version}.eclplugin"
     package = build_plugin_package(source_path, archive_path)
     code_path = data_path / "plugin_packages" / "demo" / f"pkg-{package.manifest_sha256[:20]}"
@@ -77,6 +93,49 @@ def test_package_install_commits_worker_after_explicit_confirmation(
         active = framework._package_store.restore("demo")
         assert active is not None and active.worker is not None
         assert active.worker.call("pid") != os.getpid()
+        assert "ecl_worker_plugin_main" not in sys.modules
+    finally:
+        framework.close()
+
+
+def test_package_sdk_commands_follow_active_worker_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    归档命令只路由到已启用 Worker，禁用、重载和卸载后没有宿主回退。
+    """
+    data_path = tmp_path / "data"
+    asset = PluginRuntimeAsset("test-runtime", "0" * 64, 1, "python", "uv", "worker.py")
+    resource_path = _resource_path(tmp_path, asset)
+    prepared = _prepared_package(tmp_path, data_path, with_commands=True)
+    _ready_worker_paths(monkeypatch)
+    monkeypatch.setattr(PluginPackagePreparer, "prepare", lambda *_args, **_kwargs: prepared)
+    framework = PluginManager()
+    framework.initialize(data_path, resource_path)
+    try:
+        assert framework.install(str(tmp_path / "demo-1.0.0.eclplugin"), confirm_unverified_source=True).success
+        assert framework.list_plugins()[0]["services"] == ["crash", "echo"]
+        handler = PluginHandlers.__new__(PluginHandlers)
+        handler.plugins = framework
+        response = asyncio.run(handler.plugin_call_command({"command": "demo:echo", "params": {"value": "hello"}}))
+        assert response["success"] and response["data"]["value"] == "hello"
+        assert response["data"]["pid"] != os.getpid()
+        with pytest.raises(PluginCommandError, match="未注册"):
+            framework.call_command("demo:pid")
+        assert framework.disable("demo").success
+        with pytest.raises(PluginCommandError, match="未启用"):
+            framework.call_command("demo:echo", {"value": "disabled"})
+        assert framework.enable("demo").success
+        assert framework.reload("demo").success
+        assert framework.call_command("demo:echo", {"value": "again"})["value"] == "again"
+        with pytest.raises(PluginCommandError, match="通信失败"):
+            framework.call_command("demo:crash")
+        failed_entry = framework.list_plugins()[0]
+        assert failed_entry["status"] == "error" and failed_entry["title"] == "归档示例"
+        assert failed_entry["services"] == []
+        assert framework.enable("demo").success
+        assert framework.call_command("demo:echo", {"value": "recovered"})["value"] == "recovered"
+        assert framework.uninstall("demo").success
+        with pytest.raises(PluginCommandError, match="未启用"):
+            framework.call_command("demo:echo")
         assert "ecl_worker_plugin_main" not in sys.modules
     finally:
         framework.close()
@@ -342,3 +401,24 @@ def test_package_inspect_and_install_ipc_run_outside_event_loop(tmp_path: Path) 
     )
     assert installed == {"success": True}
     assert len(called_threads) == 2 and all(thread != caller_thread for thread in called_threads)
+
+
+def test_plugin_command_ipc_runs_outside_event_loop() -> None:
+    """
+    Worker 命令的进程等待不占用正式 IPC 事件循环。
+    """
+
+    class CommandActions:
+        def call_command(self, command: str, params: dict[str, object]) -> dict[str, object]:
+            return {"command": command, "params": params, "thread": get_ident()}
+
+    handler = PluginHandlers.__new__(PluginHandlers)
+    handler.plugins = CommandActions()
+    caller_thread = get_ident()
+    result = asyncio.run(handler.plugin_call_command({"command": "demo:echo", "params": {"value": "ok"}}))
+    assert result["success"] and result["data"] == {
+        "command": "demo:echo",
+        "params": {"value": "ok"},
+        "thread": result["data"]["thread"],
+    }
+    assert result["data"]["thread"] != caller_thread

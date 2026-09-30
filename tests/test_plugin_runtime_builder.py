@@ -76,6 +76,7 @@ def test_runtime_builder_emits_usable_asset_and_embedded_manifest(tmp_path: Path
         assert archive.read(manifest["python_relpath"]) == b"test-python"
         assert archive.read(manifest["uv_relpath"]) == b"test-uv"
         assert b"def main(" in archive.read(manifest["worker_relpath"])
+        assert b"class Plugin:" in archive.read("ecl_plugin_sdk.py")
         assert "python/include/Python.h" not in archive.namelist()
         assert "python/Lib/site-packages/pip/__init__.py" not in archive.namelist()
 
@@ -85,6 +86,7 @@ def test_runtime_builder_emits_usable_asset_and_embedded_manifest(tmp_path: Path
     assert runtime_paths.python_path.read_bytes() == b"test-python"
     assert runtime_paths.uv_path.read_bytes() == b"test-uv"
     assert runtime_paths.worker_path.is_file()
+    assert (runtime_paths.root_path / "ecl_plugin_sdk.py").is_file()
 
 
 def test_runtime_builder_dedupes_case_insensitive_paths(tmp_path: Path, monkeypatch) -> None:

@@ -232,10 +232,13 @@ class PluginPackages(_PluginState):
             "metadata": metadata if isinstance(metadata, dict) else {},
             "status": "enabled" if active.enabled else "disabled",
             "error": None,
+            "services": list(active.worker.commands) if active.worker is not None else [],
         }
 
     def _package_error(self, name: str, message: str) -> None:
-        self._package_entries[name] = {"metadata": {"name": name}, "status": "error", "error": message}
+        previous = self._package_entries.get(name)
+        metadata = previous["metadata"] if previous is not None else {"name": name}
+        self._package_entries[name] = {"metadata": metadata, "status": "error", "error": message, "services": []}
         self.logger.error("归档插件 %s 无法恢复: %s", name, message)
 
     def _restore_package_plugins(

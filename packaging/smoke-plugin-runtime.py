@@ -127,23 +127,27 @@ def _run_smoke_checks(
     )
     (plugin_path / "main.py").write_text(
         "import os\n"
-        "class Plugin:\n"
+        "from ecl_plugin_sdk import Plugin as BasePlugin\n"
+        "class Plugin(BasePlugin):\n"
         "    enabled = False\n"
         "    def on_enable(self):\n"
         "        self.enabled = True\n"
         "    def on_disable(self):\n"
         "        self.enabled = False\n"
+        "    @BasePlugin.on_command('identity')\n"
         "    def identity(self):\n"
         "        return {'pid': os.getpid(), 'enabled': self.enabled}\n",
         encoding="utf-8",
     )
     with PluginWorkerProcess(worker_python, paths.worker_path, plugin_path) as worker:
+        if worker.commands != ("identity",):
+            raise RuntimeError("插件运行时未公布 SDK 命令")
         worker.enable()
-        active = worker.call("identity")
+        active = worker.call_command("identity", {})
         worker.disable()
         inactive = worker.call("identity")
         worker.enable()
-        active_again = worker.call("identity")
+        active_again = worker.call_command("identity", {})
     if (
         not isinstance(active, dict)
         or not isinstance(active.get("pid"), int)

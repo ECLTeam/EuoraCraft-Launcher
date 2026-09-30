@@ -108,6 +108,8 @@ def _write_archive(
     uv_name = (Path("uv") / uv_path.name).as_posix()
     worker_name = "worker.py"
     worker_path = Path(__file__).with_name("plugin_worker.py")
+    sdk_name = "ecl_plugin_sdk.py"
+    sdk_path = Path(__file__).with_name(sdk_name)
     files = sorted(
         entry
         for entry in distribution_path.rglob("*")
@@ -145,6 +147,11 @@ def _write_archive(
         worker_entry.compress_type = zipfile.ZIP_DEFLATED
         worker_entry.external_attr = (stat.S_IFREG | 0o644) << 16
         with worker_path.open("rb") as source, archive.open(worker_entry, "w") as target:
+            shutil.copyfileobj(source, target, copy_chunk_bytes)
+        sdk_entry = zipfile.ZipInfo(sdk_name, date_time=(1980, 1, 1, 0, 0, 0))
+        sdk_entry.compress_type = zipfile.ZIP_DEFLATED
+        sdk_entry.external_attr = (stat.S_IFREG | 0o644) << 16
+        with sdk_path.open("rb") as source, archive.open(sdk_entry, "w") as target:
             shutil.copyfileobj(source, target, copy_chunk_bytes)
     return python_name, uv_name, worker_name
 
