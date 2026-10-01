@@ -286,6 +286,9 @@ class FakeInfoCard:
 
 
 class FakeGame:
+    def read_version_settings(self, game_path, version_id):
+        return {}
+
     def __init__(self):
         self.install_call = None
         self.launch_call = None
@@ -756,6 +759,65 @@ def test_select_save_file_instance_export_uses_mrpack_suffix(tmp_path, monkeypat
             "set_file_name": "instance.mrpack",
             "set_title": "导出实例整合包",
         }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("purpose", "filename", "expected_name", "label", "extensions"),
+    [
+        ("instance-shortcut", "测试实例", "测试实例.lnk", "Windows 快捷方式", ["lnk"]),
+    ],
+)
+def test_select_save_file_advanced_purposes(tmp_path, monkeypatch, purpose, filename, expected_name, label, extensions):
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class FakeSaveDialog:
+        def blocking_save_file(self, **options):
+            calls.append(options)
+            return tmp_path / filename
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakeSaveDialog()))
+    result = asyncio.run(api.select_save_file({"purpose": purpose}))
+    assert result == {"success": True, "data": {"path": str(tmp_path / expected_name)}}
+    assert calls[0]["add_filter"] == (label, extensions)
+
+
+def test_instance_shortcut_ipc_uses_application_runtime_paths(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    api.context.state.resource_path = tmp_path / "resources"
+    api.context.state.is_frozen = False
+    target = SimpleNamespace(game_path=tmp_path, version_id="1.21.1", instance_path=tmp_path / "versions" / "1.21.1")
+    monkeypatch.setattr(api.game, "resolve_instance", lambda *_args: target, raising=False)
+    monkeypatch.setattr(
+        api.game,
+        "scan_versions",
+        lambda _roots: [{"versionId": "1.21.1", "alias": "测试实例", "icon": {"type": "builtin", "value": "command"}}],
+        raising=False,
+    )
+    calls = []
+
+    class FakeShortcutService:
+        def __init__(self, *args, **kwargs):
+            calls.append((args, kwargs))
+
+        def create(self, instance_path, name, icon, output_path):
+            assert (instance_path, name, icon.value) == (target.instance_path, "测试实例", "command")
+            return {"path": str(output_path), "iconPath": "icon.ico"}
+
+    monkeypatch.setattr(import_module("ECL.api.workspace"), "InstanceShortcutService", FakeShortcutService)
+    result = asyncio.run(
+        api.game_instance_shortcut_create(
+            {"game_path": str(tmp_path), "version_id": "1.21.1", "output_path": str(tmp_path / "实例.lnk")}
+        )
+    )
+    assert result["success"] is True
+    assert calls == [
+        (
+            (api.context.state.data_path, api.context.state.resource_path),
+            {"is_frozen": False, "app_path": tmp_path},
+        )
     ]
 
 
@@ -1434,9 +1496,9 @@ def test_frontend_ready_dispatches_cli_launch_once(tmp_path, monkeypatch) -> Non
     body = recorded[0]
     assert body["version_id"] == "Foo"
     assert body["game_path"] == str(Path("/games/mc"))
-    assert body["memory"] == 4096  # 来自生效配置的 game.memory_size 默认值
-    assert body["lock_memory"] is False
-    assert body["process_priority"] == "normal"
+    assert "memory" not in body  # 缺省字段交由统一实例设置解析器处理
+    assert "lock_memory" not in body
+    assert "process_priority" not in body
 
 
 def test_frontend_ready_cli_launch_failure_emits_popup(tmp_path) -> None:
@@ -1455,3 +1517,43 @@ def test_frontend_ready_cli_launch_failure_emits_popup(tmp_path) -> None:
     asyncio.run(scenario())
 
     assert any(popup.get("id") == "cli-launch-failed" for popup in popups)
+
+
+def test_authenticated_launch_requests_wait_for_ready_and_use_temporary_overrides(tmp_path, monkeypatch) -> None:
+    import ECL.api.bridge as bridge_module
+    from ECL.services.single_instance import SingleInstanceService
+
+    api = _build_api(tmp_path)
+    service = SingleInstanceService(api.events, tmp_path, "test")
+    api._single_instance = service
+    api.events.subscribe("launcher:launch_request", api._on_cli_request)
+    monkeypatch.setattr(bridge_module, "resolve_launch_target", lambda target, roots: (Path("/games/mc"), target))
+    recorded = []
+
+    async def launch(body):
+        recorded.append(body)
+        return {"success": True}
+
+    monkeypatch.setattr(api, "game_launch", launch)
+    payload = {"token": service._token, "action": "launch", "argv": ["--launch=Foo", "--memory=6144", "--windowed"]}
+    assert service._dispatch(payload)
+    assert recorded == []
+
+    async def scenario():
+        await api.frontend_ready({}, FakeWebviewWindow())
+        await api._cli_launch_task
+        assert recorded == [
+            {"version_id": "Foo", "game_path": str(Path("/games/mc")), "memory": 6144, "fullscreen": False}
+        ]
+        assert service._dispatch({**payload, "argv": ["--launch=Bar"]})
+        await asyncio.sleep(0)
+        await api._cli_launch_task
+        assert recorded[-1]["version_id"] == "Bar"
+        assert "memory" not in recorded[-1]
+        api._on_launcher_closing(None)
+        await asyncio.sleep(0)
+        assert api._launch_closing
+        assert not api._pending_cli_launches
+
+    asyncio.run(scenario())
+    service.close()

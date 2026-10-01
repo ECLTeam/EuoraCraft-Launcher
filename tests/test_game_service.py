@@ -1608,11 +1608,13 @@ def test_version_settings_stored_in_versions_own_directory(tmp_path) -> None:
     settings = {"customMemory": True, "memory": 6144, "jvmArgs": "-XX:+UseG1GC"}
     saved = service.write_version_settings(game_path, "1.21.1", settings)
     settings_file = game_path / "versions" / "1.21.1" / ".ecl" / "settings.json"
-    assert saved == settings
+    assert all(saved[key] == value for key, value in settings.items())
+    assert saved["schemaVersion"] == 2
+    assert saved["memoryMode"] == "manual"
     assert settings_file.is_file()
-    assert json.loads(settings_file.read_text(encoding="utf-8")) == settings
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == saved
     assert not (game_path / "ecl.json").is_file()
-    assert service.read_version_settings(game_path, "1.21.1") == settings
+    assert service.read_version_settings(game_path, "1.21.1") == saved
 
 
 def test_version_settings_skips_unchanged_writes_and_rejects_invalid(tmp_path, monkeypatch) -> None:

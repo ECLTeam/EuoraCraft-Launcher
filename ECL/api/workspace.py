@@ -64,11 +64,13 @@
 #       - game_schematic_session_open(body) -> ApiResponse
 #       - game_schematic_session_chunks(body) -> ApiResponse
 #       - game_schematic_session_close(body) -> ApiResponse
+#       - game_instance_shortcut_create(body) -> ApiResponse — 创建 Windows 实例快捷方式。
 # ============================================================
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from anyio import to_thread
@@ -115,6 +117,8 @@ from ECL.api.models import (
     WorldRequest,
     WorldTransferRequest,
 )
+from ECL.services.instance_shortcuts import InstanceShortcutService, ShortcutIcon
+from ECL.utils.errors import GameServiceError
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body
 
@@ -136,6 +140,42 @@ class WorkspaceHandlers(_FrontendState):
         if isinstance(request, InstanceTarget) and request.version_isolation is None:
             request.version_isolation = self.game.resolve_version_isolation(request.game_path, request.version_id)
         return success(await to_thread.run_sync(lambda: callback(request)))
+
+    @_ipc_handler("SHORTCUT_CREATE_FAILED")
+    async def game_instance_shortcut_create(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        以实例有效图标创建 Windows 桌面或指定位置的快捷方式。
+
+        :param body: 实例目标及可选 output_path
+        :return: 快捷方式与稳定 ICO 缓存路径
+        """
+        request = InstanceTarget.model_validate({key: value for key, value in body.items() if key != "output_path"})
+        output = body.get("output_path")
+        if output is not None and (not isinstance(output, str) or not output.strip()):
+            return failure("快捷方式保存路径无效", "SHORTCUT_PATH_INVALID")
+
+        def create() -> dict[str, str]:
+            target = self.game.resolve_instance(request.game_path, request.version_id)
+            versions = self.game.scan_versions([str(target.game_path)])
+            version = next((item for item in versions if item["versionId"] == target.version_id), None)
+            if version is None:
+                raise GameServiceError("实例不存在", "INSTANCE_NOT_FOUND")
+            effective_icon = version.get("icon") or {"type": "builtin", "value": "grass"}
+            state = self.context.state
+            service = InstanceShortcutService(
+                state.data_path,
+                state.resource_path,
+                is_frozen=state.is_frozen,
+                app_path=state.app_path,
+            )
+            return service.create(
+                target.instance_path,
+                str(version.get("alias") or target.version_id),
+                ShortcutIcon(str(effective_icon.get("type", "builtin")), str(effective_icon.get("value", "grass"))),
+                Path(output) if output else None,
+            )
+
+        return success(await to_thread.run_sync(create))
 
     @_ipc_handler("INSTANCE_FOLDER_OPEN_FAILED")
     async def game_instance_folder_open(self, body: dict[str, Any]) -> ApiResponse:

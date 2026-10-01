@@ -81,6 +81,7 @@ class FileHandlers(_FrontendState):
         ImagePurpose.BACKGROUND: ("选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
     }
     save_file_options: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
+        FileSavePurpose.INSTANCE_SHORTCUT: ("创建实例快捷方式", "Minecraft.lnk", ["lnk"]),
         FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
         FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft Launcher启动器日志", "EuoraCraft-logs.zip", ["zip"]),
         FileSavePurpose.WORLD_EXPORT: ("导出 Minecraft 存档", "world.zip", ["zip"]),
@@ -650,6 +651,8 @@ class FileHandlers(_FrontendState):
             if request.purpose == FileSavePurpose.MOD_FILE
             else "Modrinth 整合包"
             if request.purpose == FileSavePurpose.INSTANCE_EXPORT
+            else "Windows 快捷方式"
+            if request.purpose == FileSavePurpose.INSTANCE_SHORTCUT
             else "ZIP 压缩包"
         )
         selected = await self._pick_save_path(

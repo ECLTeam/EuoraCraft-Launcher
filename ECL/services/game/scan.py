@@ -29,6 +29,7 @@ from typing import Any
 from ECL.utils import ConfigError, atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
+from .launch_settings import InstanceLaunchOverrides
 
 
 class ScanCoordinator(_GameState):
@@ -562,6 +563,8 @@ class ScanCoordinator(_GameState):
         """
         if not isinstance(data, dict):
             raise GameServiceError("版本设置数据必须是字典", "INVALID_ECL_CONFIG")
+        if data:
+            data = InstanceLaunchOverrides.model_validate(data).model_dump(by_alias=True)
         path = self._normalize_game_path(game_path)
         name = self._normalize_version_name(version_id, "实例名称")
         settings_path = self._version_settings_path(path, name)
@@ -573,6 +576,17 @@ class ScanCoordinator(_GameState):
                         existing = json.loads(settings_path.read_text(encoding="utf-8"))
                     except (OSError, ValueError, UnicodeDecodeError):
                         existing = None
+                    if isinstance(existing, dict):
+                        if int(existing.get("schemaVersion", 1)) > 2:
+                            raise GameServiceError("实例设置来自更高版本，不能覆盖", "SETTINGS_SCHEMA_UNSUPPORTED")
+                        unknown = {
+                            key: value
+                            for key, value in existing.items()
+                            if key
+                            not in {field.alias or name for name, field in InstanceLaunchOverrides.model_fields.items()}
+                            and key != "isolated"
+                        }
+                        data = {**unknown, **data}
                     if existing == data:
                         self.logger.debug("跳过未变化的版本独立设置写入: %s", settings_path)
                         return deepcopy(data)

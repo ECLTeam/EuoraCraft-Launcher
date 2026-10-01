@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,7 @@ class LaunchOptions:
     在前端就绪后由调度层消费，不参与配置覆盖。
     """
 
+    forwarded_argv: tuple[str, ...] = field(default=(), compare=False, repr=False)
     data_dir: Path | None = None  # --data-dir 指定的数据目录，None 表示沿用默认解析
     debug: bool = False  # --debug 是否开启调试模式
     log_level: str | None = None  # --log-level 指定的控制台日志级别
@@ -47,6 +48,47 @@ class LaunchOptions:
     launch_target: str | None = None  # --launch 指向的实例（版本名或实例目录）
     server_target: str | None = None  # --server 指定的快捷进入服务器地址
     world_target: str | None = None  # --world 指定的快捷进入世界 ID
+    game_dir: Path | None = None
+    java_path: Path | None = None
+    memory: int | None = None
+    width: int | None = None
+    height: int | None = None
+    fullscreen: bool | None = None
+    isolation_mode: str | None = None
+    process_priority: str | None = None
+    lock_memory: bool | None = None
+    jvm_args: tuple[str, ...] = ()
+    game_args: tuple[str, ...] = ()
+    launcher_visibility: str | None = None
+    open_page: str | None = None
+
+    def game_overrides(self) -> dict[str, object]:
+        """
+        生成本次显式游戏启动覆盖，不包含进程配置或缺省字段。
+
+        :return: 供统一启动边界校验的选项
+        """
+        values: dict[str, object] = {}
+        for name in (
+            "java_path",
+            "memory",
+            "width",
+            "height",
+            "fullscreen",
+            "process_priority",
+            "lock_memory",
+            "launcher_visibility",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                values[name] = str(value) if isinstance(value, Path) else value
+        if self.isolation_mode in {"enabled", "disabled"}:
+            values["version_isolation"] = self.isolation_mode == "enabled"
+        if self.jvm_args:
+            values["jvm_args"] = list(self.jvm_args)
+        if self.game_args:
+            values["game_args"] = list(self.game_args)
+        return values
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -115,6 +157,43 @@ def build_arg_parser() -> argparse.ArgumentParser:
         metavar="世界ID",
         help="配合 --launch 使用：启动后快速进入该世界",
     )
+    parser.add_argument("--game-dir", metavar="目录", help="配合 --launch 版本ID指定游戏根目录")
+    parser.add_argument("--java-path", metavar="可执行文件", help="本次启动使用的 Java")
+    parser.add_argument("--memory", type=int, metavar="MB", help="本次内存（512—65536 MB）")
+    parser.add_argument("--width", type=int, help="窗口宽度（320—16384）")
+    parser.add_argument("--height", type=int, help="窗口高度（240—16384）")
+    display = parser.add_mutually_exclusive_group()
+    display.add_argument("--fullscreen", dest="fullscreen", action="store_true", default=None, help="本次全屏")
+    display.add_argument("--windowed", dest="fullscreen", action="store_false", help="本次窗口模式")
+    parser.add_argument(
+        "--isolation", choices=("inherit", "enabled", "disabled"), help="本次隔离覆盖，inherit 沿用实例设置"
+    )
+    parser.add_argument(
+        "--process-priority",
+        choices=("idle", "below_normal", "normal", "above_normal", "high"),
+        help="本次游戏进程优先级",
+    )
+    memory_lock = parser.add_mutually_exclusive_group()
+    memory_lock.add_argument(
+        "--lock-memory", dest="lock_memory", action="store_true", default=None, help="锁定初始内存"
+    )
+    memory_lock.add_argument("--no-lock-memory", dest="lock_memory", action="store_false", help="不锁定初始内存")
+    parser.add_argument(
+        "--jvm-arg",
+        action="append",
+        default=[],
+        metavar="参数",
+        help="追加 JVM 参数，可重复，推荐 --jvm-arg=-Dkey=value",
+    )
+    parser.add_argument("--game-arg", action="append", default=[], metavar="参数", help="追加游戏参数，可重复")
+    parser.add_argument(
+        "--launcher-visibility", choices=("none", "minimize", "quit"), help="游戏启动成功后的启动器行为"
+    )
+    parser.add_argument(
+        "--open-page",
+        choices=("games", "instances", "download", "settings", "more"),
+        help="打开指定页面，与 --launch 互斥",
+    )
     return parser
 
 
@@ -152,6 +231,42 @@ def _resolve_frontend_dist(parser: argparse.ArgumentParser, raw: str | None) -> 
     return str(frontend_path)
 
 
+def _validate_game_options(
+    parser: argparse.ArgumentParser, args: argparse.Namespace, launch_target: str | None
+) -> None:
+    """
+    校验启动动作依赖及选项范围，不加载游戏或桌面依赖。
+    """
+    if args.open_page and launch_target:
+        parser.error("--open-page 与 --launch 不能同时使用")
+    options = (
+        args.game_dir,
+        args.java_path,
+        args.memory,
+        args.width,
+        args.height,
+        args.fullscreen,
+        args.isolation,
+        args.process_priority,
+        args.lock_memory,
+        args.launcher_visibility,
+    )
+    if not launch_target and (any(value is not None for value in options) or args.jvm_arg or args.game_arg):
+        parser.error("游戏启动设置需要与 --launch 同时使用")
+    for name, lower, upper in (("memory", 512, 65536), ("width", 320, 16384), ("height", 240, 16384)):
+        value = getattr(args, name)
+        if value is not None and not lower <= value <= upper:
+            parser.error(f"--{name} 必须在 {lower}—{upper} 之间")
+    if args.game_dir:
+        root = Path(args.game_dir).expanduser().resolve()
+        if not root.is_dir():
+            parser.error("--game-dir 必须为已存在的游戏根目录")
+        if launch_target and ("/" in launch_target or "\\" in launch_target):
+            parser.error("--game-dir 只能与 --launch 版本ID联用，不能与完整实例目录联用")
+    if any("\0" in arg for arg in (*args.jvm_arg, *args.game_arg)):
+        parser.error("启动参数不能包含空字符")
+
+
 def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
     """
     解析并校验命令行启动参数。
@@ -169,7 +284,10 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         parser.error("--server/--world 需要与 --launch 同时使用")
     if args.server and args.world:
         parser.error("--server 与 --world 不能同时使用")
+    launch_target = _validate_quick_target(parser, "--launch", args.launch)
+    _validate_game_options(parser, args, launch_target)
     return LaunchOptions(
+        forwarded_argv=tuple(argv),
         data_dir=_resolve_data_dir(parser, args.data_dir),
         debug=bool(args.debug),
         log_level=args.log_level,
@@ -179,6 +297,19 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         launch_target=args.launch.strip() if args.launch else None,
         server_target=_validate_quick_target(parser, "--server", args.server),
         world_target=_validate_quick_target(parser, "--world", args.world),
+        game_dir=Path(args.game_dir).expanduser().resolve() if args.game_dir else None,
+        java_path=Path(args.java_path).expanduser().resolve() if args.java_path else None,
+        memory=args.memory,
+        width=args.width,
+        height=args.height,
+        fullscreen=args.fullscreen,
+        isolation_mode=args.isolation,
+        process_priority=args.process_priority,
+        lock_memory=args.lock_memory,
+        jvm_args=tuple(args.jvm_arg),
+        game_args=tuple(args.game_arg),
+        launcher_visibility=args.launcher_visibility,
+        open_page=args.open_page,
     )
 
 

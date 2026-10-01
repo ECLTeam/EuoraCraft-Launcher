@@ -279,6 +279,7 @@ class ApplicationContext:
             object.__setattr__(self, "_closed", True)
             logger.debug("开始关闭后台服务")
             # 开发者通道先于插件关闭，避免通道继续处理请求时依赖已被释放。
+            self.events.emit("launcher:closing", None)
             resources: tuple[Any, ...] = (
                 self.single_instance,
                 self.dev_channel,

@@ -18,6 +18,8 @@ import json
 import os
 import socket
 
+import pytest
+
 from ECL.events import EventBus
 from ECL.services.single_instance import SingleInstanceService, probe_running_instance
 
@@ -115,3 +117,33 @@ def test_close_is_idempotent(tmp_path) -> None:
     assert service._thread is None
     assert thread is not None and not thread.is_alive()
     assert not (tmp_path / "single_instance.json").exists()
+
+
+def test_launch_equal_flags_are_queued_once_and_retained_until_ready(tmp_path) -> None:
+    service = SingleInstanceService(EventBus(), tmp_path, "1.0")
+    service.start()
+    try:
+        argv = ["--launch=Foo", "--memory=6144", "--windowed", "--jvm-arg=-Dcustom=value"]
+        assert probe_running_instance(tmp_path, argv)
+        assert probe_running_instance(tmp_path, argv)
+        requests = service.take_launch_requests()
+        assert len(requests) == 1
+        assert requests[0].launch_target == "Foo"
+        assert requests[0].game_overrides() == {"memory": 6144, "fullscreen": False, "jvm_args": ["-Dcustom=value"]}
+        assert service.take_launch_requests() == []
+        assert probe_running_instance(tmp_path, ["--open-page=download"])
+        assert service.take_launch_requests()[0].open_page == "download"
+    finally:
+        service.close()
+
+
+def test_running_instance_rejects_process_overrides_without_falling_back_to_new_process(tmp_path) -> None:
+    service = SingleInstanceService(EventBus(), tmp_path, "1.0")
+    service.start()
+    try:
+        with pytest.raises(ValueError, match="拒绝"):
+            probe_running_instance(tmp_path, ["--launch=Foo", "--disable-plugins"])
+        assert service.take_launch_requests() == []
+        assert service.discovery_path.is_file()
+    finally:
+        service.close()

@@ -9,6 +9,8 @@
 #   - guard_ipc_handler(state, operation, handler, timeout=…) -> Any — 为正式 IPC 命令补齐统一的异常边界与严重错误呈现元数据。
 # ============================================================
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import functools
@@ -16,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import deque
 from contextlib import suppress
 from pathlib import Path
 from threading import RLock
@@ -38,7 +41,7 @@ from ECL.api.models import (
     ProcessStopRequest,
 )
 from ECL.application import ApplicationContext
-from ECL.cli import apply_launch_overrides
+from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.game import AuthException, NetException
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
@@ -348,6 +351,7 @@ class _FrontendState:
         self.logger = get_logger("FrontendApi")
         self.events = context.events
         self.launcher = context.state
+        self.context = context
         self.config = context.config
         self.accounts = context.accounts
         self.wardrobe = context.wardrobe
@@ -367,6 +371,13 @@ class _FrontendState:
         self._plugins_frontend_ready = False
         self._cli_launch_dispatched = False  # 命令行快捷启动是否已派发（每次进程运行至多一次）
         self._cli_launch_task: asyncio.Task[None] | None = None  # 持有任务引用，避免被垃圾回收
+        self._single_instance = getattr(context, "single_instance", None)
+        self._cli_event_loop: asyncio.AbstractEventLoop | None = None
+        self._pending_cli_launches: deque[LaunchOptions] = deque()
+        self._active_cli_request: LaunchOptions | None = None
+        self._launch_closing = False
+        self.events.subscribe("launcher:launch_request", self._on_cli_request)
+        self.events.subscribe("launcher:closing", self._on_launcher_closing)
         self._main_window_event_bound = False
         self._pending_frontend_events: list[tuple[str, Any]] = []
         self._pending_error_presentations: dict[str, dict[str, Any]] = {}
@@ -876,16 +887,62 @@ class _FrontendState:
             startup_update_result = self.startup_update.result()
             if startup_update_result is not None:
                 self.emit_to_frontend("update:check_completed", startup_update_result)
-        if window_type == "main" and not self._cli_launch_dispatched:
-            self._cli_launch_dispatched = True
-            launch_options = getattr(self.launcher, "launch_options", None)
-            if launch_options is not None and getattr(launch_options, "launch_target", None):
-                # 前端就绪后派发命令行快捷启动，保证启动进度事件可完整送达界面。
-                self._cli_launch_task = asyncio.create_task(self._run_cli_launch())
+        if window_type == "main":
+            self._cli_event_loop = asyncio.get_running_loop()
+            if not self._cli_launch_dispatched:
+                self._cli_launch_dispatched = True
+                options = getattr(self.launcher, "launch_options", None)
+                if isinstance(options, LaunchOptions) and (options.launch_target or options.open_page):
+                    self._pending_cli_launches.append(options)
+            self._start_queued_launches()
         self.logger.info("前端加载完成")
         return {"success": True}
 
-    async def _run_cli_launch(self) -> None:
+    def _on_cli_request(self, _payload: object) -> None:
+        """
+        从监听线程唤醒主事件循环，初始化阶段保留服务内请求。
+        """
+        loop = self._cli_event_loop
+        if loop is not None and not loop.is_closed() and not self._launch_closing:
+            loop.call_soon_threadsafe(self._start_queued_launches)
+
+    def _on_launcher_closing(self, _payload: object) -> None:
+        """
+        关闭后停止调度并取消持有的启动任务，防止服务销毁后继续消费。
+        """
+        self._launch_closing = True
+        loop = self._cli_event_loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._cancel_cli_requests)
+
+    def _cancel_cli_requests(self) -> None:
+        self._pending_cli_launches.clear()
+        if self._cli_launch_task is not None:
+            self._cli_launch_task.cancel()
+
+    def _start_queued_launches(self) -> None:
+        if self._launch_closing:
+            return
+        if self._single_instance is not None:
+            for request in self._single_instance.take_launch_requests():
+                if request != self._active_cli_request and request not in self._pending_cli_launches:
+                    self._pending_cli_launches.append(request)
+        if self._pending_cli_launches and (self._cli_launch_task is None or self._cli_launch_task.done()):
+            self._cli_launch_task = asyncio.create_task(self._drain_cli_requests())
+
+    async def _drain_cli_requests(self) -> None:
+        try:
+            while self._pending_cli_launches and not self._launch_closing:
+                options = self._pending_cli_launches.popleft()
+                self._active_cli_request = options
+                if options.open_page:
+                    self.emit_to_frontend("launcher:open_page", {"page": options.open_page})
+                else:
+                    await self._run_cli_launch(options)
+        finally:
+            self._active_cli_request = None
+
+    async def _run_cli_launch(self, options: LaunchOptions | None = None) -> None:
         """
         处理命令行快捷启动目标。
 
@@ -895,20 +952,15 @@ class _FrontendState:
 
         :raises None: 本方法不向调用方抛出异常，全部失败均转为弹窗事件
         """
-        options = getattr(self.launcher, "launch_options", None)
+        options = options or getattr(self.launcher, "launch_options", None)
         target = str(getattr(options, "launch_target", "") or "").strip()
         try:
             game_config = self._get_effective_config().get("game") or {}
-            game_path, version_id = resolve_launch_target(target, candidate_roots(game_config))
-            # game_launch 不从配置兜底 memory 等字段（平时由前端显式传入），
-            # CLI 调度需与前端行为对齐，从生效配置显式带入。
-            body: dict[str, Any] = {
-                "version_id": version_id,
-                "game_path": str(game_path),
-                "memory": int(game_config.get("memory_size", default_config["game"]["memory_size"])),
-                "lock_memory": bool(game_config.get("lock_memory", False)),
-                "process_priority": str(game_config.get("process_priority", "normal")),
-            }
+            roots = [options.game_dir] if options is not None and options.game_dir else candidate_roots(game_config)
+            game_path, version_id = await to_thread.run_sync(resolve_launch_target, target, roots)
+            body: dict[str, Any] = {"version_id": version_id, "game_path": str(game_path)}
+            if isinstance(options, LaunchOptions):
+                body.update(options.game_overrides())
             server_target = str(getattr(options, "server_target", "") or "")
             world_target = str(getattr(options, "world_target", "") or "")
             if server_target:

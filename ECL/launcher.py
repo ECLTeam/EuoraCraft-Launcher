@@ -72,7 +72,7 @@ class EuoraCraftLauncher:
         self.context: ApplicationContext | None = None  # 已构造的后端应用上下文
         self._shutdown_complete = False  # 关闭流程是否已完成（用于幂等）
         # 单实例探测必须先于日志系统：移交成功时不创建日志文件，避免与主实例竞争轮转句柄。
-        self._handed_over = probe_running_instance(self.data_path, sys.argv)
+        self._handed_over = probe_running_instance(self.data_path, self.options.forwarded_argv)
         if self._handed_over:
             self.logging = None  # 移交进程不初始化日志系统
             self.logger = logging.getLogger("EuoraCraft_Launcher")  # 无处理器的兜底日志器

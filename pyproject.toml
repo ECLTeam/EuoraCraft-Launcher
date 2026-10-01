@@ -11,6 +11,7 @@ authors = [
 ]
 dependencies = [
     "aiofiles>=23.0.0",
+    "Pillow>=11.0.0",
     "pytauri-wheel>=0.8.0",
     "pytauri>=0.8.0",
     "anyio>=4.0",

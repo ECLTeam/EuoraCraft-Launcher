@@ -35,11 +35,11 @@
 #       - game_crash_analyze(body) -> ApiResponse — 在指定版本上下文中分析用户选择的 Minecraft 日志或 ZIP。
 #       - game_crash_output(body) -> ApiResponse — 按需读取当前会话报告中的脱敏游戏输出。
 #       - game_crash_export(body) -> ApiResponse — 将当前会话报告导出为经过脱敏的 ZIP。
+#       - game_version_settings_effective(body) -> ApiResponse — 解析当前实例的有效启动设置。
 # ============================================================
 
 from __future__ import annotations
 
-import shlex
 from typing import Any
 
 from anyio import to_thread
@@ -68,7 +68,7 @@ from ECL.api.models import (
     LaunchRequest,
     LoaderCatalogRequest,
 )
-from ECL.utils.config import default_config
+from ECL.services.game.launch_settings import InstanceLaunchOverrides, LaunchSettingsResolver
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body
 
@@ -83,35 +83,6 @@ class GameHandlers(_FrontendState):
         if requested_source:
             return requested_source
         return str((self._get_effective_config().get("download") or {}).get("mirror_source") or "official")
-
-    @staticmethod
-    def _parse_game_args_tail(value: Any) -> list[str]:
-        """
-        将全局游戏参数文本解析为稳定的参数数组。
-
-        使用 shell 兼容的引号规则拆分文本，但不执行命令；引号不匹配时转换为
-        可由 IPC 边界统一处理的 ``ValueError``。
-        """
-        if not isinstance(value, str) or not value.strip():
-            return []
-        try:
-            return shlex.split(value)
-        except ValueError as exc:
-            raise ValueError("游戏参数尾部的引号格式无效") from exc
-
-    @staticmethod
-    def _global_jvm_args(value: Any) -> list[str]:
-        """
-        校验并复制全局 JVM 参数，避免不可信配置污染启动请求。
-
-        仅接受字符串列表，并在返回前丢弃空白参数，避免配置文件中的异常值直接
-        进入 Java 子进程参数。
-        """
-        if value in (None, ""):
-            return []
-        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-            raise ValueError("全局 JVM 参数配置格式无效")
-        return [item.strip() for item in value if item.strip()]
 
     @_ipc_handler("VERSION_CATALOG_FAILED")
     async def game_versions(self, body: dict[str, Any]) -> ApiResponse:
@@ -311,6 +282,29 @@ class GameHandlers(_FrontendState):
         return success(await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id))
 
     @_ipc_handler("GAME_CONFIG_FAILED")
+    async def game_version_settings_effective(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        查询与实际启动相同的实例有效设置，供界面展示继承结果。
+
+        :param body: 实例目标
+        :return: 解析后的启动设置
+        """
+        request, invalid = _validate_body(GameVersionRequest, body)
+        if invalid is not None:
+            return invalid
+        settings = await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id)
+        effective = await to_thread.run_sync(
+            LaunchSettingsResolver.resolve,
+            self._get_effective_config().get("game") or {},
+            InstanceLaunchOverrides.model_validate(settings),
+        )
+        values = effective.model_dump()
+        values["version_isolation"] = await to_thread.run_sync(
+            self.game.resolve_version_isolation, request.game_path, request.version_id, effective.version_isolation
+        )
+        return success(values)
+
+    @_ipc_handler("GAME_CONFIG_FAILED")
     async def game_version_settings_set(self, body: dict[str, Any]) -> ApiResponse:
         """
         原子写入版本目录中的独立启动设置。
@@ -475,33 +469,19 @@ class GameHandlers(_FrontendState):
         request, invalid = _validate_body(LaunchRequest, body)
         if invalid is not None:
             return invalid
-        values = request.model_dump()
-        version_id = values.pop("version_id")
-        game_path = values.pop("game_path")
-        source = values.pop("source")
+        version_id = request.version_id
+        game_path = request.game_path
+        source = request.source
+        quick_target = request.quick_target.model_dump() if request.quick_target else None
+        settings = await to_thread.run_sync(self.game.read_version_settings, game_path, version_id)
+        effective = await to_thread.run_sync(
+            LaunchSettingsResolver.resolve,
+            self._get_effective_config().get("game") or {},
+            InstanceLaunchOverrides.model_validate(settings),
+            request.model_dump(exclude_unset=True),
+        )
+        values = effective.model_dump()
         java_path = values.pop("java_path")
-        quick_target = values.pop("quick_target", None)
-        game_config = self._get_effective_config().get("game") or {}
-        if "width" not in request.model_fields_set:
-            values["width"] = game_config.get("game_width", default_config["game"]["game_width"])
-        if "height" not in request.model_fields_set:
-            values["height"] = game_config.get("game_height", default_config["game"]["game_height"])
-        if "fullscreen" not in request.model_fields_set:
-            values["fullscreen"] = bool(game_config.get("fullscreen", default_config["game"]["fullscreen"]))
-        # 启动高级选项：前端未显式提供（实例覆盖为空）时回退到全局游戏设置。
-        if "launcher_visibility" not in request.model_fields_set:
-            values["launcher_visibility"] = str(game_config.get("launcher_visibility") or "none")
-        for advanced_key in ("wrapper_command", "post_exit_command", "env_vars", "window_title"):
-            if advanced_key not in request.model_fields_set:
-                values[advanced_key] = str(game_config.get(advanced_key) or "")
-        values["jvm_args"] = [
-            *self._global_jvm_args(game_config.get("jvm_args")),
-            *values.get("jvm_args", []),
-        ]
-        values["game_args"] = [
-            *self._parse_game_args_tail(game_config.get("game_args_tail")),
-            *values.get("game_args", []),
-        ]
         values["version_isolation"] = await to_thread.run_sync(
             self.game.resolve_version_isolation,
             game_path,
@@ -509,25 +489,22 @@ class GameHandlers(_FrontendState):
             values.get("version_isolation"),
         )
         if quick_target:
+            quick_arguments = await to_thread.run_sync(
+                self.game.quick_launch_arguments,
+                game_path,
+                version_id,
+                quick_target,
+                values.get("version_isolation", False),
+            )
             values["game_args"] = [
                 *values.get("game_args", []),
-                *self.game.quick_launch_arguments(
-                    game_path,
-                    version_id,
-                    quick_target,
-                    values.get("version_isolation", False),
-                ),
+                *quick_arguments,
             ]
         result = await self.game.launch_instance(
             {"version_id": version_id},
             game_path=game_path,
             source=self._download_source(source.value if source else None),
             java_path=str(java_path) if java_path else None,
-            pre_launch_command=game_config.get("pre_launch_command"),
-            renderer=game_config.get("renderer"),
-            prefer_high_performance_gpu=bool(game_config.get("prefer_high_performance_gpu")),
-            use_java_exe=bool(game_config.get("use_java_exe")),
-            disable_crash_analysis=bool(game_config.get("disable_crash_analysis")),
             **values,
         )
         return success(result)

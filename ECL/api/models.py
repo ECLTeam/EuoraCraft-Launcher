@@ -200,6 +200,7 @@ class FileSavePurpose(StrEnum):
     SCHEMATIC_MATERIAL_MANIFEST = "schematic-material-manifest"
     SCREENSHOT = "screenshot"
     MOD_FILE = "mod-file"
+    INSTANCE_SHORTCUT = "instance-shortcut"
 
 
 class WindowOpenRequest(RequestModel):
@@ -439,7 +440,7 @@ class LaunchRequest(RequestModel):
     game_path: SafePath
     java_path: SafePath | None = None
     source: DownloadSource | None = None
-    memory: int = Field(default=default_config["game"]["memory_size"], ge=256, le=131072)
+    memory: int = Field(default=default_config["game"]["memory_size"], ge=512, le=65536)
     # 是否锁定 JVM 初始堆与最大堆一致（-Xms=-Xmx）。
     lock_memory: bool = False
     # 游戏进程优先级: idle / below_normal / normal / above_normal / high。
@@ -453,6 +454,11 @@ class LaunchRequest(RequestModel):
     # None 表示由后端读取实例 .ecl/settings.json；显式布尔值仅用于调用方覆盖。
     version_isolation: bool | None = None
     quick_target: Annotated[WorldQuickTarget | ServerQuickTarget, Field(discriminator="type")] | None = None
+    pre_launch_command: str = ""
+    renderer: Literal["default", "software", "directx12", "vulkan"] = "default"
+    prefer_high_performance_gpu: bool = False
+    use_java_exe: bool = False
+    disable_crash_analysis: bool = False
     # 包裹 java 命令的包装命令：含 {} 占位符时替换为完整命令，否则作为前缀拼接。
     wrapper_command: str = ""
     # 游戏进程退出后在实例目录执行的命令；为空时跳过。
@@ -809,6 +815,7 @@ class RequestModelRegistry:
         "game_config_patch": GameConfigPatch,
         "game_version_stats": GameVersionRequest,
         "game_version_settings_get": GameVersionRequest,
+        "game_version_settings_effective": GameVersionRequest,
         "game_version_settings_set": GameVersionSettingsUpdate,
         "game_instance_profile_get": GameVersionRequest,
         "game_instance_profile_patch": InstanceProfilePatchRequest,

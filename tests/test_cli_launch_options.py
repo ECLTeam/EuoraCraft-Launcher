@@ -227,3 +227,32 @@ def test_apply_overrides_creates_missing_sections() -> None:
     assert apply_launch_overrides({}, LaunchOptions(frontend_dist="http://localhost:5173")) == {
         "tauri": {"frontenddist": "http://localhost:5173"}
     }
+
+
+def test_temporary_game_overrides_keep_explicit_false_and_dont_copy_defaults() -> None:
+    options = parse_launch_options(
+        ["--launch=Foo", "--memory=6144", "--windowed", "--no-lock-memory", "--jvm-arg=-Dfoo=bar", "--game-arg=--demo"]
+    )
+    assert options.game_overrides() == {
+        "memory": 6144,
+        "fullscreen": False,
+        "lock_memory": False,
+        "jvm_args": ["-Dfoo=bar"],
+        "game_args": ["--demo"],
+    }
+    assert parse_launch_options(["--launch=Foo"]).game_overrides() == {}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--memory=4096"],
+        ["--launch=Foo", "--memory=100"],
+        ["--launch=Foo", "--width=10"],
+        ["--launch=Foo", "--open-page=games"],
+        ["--launch=Foo", "--fullscreen", "--windowed"],
+    ],
+)
+def test_invalid_extended_game_options_are_rejected(argv) -> None:
+    with pytest.raises(SystemExit):
+        parse_launch_options(argv)

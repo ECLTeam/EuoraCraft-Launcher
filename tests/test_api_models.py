@@ -221,6 +221,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
     schemas = request_schemas()
 
     assert set(schemas) == {
+        "game_version_settings_effective",
         "settings_get",
         "settings_set",
         "frontend_log",
