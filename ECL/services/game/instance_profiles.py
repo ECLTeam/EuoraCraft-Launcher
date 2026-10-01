@@ -58,7 +58,7 @@ class InstanceProfilePolicy:
         }
     )
     external_sources = frozenset({"auto", "pcl", "hmcl"})
-    version_icons = {
+    version_icons: dict[str, str] = {
         "release": "grass",
         "snapshot": "command",
         "old_beta": "coal",
