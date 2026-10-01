@@ -38,13 +38,13 @@ from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
+from ECL.services.operations import OperationManager
 from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
 
 from .download_sources import PreferredApiClient, alternate_source
 from .instance_compat import InstanceCompatibilityReader
 from .instance_profiles import InstanceProfileStore
 from .mcmod import McmodTranslator
-from .operations import GameOperationManager
 from .version_stats import VersionStatsStore
 
 if TYPE_CHECKING:
@@ -112,6 +112,7 @@ class _GameState:
         version_watch_debounce: float = 0.75,
         event_bus: EventBus | None = None,
         isolation_policy_provider: IsolationPolicyProvider | None = None,
+        operations: OperationManager | None = None,
     ):
         """
         创建游戏服务共享状态，并注入可替换的 Core 边界实现。
@@ -169,7 +170,8 @@ class _GameState:
             self._version_stats,
             compatibility_reader=InstanceCompatibilityReader(self.instance_compatibility),
         )
-        self._game_operations = GameOperationManager(self._data_path, self.events)
+        self._owns_operations = operations is None
+        self._game_operations = operations or OperationManager(self._data_path, self.events)
         self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._server_status_lock = RLock()
         self._schematic_sessions: dict[str, SchematicSession] = {}
@@ -431,7 +433,8 @@ class _GameState:
             except Exception:
                 self.logger.exception("关闭游戏 API 客户端失败")
         self._crash_executor.shutdown(wait=True, cancel_futures=True)
-        self._game_operations.close()
+        if self._owns_operations:
+            self._game_operations.close()
         self._crash_analyzer.close()
         if self.authlib_injector is not None:
             self.authlib_injector.close()
