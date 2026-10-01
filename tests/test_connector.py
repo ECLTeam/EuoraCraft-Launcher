@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import logging
 import threading
 from types import SimpleNamespace
 
@@ -379,3 +380,177 @@ async def test_run_in_daemon_uses_daemon_thread() -> None:
 
     assert await _run_in_daemon(probe) == "ok"
     assert captured["daemon"] is True
+
+
+@pytest.fixture
+def nat_probe(monkeypatch):
+    class Node:
+        def __init__(self, config) -> None:
+            self.stopped = False
+            self.info = {"stun_info": {"udp_nat_type": "FullCone", "public_ip": ["203.0.113.9"]}}
+            self.failure = ""
+
+        def start(self) -> None:
+            if self.failure == "start":
+                raise RuntimeError("start failed")
+
+        def node_info(self):
+            if self.failure == "read":
+                raise RuntimeError("read failed")
+            return self.info
+
+        def stop(self) -> None:
+            self.stopped = True
+            if self.failure == "stop":
+                raise RuntimeError("stop failed")
+
+    node = Node({})
+    monkeypatch.setattr("ECL.services.connector.easytier_pyo3.Node", lambda config: node)
+    monkeypatch.setattr("ECL.services.connector.sleep", lambda seconds: None)
+    return node
+
+
+@pytest.mark.parametrize("phase", ["start", "read"])
+def test_nat_failure_cleans_node_and_allows_retry(nat_probe, phase: str) -> None:
+    from ECL.services.connector import ConnectorNatError
+
+    service = ConnectorService()
+    nat_probe.failure = phase
+    with pytest.raises(ConnectorNatError) as captured:
+        service.get_nat_type()
+    assert captured.value.error_code == "CONNECTOR_NAT_TYPE_FAILED"
+    assert isinstance(captured.value.__cause__, RuntimeError)
+    assert nat_probe.stopped
+    nat_probe.failure = ""
+    assert service.get_nat_type()["detailType"] == "fullCone"
+
+
+def test_nat_creation_failure_releases_lock(monkeypatch, nat_probe) -> None:
+    from ECL.services.connector import ConnectorNatError
+
+    def fail(config):
+        raise RuntimeError("creation failed")
+
+    service = ConnectorService()
+    monkeypatch.setattr("ECL.services.connector.easytier_pyo3.Node", fail)
+    with pytest.raises(ConnectorNatError) as captured:
+        service.get_nat_type()
+    assert captured.value.error_code == "CONNECTOR_NAT_TYPE_FAILED"
+    monkeypatch.setattr("ECL.services.connector.easytier_pyo3.Node", lambda config: nat_probe)
+    assert service.get_nat_type()["type"] == "cone"
+
+
+def test_nat_empty_timeout_is_not_success(nat_probe) -> None:
+    from ECL.services.connector import ConnectorNatError
+
+    service = ConnectorService()
+    service.nat_probe_timeout_seconds = 0
+    with pytest.raises(ConnectorNatError) as captured:
+        service.get_nat_type()
+    assert captured.value.error_code == "CONNECTOR_NAT_TYPE_TIMEOUT"
+    assert nat_probe.stopped
+
+
+@pytest.mark.parametrize("public_ips,has_partial_result", [([], False), (["203.0.113.9"], True)])
+def test_nat_unknown_requires_probe_information(monkeypatch, nat_probe, public_ips, has_partial_result: bool) -> None:
+    from ECL.services.connector import ConnectorNatError
+
+    nat_probe.info = {"stun_info": {"udp_nat_type": "Unknown", "public_ip": public_ips}}
+    ticks = iter([0.0, 0.0, 26.0])
+    monkeypatch.setattr("ECL.services.connector.monotonic", lambda: next(ticks))
+    service = ConnectorService()
+    if has_partial_result:
+        result = service.get_nat_type()
+        assert result["type"] == "unknown"
+        assert result["publicIp"] == "203.0.113.9"
+    else:
+        with pytest.raises(ConnectorNatError) as captured:
+            service.get_nat_type()
+        assert captured.value.error_code == "CONNECTOR_NAT_TYPE_TIMEOUT"
+    assert nat_probe.stopped
+
+
+def test_nat_room_node_is_never_stopped(nat_probe) -> None:
+    service = ConnectorService()
+    service._easy_tier_node = nat_probe
+    assert service.get_nat_type()["type"] == "cone"
+    assert not nat_probe.stopped
+    nat_probe.failure = "read"
+    from ECL.services.connector import ConnectorNatError
+
+    with pytest.raises(ConnectorNatError):
+        service.get_nat_type()
+    assert not nat_probe.stopped
+
+
+def test_nat_udp_blocked_is_valid_result(nat_probe) -> None:
+    nat_probe.info = {"stun_info": {"udp_nat_type": "UdpBlocked"}}
+    result = ConnectorService().get_nat_type()
+    assert result["type"] == "blocked"
+    assert result["publicIp"] is None
+    assert nat_probe.stopped
+
+
+def test_nat_stop_failure_keeps_original_error(monkeypatch, nat_probe, caplog) -> None:
+    from ECL.services.connector import ConnectorNatError
+
+    nat_probe.failure = "stop"
+
+    def fail():
+        raise RuntimeError("original failure")
+
+    monkeypatch.setattr(nat_probe, "node_info", fail)
+    with caplog.at_level(logging.WARNING), pytest.raises(ConnectorNatError) as captured:
+        ConnectorService().get_nat_type()
+    assert str(captured.value.__cause__) == "original failure"
+    assert "停止 NAT" in caplog.text
+
+
+def test_nat_concurrent_detection_is_rejected(nat_probe, monkeypatch) -> None:
+    from ECL.services.connector import ConnectorNatError
+
+    service = ConnectorService()
+    entered = threading.Event()
+    release = threading.Event()
+    results = []
+    original = nat_probe.node_info
+
+    def wait():
+        entered.set()
+        assert release.wait(5)
+        return original()
+
+    monkeypatch.setattr(nat_probe, "node_info", wait)
+    worker = threading.Thread(target=lambda: results.append(service.get_nat_type()))
+    worker.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(ConnectorNatError) as captured:
+            service.get_nat_type()
+        assert captured.value.error_code == "CONNECTOR_NAT_TYPE_BUSY"
+        assert not nat_probe.stopped
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert results[0]["type"] == "cone"
+    assert service.get_nat_type()["type"] == "cone"
+
+
+@pytest.mark.parametrize(
+    "error_code", ["CONNECTOR_NAT_TYPE_TIMEOUT", "CONNECTOR_NAT_TYPE_BUSY", "CONNECTOR_NAT_TYPE_FAILED"]
+)
+async def test_nat_ipc_preserves_domain_error_codes(error_code: str) -> None:
+    from ECL.api.connector import ConnectorHandlers
+    from ECL.services.connector import ConnectorNatError
+
+    def fail():
+        raise ConnectorNatError("探测未完成", error_code)
+
+    state = SimpleNamespace(
+        connector=SimpleNamespace(get_nat_type=fail),
+        logger=logging.getLogger("test"),
+        events=SimpleNamespace(emit=lambda *args: None),
+    )
+    result = await ConnectorHandlers.connector_nat_type(state, {})
+    assert result == {"success": False, "message": "探测未完成", "errorCode": error_code, "presentation": "message"}

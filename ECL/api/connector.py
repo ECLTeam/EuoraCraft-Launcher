@@ -31,7 +31,7 @@ from typing import Any
 
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import InstanceTarget, KickRequest, PortRequest, PortsRequest, RoomCodeRequest
-from ECL.services.connector import ConnectorError, ConnectorNotAvailableError
+from ECL.services.connector import ConnectorError, ConnectorNatError, ConnectorNotAvailableError
 
 from .bridge import _FrontendState, _ipc_handler
 
@@ -171,7 +171,13 @@ class ConnectorHandlers(_FrontendState):
     @_ipc_handler("CONNECTOR_NAT_TYPE_FAILED")
     async def connector_nat_type(self, body: dict[str, Any]) -> ApiResponse:
         """
-        查询本机网络的 NAT 类型。
+        在线程中探测本机 NAT，保留领域错误码并避免阻塞 IPC 事件循环。
+
+        :param body: 无需参数的 IPC 请求体
+        :return: NAT 探测结果或保留 NAT 领域错误码的失败响应
         """
-        result = await _run_in_daemon(self.connector.get_nat_type)
+        try:
+            result = await _run_in_daemon(self.connector.get_nat_type)
+        except ConnectorNatError as exc:
+            return failure(str(exc), exc.error_code)
         return success(result)

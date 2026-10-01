@@ -22,6 +22,7 @@
 #       - kick(machine_id) -> dict[str, Any] — 移出玩家。
 #       - detect_ports() -> dict[str, Any] — 探测本机 Java 进程开放的候选端口。
 #       - search_mc_port(ports) -> dict[str, Any] — 在候选端口中搜索确认 Minecraft 服务端口。
+#   - class ConnectorNatError — NAT 探测失败，携带稳定 IPC 错误码。
 # ============================================================
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ import struct
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from ipaddress import ip_address
-from threading import RLock
+from threading import Lock, RLock
 from time import monotonic, sleep
 from typing import Any
 from uuid import uuid4
@@ -56,6 +57,27 @@ logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
+
+
+class ConnectorNatError(ConnectorError):
+    """
+    表示可安全转换为 IPC 失败响应的 NAT 探测错误。
+
+    :param message: 面向调用方的失败描述
+    :param error_code: 超时、忙碌或探测失败的稳定错误码
+    """
+
+    error_code: str
+
+    def __init__(self, message: str, error_code: str) -> None:
+        """
+        保存可安全返回前端的提示和稳定 NAT 错误码。
+
+        :param message: 不含原生节点内部信息的失败提示
+        :param error_code: NAT 超时、忙碌或失败的错误码
+        """
+        super().__init__(message)
+        self.error_code = error_code
 
 
 def _supports_kwarg(func: Callable[..., Any], name: str) -> bool:
@@ -128,6 +150,7 @@ class ConnectorService:
         self._mc_port: int | None = None
         self._room_server: Any = None  # AsyncFloroldingServer
         self._easy_tier_node: Any = None  # easytier_pyo3.Node
+        self._nat_probe_lock = Lock()
         self._client: Any = None  # AsyncFloroldingClient
         self._players: list[dict[str, Any]] = []
         self._nodes: list[str] = list(self.default_nodes)
@@ -424,7 +447,7 @@ class ConnectorService:
             "error": None,
         }
 
-    def get_nat_type(self) -> dict[str, Any]:
+    def get_nat_type(self) -> dict[str, str | int | bool | None]:
         """
         使用 EasyTier 内置 STUN 探测检测 NAT 类型。
 
@@ -432,77 +455,87 @@ class ConnectorService:
         无中继连接的临时节点，取得结果后立即停止。类型归类沿用 EasyTier
         的判定：开放与各类锥形 NAT 归为 ``cone``，对称映射归为 ``symmetric``。
 
-        :returns: NAT 大类、详细类型、公网地址、端口范围与 IPv6 支持状态
+        同一服务只允许一个探测任务；锁不会阻塞房间状态操作。轮询窗口有界，
+        但不能中断卡住的原生调用。临时节点在成功和失败时均尝试停止，复用的
+        房间节点不会被本方法关闭。
+
+        :return: NAT 大类、详细类型、公网地址、端口范围与 IPv6 探测状态
+        :raises ConnectorNatError: 已有探测、无有效信息而超时或节点操作失败时抛出
         """
+        if not self._nat_probe_lock.acquire(blocking=False):
+            raise ConnectorNatError("已有 NAT 检测正在进行，请稍后重试", "CONNECTOR_NAT_TYPE_BUSY")
         node = self._easy_tier_node
         owns_node = node is None
-        if owns_node:
-            identity = uuid4().hex
-            node = easytier_pyo3.Node(
-                {
-                    "instance_name": "ecl-nat-probe",
-                    "network_identity": {
-                        "network_name": f"ecl-nat-probe-{identity}",
-                        "network_secret": uuid4().hex,
-                    },
-                    "listeners": [],
-                    "peer": [],
-                    "dhcp": False,
-                    "flags": {
-                        "no_tun": True,
-                        "bind_device": False,
-                        "enable_ipv6": True,
-                    },
-                }
-            )
-
-        started_at = monotonic()
-        latest_result: dict[str, Any] | None = None
         try:
             if owns_node:
+                node = easytier_pyo3.Node(
+                    {
+                        "instance_name": "ecl-nat-probe",
+                        "network_identity": {
+                            "network_name": f"ecl-nat-probe-{uuid4().hex}",
+                            "network_secret": uuid4().hex,
+                        },
+                        "listeners": [],
+                        "peer": [],
+                        "dhcp": False,
+                        "flags": {"no_tun": True, "bind_device": False, "enable_ipv6": True},
+                    }
+                )
+            if owns_node:
                 node.start()
+            started_at = monotonic()
+            latest_result: dict[str, str | int | bool | None] | None = None
             while monotonic() - started_at < self.nat_probe_timeout_seconds:
                 node_info = node.node_info()
                 result = self._nat_result_from_stun_info(node_info.get("stun_info"))
                 if result is not None:
-                    latest_result = result
+                    if result["publicIp"] or result["publicPort"]:
+                        latest_result = result
                     if result["detailType"] == "unknown":
                         sleep(self.nat_probe_interval_seconds)
                         continue
                     logger.info(
-                        "NAT 检测完成: detail=%s, public=%s:%s-%s, ipv6=%s",
+                        "NAT 检测完成: detail=%s, ipv6=%s",
                         result["detailType"],
-                        result["publicIp"],
-                        result["publicPort"],
-                        result["publicPortEnd"],
                         result["supportsIpv6"],
                     )
                     return result
                 sleep(self.nat_probe_interval_seconds)
             logger.warning("NAT 检测超时，未取得完整的 EasyTier STUN 类型")
-        except Exception:
+            if latest_result is not None:
+                return latest_result
+            raise ConnectorNatError("NAT 检测超时，请检查网络后重试", "CONNECTOR_NAT_TYPE_TIMEOUT")
+        except ConnectorNatError:
+            raise
+        except Exception as exc:
             logger.warning("NAT 检测失败", exc_info=True)
+            raise ConnectorNatError("NAT 探测失败，请稍后重试", "CONNECTOR_NAT_TYPE_FAILED") from exc
         finally:
-            if owns_node:
-                try:
-                    node.stop()
-                except Exception:
-                    logger.debug("停止 NAT 临时探测节点失败", exc_info=True)
-
-        if latest_result is not None:
-            return latest_result
-        return {
-            "type": "unknown",
-            "detailType": "unknown",
-            "publicIp": None,
-            "publicPort": None,
-            "publicPortEnd": None,
-            "supportsIpv6": False,
-        }
+            try:
+                if owns_node and node is not None:
+                    self._stop_nat_probe(node)
+            finally:
+                self._nat_probe_lock.release()
 
     @staticmethod
-    def _nat_result_from_stun_info(stun_info: Any) -> dict[str, Any] | None:
-        # 把 EasyTier STUN 快照转换为稳定的前端结构。
+    def _stop_nat_probe(node: Any) -> None:
+        """
+        尝试关闭已创建的临时原生节点，不覆盖探测本身的结果或异常。
+
+        原生资源清理失败仅记录日志，调用方仍需释放检测锁。
+        """
+        try:
+            node.stop()
+        except Exception:
+            logger.warning("停止 NAT 临时探测节点失败", exc_info=True)
+
+    @staticmethod
+    def _nat_result_from_stun_info(stun_info: Any) -> dict[str, str | int | bool | None] | None:
+        """
+        校验原生节点快照并转换为稳定的 NAT 结果结构。
+
+        丢弃无效地址和端口，不把缺失 IPv6 数据视为网络不支持 IPv6。
+        """
         if not isinstance(stun_info, dict) or not stun_info:
             return None
 
