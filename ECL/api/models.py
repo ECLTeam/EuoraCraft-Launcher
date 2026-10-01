@@ -123,6 +123,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, field_validator, model_validator
 
+from ECL.services.custom_downloads import CustomDownloadRequest
 from ECL.utils.config import default_config
 
 
@@ -200,6 +201,7 @@ class FileSavePurpose(StrEnum):
     SCHEMATIC_MATERIAL_MANIFEST = "schematic-material-manifest"
     SCREENSHOT = "screenshot"
     MOD_FILE = "mod-file"
+    CUSTOM_DOWNLOAD = "custom-download"
     INSTANCE_SHORTCUT = "instance-shortcut"
 
 
@@ -795,7 +797,8 @@ class RequestModelRegistry:
     保存 IPC 命令到请求模型的映射。
     """
 
-    models: dict[str, type[RequestModel]] = {
+    models: dict[str, type[BaseModel]] = {
+        "custom_download_start": CustomDownloadRequest,
         "settings_get": SettingsQuery,
         "settings_set": SettingsUpdate,
         "frontend_log": FrontendLogRequest,

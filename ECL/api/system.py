@@ -25,6 +25,8 @@
 #       - debug_reset_launcher_data(body) -> dict[str, Any] — 还原启动器设置。
 #       - debug_clear_plugins(body) -> dict[str, Any] — 清理插件数据。
 #       - debug_devtools_open(body) -> dict[str, Any] — 打开 WebView 开发者工具（F12 调试窗口）。
+#       - custom_download_start(body) -> ApiResponse — 提交自定义文件下载。
+#       - custom_download_retry(body) -> ApiResponse — 重试本会话失败或取消的下载。
 # ============================================================
 
 from __future__ import annotations
@@ -38,8 +40,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import psutil
 from anyio import to_thread
 
-from ECL.api.contracts import success
+from ECL.api.contracts import ApiResponse, failure, success
 from ECL.services.app_update import AppUpdateError, UpdateApplier
+from ECL.services.custom_downloads import CustomDownloadRequest
 from ECL.services.maintenance import schedule_debug_maintenance
 from ECL.services.updates import UpdateChecker
 
@@ -92,6 +95,34 @@ class SystemHandlers(_FrontendState):
         :param body: 经过边界校验的 IPC 请求数据
         """
         return {"success": True, "data": {"status": "ok", "message": "正常"}}
+
+    @_ipc_handler("CUSTOM_DOWNLOAD_FAILED")
+    async def custom_download_start(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        校验并提交自定义下载，任务在独立线程运行。
+
+        :param body: HTTP(S) 地址、完整保存路径及覆盖意图
+        :return: 新下载任务标识
+        """
+        request = await to_thread.run_sync(CustomDownloadRequest.model_validate, body)
+        if self.context.downloads is None:
+            return failure("下载服务未初始化", "DOWNLOAD_UNAVAILABLE")
+        return success(await to_thread.run_sync(self.context.downloads.submit, request))
+
+    @_ipc_handler("CUSTOM_DOWNLOAD_RETRY_FAILED")
+    async def custom_download_retry(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        将本会话失败或取消的下载重新登记为新任务。
+
+        :param body: 包含原 operation_id 的请求
+        :return: 重试任务标识
+        """
+        operation_id = body.get("operation_id")
+        if not isinstance(operation_id, str) or not operation_id:
+            return failure("任务标识无效", "INVALID_OPERATION")
+        if self.context.downloads is None:
+            return failure("下载服务未初始化", "DOWNLOAD_UNAVAILABLE")
+        return success(await to_thread.run_sync(self.context.downloads.retry, operation_id))
 
     @_ipc_handler("SYSTEM_MEMORY_FAILED")
     async def system_memory(self, body: dict[str, Any]) -> dict[str, Any]:

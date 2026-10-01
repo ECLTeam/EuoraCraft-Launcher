@@ -39,9 +39,11 @@ from ECL.game import InstancesManager
 from ECL.plugins import PluginManager
 from ECL.services.accounts import AccountManager
 from ECL.services.background_media import BackgroundMediaService
+from ECL.services.custom_downloads import CustomDownloadService
 from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
+from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
 from ECL.services.single_instance import SingleInstanceService
 from ECL.services.updates import StartupUpdateService
@@ -261,6 +263,8 @@ class ApplicationContext:
     connector: ConnectorService
     plugins: PluginManager
     processes: ProcessService
+    operations: OperationManager | None = None
+    downloads: CustomDownloadService | None = None
     background_media: BackgroundMediaService | None = None
     startup_update: StartupUpdateService | None = None
     single_instance: SingleInstanceService | None = None  # 按配置启动的单实例互斥监听
@@ -287,6 +291,7 @@ class ApplicationContext:
                 self.processes,
                 self.game,
                 self.connector,
+                self.operations,
                 self.accounts,
                 self.background_media,
                 self.startup_update,
@@ -420,6 +425,9 @@ def create_application(
         logger.info("正在初始化游戏服务")
         # 共享进程管理器，使实例终端能同时展示插件与 Minecraft 实例的输出。
         shared_instances = InstancesManager()
+        operations = OperationManager(state.data_path, events)
+        created.append(operations)
+        downloads = CustomDownloadService(operations)
         game = GameService(
             accounts,
             data_path=state.data_path,
@@ -430,6 +438,7 @@ def create_application(
             event_bus=events,
             isolation_policy_provider=lambda: (config.get_config("game") or {}).get("instance_isolation_policy"),
             instances_manager=shared_instances,
+            operations=operations,
         )
         created.append(game)
         logger.info("游戏服务初始化完成")
@@ -519,6 +528,8 @@ def create_application(
         connector=connector,
         plugins=plugins,
         processes=processes,
+        operations=operations,
+        downloads=downloads,
         background_media=background_media,
         startup_update=startup_update,
         single_instance=single_instance,

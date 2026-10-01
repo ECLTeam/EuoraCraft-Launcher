@@ -222,6 +222,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
 
     assert set(schemas) == {
         "game_version_settings_effective",
+        "custom_download_start",
         "settings_get",
         "settings_set",
         "frontend_log",

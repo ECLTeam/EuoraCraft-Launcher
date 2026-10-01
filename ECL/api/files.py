@@ -81,6 +81,7 @@ class FileHandlers(_FrontendState):
         ImagePurpose.BACKGROUND: ("选择背景图片", ["png", "jpg", "jpeg", "gif", "bmp", "webp"]),
     }
     save_file_options: dict[FileSavePurpose, tuple[str, str, list[str]]] = {
+        FileSavePurpose.CUSTOM_DOWNLOAD: ("保存下载文件", "download.bin", ["*"]),
         FileSavePurpose.INSTANCE_SHORTCUT: ("创建实例快捷方式", "Minecraft.lnk", ["lnk"]),
         FileSavePurpose.CRASH_REPORT: ("保存 Minecraft 崩溃报告", "EuoraCraft-crash-report.zip", ["zip"]),
         FileSavePurpose.LAUNCHER_LOGS: ("保存 EuoraCraft Launcher启动器日志", "EuoraCraft-logs.zip", ["zip"]),
@@ -651,6 +652,8 @@ class FileHandlers(_FrontendState):
             if request.purpose == FileSavePurpose.MOD_FILE
             else "Modrinth 整合包"
             if request.purpose == FileSavePurpose.INSTANCE_EXPORT
+            else "所有文件"
+            if request.purpose == FileSavePurpose.CUSTOM_DOWNLOAD
             else "Windows 快捷方式"
             if request.purpose == FileSavePurpose.INSTANCE_SHORTCUT
             else "ZIP 压缩包"
@@ -668,6 +671,7 @@ class FileHandlers(_FrontendState):
             FileSavePurpose.SCHEMATIC_MATERIAL_MANIFEST,
             FileSavePurpose.SCREENSHOT,
             FileSavePurpose.MOD_FILE,
+            FileSavePurpose.CUSTOM_DOWNLOAD,
         }
         if selected and request.purpose not in no_suffix_force:
             primary_ext = extensions[0] if extensions else "zip"

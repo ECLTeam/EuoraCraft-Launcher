@@ -765,6 +765,7 @@ def test_select_save_file_instance_export_uses_mrpack_suffix(tmp_path, monkeypat
 @pytest.mark.parametrize(
     ("purpose", "filename", "expected_name", "label", "extensions"),
     [
+        ("custom-download", "file.bin", "file.bin", "所有文件", ["*"]),
         ("instance-shortcut", "测试实例", "测试实例.lnk", "Windows 快捷方式", ["lnk"]),
     ],
 )

@@ -35,6 +35,8 @@ class IpcCommandRegistry:
         "frontend_ready",
         "launcher_errors_pending",
         "launcher_errors_ack",
+        "custom_download_start",
+        "custom_download_retry",
         "system_ping",
         "system_memory",
         "launcher_info",
