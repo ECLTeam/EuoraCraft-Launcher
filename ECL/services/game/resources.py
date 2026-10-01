@@ -11,7 +11,7 @@
 #       - list_resources(game_path, version_id, resource_type, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 扫描资源文件、解析元数据，并标记重复哈希、重复模组 ID 与缺失依赖。
 #       - install_resources(game_path, version_id, resource_type, source_paths, version_isolation=…, world_id=…) -> dict[str, str] — 异步复制一个或多个本地资源，目标文件通过临时文件原子提交。
 #       - toggle_resource(game_path, version_id, resource_type, resource_id, enabled, version_isolation=…, world_id=…) -> dict[str, Any] — 按资源语义启停；原理图明确不提供无意义开关。
-#       - delete_resources(game_path, version_id, resource_type, resource_ids, version_isolation=…, world_id=…) -> None
+#       - delete_resources(game_path, version_id, resource_type, resource_ids, version_isolation=…, world_id=…) -> ResourceDeleteResult
 #       - export_resource_manifest(game_path, version_id, resource_type, output_path, output_format, version_isolation=…, world_id=…) -> dict[str, str]
 #       - curseforge_available() -> bool — 返回 CurseForge 在线搜索是否已配置 API Key。
 #       - search_online_resources(query, game_version, loader, source=…, curseforge_key=…, limit=…, resource_type=…, offset=…, sort=…) -> dict[str, Any] — 搜索 Modrinth 或 CurseForge；无 Key 时只禁用 CurseForge。
@@ -24,6 +24,7 @@
 #       - check_resource_updates(game_path, version_id, resource_type, game_version, loader, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 查询与当前游戏版本和加载器严格兼容的 Modrinth 更新候选。
 #       - update_resource(game_path, version_id, resource_type, resource_id, update, version_isolation=…, world_id=…) -> dict[str, str] — 下载校验更新文件后原子替换，旧文件直接删除。
 #       （整合包导入导出已移交 ModpackCoordinator，见 modpack.py）
+#   - ResourceDeleteResult — 批量删除中已删除资源及逐项失败的结果。
 # ============================================================
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ import zipfile
 import zlib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,6 +57,24 @@ from ECL.utils.network import download_proxy_url
 from .base import GameServiceError
 from .operations import OperationContext
 from .workspace import delete_path, resolve_relative_id
+
+
+class ResourceDeleteFailure(TypedDict):
+    """
+    描述一个资源删除失败的稳定标识与可展示原因。
+    """
+
+    resourceId: str
+    message: str
+
+
+class ResourceDeleteResult(TypedDict):
+    """
+    汇总批量删除的成功项与失败项，允许前端保留未完成选择。
+    """
+
+    deleted: list[str]
+    failed: list[ResourceDeleteFailure]
 
 
 def _proxied_get(url: str, **kwargs: Any) -> httpx.Response:
@@ -640,10 +659,34 @@ class ResourceCoordinator:
         resource_ids: list[str],
         version_isolation: Any = False,
         world_id: str | None = None,
-    ) -> None:
+    ) -> ResourceDeleteResult:
+        """
+        校验整批资源边界后逐项删除，返回部分失败而不掩盖已完成项。
+
+        :param game_path: 游戏根目录
+        :param version_id: 实例标识
+        :param resource_type: 资源类型
+        :param resource_ids: 待删除的相对标识
+        :param version_isolation: 实例隔离设置
+        :param world_id: 数据包所属存档
+        :return: 已删除标识和各失败项的可展示原因
+        :raises GameServiceError: 任一标识越界时在删除开始前拒绝整批请求
+        """
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
-        for resource_id in resource_ids:
-            delete_path(resolve_relative_id(root, resource_id))
+        paths_by_id = {
+            resource_id: resolve_relative_id(root, resource_id, must_exist=False) for resource_id in resource_ids
+        }
+        if root.resolve() in paths_by_id.values():
+            raise GameServiceError("资源 ID 必须指向目录内的资源", "INVALID_RELATIVE_ID")
+        result: ResourceDeleteResult = {"deleted": [], "failed": []}
+        for resource_id, resource_path in paths_by_id.items():
+            try:
+                delete_path(resource_path)
+            except GameServiceError as exc:
+                result["failed"].append({"resourceId": resource_id, "message": str(exc)})
+            else:
+                result["deleted"].append(resource_id)
+        return result
 
     def export_resource_manifest(
         self,
