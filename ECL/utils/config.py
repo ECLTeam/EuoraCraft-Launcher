@@ -12,6 +12,7 @@
 #       - list_sections() -> list[str] — 获取全部配置分区名称
 #       - get_many(sections) -> dict[str, Any] — 批量获取配置分区
 #       - save_config(section, data) -> None — 保存配置分区
+#       - remove_legacy_instance_settings(key) -> None — 实例设置落盘后清理对应旧全局条目。
 # ============================================================
 
 from __future__ import annotations
@@ -240,6 +241,25 @@ class ConfigStore:
         """
         config_data = self.get_config()
         return {section: config_data.get(section) for section in dict.fromkeys(sections)}
+
+    def remove_legacy_instance_settings(self, key: str) -> None:
+        """
+        在实例设置成功落盘后原子移除旧全局条目，不开放旧分区写入。
+
+        与全局分区保存共用锁，保留其他实例的条目及并发完成的配置变更。
+
+        :param key: 经过实例目标规范化的旧设置标识
+        :raises ConfigError: 原子保存配置失败时抛出，保留原配置
+        """
+        with self._lock:
+            config_data = self.get_config()
+            legacy = config_data.get("version_settings")
+            if not isinstance(legacy, dict) or key not in legacy:
+                return
+            del legacy[key]
+            if not legacy:
+                del config_data["version_settings"]
+            self._write_config(config_data)
 
     def save_config(self, section: str, data: Any) -> None:
         """

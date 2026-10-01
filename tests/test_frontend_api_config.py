@@ -822,6 +822,29 @@ def test_instance_shortcut_ipc_uses_application_runtime_paths(tmp_path, monkeypa
     ]
 
 
+def test_launch_uses_legacy_global_instance_overrides_until_saved(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    key = f"{str(tmp_path).replace(chr(92), '/').lower()}::1.21.1"
+    legacy = {"customMemory": True, "memory": 6144, "customJava": True, "javaPath": "custom-java"}
+    api.config._write_config({**api.config.get_config(), "version_settings": {key: legacy, "other::instance": legacy}})
+    body = {"game_path": str(tmp_path), "version_id": "1.21.1"}
+    assert asyncio.run(api.game_version_settings_get(body))["data"] == legacy
+    effective = asyncio.run(api.game_version_settings_effective(body))["data"]
+    assert (effective["memory"], effective["java_path"]) == (6144, "custom-java")
+    assert asyncio.run(api.game_launch(body))["success"] is True
+    assert api.game.launch_call[1]["memory"] == 6144
+    assert api.game.launch_call[1]["java_path"] == "custom-java"
+    monkeypatch.setattr(api.game, "read_version_settings", lambda *_args: {"memoryMode": "manual", "memory": 8192})
+    assert asyncio.run(api.game_launch(body))["success"] is True
+    assert api.game.launch_call[1]["memory"] == 8192
+    assert api.config.get_config("version_settings")[key] == legacy
+    monkeypatch.setattr(api.game, "write_version_settings", lambda *_args: {}, raising=False)
+    assert asyncio.run(api.game_version_settings_set({**body, "data": {}}))["success"] is True
+    assert api.config.get_config("version_settings") == {"other::instance": legacy}
+    monkeypatch.setattr(api.game, "read_version_settings", lambda *_args: {})
+    assert asyncio.run(api.game_version_settings_get(body))["data"] == {}
+
+
 def test_select_file_modpack_purpose_filters_modpack_extensions(tmp_path, monkeypatch) -> None:
     api = _build_api(tmp_path)
     api._webview = object()

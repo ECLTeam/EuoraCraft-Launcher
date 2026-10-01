@@ -40,6 +40,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from anyio import to_thread
@@ -77,6 +78,23 @@ class GameHandlers(_FrontendState):
     """
     提供游戏目录、安装任务和运行实例的正式 IPC 边界。
     """
+
+    async def _read_launch_settings(self, game_path: str | Path, version_id: str) -> dict[str, Any]:
+        """
+        优先读取实例文件，文件为空时保留旧全局实例覆盖的启动语义。
+
+        此回退与旧前端的键规范一致，只读取而不迁移落盘；用户保存或重置时
+        由既有设置接口写入实例文件并清理旧入口。
+        """
+        settings = await to_thread.run_sync(self.game.read_version_settings, game_path, version_id)
+        if settings:
+            return settings
+        legacy = self._get_effective_config().get("version_settings")
+        if not isinstance(legacy, dict):
+            return {}
+        normalized_path = str(game_path).strip().replace("\\", "/").rstrip("/").lower()
+        value = legacy.get(f"{normalized_path}::{version_id.strip()}")
+        return dict(value) if isinstance(value, dict) else {}
 
     def _download_source(self, requested_source: str | None) -> str:
         # 选择请求显式指定的下载源，缺失时使用启动器配置。
@@ -279,7 +297,7 @@ class GameHandlers(_FrontendState):
         request, invalid = _validate_body(GameVersionRequest, body)
         if invalid is not None:
             return invalid
-        return success(await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id))
+        return success(await self._read_launch_settings(request.game_path, request.version_id))
 
     @_ipc_handler("GAME_CONFIG_FAILED")
     async def game_version_settings_effective(self, body: dict[str, Any]) -> ApiResponse:
@@ -292,7 +310,7 @@ class GameHandlers(_FrontendState):
         request, invalid = _validate_body(GameVersionRequest, body)
         if invalid is not None:
             return invalid
-        settings = await to_thread.run_sync(self.game.read_version_settings, request.game_path, request.version_id)
+        settings = await self._read_launch_settings(request.game_path, request.version_id)
         effective = await to_thread.run_sync(
             LaunchSettingsResolver.resolve,
             self._get_effective_config().get("game") or {},
@@ -315,14 +333,17 @@ class GameHandlers(_FrontendState):
         request, invalid = _validate_body(GameVersionSettingsUpdate, body)
         if invalid is not None:
             return invalid
-        return success(
-            await to_thread.run_sync(
-                self.game.write_version_settings,
-                request.game_path,
-                request.version_id,
-                request.data,
-            )
+        saved = await to_thread.run_sync(
+            self.game.write_version_settings,
+            request.game_path,
+            request.version_id,
+            request.data,
         )
+        normalized_path = str(request.game_path).strip().replace("\\", "/").rstrip("/").lower()
+        await to_thread.run_sync(
+            self.config.remove_legacy_instance_settings, f"{normalized_path}::{request.version_id.strip()}"
+        )
+        return success(saved)
 
     @_ipc_handler("INSTANCE_PROFILE_FAILED")
     async def game_instance_profile_get(self, body: dict[str, Any]) -> ApiResponse:
@@ -473,7 +494,7 @@ class GameHandlers(_FrontendState):
         game_path = request.game_path
         source = request.source
         quick_target = request.quick_target.model_dump() if request.quick_target else None
-        settings = await to_thread.run_sync(self.game.read_version_settings, game_path, version_id)
+        settings = await self._read_launch_settings(game_path, version_id)
         effective = await to_thread.run_sync(
             LaunchSettingsResolver.resolve,
             self._get_effective_config().get("game") or {},
