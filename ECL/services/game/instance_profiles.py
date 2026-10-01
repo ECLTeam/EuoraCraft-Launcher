@@ -58,6 +58,13 @@ class InstanceProfilePolicy:
         }
     )
     external_sources = frozenset({"auto", "pcl", "hmcl"})
+    version_icons = {
+        "release": "grass",
+        "snapshot": "command",
+        "old_beta": "coal",
+        "old_alpha": "quartz",
+        "april_fools": "iron",
+    }
     external_source_pattern = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
     builtin_categories = (
         {"id": "unclassified", "name": "未分类", "color": "#8b95a5", "order": 0, "builtin": True},
@@ -560,7 +567,7 @@ class InstanceProfileStore:
                 else "builtin",
                 "value": str(version.get("primaryLoader") or "grass").casefold()
                 if str(version.get("primaryLoader") or "Vanilla").casefold() != "vanilla"
-                else "grass",
+                else InstanceProfilePolicy.version_icons.get(str(version.get("versionType") or "").casefold(), "grass"),
             },
             "cover": None,
             "pinOrder": 2**31 - 1,

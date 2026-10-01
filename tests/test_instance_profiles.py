@@ -81,6 +81,29 @@ def test_profile_keeps_explicit_false_and_resets_single_field(tmp_path) -> None:
     assert reset["favorite"] is False
 
 
+@pytest.mark.parametrize(
+    ("version_type", "icon_key"),
+    [
+        ("release", "grass"),
+        ("snapshot", "command"),
+        ("old_beta", "coal"),
+        ("old_alpha", "quartz"),
+        ("april_fools", "iron"),
+        ("unknown", "grass"),
+    ],
+)
+def test_automatic_icon_uses_version_type_and_preserves_override(tmp_path, version_type, icon_key) -> None:
+    game_path, _ = _instance(tmp_path)
+    store = InstanceProfileStore(tmp_path / "data", VersionStatsStore())
+    version = {**_base_version(), "versionType": version_type}
+    assert store.enrich_version(game_path, version)["icon"] == {"type": "builtin", "value": icon_key}
+    store.set_icon(game_path, "1.21.8", "builtin", value="grass")
+    assert store.enrich_version(game_path, version)["icon"] == {"type": "builtin", "value": "grass"}
+    store.reset_profile_fields(game_path, "1.21.8", ["icon"])
+    version["primaryLoader"] = "Fabric"
+    assert store.enrich_version(game_path, version)["icon"] == {"type": "loader", "value": "fabric"}
+
+
 def test_local_icon_is_validated_and_copied_into_ecl_directory(tmp_path) -> None:
     game_path, instance_path = _instance(tmp_path)
     store = InstanceProfileStore(tmp_path / "data", VersionStatsStore())
