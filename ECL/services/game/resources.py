@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import io
@@ -35,10 +36,12 @@ import json
 import os
 import re
 import shutil
+import struct
 import tempfile
 import time
 import tomllib
 import zipfile
+import zlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -247,6 +250,49 @@ class ResourceCoordinator:
     统一管理模组、资源包、光影包、数据包和原理图。
     """
 
+    resourcepack_icon_max_bytes: int = 1024 * 1024
+    resourcepack_icon_max_dimension: int = 4096
+
+    def _read_resourcepack_icon(self, pack_path: Path) -> str | None:
+        """
+        有界读取资源包根目录的 PNG 图标并转换为列表可展示的 Data URL。
+
+        ZIP 不解压到磁盘，文件夹图标解析后必须仍位于包内。图标缺失、损坏或
+        超限时返回 None，让前端回退；完整图片解码失败由前端图片错误处理兜底。
+        调用方须在线程中执行此磁盘读取，不缓存图标以支持刷新后的文件替换。
+        """
+        try:
+            if pack_path.is_dir():
+                pack_root = pack_path.resolve(strict=True)
+                icon_path = (pack_root / "pack.png").resolve(strict=True)
+                if not icon_path.is_relative_to(pack_root) or not icon_path.is_file():
+                    return None
+                if icon_path.stat().st_size > self.resourcepack_icon_max_bytes:
+                    return None
+                with icon_path.open("rb") as icon_file:
+                    icon_bytes = icon_file.read(self.resourcepack_icon_max_bytes + 1)
+            else:
+                with zipfile.ZipFile(pack_path) as archive:
+                    icon_entry = archive.getinfo("pack.png")
+                    if icon_entry.file_size > self.resourcepack_icon_max_bytes:
+                        return None
+                    with archive.open(icon_entry) as icon_file:
+                        icon_bytes = icon_file.read(self.resourcepack_icon_max_bytes + 1)
+        except (OSError, ValueError, KeyError, RuntimeError, NotImplementedError, zipfile.BadZipFile, zlib.error):
+            # 图标是可选展示信息，单个包读取失败不阻断整个资源列表。
+            return None
+
+        if not 33 <= len(icon_bytes) <= self.resourcepack_icon_max_bytes:
+            return None
+        if icon_bytes[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR":
+            return None
+        width, height = struct.unpack(">II", icon_bytes[16:24])
+        if not (
+            0 < width <= self.resourcepack_icon_max_dimension and 0 < height <= self.resourcepack_icon_max_dimension
+        ):
+            return None
+        return "data:image/png;base64," + base64.b64encode(icon_bytes).decode("ascii")
+
     def _resource_root(
         self,
         game_path: Any,
@@ -398,7 +444,18 @@ class ResourceCoordinator:
         world_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
-        扫描资源文件、解析元数据，并标记重复哈希、重复模组 ID 与缺失依赖。
+        扫描实例资源、解析元数据，并为资源包附带包内 PNG 图标。
+
+        图标读取失败时保留资源条目并返回空图标；重复哈希、重复模组 ID 和
+        缺失依赖仍按原有规则标记。方法执行同步磁盘读取，IPC 在线程中调用。
+
+        :param game_path: 游戏根目录
+        :param version_id: 实例版本标识
+        :param resource_type: 要扫描的资源类型
+        :param version_isolation: 是否使用实例隔离目录
+        :param world_id: 数据包所属的世界标识
+        :return: 排序后的资源清单，资源包含可空的 iconData 字段
+        :raises GameServiceError: 资源类型或实例、世界目标无效时抛出
         """
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         if not root.is_dir():
@@ -419,6 +476,8 @@ class ResourceCoordinator:
                 if resource_type in {"resourcepack", "datapack"}
                 else {"name": path.stem}
             )
+            if resource_type == "resourcepack":
+                metadata["iconData"] = self._read_resourcepack_icon(path)
             digest = _sha512(path) if path.is_file() else None
             recorded = manifest.get(f"{resource_type}:{path.name}") or {}
             resources.append(
@@ -596,7 +655,25 @@ class ResourceCoordinator:
         version_isolation: Any = False,
         world_id: str | None = None,
     ) -> dict[str, str]:
-        resources = self.list_resources(game_path, version_id, resource_type, version_isolation, world_id)
+        """
+        将实例资源元数据原子导出为 JSON 或 CSV 清单。
+
+        图标仅供列表展示，导出时从条目副本中移除，避免清单包含图片数据。
+
+        :param game_path: 游戏根目录
+        :param version_id: 实例版本标识
+        :param resource_type: 要导出的资源类型
+        :param output_path: 清单保存位置，父目录不存在时创建
+        :param output_format: json 或 csv
+        :param version_isolation: 是否使用实例隔离目录
+        :param world_id: 数据包所属的世界标识
+        :return: 已保存清单的路径
+        :raises GameServiceError: 目标无效或清单格式不支持时抛出
+        """
+        resources = [
+            {key: value for key, value in item.items() if key != "iconData"}
+            for item in self.list_resources(game_path, version_id, resource_type, version_isolation, world_id)
+        ]
         output = Path(str(output_path)).expanduser().resolve(strict=False)
         output.parent.mkdir(parents=True, exist_ok=True)
         if output_format == "json":
