@@ -152,7 +152,6 @@ class HostDependencyPolicy:
                     owners[import_name] = package.name
                     if import_name in sys.stdlib_module_names or import_name in {
                         "ECL",
-                        "ecl_plugin_sdk",
                         "pytauri",
                         "pytauri_wheel",
                         "pytauri_plugins",

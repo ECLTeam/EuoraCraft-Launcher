@@ -59,9 +59,6 @@ dev = [
     "uv==0.12.16"
 ]
 
-[tool.setuptools]
-py-modules = ["ecl_plugin_sdk"]
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ECL*"]

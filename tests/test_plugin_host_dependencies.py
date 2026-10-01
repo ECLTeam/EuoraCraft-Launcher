@@ -50,7 +50,7 @@ def test_host_versions_use_pep440_equivalence_and_cannot_be_overwritten(tmp_path
     assert "导入冲突" in instance.conflict(directory(tmp_path, ("other", "1", "example")))
 
 
-@pytest.mark.parametrize("root", ["json", "ECL", "pytauri", "ecl_plugin_sdk"])
+@pytest.mark.parametrize("root", ["json", "ECL", "pytauri"])
 def test_protected_imports_are_rejected(tmp_path: Path, root: str) -> None:
     assert "受保护" in policy(tmp_path).conflict(directory(tmp_path, ("third-party", "1", root)))
 

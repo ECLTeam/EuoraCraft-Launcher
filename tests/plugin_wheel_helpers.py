@@ -65,8 +65,10 @@ def make_package(
     wheel_paths: tuple[Path, ...] = (),
     dependencies: tuple[str, ...] = (),
     plugin_dependencies: dict[str, str] | None = None,
-    permissions: tuple[dict[str, str], ...] = (),
+    permissions: tuple[dict[str, str], ...] | None = None,
 ) -> Path:
+    if permissions is None:
+        permissions = ({"scope": "commands", "action": "execute", "resource": "pid"},) if code is None else ()
     source_path = folder_path / f"{name}-{version}-source"
     source_path.mkdir(parents=True)
     (source_path / "plugin.json").write_text(
@@ -85,7 +87,8 @@ def make_package(
     )
     (source_path / "main.py").write_text(
         code
-        or "from ecl_plugin_sdk import Plugin as BasePlugin\nimport os\nclass Plugin(BasePlugin):\n    @BasePlugin.on_command('pid')\n    def pid(self):\n        return os.getpid()\n",
+        if code is not None
+        else "from ECL.plugins import Plugin as BasePlugin\nimport os\nclass Plugin(BasePlugin):\n    @BasePlugin.on_command('pid')\n    def pid(self):\n        return os.getpid()\n",
         encoding="utf-8",
     )
     if wheel_paths:

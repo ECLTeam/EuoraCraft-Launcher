@@ -105,7 +105,7 @@ async def test_packaged_launcher_installs_offline_wheels_and_loads_native_extens
             "ecl_smoke_resource/value.txt": b"offline-resource",
         },
     )
-    code = """from ecl_plugin_sdk import Plugin as BasePlugin
+    code = """from ECL.plugins import Plugin as BasePlugin
 import os
 import sys
 import importlib.resources
@@ -116,6 +116,8 @@ class Plugin(BasePlugin):
     def probe(self):
         return {
             'pid': os.getpid(),
+            'sdk_module': BasePlugin.__module__,
+            'has_host_context': self.framework is not None and self.name == 'demo',
             'frozen': bool(getattr(sys, 'frozen', False) or '__compiled__' in globals()),
             'resource': importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
             'native': xxhash.xxh64(b'ecl').hexdigest(),
@@ -127,6 +129,7 @@ class Plugin(BasePlugin):
         code=code,
         wheel_paths=(pure_wheel, *native_wheels),
         dependencies=("ecl-smoke-resource==1.0.0", "xxhash==3.6.0"),
+        permissions=({"scope": "commands", "action": "execute", "resource": "probe"},),
     )
     data_path = tmp_path / "data"
     for phase in ("install", "restart"):
@@ -169,6 +172,7 @@ class Plugin(BasePlugin):
                     assert result["result"]["success"], result
                     probe = result["result"]["data"]
                     assert probe["pid"] == info["pid"]
+                    assert probe["sdk_module"] == "ECL.plugins.plugin" and probe["has_host_context"]
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
                     assert not (data_path / "plugin_envs").exists()

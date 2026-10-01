@@ -19,8 +19,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from ECL.plugins.command_sdk import CommandPluginAdapter
-from ECL.plugins.command_sdk import Plugin as CommandPlugin
 from ECL.plugins.dependencies import (
     DependencyResolution,
     PluginDependencyInfo,
@@ -164,7 +162,12 @@ class PluginDiscovery(_PluginState):
     def _create_instance(
         self, name: str, plugin_dir: Path, metadata: dict[str, Any], entry_point: str, is_system: bool
     ) -> Plugin:
-        # 从 entry_point 创建插件实例，entry_point 格式为 "文件名:类名" 或纯 "文件名"。
+        """
+        校验包内入口并在主进程创建使用宿主构造参数的插件实例。
+
+        entry_point 为文件名或“文件名:类名”；模块执行前限制文件路径边界，
+        不再识别无参数 SDK 或使用命令适配器。入口代码仍具有本进程能力。
+        """
         parts = entry_point.split(":", 1)
         module_name = parts[0]
         class_name = parts[1] if len(parts) > 1 else "Plugin"
@@ -186,8 +189,6 @@ class PluginDiscovery(_PluginState):
         source = spec.loader.get_source(spec.name)
         exec(compile(source, str(main_py), "exec", dont_inherit=True), module.__dict__)
         plugin_class = getattr(module, class_name)
-        if isinstance(plugin_class, type) and issubclass(plugin_class, CommandPlugin):
-            return CommandPluginAdapter(plugin_class(), self, plugin_dir, metadata, is_system)
         return plugin_class(self, plugin_dir, metadata, is_system)
 
     def _call_plugin_hook(self, plugin: Plugin, method_name: str, *, fail_status: str | None = None) -> bool:

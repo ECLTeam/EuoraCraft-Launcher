@@ -109,7 +109,6 @@ datas = [
 
 binaries = _wheel_binaries + _plugin_binaries + _collect_msvc_runtime()
 hiddenimports = [
-    "ecl_plugin_sdk",
     "importlib_metadata",
     "pytauri",
     "pytauri.ffi",

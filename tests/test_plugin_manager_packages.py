@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from plugin_wheel_helpers import make_package, make_wheel
 
+from ECL.plugins import Plugin
 from ECL.plugins.framework import PluginCommandError, PluginManager
 from ECL.plugins.host_dependencies import HostDependencyPolicy
 
@@ -47,7 +48,13 @@ def test_install_waits_for_restart_then_runs_in_main_process(tmp_path: Path) -> 
     restarted = PluginManager()
     restarted.initialize(data_path, resource_path)
     try:
-        assert restarted.get_plugin("demo") is not None
+        plugin = restarted.get_plugin("demo")
+        assert isinstance(plugin, Plugin)
+        assert type(plugin).__bases__ == (Plugin,)
+        assert plugin.framework is restarted
+        assert plugin.metadata["name"] == "demo"
+        assert plugin.plugin_dir.is_relative_to(data_path / "plugin_packages")
+        assert not plugin.is_system
         assert restarted.list_plugins()[0]["status"] == "enabled"
         assert restarted.call_command("demo:pid") == os.getpid()
         with pytest.raises(PluginCommandError):
@@ -151,7 +158,7 @@ def test_startup_conflicting_archives_do_not_execute_either(tmp_path: Path) -> N
 def test_on_load_failure_is_not_enabled(tmp_path: Path) -> None:
     data_path = tmp_path / "data"
     resource_path = resources(tmp_path)
-    code = "from ecl_plugin_sdk import Plugin as BasePlugin\nclass Plugin(BasePlugin):\n    def on_load(self):\n        raise RuntimeError('load failed')\n    def on_enable(self):\n        raise AssertionError('must not enable')\n"
+    code = "from ECL.plugins import Plugin as BasePlugin\nclass Plugin(BasePlugin):\n    def on_load(self):\n        raise RuntimeError('load failed')\n    def on_enable(self):\n        raise AssertionError('must not enable')\n"
     installer = PluginManager()
     installer.initialize(data_path, resource_path)
     assert installer.install(str(make_package(tmp_path, code=code)), confirm_unverified_source=True).success
@@ -169,7 +176,7 @@ def test_on_load_failure_is_not_enabled(tmp_path: Path) -> None:
 def test_archive_host_sdk_and_plugin_dependency_order(tmp_path: Path) -> None:
     data_path = tmp_path / "data"
     resource_path = resources(tmp_path)
-    code = "from ECL.plugins.plugin import Plugin as BasePlugin\nclass Plugin(BasePlugin):\n    @BasePlugin.on_command('value')\n    def value(self):\n        return 'host'\n"
+    code = "from ECL.plugins import Plugin as BasePlugin\nclass Plugin(BasePlugin):\n    @BasePlugin.on_command('value')\n    def value(self):\n        return 'host'\n"
     installer = PluginManager()
     installer.initialize(data_path, resource_path)
     for archive in (
@@ -206,5 +213,78 @@ def test_unloaded_archive_reports_missing_plugin_dependency(tmp_path: Path) -> N
     try:
         assert "missing" in restarted.list_plugins()[0]["error"]
         assert restarted.get_plugin("demo") is None
+    finally:
+        restarted.close()
+
+
+def test_archive_dynamic_command_uses_host_constructor_and_lifecycle(tmp_path: Path) -> None:
+    data_path = tmp_path / "data"
+    resource_path = resources(tmp_path)
+    code = """from ECL.plugins import Plugin as BasePlugin
+
+class Plugin(BasePlugin):
+    def __init__(self, framework, plugin_dir, metadata, is_system):
+        super().__init__(framework, plugin_dir, metadata, is_system)
+        self.phases = ['constructed']
+
+    def on_load(self):
+        self.phases.append('loaded')
+        self.register_command('greet', self.greet)
+
+    def on_enable(self):
+        self.phases.append('enabled')
+
+    def greet(self, name):
+        return {'name': name, 'phases': self.phases}
+
+    def unregistered(self):
+        return 'not exposed'
+"""
+    installer = PluginManager()
+    installer.initialize(data_path, resource_path)
+    try:
+        archive_path = make_package(
+            tmp_path,
+            code=code,
+            permissions=({"scope": "commands", "action": "execute", "resource": "greet"},),
+        )
+        assert installer.install(str(archive_path), confirm_unverified_source=True).success
+        assert installer.get_plugin("demo") is None
+    finally:
+        installer.close()
+    restarted = PluginManager()
+    restarted.initialize(data_path, resource_path)
+    try:
+        assert restarted.call_command("demo:greet", {"name": "ECL"}) == {
+            "name": "ECL",
+            "phases": ["constructed", "loaded", "enabled"],
+        }
+        with pytest.raises(PluginCommandError):
+            restarted.call_command("demo:unregistered")
+        assert restarted.disable("demo").success
+        with pytest.raises(PluginCommandError):
+            restarted.call_command("demo:greet", {"name": "ECL"})
+    finally:
+        restarted.close()
+
+
+def test_archive_explicit_empty_permissions_are_not_granted(tmp_path: Path) -> None:
+    data_path = tmp_path / "data"
+    resource_path = resources(tmp_path)
+    installer = PluginManager()
+    installer.initialize(data_path, resource_path)
+    try:
+        archive_path = make_package(tmp_path, permissions=())
+        assert installer.install(str(archive_path), confirm_unverified_source=True).success
+    finally:
+        installer.close()
+    restarted = PluginManager()
+    restarted.initialize(data_path, resource_path)
+    try:
+        assert restarted.get_plugin("demo") is None
+        assert restarted._status["demo"] == "permission_denied"
+        assert "commands:execute:pid" in restarted.list_plugins()[0]["error"]
+        with pytest.raises(PluginCommandError):
+            restarted.call_command("demo:pid")
     finally:
         restarted.close()

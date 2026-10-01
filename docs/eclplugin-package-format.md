@@ -71,10 +71,10 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 
 ## 主进程 SDK
 
-归档插件可以继续使用启动器内置的 `ecl_plugin_sdk.Plugin`，保持无参数构造和命令契约。命令用装饰器或在构造/`on_load` 中 `register_command` 登记，参数和结果应可 JSON 编码。只有登记命令可以被调用，禁用时拒绝调用；普通公开方法不自动暴露。
+目录插件与归档插件统一继承启动器公开导出的 `ECL.plugins.Plugin`。命令用装饰器或在 `on_load` 中 `register_command` 登记，参数和结果应可 JSON 编码。只有登记命令可以被调用，禁用时拒绝调用；普通公开方法不自动暴露。
 
 ```python
-from ecl_plugin_sdk import Plugin as BasePlugin
+from ECL.plugins import Plugin as BasePlugin
 
 
 class Plugin(BasePlugin):
@@ -83,7 +83,19 @@ class Plugin(BasePlugin):
         return {"message": f"你好，{name}"}
 ```
 
-该兼容 SDK 只承诺既有命令能力。需要完整宿主 API 的新归档插件可直接使用 `ECL.plugins.plugin.Plugin`，构造参数、权限声明、生命周期、事件、设置和前端资源与目录插件相同，不需要跨进程代理。代码、依赖及钩子都与启动器共享进程状态。详见[当前实施方案](plugin-install-directory-isolation-plan.md)。
+上述示例需要在 `plugin.json` 声明对应命令权限：
+
+```json
+{
+  "permissions": [
+    { "scope": "commands", "action": "execute", "resource": "greet" }
+  ]
+}
+```
+
+不自定义构造函数时直接继承基类构造。确需自定义构造时，接收宿主传入的 `framework`、`plugin_dir`、`metadata`、`is_system` 并调用 `super().__init__`；初始化业务优先放在 `on_load` 中。没有旧命令 SDK 的无参数构造适配。
+
+归档插件与目录插件使用相同的完整宿主 API、权限声明、生命周期、事件、设置和前端资源，不需要跨进程代理。代码、依赖及钩子都与启动器共享进程状态。详见[安装目录隔离方案](plugin-install-directory-isolation-plan.md)与[SDK 统一方案](plugin-sdk-unification-plan.md)。
 
 ## 产物验证
 
