@@ -13,7 +13,7 @@
 | 后退出命令 `post_exit_command` | 游戏进程退出后（无论退出码）在实例工作目录异步执行，不阻塞退出结算与崩溃分析；失败仅记录日志 | HMCL `postExitCommand` |
 | 自定义环境变量 `env_vars` | 多行 `KEY=VALUE` 文本；非法行（无 `=`、键为空）记录警告并跳过。合并优先级：系统环境 < 用户变量 < 插件 env（插件覆写语义保持不变） | HMCL `environmentVariables` |
 | 窗口标题 `window_title` | 模板占位符：`{instance}`（实例名）、`{version}`（MC 版本）、`{account}`（玩家名）；留空不修改。启动后等待游戏主窗口出现（最长 60s）后改写标题 | PCL `LaunchArgumentTitle` |
-| 启动器可见性 `launcher_visibility` | `none`（不动作）/ `minimize`（启动成功后最小化主窗口，可从任务栏恢复）/ `quit`（启动成功后优雅关闭启动器，保留运行中的游戏实例；崩溃检测与运行统计随之失效——与竞品行为一致） | HMCL/PCL `LauncherVisibility` |
+| 启动器可见性 `launcher_visibility` | `none`（无）/ `minimize`（启动成功后最小化主窗口，可从任务栏恢复）/ `quit`（启动成功后优雅关闭启动器，保留运行中的游戏实例；崩溃检测与运行统计随之失效——与竞品行为一致） | HMCL/PCL `LauncherVisibility` |
 
 窗口标题的平台策略：Windows 用 `ctypes` 直调 user32（`EnumWindows` 按 PID 匹配可见主窗口 → `SetWindowTextW`），**零新依赖**；POSIX 检测到 `xdotool` 时按 PID 搜索并改名，否则静默跳过。
 
