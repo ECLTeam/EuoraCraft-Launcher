@@ -229,6 +229,8 @@ class IpcCommandRegistry:
         "plugin_get_settings",
         "plugin_update_setting",
         "plugin_notify_sidebar_state",
+        "connector_nodes_get",
+        "connector_nodes_set",
         "connector_status",
         "launcher_preload_connector",
         "connector_host_port",

@@ -19,6 +19,8 @@
 #       - connector_detect_ports(body) -> ApiResponse — 探测本机 Java 进程开放的候选端口。
 #       - connector_search_mc_port(body) -> ApiResponse — 在候选端口中搜索确认 Minecraft 服务端口。
 #       - connector_nat_type(body) -> ApiResponse — 查询本机网络的 NAT 类型。
+#       - connector_nodes_get(body) -> ApiResponse — 读取下一次连接的节点策略。
+#       - connector_nodes_set(body) -> ApiResponse — 校验并保存节点策略。
 # ============================================================
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from typing import Any
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import InstanceTarget, KickRequest, PortRequest, PortsRequest, RoomCodeRequest
 from ECL.services.connector import ConnectorError, ConnectorNatError, ConnectorNotAvailableError
+from ECL.services.connector_nodes import ConnectorNodeSettings
 
 from .bridge import _FrontendState, _ipc_handler
 
@@ -72,6 +75,28 @@ class ConnectorHandlers(_FrontendState):
     """
     联机功能的 IPC 命令处理器。
     """
+
+    @_ipc_handler("CONNECTOR_NODE_SETTINGS_FAILED")
+    async def connector_nodes_get(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        读取下一次连接的节点策略，不改变活动房间。
+
+        :param body: 空请求体
+        :return: 已校验的节点设置
+        """
+        return success(ConnectorNodeSettings.model_validate(self.config.get_config("connector") or {}).model_dump())
+
+    @_ipc_handler("CONNECTOR_NODE_SETTINGS_FAILED")
+    async def connector_nodes_set(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        原子持久化节点策略，下一次创建或加入房间时应用。
+
+        :param body: 节点策略和 URI 列表
+        :return: 规范化后的设置
+        """
+        settings = ConnectorNodeSettings.model_validate(body).model_dump()
+        await asyncio.to_thread(self.config.save_config, "connector", settings)
+        return success(settings)
 
     @_ipc_handler("CONNECTOR_NOT_AVAILABLE")
     async def connector_status(self, body: dict[str, Any]) -> ApiResponse:

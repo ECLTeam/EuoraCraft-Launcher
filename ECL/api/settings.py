@@ -56,7 +56,7 @@ class SettingsHandlers(_FrontendState):
         request, invalid = _validate_body(SettingsUpdate, body)
         if invalid is not None:
             return invalid
-        self.config.save_config(request.section, request.data)
+        await to_thread.run_sync(self.config.save_config, request.section, request.data)
         return success()
 
     @_ipc_handler("JAVA_SCAN_FAILED")

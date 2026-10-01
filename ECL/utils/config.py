@@ -20,6 +20,7 @@ import json
 from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from ECL.events import EventBus
@@ -87,6 +88,7 @@ default_config: dict[str, Any] = {
         "last_manage_path": "",
     },
     "download": {"mirror_source": "official"},
+    "connector": {"mode": "automatic", "nodes": []},
     "ui": {
         "locale": "zh-CN",
         "theme": {
@@ -133,6 +135,7 @@ class ConfigStore:
         self.logger = get_logger("config")  # 配置读写日志器。
         self.data_path = Path(data_path)  # 应用数据目录。
         self.config_path = self.data_path / "setting.json"  # 配置文件路径。
+        self._lock = RLock()
         self.config_data: dict[str, Any] | None = None  # 内存中的配置快照。
         self.events = event_bus or EventBus()  # 配置变更事件总线。
 
@@ -215,11 +218,12 @@ class ConfigStore:
         :param section: 配置分区，为 None 时返回全部配置
         :return: 配置数据
         """
-        if self.config_data is None:
-            self.config_data = self._load_config()
-        if section is None:
-            return deepcopy(self.config_data)
-        return deepcopy(self.config_data.get(section))
+        with self._lock:
+            if self.config_data is None:
+                self.config_data = self._load_config()
+            if section is None:
+                return deepcopy(self.config_data)
+            return deepcopy(self.config_data.get(section))
 
     def list_sections(self) -> list[str]:
         """
@@ -248,8 +252,13 @@ class ConfigStore:
         normalized_section = section.strip()
         if normalized_section not in self.allowed_sections:
             raise ConfigValidationError(f"配置分区不受支持: {normalized_section}")
-        config_data = self.get_config()
-        config_data[normalized_section] = deepcopy(data)
-        self._write_config(config_data)
+        if normalized_section == "connector":
+            from ECL.services.connector_nodes import ConnectorNodeSettings
+
+            data = ConnectorNodeSettings.model_validate(data).model_dump()
+        with self._lock:
+            config_data = self.get_config()
+            config_data[normalized_section] = deepcopy(data)
+            self._write_config(config_data)
         # 广播配置变更事件，通知订阅组件。
         self.events.emit("config:updated", normalized_section, deepcopy(data))

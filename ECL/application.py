@@ -436,6 +436,7 @@ def create_application(
         logger.debug("正在初始化联机服务 ConnectorService")
         from ECL.plugins.connector import ConnectorExtensionRegistry
         from ECL.services.connector import ConnectorService
+        from ECL.services.connector_nodes import ConnectorNodeSettings
 
         current_account = accounts.current_account()
         connector_extensions = ConnectorExtensionRegistry()
@@ -444,6 +445,7 @@ def create_application(
             extensions=connector_extensions,
             local_player_icon_provider=_build_local_player_icon_provider(accounts, http),
             http_client=http,
+            node_settings_provider=lambda: ConnectorNodeSettings.model_validate(config.get_config("connector") or {}),
         )
         logger.debug(
             "联机服务状态: available=%s, easytier_available=%s, easytier_version=%s",

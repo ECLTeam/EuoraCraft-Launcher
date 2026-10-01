@@ -50,6 +50,7 @@ from ECL.plugins.connector import (
     ConnectorProtocolRequest,
     ConnectorSessionContext,
 )
+from ECL.services.connector_nodes import ConnectorNodeSettings
 from ECL.services.florolding import Florolding, find_free_port, validate_code
 from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
 
@@ -127,12 +128,14 @@ class ConnectorService:
         node_cache_ttl: float | None = None,
         extensions: ConnectorExtensionRegistry | None = None,
         local_player_icon_provider: Callable[[], str | None] | None = None,
+        node_settings_provider: Callable[[], ConnectorNodeSettings] | None = None,
     ) -> None:
         self._launcher_info = launcher_info
         self._player_name = player_name or "Player"
         self._http = http_client
         self.extensions = extensions or ConnectorExtensionRegistry()
         self._local_player_icon_provider = local_player_icon_provider
+        self._node_settings_provider = node_settings_provider
         if log_callback is None:
 
             def _default_log(level: str, msg: str) -> None:
@@ -211,6 +214,19 @@ class ConnectorService:
             self._transitioning = False
 
     def fetch_nodes(self, *, force: bool = False) -> list[str]:
+        """
+        按当前策略为下一次连接解析节点，活动房间继续使用原节点。
+
+        :param force: 是否强制刷新公共节点缓存
+        :return: 保序去重的 EasyTier 节点 URI
+        """
+        settings = self._node_settings_provider() if self._node_settings_provider else ConnectorNodeSettings()
+        if settings.mode == "custom":
+            return list(settings.nodes)
+        public_nodes = self._fetch_public_nodes(force=force)
+        return list(dict.fromkeys([*settings.nodes, *public_nodes])) if settings.mode == "append" else public_nodes
+
+    def _fetch_public_nodes(self, *, force: bool = False) -> list[str]:
         """
         获取可用的 EasyTier 中继节点 URI 列表。
 
