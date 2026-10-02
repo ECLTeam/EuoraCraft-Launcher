@@ -10,7 +10,7 @@ from ECL.plugins.host_dependencies import build_host_dependency_manifest
 SPEC_DIR = Path(SPECPATH).resolve()
 
 APP_NAME = "EuoraCraft Launcher"
-BUNDLE_IDENTIFIER = "top.eclteam.euoracraft-launcher"
+BUNDLE_IDENTIFIER = "EuoraCraft-Launcher"
 
 
 def _resolve_console_mode() -> bool:
