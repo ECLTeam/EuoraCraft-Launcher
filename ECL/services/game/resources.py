@@ -16,6 +16,7 @@
 #       - curseforge_available() -> bool — 返回 CurseForge 在线搜索是否已配置 API Key。
 #       - search_online_resources(query, game_version, loader, source=…, curseforge_key=…, limit=…, resource_type=…, offset=…, sort=…) -> dict[str, Any] — 搜索 Modrinth 或 CurseForge；无 Key 时只禁用 CurseForge。
 #       - map_search_hits(source, hits, resource_type=…) -> list[dict[str, Any]] — 将在线搜索命中结果映射为前端在线模组卡片所需的结构。
+#       - search_resource_catalog(criteria, session_id=…, page=…, refresh=…) -> SearchResult — 聚合双平台搜索会话。
 #       - fetch_project_info(source, project_id, resource_type=…) -> dict[str, Any] — 获取 Modrinth 项目详情，映射为前端 ``ModInfo`` 结构。
 #       - fetch_project_versions(source, project_id, game_version=…, loader=…) -> list[dict[str, Any]] — 获取 Modrinth 项目版本列表，映射为前端 ``ModVersion`` 结构。
 #       - install_online_resource(game_path, version_id, resource_type, source, project_id, version_id_str, version_isolation=…, task_id=…, world_id=…) -> dict[str, Any] — 按版本 ID 下载在线资源到目标目录，并记录来源到清单。
@@ -59,6 +60,7 @@ from ECL.utils.network import download_proxy_url
 from .base import GameServiceError
 from .operations import OperationContext
 from .resource_files import ResourceFilePolicy
+from .resource_search import SearchBatch, SearchCriteria, SearchItem, SearchResult, SearchSource
 from .workspace import delete_path, resolve_relative_id
 
 
@@ -151,6 +153,8 @@ class ResourceCatalogPolicy:
         "updated": 3,
     }
 
+    curseforge_loaders: Mapping[str, int] = {"forge": 1, "fabric": 4, "quilt": 5, "neoforge": 6}
+
 
 class _ModrinthSearchHit(BaseModel):
     # Modrinth 搜索命中 → 前端 ``ModSearchItem`` 的字段映射模型。
@@ -168,6 +172,7 @@ class _ModrinthSearchHit(BaseModel):
     downloads: Any = None
     follows: Any = None
     date_modified: Any = Field(default=None, validation_alias="date_modified", serialization_alias="dateModified")
+    date_created: Any = Field(default=None, serialization_alias="dateCreated")
     source: str = ""
     project_url: str = Field(default="", serialization_alias="projectUrl")
     resource_type: str = Field(default="", serialization_alias="resourceType")
@@ -214,6 +219,7 @@ def _normalize_curseforge_hit(hit: dict[str, Any]) -> dict[str, Any]:
         "icon_url": logo.get("url"),
         "downloads": hit.get("downloadCount"),
         "date_modified": hit.get("dateModified"),
+        "date_created": hit.get("dateCreated"),
         "categories": [],
         "versions": [],
     }
@@ -847,6 +853,7 @@ class ResourceCoordinator:
                 offset,
                 sort,
                 os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key or curseforge_key,
+                loader=loader,
             )
         raise GameServiceError("未知在线资源来源", "INVALID_RESOURCE_SOURCE")
 
@@ -859,6 +866,8 @@ class ResourceCoordinator:
         offset: int,
         sort: str,
         key: str | None,
+        *,
+        loader: str = "",
     ) -> dict[str, Any]:
         """
         调用 CurseForge API 按分类搜索资源。
@@ -880,6 +889,11 @@ class ResourceCoordinator:
             "index": offset,
             "pageSize": min(limit, 50),
         }
+        if resource_type == "mod" and loader:
+            loader_id = ResourceCatalogPolicy.curseforge_loaders.get(loader.casefold())
+            if loader_id is None:
+                raise GameServiceError("CurseForge 不支持此加载器筛选", "INVALID_RESOURCE_LOADER")
+            params["modLoaderType"] = loader_id
         response = _proxied_get(
             "https://api.curseforge.com/v1/mods/search",
             params=params,
@@ -927,6 +941,53 @@ class ResourceCoordinator:
             "total": data.get("count", 0) if isinstance(data, dict) else 0,
             "resource_type": resource_type,
         }
+
+    def search_resource_catalog(
+        self, criteria: SearchCriteria, *, session_id: str = "", page: int = 1, refresh: bool = False
+    ) -> SearchResult:
+        """
+        在服务拥有的会话中聚合双平台，预先初始化百科数据后并行读取。
+
+        :param criteria: 搜索条件，不会被修改
+        :param session_id: 已存在的会话标识
+        :param page: 顺序加载的页面编号
+        :param refresh: 创建新的第一页会话
+        :return: 稳定页面、合并来源与渐进分页状态
+        :raises GameServiceError: 搜索失败或会话无效
+        """
+        with self._lock:
+            self._mcmod.lookup_by_modrinth_slug("")
+
+        def fetch(source: SearchSource, conditions: SearchCriteria, offset: int) -> SearchBatch:
+            sort = conditions.sort or ("relevance" if conditions.query else "downloads")
+            result = self.search_online_resources(
+                conditions.query,
+                conditions.game_version,
+                conditions.loader,
+                source,
+                limit=20,
+                resource_type=conditions.resource_type,
+                offset=offset,
+                sort=sort,
+            )
+            raw_hits = result.get("items") or []
+            mapped = self.map_search_hits(source, raw_hits, conditions.resource_type)
+            items = [
+                SearchItem.model_validate({key: value for key, value in item.items() if value is not None})
+                for item in mapped
+            ]
+            raw_total = result.get("total")
+            total = raw_total if isinstance(raw_total, int) and raw_total >= 0 else None
+            return SearchBatch(items=items, raw_count=len(raw_hits), total=total)
+
+        return self._resource_search.search(
+            criteria,
+            fetch,
+            curseforge_available=self.curseforge_available(),
+            session_id=session_id,
+            page=page,
+            refresh=refresh,
+        )
 
     def map_search_hits(
         self,

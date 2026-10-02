@@ -104,6 +104,8 @@ type = "github"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# 子仓库测试由各自工作流执行；主仓库默认收集自身测试和子模块集成用例。
+testpaths = ["tests"]
 
 [tool.euoracraft]
 version_type = "alpha"

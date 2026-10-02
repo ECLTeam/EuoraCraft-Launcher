@@ -45,6 +45,7 @@ from .download_sources import PreferredApiClient, alternate_source
 from .instance_compat import InstanceCompatibilityReader
 from .instance_profiles import InstanceProfileStore
 from .mcmod import McmodTranslator
+from .resource_search import ResourceSearchService
 from .version_stats import VersionStatsStore
 
 if TYPE_CHECKING:
@@ -150,6 +151,7 @@ class _GameState:
             else (Path(gettempdir()) / "EuoraCraft-Launcher").resolve(strict=False)
         )
         self._mcmod = McmodTranslator(Path(resource_path) / "resources" / "mcmod_data.json" if resource_path else None)
+        self._resource_search: ResourceSearchService = ResourceSearchService()
         self._curseforge_api_key = curseforge_api_key
         self._java_cache_file = self._data_path / "java_cache.json" if data_path else None
         self.authlib_injector = authlib_injector or (AuthlibInjector(data_path) if data_path else None)
@@ -387,6 +389,7 @@ class _GameState:
         with self._lock:
             self._closing = True
         self._crash_capture.close()
+        self._resource_search.close()
         with self._lock:
             running_tokens = [token for token, run in self._running_games.items() if not run.pending]
         for token in running_tokens:

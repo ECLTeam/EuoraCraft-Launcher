@@ -408,6 +408,52 @@ def _build_api(tmp_path) -> FrontendApi:
     return FrontendApi(context)
 
 
+def test_dual_source_search_uses_real_game_service_and_typed_ipc(tmp_path, monkeypatch) -> None:
+    from ECL.services.game import GameService
+
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs["params"]))
+        if "modrinth" in url:
+            body = {
+                "hits": [{"project_id": "mr-sodium", "slug": "sodium", "title": "Sodium", "author": "Author"}],
+                "total_hits": 1,
+            }
+        else:
+            body = {
+                "data": [{"id": 123, "slug": "sodium", "name": "Sodium", "authors": [{"name": "Author"}]}],
+                "pagination": {"totalCount": 1},
+            }
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: body)
+
+    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+    api = _build_api(tmp_path)
+    api.game = GameService(
+        FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test", enable_version_watcher=False
+    )
+    try:
+        response = asyncio.run(api.search_mods({"query": "", "source": "all", "loader_type": "fabric"}))
+        assert response["success"] is True
+        catalog = response["data"]
+        assert catalog["total"] == 1 and catalog["totalExact"] is True
+        assert catalog["sessionId"] and not catalog["hasMore"]
+        assert catalog["items"][0]["groupId"] == "mod:modrinth:mr-sodium"
+        assert [(entry["source"], entry["projectId"]) for entry in catalog["items"][0]["alternatives"]] == [
+            ("modrinth", "mr-sodium"),
+            ("curseforge", "123"),
+        ]
+        assert len(calls) == 2
+        cf_params = next(params for url, params in calls if "curseforge" in url)
+        assert cf_params["modLoaderType"] == 4
+        assert cf_params["sortField"] == 6
+        invalid = asyncio.run(api.search_mods({"query": "", "source": "all", "offset": 20}))
+        assert invalid["success"] is False
+        assert invalid["errorCode"] == "INVALID_REQUEST"
+    finally:
+        api.game.close()
+
+
 def test_launcher_config_excludes_runtime_metadata(tmp_path) -> None:
     api = _build_api(tmp_path)
 

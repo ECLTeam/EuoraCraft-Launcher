@@ -92,6 +92,7 @@
 #   - class ResourceDeleteRequest
 #   - class ResourceManifestExportRequest
 #   - class ResourceSearchRequest
+#   - class OnlineResourceSearchRequest
 #   - class ResourceHashRequest
 #   - class ResourceUpdateCheckRequest
 #   - class ResourceUpdateRequest
@@ -819,12 +820,48 @@ class KickRequest(RequestModel):
     machine_id: str = Field(min_length=1, max_length=128)
 
 
+class OnlineResourceSearchRequest(RequestModel):
+    """
+    校验下载页搜索请求，空查询用于热门列表，聚合页码与单源偏移量分开。
+    """
+
+    query: str = Field(default="", max_length=100)
+    source: Literal["all", "modrinth", "curseforge", "ftb"] = "modrinth"
+    game_version: str = Field(default="", max_length=64)
+    loader_type: str = Field(default="", max_length=64)
+    resource_type: Literal["mod", "resourcepack", "shaderpack", "datapack", "modpack", "world"] = "mod"
+    limit: int = Field(default=20, ge=1, le=50)
+    offset: int = Field(default=0, ge=0, le=100000)
+    sort: Literal["", "relevance", "downloads", "follows", "newest", "updated"] = ""
+    session_id: str = Field(default="", max_length=64)
+    page: int = Field(default=1, ge=1, le=2000)
+    refresh: bool = False
+
+    @model_validator(mode="after")
+    def validate_search_mode(self) -> OnlineResourceSearchRequest:
+        """
+        拒绝聚合偏移跳页及不支持的平台与资源组合。
+
+        :return: 通过校验的当前请求
+        """
+        if self.source == "all" and (self.resource_type == "world" or self.offset != 0 or self.limit != 20):
+            raise ValueError("双平台搜索仅支持非存档资源，每页 20 项并使用 page 翻页")
+        if self.source == "ftb" and self.resource_type != "modpack":
+            raise ValueError("FTB 仅支持整合包")
+        if self.resource_type == "world" and self.source != "curseforge":
+            raise ValueError("存档仅支持 CurseForge")
+        if self.refresh and self.page != 1:
+            raise ValueError("刷新必须从第一页开始")
+        return self
+
+
 class RequestModelRegistry:
     """
     保存 IPC 命令到请求模型的映射。
     """
 
     models: dict[str, type[BaseModel]] = {
+        "search_mods": OnlineResourceSearchRequest,
         "custom_download_start": CustomDownloadRequest,
         "settings_get": SettingsQuery,
         "settings_set": SettingsUpdate,
@@ -936,6 +973,7 @@ __all__ = [
     "LaunchRequest",
     "LoaderCatalogRequest",
     "MicrosoftCapeRequest",
+    "OnlineResourceSearchRequest",
     "PortRequest",
     "PortsRequest",
     "RequestModelRegistry",

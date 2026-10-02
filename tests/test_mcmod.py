@@ -409,6 +409,28 @@ def test_search_curseforge_uses_hmcl_style_params(tmp_path: Path) -> None:
     assert params["index"] == 0
 
 
+@pytest.mark.parametrize(("loader", "expected"), [("forge", 1), ("fabric", 4), ("quilt", 5), ("neoforge", 6)])
+def test_curseforge_search_filters_mod_loader(tmp_path: Path, monkeypatch, loader: str, expected: int) -> None:
+    from types import SimpleNamespace
+
+    captured = {}
+
+    def fake_get(url, **kwargs):
+        captured.update(kwargs["params"])
+        return SimpleNamespace(
+            status_code=200, raise_for_status=lambda: None, json=lambda: {"data": [], "pagination": {"totalCount": 0}}
+        )
+
+    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+    service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test")
+    try:
+        service.search_online_resources("", "1.21.1", loader, source="curseforge")
+        assert captured["modLoaderType"] == expected
+        assert captured["gameVersion"] == "1.21.1"
+    finally:
+        service.close()
+
+
 def test_search_curseforge_maps_sort_and_resource_type(tmp_path: Path) -> None:
     from unittest.mock import patch
 

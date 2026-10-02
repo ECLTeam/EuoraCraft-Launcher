@@ -27,8 +27,10 @@ from typing import Any
 from anyio import to_thread
 
 from ECL.api.contracts import ApiResponse, success
+from ECL.services.game.resource_search import SearchCriteria, SearchResult
 
-from .bridge import _FrontendState, _ipc_handler, _open_folder
+from .bridge import _FrontendState, _ipc_handler, _open_folder, _validate_body
+from .models import OnlineResourceSearchRequest
 
 
 class ModHandlers(_FrontendState):
@@ -99,17 +101,34 @@ class ModHandlers(_FrontendState):
         :param body: 在线搜索条件
         :return: 在线模组搜索结果
         """
+        request, error = _validate_body(OnlineResourceSearchRequest, body)
+        if error:
+            return error
+        if request.source == "all":
+
+            def search_catalog() -> SearchResult:
+                return self.game.search_resource_catalog(
+                    SearchCriteria(
+                        request.query, request.game_version, request.loader_type, request.resource_type, request.sort
+                    ),
+                    session_id=request.session_id,
+                    page=request.page,
+                    refresh=request.refresh,
+                )
+
+            catalog = await to_thread.run_sync(search_catalog)
+            return success(catalog.model_dump(by_alias=True))
         result = await to_thread.run_sync(
             self.game.search_online_resources,
-            body.get("query", ""),
-            body.get("game_version", ""),
-            body.get("loader_type", ""),
-            body.get("source", "modrinth"),
+            request.query,
+            request.game_version,
+            request.loader_type,
+            request.source,
             None,
-            body.get("limit", 20),
-            body.get("resource_type", "mod"),
-            body.get("offset", 0),
-            body.get("sort", "relevance"),
+            request.limit,
+            request.resource_type,
+            request.offset,
+            request.sort,
         )
         source = str(result.get("source") or "modrinth")
         resource_type = str(result.get("resource_type") or "mod")
