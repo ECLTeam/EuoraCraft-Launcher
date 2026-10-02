@@ -124,6 +124,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from ECL.services.custom_downloads import CustomDownloadRequest
+from ECL.services.game.base import GameServiceError
+from ECL.services.game.world_seeds import WorldSeedStore
 from ECL.utils.config import default_config
 
 
@@ -532,14 +534,37 @@ class WorldRequest(InstanceTarget):
 
 
 class WorldPatchData(RequestModel):
+    """
+    校验世界设置修改，种子使用文本保持跨 IPC 的整数精度。
+
+    可选字段缺省表示保留原值，种子数字请求仅接受安全整数。
+    """
+
     difficulty: int | None = Field(default=None, ge=0, le=3)
     allow_commands: bool | None = Field(default=None, alias="allowCommands")
     difficulty_locked: bool | None = Field(default=None, alias="difficultyLocked")
     game_mode: int | None = Field(default=None, ge=0, le=3, alias="gameMode")
     raining: bool | None = None
     thundering: bool | None = None
-    seed: int | None = None
+    seed: str | None = None
     spawn: dict[str, int] | None = None
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def validate_seed(cls, value: object) -> str | None:
+        """
+        将种子规范为精确文本，拒绝不安全的数值请求。
+
+        :param value: 原始 IPC 种子值，None 表示不修改
+        :return: 校验后的十进制字符串
+        :raises ValueError: 种子不是合法的有符号 64 位整数文本
+        """
+        if value is None:
+            return None
+        try:
+            return str(WorldSeedStore.parse_input(value))
+        except GameServiceError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 class WorldPatchRequest(WorldRequest):

@@ -40,11 +40,12 @@ from urllib.parse import quote_plus
 from PIL import Image, UnidentifiedImageError
 
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Byte, Compound, Int, Long, load
+from ECL.utils.nbt import Byte, Compound, Int, load
 
 from .base import GameServiceError
 from .operations import OperationContext
 from .workspace import delete_path, resolve_relative_id, safe_extract_zip
+from .world_seeds import WorldSeedStore
 
 
 def _nbt_scalar(value: Any, default: Any = None) -> Any:
@@ -87,6 +88,21 @@ class WorldCoordinator:
 
     @staticmethod
     def _read_world(world_path: Path) -> dict[str, Any]:
+        """
+        在同一存档锁内读取元数据和种子，避免看到多文件事务中间值。
+
+        返回的字段不持有可修改的 NBT 文档引用。
+        """
+        with WorldSeedStore.lock_for(world_path):
+            return WorldCoordinator._read_world_unlocked(world_path)
+
+    @staticmethod
+    def _read_world_unlocked(world_path: Path) -> dict[str, Any]:
+        """
+        读取 level.dat 和已识别的种子来源，调用者须持有存档锁。
+
+        种子来源损坏时保留其他元数据及可理解的原因，不回退到过期值。
+        """
         level_path = world_path / "level.dat"
         if not level_path.is_file():
             raise GameServiceError("存档缺少 level.dat", "WORLD_LEVEL_DAT_MISSING")
@@ -101,6 +117,7 @@ class WorldCoordinator:
         version_name = _nbt_scalar(version.get("Name"), "未知") if hasattr(version, "get") else "未知"
         last_played = int(_nbt_scalar(data.get("LastPlayed"), 0) or 0)
         modified = world_path.stat().st_mtime
+        seed_source = WorldSeedStore.read(world_path, data)
         return {
             "id": world_path.name,
             "name": str(_nbt_scalar(data.get("LevelName"), world_path.name) or world_path.name),
@@ -113,7 +130,9 @@ class WorldCoordinator:
             "difficultyLocked": bool(_nbt_scalar(data.get("DifficultyLocked"), False)),
             "allowCommands": bool(_nbt_scalar(data.get("allowCommands"), False)),
             "version": str(version_name),
-            "seed": str(_nbt_scalar(data.get("RandomSeed"), "")),
+            "seed": str(seed_source.value) if seed_source.value is not None else "",
+            "seedEditable": seed_source.value is not None,
+            "seedError": seed_source.error or None,
             "spawn": {
                 "x": int(_nbt_scalar(data.get("SpawnX"), 0) or 0),
                 "y": int(_nbt_scalar(data.get("SpawnY"), 0) or 0),
@@ -165,15 +184,6 @@ class WorldCoordinator:
             except OSError as exc:
                 raise GameServiceError("存档正在被占用", "WORLD_IS_LOCKED") from exc
 
-    @staticmethod
-    def _atomic_save_nbt(document: Any, destination: Path) -> None:
-        temp = destination.with_name(f".{destination.name}.ecl-tmp")
-        try:
-            document.save(temp, gzipped=True)
-            temp.replace(destination)
-        finally:
-            temp.unlink(missing_ok=True)
-
     def patch_world(
         self,
         game_path: Any,
@@ -183,23 +193,46 @@ class WorldCoordinator:
         version_isolation: Any = False,
     ) -> dict[str, Any]:
         """
-        备份后原子修改存档常用字段，保留所有未知 NBT 字段。
+        在存档锁内校验、备份并原子修改字段，保留未知 NBT 内容。
+
+        独立种子文件和 level.dat 组成同一事务，替换失败回滚；游戏运行
+        或存档被占用时拒绝写入。
+
+        :param game_path: Minecraft 根目录
+        :param version_id: 目标实例标识
+        :param world_id: 存档相对目录名
+        :param patch: 当前请求的字段修改，种子使用十进制文本
+        :param version_isolation: 是否使用实例隔离目录
+        :return: 落盘后重新读取的世界详情
+        :raises GameServiceError: 输入非法、存档占用或写入失败
         """
         target = self.resolve_instance(game_path, version_id, version_isolation)
         world_path = self._world_path(game_path, version_id, world_id, version_isolation)
-        self._assert_world_writable(target, world_path)
-        self.create_world_backup(game_path, version_id, world_id, version_isolation, automatic=True)
-        level_path = world_path / "level.dat"
-        try:
-            document = load(level_path)
-            data = document.get("Data", document)
-            self._apply_world_patch(data, patch)
-            self._atomic_save_nbt(document, level_path)
-        except GameServiceError:
-            raise
-        except Exception as exc:
-            raise GameServiceError(f"修改世界数据失败：{exc}", "WORLD_UPDATE_FAILED") from exc
-        return self._read_world(world_path)
+        with WorldSeedStore.lock_for(world_path):
+            self._assert_world_writable(target, world_path)
+            level_path = world_path / "level.dat"
+            if not level_path.resolve().is_relative_to(world_path.resolve()):
+                raise GameServiceError("世界数据文件超出存档目录", "WORLD_UPDATE_FAILED")
+            try:
+                document = load(level_path)
+                data = document.get("Data", document)
+                if not isinstance(data, Compound):
+                    raise GameServiceError("世界数据结构无效", "WORLD_NBT_INVALID")
+                documents = [(level_path, document)]
+                other_patch = {key: value for key, value in patch.items() if key != "seed"}
+                self._apply_world_patch(data, other_patch)
+                if "seed" in patch:
+                    source = WorldSeedStore.read(world_path, data)
+                    WorldSeedStore.set_value(source, patch["seed"])
+                    if source.file_path is not None and source.document is not None:
+                        documents.append((source.file_path, source.document))
+                self.create_world_backup(game_path, version_id, world_id, version_isolation, automatic=True)
+                WorldSeedStore.commit(documents)
+            except GameServiceError:
+                raise
+            except Exception as exc:
+                raise GameServiceError(f"修改世界数据失败：{exc}", "WORLD_UPDATE_FAILED") from exc
+            return self._read_world(world_path)
 
     @staticmethod
     def _apply_world_patch(data: Compound, patch: dict[str, Any]) -> None:
@@ -213,11 +246,6 @@ class WorldCoordinator:
         for field, key in WorldPatchPolicy.boolean_fields.items():
             if field in patch:
                 data[key] = Byte(1 if patch[field] else 0)
-        if "seed" in patch:
-            seed = patch["seed"]
-            if not isinstance(seed, int) or isinstance(seed, bool):
-                raise GameServiceError("种子必须是整数", "INVALID_WORLD_SEED")
-            data["RandomSeed"] = Long(seed)
         if "spawn" in patch:
             spawn = patch["spawn"]
             if not isinstance(spawn, dict) or any(
@@ -514,6 +542,8 @@ class WorldCoordinator:
         self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False
     ) -> dict[str, str]:
         world = self.world_detail(game_path, version_id, world_id, version_isolation)
+        if not world.get("seed"):
+            raise GameServiceError("无法读取世界种子", "WORLD_SEED_UNAVAILABLE")
         version = str(world.get("version") or "")
         if not version or any(char.isalpha() for char in version.replace("Java", "")):
             raise GameServiceError("快照或未知版本无法映射到 Chunkbase", "CHUNKBASE_VERSION_UNSUPPORTED")
