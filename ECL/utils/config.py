@@ -96,7 +96,7 @@ default_config: dict[str, Any] = {
             "theme_id": "classic",
             "mode": "system",
             "primary_color": "#5B6FF5",
-            "blur_amount": 18,
+            "blur_amount": 0,
             "sidebar_collapsed": True,
             "navigation_mode": "sidebar",
             "titlebar_hidden": False,
