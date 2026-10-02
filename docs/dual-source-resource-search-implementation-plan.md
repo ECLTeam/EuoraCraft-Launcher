@@ -193,4 +193,6 @@ final_score = rank_score + 0.60 × title_match
 - 在生产 Vue 构建与实际 Tauri／WebView2 中，用受控平台 HTTP 数据运行真实后端聚合与 IPC，共完成 10 项验收：50 个唯一项目按 20／20／10 分页、跨页去重、返回页面稳定、晚到来源补充、详情／版本使用 CF 真实项目 ID、单源失败降级、双源失败保留旧结果及重试、预算短页继续读取、全部资源分类与固定 CF 存档。透明加载背景与「实例」导航回归正常，程序正常退出（0）。
 - 桌面验收产物位于 `C:\Users\Wuchang325\.codex\visualizations\2026\10\02\01a0fc0a-f7d1-7033-86d5-cb636307acf5`：`dual-search-desktop-results.json`、`dual-search-requests.jsonl`、`dual-search-merged-list.png`、`dual-search-failure-retained.png`、`dual-search-dark-world.png`，以及对应启动／验收脚本；均不进入 Git。
 - Modrinth 真实搜索端点返回 200；通过真实游戏服务聚合入口检索 Sodium／Fabric，返回 20 项且 Modrinth 无错误，CF 状态正确显示未配置。本机未配置有效 CurseForge Key，因此真实双平台联网与实际文件下载未验证；受控数据验收覆盖聚合、页面及详情／版本来源标识，不等同于线上双平台可用性验收。
-- 提交与本地 main 同步记录在完成同步后补充；日常主仓库已有其他配置及测试改动，必须保留。
+- 功能提交：前端 `b416613`（`feat: 实现双平台资源搜索与稳定分页`），主仓库 `25d1e7a`（`feat: 聚合双平台资源检索并保留多源下载入口`）。已将两者快进同步至 `E:\Projects\EuoraCraft-Launcher\EuoraCraft-Launcher` 的主仓库／前端本地 `main`，未推送远端。
+- 同步时暂存并恢复了日常目录的三项未提交配置／测试修改；通过比较同步前后的实际增删行以及文件哈希确认完整保留。既有未跟踪比较文档及同步期间出现的前端浏览器字节码同样保留，未夹带进本次提交。临时 stash 已清除。
+- 在同步后的日常目录追加执行搜索、前端 IPC 和配置路径用例：118 项通过。同步验收记录及补充文档将通过单独的文档提交同步到同一 main；功能与子模块指针不再变化。
