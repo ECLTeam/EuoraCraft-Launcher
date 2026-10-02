@@ -100,7 +100,7 @@ default_config: dict[str, Any] = {
             "sidebar_collapsed": True,
             "navigation_mode": "sidebar",
             "titlebar_hidden": False,
-            "window_chrome": "custom",
+            "window_chrome": "system_shadow",
             "transparent_bg": False,
             "background_opacity": 1.0,
             "appearance": {
