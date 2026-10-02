@@ -107,6 +107,58 @@ class _WorldHarness(WorldCoordinator, WorkspaceCoordinator):
         return []
 
 
+@pytest.mark.parametrize("source_kind", ["directory", "zip"])
+def test_world_import_accepts_folder_and_zip(tmp_path: Path, source_kind: str) -> None:
+    from types import SimpleNamespace
+
+    source = tmp_path / "export" / "world"
+    _write_level_dat(source)
+    if source_kind == "zip":
+        archive_path = tmp_path / "world.ZIP"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.write(source / "level.dat", "world/level.dat")
+        source = archive_path
+    service = _WorldHarness(tmp_path / "app-data")
+    context = SimpleNamespace(check_cancelled=lambda: None)
+    service._game_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
+    result = service.import_world(tmp_path, "demo", source, True)
+    assert result == {"worldId": "world"}
+    assert service.list_worlds(tmp_path, "demo", True)[0]["name"] == "测试世界"
+
+
+def test_local_world_import_rejects_non_zip_but_download_helper_accepts_archive(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    source = tmp_path / "world"
+    _write_level_dat(source)
+    archive_path = tmp_path / "download.tmp"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.write(source / "level.dat", "world/level.dat")
+    service = _WorldHarness(tmp_path / "app-data")
+    calls = []
+    service._game_operations = SimpleNamespace(submit=lambda *args: calls.append(args))
+    with pytest.raises(GameServiceError) as raised:
+        service.import_world(tmp_path, "demo", archive_path, True)
+    assert raised.value.error_code == "UNSUPPORTED_WORLD_IMPORT"
+    assert not calls
+    assert service._import_world_source(tmp_path / "downloaded", archive_path) == {"worldId": "world"}
+
+
+@pytest.mark.parametrize("world_count", [0, 2])
+def test_world_import_rejects_invalid_or_multiple_worlds(tmp_path: Path, world_count: int) -> None:
+    archive_path = tmp_path / "world.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        for index in range(world_count):
+            source = tmp_path / f"world{index}"
+            _write_level_dat(source)
+            archive.write(source / "level.dat", f"world{index}/level.dat")
+    service = _WorldHarness(tmp_path / "app-data")
+    with pytest.raises(GameServiceError) as raised:
+        service._import_world_source(tmp_path / "saves", archive_path)
+    assert raised.value.error_code == "INVALID_WORLD_ARCHIVE"
+    assert list((tmp_path / "saves").iterdir()) == []
+
+
 def test_world_patch_preserves_unknown_nbt_and_creates_backup(tmp_path: Path) -> None:
     version = tmp_path / "versions" / "test"
     _write_level_dat(version / "saves" / "world")

@@ -81,12 +81,9 @@ def test_list_returns_actual_pack_icon_and_refreshes(tmp_path: Path, kind: str, 
 @pytest.mark.parametrize("metadata", [None, b"not json"])
 def test_icon_is_independent_of_metadata(tmp_path: Path, kind: str, metadata: bytes | None) -> None:
     root = tmp_path / "versions" / "resourcepacks"
-    _pack(root, kind, _png(), metadata=metadata)
-    assert (
-        ResourceService()
-        .list_resources(tmp_path, "1.21.1", "resourcepack")[0]["iconData"]
-        .startswith("data:image/png;base64,")
-    )
+    pack_path = _pack(root, kind, _png(), metadata=metadata)
+    assert ResourceService()._read_resourcepack_icon(pack_path).startswith("data:image/png;base64,")
+    assert ResourceService().list_resources(tmp_path, "1.21.1", "resourcepack") == []
 
 
 @pytest.mark.parametrize("kind", ["zip", "directory"])
@@ -114,7 +111,8 @@ def test_broken_zip_has_no_icon(tmp_path: Path) -> None:
     root = tmp_path / "versions" / "resourcepacks"
     root.mkdir(parents=True)
     (root / "broken.zip").write_bytes(b"broken zip")
-    assert ResourceService().list_resources(tmp_path, "1.21.1", "resourcepack")[0]["iconData"] is None
+    assert ResourceService()._read_resourcepack_icon(root / "broken.zip") is None
+    assert ResourceService().list_resources(tmp_path, "1.21.1", "resourcepack") == []
 
 
 def test_icon_symlink_cannot_escape_pack(tmp_path: Path) -> None:

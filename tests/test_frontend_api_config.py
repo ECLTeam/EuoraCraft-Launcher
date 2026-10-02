@@ -901,6 +901,54 @@ def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "resource_type,extensions",
+    [
+        ("shaderpack", ["zip"]),
+        ("datapack", ["zip"]),
+        ("resourcepack", ["zip"]),
+        ("schematic", ["litematic", "schem", "schematic"]),
+    ],
+)
+def test_resource_picker_filters_current_type(tmp_path, monkeypatch, resource_type, extensions) -> None:
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class FakePickDialog:
+        def blocking_pick_files(self, **options):
+            calls.append(options)
+            return []
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakePickDialog()))
+    response = asyncio.run(api.select_files({"purpose": "resource-files", "resource_type": resource_type}))
+    assert response["success"] is True
+    assert calls[0]["add_filter"][1] == extensions
+
+
+@pytest.mark.parametrize("purpose,is_folder", [("world-import", False), ("world-import-folder", True)])
+def test_world_picker_uses_zip_filter_or_directory(tmp_path, monkeypatch, purpose, is_folder) -> None:
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class FakePickDialog:
+        def blocking_pick_file(self, **options):
+            calls.append((False, options))
+            return None
+
+        def blocking_pick_folder(self, **options):
+            calls.append((True, options))
+            return None
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: FakePickDialog()))
+    response = asyncio.run(api.select_file({"purpose": purpose}))
+    assert response == {"success": True, "data": {"path": ""}}
+    assert calls[0][0] == is_folder
+    if not is_folder:
+        assert calls[0][1]["add_filter"][1] == ["zip"]
+
+
 def test_offline_account_forwards_optional_custom_uuid(tmp_path) -> None:
     api = _build_api(tmp_path)
 

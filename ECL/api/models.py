@@ -190,6 +190,7 @@ class FileSelectionPurpose(StrEnum):
     MODPACK = "modpack"
     PLUGIN_PACKAGE = "plugin-package"
     WORLD_IMPORT = "world-import"
+    WORLD_IMPORT_FOLDER = "world-import-folder"
 
 
 class FileSavePurpose(StrEnum):
@@ -738,6 +739,7 @@ class ImageSelectionRequest(RequestModel):
 
 class FileSelectionRequest(RequestModel):
     purpose: FileSelectionPurpose | None = None
+    resource_type: Literal["mod", "resourcepack", "shaderpack", "datapack", "schematic"] | None = None
 
 
 class FileSaveRequest(RequestModel):

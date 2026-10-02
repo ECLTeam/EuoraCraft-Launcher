@@ -34,6 +34,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -43,6 +44,7 @@ import time
 import tomllib
 import zipfile
 import zlib
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict
@@ -56,6 +58,7 @@ from ECL.utils.network import download_proxy_url
 
 from .base import GameServiceError
 from .operations import OperationContext
+from .resource_files import ResourceFilePolicy
 from .workspace import delete_path, resolve_relative_id
 
 
@@ -106,6 +109,7 @@ class ResourceCatalogPolicy:
         "shaderpack": "shaderpacks",
         "schematic": "schematics",
     }
+    file_extensions: Mapping[str, tuple[str, ...]] = ResourceFilePolicy.extensions
 
     # 在线搜索的 resource_type -> Modrinth project_type 映射（存档无在线下载类型）
     project_types = {
@@ -488,10 +492,19 @@ class ResourceCoordinator:
                 continue
             if resource_type == "mod" and path.suffix.casefold() not in {".jar", ".disabled"}:
                 continue
+            inspection = None
+            if resource_type != "mod":
+                try:
+                    inspection = ResourceFilePolicy.validate(path, resource_type, allow_directory=True, use_cache=True)
+                except GameServiceError as exc:
+                    logging.getLogger(__name__).debug(
+                        "资源已过滤：%s %s (%s)", resource_type, path.name, exc.error_code
+                    )
+                    continue
             metadata = (
                 self._parse_mod(path)
                 if resource_type == "mod"
-                else self._parse_pack(path)
+                else {"name": inspection.name or path.stem, "packFormat": inspection.pack_format}
                 if resource_type in {"resourcepack", "datapack"}
                 else {"name": path.stem}
             )
@@ -546,11 +559,25 @@ class ResourceCoordinator:
     ) -> dict[str, str]:
         """
         异步复制一个或多个本地资源，目标文件通过临时文件原子提交。
+
+        整批来源先进行类型和结构预检，任何无效输入均不提交任务；复制后的
+        临时目标重新校验，通过后才替换正式文件。各资源独立原子提交。
+
+        :param game_path: 游戏根目录
+        :param version_id: 实例标识
+        :param resource_type: 资源类型
+        :param source_paths: 要安装的本地资源来源
+        :param version_isolation: 是否使用实例隔离目录
+        :param world_id: 数据包所属世界
+        :return: 可查询的安装任务标识
+        :raises GameServiceError: 类型、内容或目标无效时抛出
         """
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         sources = [Path(str(value)).expanduser().resolve(strict=True) for value in source_paths]
         if not sources:
             raise GameServiceError("未选择资源文件", "RESOURCE_FILES_REQUIRED")
+        for source in sources:
+            ResourceFilePolicy.validate(source, resource_type)
 
         def worker(context: OperationContext) -> dict[str, Any]:
             root.mkdir(parents=True, exist_ok=True)
@@ -560,13 +587,15 @@ class ResourceCoordinator:
                 destination = resolve_relative_id(root, source.name, must_exist=False)
                 if destination.exists():
                     raise GameServiceError(f"资源已存在：{source.name}", "RESOURCE_ALREADY_EXISTS")
-                temp = destination.with_name(f".{destination.name}.ecl-tmp")
+                temp = destination.with_name(f".{destination.stem}.ecl-tmp{destination.suffix}")
                 try:
                     if source.is_dir():
                         shutil.copytree(source, temp)
                     else:
                         shutil.copy2(source, temp)
+                    ResourceFilePolicy.validate(temp, resource_type)
                     temp.replace(destination)
+                    ResourceFilePolicy.invalidate()
                 finally:
                     if temp.is_dir():
                         shutil.rmtree(temp, ignore_errors=True)
@@ -682,6 +711,7 @@ class ResourceCoordinator:
         for resource_id, resource_path in paths_by_id.items():
             try:
                 delete_path(resource_path)
+                ResourceFilePolicy.invalidate()
             except GameServiceError as exc:
                 result["failed"].append({"resourceId": resource_id, "message": str(exc)})
             else:

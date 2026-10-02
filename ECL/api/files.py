@@ -28,6 +28,8 @@
 #       - open_url(body) -> dict[str, Any] — 打开链接。
 # ============================================================
 
+from __future__ import annotations
+
 import base64
 import hashlib
 import webbrowser
@@ -48,6 +50,7 @@ from ECL.api.models import (
     ImagePurpose,
     ImageSelectionRequest,
 )
+from ECL.services.game.resources import ResourceCatalogPolicy
 from ECL.utils.files import atomic_write_bytes
 
 from .bridge import (
@@ -601,9 +604,12 @@ class FileHandlers(_FrontendState):
             path = await self._pick_path(False, "选择整合包", ["zip", "mrpack"])
         elif request.purpose == FileSelectionPurpose.PLUGIN_PACKAGE:
             path = await self._pick_path(False, "选择插件包", ["eclplugin"])
+        elif request.purpose == FileSelectionPurpose.WORLD_IMPORT:
+            path = await self._pick_path(False, "选择 ZIP 存档", ["zip"])
+        elif request.purpose == FileSelectionPurpose.WORLD_IMPORT_FOLDER:
+            path = await self._pick_path(True, "选择存档文件夹")
         else:
             path = await self._pick_path(False, "选择文件")
-        self.logger.info("文件选择结果: %s", path)
         return {"success": True, "data": {"path": path}}
 
     @_ipc_handler("SELECT_FILES_ERROR")
@@ -614,6 +620,8 @@ class FileHandlers(_FrontendState):
         request, invalid = _validate_body(FileSelectionRequest, body)
         if invalid is not None:
             return invalid
+        if request.purpose == FileSelectionPurpose.RESOURCE_FILES and request.resource_type is None:
+            return {"success": False, "message": "选择资源文件需要指定资源类型", "errorCode": "INVALID_REQUEST"}
         if self._webview is None:
             return success({"paths": []})
 
@@ -621,7 +629,7 @@ class FileHandlers(_FrontendState):
             dialog = DialogExt.file(self._webview)
             if request.purpose == FileSelectionPurpose.RESOURCE_FILES:
                 return dialog.blocking_pick_files(
-                    add_filter=("资源文件", ["jar", "zip", "disabled", "schem", "litematic"])
+                    add_filter=("资源文件", list(ResourceCatalogPolicy.file_extensions[request.resource_type]))
                 )
             return dialog.blocking_pick_files(set_title="选择文件")
 

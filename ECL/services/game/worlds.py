@@ -310,8 +310,22 @@ class WorldCoordinator:
     def import_world(
         self, game_path: Any, version_id: Any, source_path: Any, version_isolation: Any = False
     ) -> dict[str, str]:
+        """
+        提交本地存档目录或 ZIP 的导入任务，归档内容仍由工作线程校验。
+
+        本地入口限制后缀，在线下载共用助手不受临时归档文件名影响。
+
+        :param game_path: 游戏根目录
+        :param version_id: 实例标识
+        :param source_path: 存档文件夹或 ZIP 文件
+        :param version_isolation: 是否使用实例隔离目录
+        :return: 可查询的导入任务标识
+        :raises GameServiceError: 本地输入不是目录或 ZIP 文件时抛出
+        """
         root = self._world_root(game_path, version_id, version_isolation)
         source = Path(str(source_path)).expanduser().resolve(strict=True)
+        if not source.is_dir() and (not source.is_file() or source.suffix.casefold() != ".zip"):
+            raise GameServiceError("仅支持世界目录或 .zip 文件", "UNSUPPORTED_WORLD_IMPORT")
 
         def worker(context: OperationContext) -> dict[str, str]:
             return self._import_world_source(root, source, context)
