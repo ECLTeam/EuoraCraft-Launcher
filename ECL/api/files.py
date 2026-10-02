@@ -43,6 +43,7 @@ from anyio import to_thread
 from pytauri_plugins.dialog import DialogExt
 
 from ECL.api.models import (
+    DirectorySelectionRequest,
     FileSavePurpose,
     FileSaveRequest,
     FileSelectionPurpose,
@@ -469,14 +470,22 @@ class FileHandlers(_FrontendState):
         self.logger.info("目录图片文件数量: %d", len(files))
         return {"success": True, "data": {"files": files}}
 
-    async def _pick_path(self, pick_folder: bool, title: str, extensions: list[str] | None = None) -> str:
-        # 打开系统文件选择对话框，返回用户选择的路径；取消时返回空字符串。
+    async def _pick_path(
+        self, pick_folder: bool, title: str, extensions: list[str] | None = None, default_directory: str | None = None
+    ) -> str:
+        """
+        在后台线程调用主窗口的原生选择器，可为目录选择提供初始位置。
+
+        对话框阻塞由工作线程承担；用户取消时返回空字符串，不改变已有选择。
+        """
         if self._webview is None:
             return ""
 
         def _pick():
             dialog = DialogExt.file(self._webview)
             if pick_folder:
+                if default_directory:
+                    return dialog.blocking_pick_folder(set_title=title, set_directory=default_directory)
                 return dialog.blocking_pick_folder(set_title=title)
             if extensions:
                 return dialog.blocking_pick_file(add_filter=("文件", extensions), set_title=title)
@@ -510,12 +519,29 @@ class FileHandlers(_FrontendState):
     @_ipc_handler("SELECT_DIRECTORY_ERROR")
     async def select_directory(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        选择目录。
+        按用途选择游戏目录或下载文件夹，取消时保留前端原值。
 
         :param body: 经过边界校验的 IPC 请求数据
         """
-        path = await self._pick_path(True, "选择游戏目录")
-        self.logger.info("目录选择结果: %s", path)
+        request, invalid = await to_thread.run_sync(_validate_body, DirectorySelectionRequest, body)
+        if invalid is not None:
+            return invalid
+        if request.purpose == "custom-download":
+
+            def prepare_directory() -> str:
+                """
+                在工作线程解析初始位置，仅为默认下载目录按需创建文件夹。
+                """
+                default_path = (self.data_path / "downloads").resolve(strict=False)
+                directory_path = request.default_directory or default_path
+                if directory_path == default_path:
+                    directory_path.mkdir(parents=True, exist_ok=True)
+                return str(directory_path)
+
+            directory = await to_thread.run_sync(prepare_directory)
+            path = await self._pick_path(True, "选择下载文件夹", default_directory=directory)
+        else:
+            path = await self._pick_path(True, "选择游戏目录")
         return {"success": True, "data": {"path": path}}
 
     @_ipc_handler("SELECT_JAVA_ERROR")

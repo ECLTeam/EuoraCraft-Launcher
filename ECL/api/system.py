@@ -26,6 +26,7 @@
 #       - debug_clear_plugins(body) -> dict[str, Any] — 清理插件数据。
 #       - debug_devtools_open(body) -> dict[str, Any] — 打开 WebView 开发者工具（F12 调试窗口）。
 #       - custom_download_start(body) -> ApiResponse — 提交自定义文件下载。
+#       - custom_download_defaults(body) -> ApiResponse — 返回默认下载目录和 UA。
 #       - custom_download_retry(body) -> ApiResponse — 重试本会话失败或取消的下载。
 # ============================================================
 
@@ -39,6 +40,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import psutil
 from anyio import to_thread
+from pydantic import ValidationError
 
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.services.app_update import AppUpdateError, UpdateApplier
@@ -101,13 +103,31 @@ class SystemHandlers(_FrontendState):
         """
         校验并提交自定义下载，任务在独立线程运行。
 
-        :param body: HTTP(S) 地址、完整保存路径及覆盖意图
+        :param body: HTTP(S) 地址、保存方式、请求设置及覆盖意图
         :return: 新下载任务标识
         """
-        request = await to_thread.run_sync(CustomDownloadRequest.model_validate, body)
+        try:
+            request = await to_thread.run_sync(CustomDownloadRequest.model_validate, body)
+        except ValidationError as exc:
+            # 模型错误可能携带敏感请求头，直接转换为脱敏校验提示。
+            return self._invalid_request(exc)
         if self.context.downloads is None:
             return failure("下载服务未初始化", "DOWNLOAD_UNAVAILABLE")
         return success(await to_thread.run_sync(self.context.downloads.submit, request))
+
+    @_ipc_handler("CUSTOM_DOWNLOAD_DEFAULTS_FAILED")
+    async def custom_download_defaults(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        读取本次应用实际数据目录对应的下载初始设置，不创建目录。
+
+        :param body: 不接受参数的请求体
+        :return: 默认下载文件夹与 UA
+        """
+        if body:
+            return failure("默认下载设置不接受参数", "INVALID_REQUEST")
+        if self.context.downloads is None:
+            return failure("下载服务未初始化", "DOWNLOAD_UNAVAILABLE")
+        return success(await to_thread.run_sync(self.context.downloads.defaults))
 
     @_ipc_handler("CUSTOM_DOWNLOAD_RETRY_FAILED")
     async def custom_download_retry(self, body: dict[str, Any]) -> ApiResponse:

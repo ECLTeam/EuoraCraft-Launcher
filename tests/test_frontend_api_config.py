@@ -454,6 +454,56 @@ def test_dual_source_search_uses_real_game_service_and_typed_ipc(tmp_path, monke
         api.game.close()
 
 
+def test_custom_download_defaults_and_validation_do_not_log_secrets(tmp_path, caplog) -> None:
+    from ECL.services.custom_downloads import CustomDownloadService
+    from ECL.services.operations import OperationManager
+
+    api = _build_api(tmp_path)
+    manager = OperationManager(tmp_path / "operations-data", EventBus())
+    api.context.downloads = CustomDownloadService(manager, data_path=api.data_path)
+    try:
+        defaults = asyncio.run(api.custom_download_defaults({}))
+        assert defaults == {
+            "success": True,
+            "data": {"downloadDirectory": str(api.data_path / "downloads"), "userAgent": "EuoraCraft-Launcher"},
+        }
+        assert not (api.data_path / "downloads").exists()
+        invalid = asyncio.run(
+            api.custom_download_start({"url": "https://host/file", "headers": {"Bad Key": "secret-value"}})
+        )
+        assert invalid["success"] is False and invalid["errorCode"] == "INVALID_REQUEST"
+        assert "secret-value" not in str(invalid) and "secret-value" not in caplog.text
+    finally:
+        manager.close()
+
+
+def test_download_folder_picker_defaults_and_legacy_game_picker(tmp_path, monkeypatch) -> None:
+    import ECL.api.files as files_module
+
+    api = _build_api(tmp_path)
+    api._webview = object()
+    calls = []
+
+    class Dialog:
+        def blocking_pick_folder(self, **options):
+            calls.append(options)
+            return None
+
+    monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: Dialog()))
+    assert asyncio.run(api.select_directory({"purpose": "custom-download"})) == {"success": True, "data": {"path": ""}}
+    assert calls[-1] == {"set_title": "选择下载文件夹", "set_directory": str(api.data_path / "downloads")}
+    assert (api.data_path / "downloads").is_dir()
+    selected = tmp_path / "different-folder"
+    asyncio.run(api.select_directory({"purpose": "custom-download", "default_directory": str(selected)}))
+    assert calls[-1]["set_directory"] == str(selected)
+    assert not selected.exists()
+    asyncio.run(api.select_directory({}))
+    assert calls[-1] == {"set_title": "选择游戏目录"}
+    count = len(calls)
+    invalid = asyncio.run(api.select_directory({"purpose": "custom-download", "default_directory": "relative"}))
+    assert invalid["success"] is False and len(calls) == count
+
+
 def test_launcher_config_excludes_runtime_metadata(tmp_path) -> None:
     api = _build_api(tmp_path)
 

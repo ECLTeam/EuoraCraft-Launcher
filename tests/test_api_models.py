@@ -224,6 +224,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "search_mods",
         "game_version_settings_effective",
         "custom_download_start",
+        "select_directory",
         "settings_get",
         "settings_set",
         "frontend_log",

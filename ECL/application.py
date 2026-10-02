@@ -427,7 +427,7 @@ def create_application(
         shared_instances = InstancesManager()
         operations = OperationManager(state.data_path, events)
         created.append(operations)
-        downloads = CustomDownloadService(operations)
+        downloads = CustomDownloadService(operations, data_path=state.data_path)
         game = GameService(
             accounts,
             data_path=state.data_path,

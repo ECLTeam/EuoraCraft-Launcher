@@ -106,6 +106,7 @@
 #   - class MicrosoftCapeRequest
 #   - class ImageSelectionRequest
 #   - class FileSelectionRequest
+#   - class DirectorySelectionRequest — 校验目录选择用途和初始位置。
 #   - class FileSaveRequest
 #       - validate_default_directory(value) -> str | None
 #       - validate_default_name(value) -> str | None
@@ -768,6 +769,31 @@ class FileSelectionRequest(RequestModel):
     resource_type: Literal["mod", "resourcepack", "shaderpack", "datapack", "schematic"] | None = None
 
 
+class DirectorySelectionRequest(RequestModel):
+    """
+    为下载文件夹选择器提供用途和初始目录，旧游戏目录调用可保持空请求。
+    """
+
+    purpose: Literal["custom-download"] | None = None
+    default_directory: Path | None = None
+
+    @field_validator("default_directory")
+    @classmethod
+    def validate_directory(cls, value: Path | None) -> Path | None:
+        """
+        拒绝无法交给原生目录对话框的相对路径和空字符。
+
+        :param value: 可选初始目录
+        :return: 规范化的绝对目录
+        :raises ValueError: 目录无效
+        """
+        if value is not None:
+            if not value.is_absolute() or "\0" in str(value) or value.is_file():
+                raise ValueError("初始目录必须是有效的绝对目录")
+            return value.resolve(strict=False)
+        return value
+
+
 class FileSaveRequest(RequestModel):
     purpose: FileSavePurpose
     default_directory: str | None = Field(default=None, max_length=4096)
@@ -863,6 +889,7 @@ class RequestModelRegistry:
     models: dict[str, type[BaseModel]] = {
         "search_mods": OnlineResourceSearchRequest,
         "custom_download_start": CustomDownloadRequest,
+        "select_directory": DirectorySelectionRequest,
         "settings_get": SettingsQuery,
         "settings_set": SettingsUpdate,
         "frontend_log": FrontendLogRequest,
@@ -945,6 +972,7 @@ __all__ = [
     "CrashAnalyzeRequest",
     "CrashExportRequest",
     "CrashReportRequest",
+    "DirectorySelectionRequest",
     "FileSavePurpose",
     "FileSaveRequest",
     "FileSelectionPurpose",
