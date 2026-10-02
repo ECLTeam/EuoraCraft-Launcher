@@ -70,6 +70,7 @@
 #   - test_authlib_server_url_is_resolved_through_ali(tmp_path) -> None
 #   - test_frontend_ready_and_plugin_api_use_registered_framework(tmp_path) -> None
 #   - test_adapter_main_window_is_visible_without_native_shadow() -> None
+#   - test_new_config_creates_platform_appropriate_window_chrome(...) -> None
 #   - test_adapter_main_window_chrome_follows_ui_setting(window_chrome, is_native) -> None
 #   - test_adapter_focuses_main_window_once_at_startup_ready(monkeypatch) -> None
 #   - test_adapter_startup_focus_failure_does_not_block_startup(monkeypatch, failure) -> None
@@ -95,6 +96,8 @@
 #   - test_frontend_ready_dispatches_cli_launch_once(tmp_path, monkeypatch) -> None
 #   - test_frontend_ready_cli_launch_failure_emits_popup(tmp_path) -> None
 # ============================================================
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -1153,6 +1156,30 @@ def test_adapter_main_window_is_visible_without_native_shadow() -> None:
     assert window_config["shadow"] is False
     assert window_config["minWidth"] == 960
     assert window_config["minHeight"] == 600
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected_mode", "is_transparent", "has_shadow"),
+    [
+        ("win32", "system_shadow", False, True),
+        ("linux", "custom", True, False),
+        ("darwin", "custom", True, False),
+    ],
+)
+def test_new_config_creates_platform_appropriate_window_chrome(
+    tmp_path, monkeypatch, platform: str, expected_mode: str, is_transparent: bool, has_shadow: bool
+) -> None:
+    monkeypatch.setattr(import_module("ECL.adapters.tauri"), "sys", SimpleNamespace(platform=platform))
+    adapter = object.__new__(Adapter)
+    adapter.config = ConfigStore(tmp_path / "ECL_data").get_config()
+    adapter.launcher_version = "0.0.1-alpha"
+
+    window_config = adapter._build_config()["app"]["windows"][0]
+
+    assert adapter._active_window_chrome == expected_mode
+    assert window_config["decorations"] is False
+    assert window_config["transparent"] is is_transparent
+    assert window_config["shadow"] is has_shadow
 
 
 @pytest.mark.parametrize("platform", ["win32", "linux"])
