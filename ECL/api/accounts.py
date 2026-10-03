@@ -358,10 +358,10 @@ class AccountHandlers(_FrontendState):
             textures.get("skinModel") or "classic",
         )
         self.logger.info(
-            "账户当前皮肤已同步到衣柜: account=%s, item=%s, deduplicated=%s",
+            "账户当前皮肤已同步到衣柜：账户标识：%s；纹理标识：%s；已去重：%s",
             request.account_id,
             item["id"],
-            deduplicated,
+            ("是" if deduplicated else "否"),
         )
         return {"success": True, "data": {"item": item, "deduplicated": deduplicated}}
 
@@ -472,7 +472,7 @@ class AccountHandlers(_FrontendState):
             return {"success": True, "data": {"path": None}}
         target = Path(str(picked))
         await to_thread.run_sync(atomic_write_bytes, target, texture)
-        self.logger.info("衣柜纹理已导出: item=%s, kind=%s", item["id"], item["kind"])
+        self.logger.info("衣柜纹理已导出：纹理标识：%s；类型：%s", item["id"], item["kind"])
         return {"success": True, "data": {"path": str(target)}}
 
     @_ipc_handler("SKIN_UPDATE_FAILED", timeout=15)
@@ -498,7 +498,7 @@ class AccountHandlers(_FrontendState):
             item["model"] or "classic",
             texture,
         )
-        self.logger.info("衣柜皮肤已上传: item=%s, model=%s", item["id"], item["model"])
+        self.logger.info("衣柜皮肤已上传：纹理标识：%s；模型：%s", item["id"], item["model"])
         return {"success": True, "data": account}
 
     @_ipc_handler("SKIN_UPDATE_FAILED", timeout=15)

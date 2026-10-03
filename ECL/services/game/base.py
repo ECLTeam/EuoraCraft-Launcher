@@ -40,6 +40,7 @@ from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
 from ECL.services.operations import OperationManager
 from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
+from ECL.utils.operation_logging import OperationTrace
 
 from .download_sources import PreferredApiClient, alternate_source
 from .instance_compat import InstanceCompatibilityReader
@@ -87,12 +88,13 @@ class _RunningGame:
     startup_complete: bool = False
     crash_analysis_disabled: bool = False
     output_lines: deque[str] = field(default_factory=lambda: deque(maxlen=500))
+    trace: OperationTrace | None = None
 
 
 class _GameState:
     # 保存游戏目录、安装、启动协调器共享的运行状态与资源。
 
-    _ECL_JSON_NAME = "ecl.json"
+    ecl_json_name = "ecl.json"
 
     def __init__(
         self,
@@ -200,9 +202,9 @@ class _GameState:
         self._version_watch_thread: Thread | None = None
         self._lock = RLock()
         self.logger.debug(
-            "游戏服务状态已创建: java_cache=%s, version_watcher=%s",
-            self._java_cache_file,
-            self._version_watcher_enabled,
+            "游戏服务状态已创建：Java缓存：%s；版本目录监听：%s",
+            ("是" if self._java_cache_file else "否"),
+            ("是" if self._version_watcher_enabled else "否"),
         )
 
     @staticmethod
@@ -254,12 +256,12 @@ class _GameState:
         return [item.strip() for item in value if item.strip()]
 
     # 支持的进程优先级白名单；非法值回退到 normal。
-    _PROCESS_PRIORITIES = frozenset({"idle", "below_normal", "normal", "above_normal", "high"})
+    process_priorities = frozenset({"idle", "below_normal", "normal", "above_normal", "high"})
 
     @classmethod
     def _normalize_process_priority(cls, value: Any) -> str:
         normalized = str(value or "normal").strip().casefold()
-        return normalized if normalized in cls._PROCESS_PRIORITIES else "normal"
+        return normalized if normalized in cls.process_priorities else "normal"
 
     @staticmethod
     def _api_config(source: str) -> ApiUrlConfig:
@@ -272,7 +274,7 @@ class _GameState:
         with self._lock:
             existing = self._contexts.get(key)
             if existing is not None:
-                self.logger.debug("复用游戏核心: path=%s, source=%s", path, normalized_source)
+                self.logger.debug("复用游戏核心：目录：%s；来源：%s", path, normalized_source)
                 return existing
 
             preferred_client = self._api_client_factory(self._api_config(normalized_source))
@@ -299,7 +301,7 @@ class _GameState:
                 api_client.close()
                 raise
             self._contexts[key] = context
-            self.logger.debug("创建游戏核心: path=%s, source=%s", path, normalized_source)
+            self.logger.debug("创建游戏核心：目录：%s；来源：%s", path, normalized_source)
             return context
 
     def _query_context(self, source: Any = "official") -> _CoreContext:
@@ -410,7 +412,7 @@ class _GameState:
             self._contexts.clear()
             self._schematic_sessions.clear()
         self.logger.debug(
-            "正在关闭游戏服务: downloads=%d, install_tasks=%d, core_contexts=%d",
+            "正在关闭游戏服务：下载任务数：%d；安装任务数：%d；核心实例数：%d",
             len(downloads),
             len(install_tasks),
             len(contexts),

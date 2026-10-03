@@ -344,10 +344,10 @@ def create_application(
     if on_state_ready is not None:
         on_state_ready(state)
     logger.debug(
-        "正在初始化后端服务: data_path=%s, frozen=%s, debug=%s",
+        "正在初始化后端服务：数据目录：%s；打包运行：%s；调试模式：%s",
         state.data_path,
-        state.is_frozen,
-        state.debug,
+        ("是" if state.is_frozen else "否"),
+        ("是" if state.debug else "否"),
     )
 
     created: list[Any] = []
@@ -406,13 +406,13 @@ def create_application(
         )
         created.append(accounts)
         logger.info(
-            "账户服务初始化完成，Microsoft 登录可用=%s",
-            accounts.microsoft_login_config()["available"],
+            "账户服务初始化完成，Microsoft 登录可用：%s",
+            ("是" if accounts.microsoft_login_config()["available"] else "否"),
         )
 
         wardrobe = WardrobeStore(state.data_path)
         logger.debug(
-            "本地衣柜已创建，条目数=%s",
+            "本地衣柜已创建，条目数：%s",
             len(wardrobe.list_items()),
         )
         info_card = InfoCardManager(
@@ -446,7 +446,7 @@ def create_application(
         logger.debug("正在初始化联机服务 ConnectorService")
         from ECL.plugins.connector import ConnectorExtensionRegistry
         from ECL.services.connector import ConnectorService
-        from ECL.services.connector_nodes import ConnectorNodeSettings
+        from ECL.services.connector_nodes import ConnectorNodeConfig
 
         current_account = accounts.current_account()
         connector_extensions = ConnectorExtensionRegistry()
@@ -455,12 +455,12 @@ def create_application(
             extensions=connector_extensions,
             local_player_icon_provider=_build_local_player_icon_provider(accounts, http),
             http_client=http,
-            node_settings_provider=lambda: ConnectorNodeSettings.model_validate(config.get_config("connector") or {}),
+            node_settings_provider=lambda: ConnectorNodeConfig.model_validate(config.get_config("connector") or {}),
         )
         logger.debug(
-            "联机服务状态: available=%s, easytier_available=%s, easytier_version=%s",
-            connector.available,
-            connector.easytier_available,
+            "联机服务状态：可用：%s；EasyTier可用：%s；EasyTier版本：%s",
+            ("是" if connector.available else "否"),
+            ("是" if connector.easytier_available else "否"),
             connector.easytier_version,
         )
         created.append(connector)
@@ -562,7 +562,7 @@ def create_application(
         )
         _sync_download_proxy_env(launcher_config)
         _apply_http_network_settings(http, launcher_config)
-        logger.debug("运行配置已刷新: debug=%s", state.debug)
+        logger.debug("运行配置已刷新：调试模式：%s", ("是" if state.debug else "否"))
 
     events.subscribe("config:updated", update_runtime_config)
     startup_update.start()

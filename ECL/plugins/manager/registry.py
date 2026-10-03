@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextvars import copy_context
 from typing import Any
 
 from ECL.plugins.plugin import Plugin
@@ -439,14 +440,24 @@ class PluginRegistry(_PluginState):
         handler = plugin._commands.get(cmd_name)
         if handler is None:
             raise PluginCommandError(f"插件 {plugin_name} 不存在命令 {cmd_name}")
+
+        def execute() -> Any:
+            self.logger.info("开始执行插件命令；插件：%s；命令：%s", plugin_name, cmd_name)
+            try:
+                result = handler(**(params or {}))
+            except BaseException:
+                self.logger.exception("插件命令执行失败；插件：%s；命令：%s", plugin_name, cmd_name)
+                raise
+            self.logger.info("插件命令执行完成；插件：%s；命令：%s", plugin_name, cmd_name)
+            return result
+
         try:
-            future = self._command_executor.submit(handler, **(params or {}))
+            future = self._command_executor.submit(copy_context().run, execute)
             return future.result(timeout=timeout)
         except FutureTimeoutError:
-            self.logger.error("插件 %s 命令 %s 执行超时", plugin_name, cmd_name)
+            self.logger.warning("等待插件命令超时，后台线程可能仍在执行；插件：%s；命令：%s", plugin_name, cmd_name)
             raise PluginCommandError(f"插件 {plugin_name} 命令 {cmd_name} 执行超时") from None
         except PluginCommandError:
             raise
         except Exception as exc:
-            self.logger.exception("插件 %s 命令 %s 执行失败", plugin_name, cmd_name)
             raise PluginCommandError(f"插件 {plugin_name} 命令 {cmd_name} 执行失败: {exc}") from exc

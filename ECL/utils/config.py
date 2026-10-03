@@ -273,12 +273,13 @@ class ConfigStore:
         if normalized_section not in self.allowed_sections:
             raise ConfigValidationError(f"配置分区不受支持: {normalized_section}")
         if normalized_section == "connector":
-            from ECL.services.connector_nodes import ConnectorNodeSettings
+            from ECL.services.connector_nodes import ConnectorNodeConfig
 
-            data = ConnectorNodeSettings.model_validate(data).model_dump()
+            data = ConnectorNodeConfig.model_validate(data).model_dump()
         with self._lock:
             config_data = self.get_config()
             config_data[normalized_section] = deepcopy(data)
             self._write_config(config_data)
         # 广播配置变更事件，通知订阅组件。
+        self.logger.debug("配置已保存；分区：%s", normalized_section)
         self.events.emit("config:updated", normalized_section, deepcopy(data))

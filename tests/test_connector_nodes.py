@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.services.connector import ConnectorService
-from ECL.services.connector_nodes import ConnectorNodeSettings
+from ECL.services.connector_nodes import ConnectorNodeConfig, ConnectorNodeError, ConnectorNodeSettings
 from ECL.utils.config import ConfigStore
 
 
@@ -70,13 +70,55 @@ def test_append_deduplicates_and_live_room_keeps_nodes(monkeypatch) -> None:
         service.close()
 
 
-def test_node_settings_persist_and_invalid_change_preserves_config(tmp_path) -> None:
+def test_config_accepts_drafts_but_rejects_invalid_structure(tmp_path) -> None:
     store = ConfigStore(tmp_path)
-    store.save_config("connector", {"mode": "custom", "nodes": ["tcp://Relay.test:1", "tcp://relay.test:1"]})
-    assert ConfigStore(tmp_path).get_config("connector") == {"mode": "custom", "nodes": ["tcp://relay.test:1"]}
+    for nodes in ([], [" unfinished ", ""]):
+        store.save_config("connector", {"mode": "custom", "nodes": nodes})
+        assert ConfigStore(tmp_path).get_config("connector") == {"mode": "custom", "nodes": nodes}
     with pytest.raises(ValidationError):
-        store.save_config("connector", {"mode": "custom", "nodes": []})
-    assert store.get_config("connector")["nodes"] == ["tcp://relay.test:1"]
+        store.save_config("connector", {"mode": "custom", "nodes": [42]})
+    assert store.get_config("connector")["nodes"] == [" unfinished ", ""]
+
+
+def test_runtime_normalizes_without_changing_saved_draft() -> None:
+    draft = ConnectorNodeConfig(mode="custom", nodes=[" tcp://Relay.test:1 ", "", "tcp://relay.test:1"])
+    assert ConnectorNodeSettings.for_connection(draft).nodes == ["tcp://relay.test:1"]
+    assert draft.nodes == [" tcp://Relay.test:1 ", "", "tcp://relay.test:1"]
+
+
+def test_automatic_and_preload_ignore_custom_drafts(monkeypatch) -> None:
+    draft = ConnectorNodeConfig(mode="automatic", nodes=["unfinished"])
+    service = ConnectorService(node_settings_provider=lambda: draft)
+    monkeypatch.setattr(service, "_fetch_public_nodes", lambda **kwargs: ["tcp://public.test:1"])
+    try:
+        assert service.fetch_nodes() == ["tcp://public.test:1"]
+        draft.mode = "append"
+        assert service.preload_nodes() == ["tcp://public.test:1"]
+        draft.mode = "custom"
+        assert service.preload_nodes() == []
+        with pytest.raises(ConnectorNodeError):
+            service.fetch_nodes()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("operation", ["join", "host_port"])
+def test_invalid_nodes_restore_idle_and_release_transition(monkeypatch, operation) -> None:
+    import ECL.services.connector as connector_module
+
+    draft = ConnectorNodeConfig(mode="custom", nodes=[])
+    service = ConnectorService(node_settings_provider=lambda: draft)
+    monkeypatch.setattr(connector_module, "validate_code", lambda value: True)
+    try:
+        for _ in range(2):
+            with pytest.raises(ConnectorNodeError) as captured:
+                service.join("U/AAAA-BBBB-CCCC-DDDD") if operation == "join" else service.host_port(25565)
+            assert captured.value.error_code == "CONNECTOR_NODES_INVALID"
+            assert "pydantic" not in str(captured.value)
+            assert service._mode == "idle"
+            assert not service._transitioning
+    finally:
+        service.close()
 
 
 def test_concurrent_node_and_game_writes_preserve_both_sections(tmp_path, monkeypatch) -> None:

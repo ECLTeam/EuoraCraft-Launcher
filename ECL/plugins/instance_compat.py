@@ -184,7 +184,7 @@ class InstanceCompatibilityRegistry:
                 result.source = provider.source
                 results.append(result)
             except Exception as exc:
-                self._logger.exception("插件实例兼容读取失败: source=%s", provider.source)
+                self._logger.exception("插件实例兼容读取失败：来源：%s", provider.source)
                 results.append(
                     ExternalInstanceMetadata(
                         source=provider.source,
@@ -212,7 +212,7 @@ class InstanceCompatibilityRegistry:
                 for path in paths:
                     resolved.append((provider.source, Path(path).expanduser().resolve(strict=False)))
             except Exception:
-                self._logger.exception("插件兼容监听路径解析失败: source=%s", provider.source)
+                self._logger.exception("插件兼容监听路径解析失败：来源：%s", provider.source)
         return resolved
 
 

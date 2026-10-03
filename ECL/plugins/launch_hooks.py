@@ -109,7 +109,7 @@ class LaunchHookRegistry:
             try:
                 callback(context)
             except Exception:
-                self._logger.exception("插件启动钩子 %s 失败: plugin=%s, hook=%s", phase, hook["owner"], hook["name"])
+                self._logger.exception("插件启动钩子 %s 失败：插件：%s；钩子：%s", phase, hook["owner"], hook["name"])
 
     def prepare(self, context: LaunchContext) -> None:
         """

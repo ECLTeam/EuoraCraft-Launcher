@@ -262,7 +262,7 @@ class ConnectorExtensionRegistry:
                 result = await result
             return _normalize_response(result)
         except Exception as exc:
-            self._logger.exception("插件联机扩展协议执行失败: protocol=%s", request.protocol)
+            self._logger.exception("插件联机扩展协议执行失败：协议：%s", request.protocol)
             return 255, str(exc).encode("utf-8", errors="replace")[:4096]
 
     def guest_joined(self, context: ConnectorSessionContext) -> None:
@@ -285,7 +285,7 @@ class ConnectorExtensionRegistry:
                 if patch:
                     status.update(patch)
             except Exception:
-                self._logger.debug("插件联机状态扩展失败: extension=%s", extension.name, exc_info=True)
+                self._logger.debug("插件联机状态扩展失败：扩展：%s", extension.name, exc_info=True)
         return status
 
     def before_leave(self, context: ConnectorSessionContext) -> None:
@@ -311,7 +311,7 @@ class ConnectorExtensionRegistry:
                 hook(context)
             except Exception:
                 self._logger.debug(
-                    "插件联机会话钩子失败: extension=%s, hook=%s",
+                    "插件联机会话钩子失败：扩展：%s；钩子：%s",
                     extension.name,
                     hook_name,
                     exc_info=True,

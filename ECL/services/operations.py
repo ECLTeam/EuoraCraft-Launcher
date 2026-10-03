@@ -20,14 +20,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, RLock
+from time import monotonic
+from types import MappingProxyType
+from typing import ClassVar
 from uuid import uuid4
 
 from ECL.events import EventBus
 from ECL.utils import atomic_write_text, get_logger
+from ECL.utils.operation_logging import OperationTrace, current_operation, trace_scope
 
 OperationWorker = Callable[["OperationContext"], object]
 
@@ -98,12 +103,34 @@ class _Operation:
     future: Future[object] | None = None
     details: dict[str, object] = field(default_factory=dict)
     can_cancel: bool = True
+    trace: OperationTrace | None = None
+    last_log_at: float = 0.0
+    last_log_message: str = ""
+    has_logged_progress: bool = False
 
 
 class OperationManager:
     """
     管理可取消的应用下载、实例复制及资源处理任务。
     """
+
+    kind_titles: ClassVar[MappingProxyType[str, str]] = MappingProxyType(
+        {
+            "custom_download": "自定义下载",
+            "instance_import": "导入实例",
+            "instance_export": "导出实例",
+            "modpack_online_install": "在线安装整合包",
+            "resource_install": "安装资源",
+            "resource_update": "更新资源",
+            "world_copy": "复制存档",
+            "world_export": "导出存档",
+            "world_import": "导入存档",
+            "world_backup": "备份存档",
+            "world_restore": "恢复存档",
+            "instance_clone": "复制实例",
+            "instance_repair": "修复实例",
+        }
+    )
 
     def __init__(self, data_path: Path, event_bus: EventBus, max_workers: int = 3) -> None:
         """
@@ -132,22 +159,45 @@ class OperationManager:
                 raise GameServiceError("启动器正在关闭，无法创建新任务", "OPERATION_MANAGER_CLOSED")
             operation_id = uuid4().hex
             operation = _Operation(operation_id, kind, datetime.now(UTC).isoformat())
+            operation.trace = OperationTrace(operation_id, "后台任务", monotonic())
             self._operations[operation_id] = operation
-            operation.future = self._executor.submit(self._run, operation, worker)
+            parent = current_operation()
+            self._logger.info(
+                "后台任务已提交；任务编号：%s；任务类型：%s；来源操作：%s",
+                operation_id,
+                self.kind_titles.get(kind, kind),
+                parent.operation_id if parent else "内部调用",
+            )
+            operation.future = self._executor.submit(copy_context().run, self._run, operation, worker)
         self._emit(operation)
         return {"operationId": operation_id, "status": operation.status}
 
     def _run(self, operation: _Operation, worker: OperationWorker) -> None:
+        with trace_scope(operation.trace):
+            self._execute(operation, worker)
+
+    def _execute(self, operation: _Operation, worker: OperationWorker) -> None:
         with self._lock:
             operation.status = "running"
             operation.message = "正在执行"
         self._emit(operation)
+        self._logger.info("后台任务开始执行；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind))
 
         def update(percent: float, message: str, details: dict[str, object]) -> None:
             with self._lock:
                 operation.percent = percent
                 operation.message = message
                 operation.details.update(details)
+                now = monotonic()
+                stage = details.get("stage") or details.get("subtask")
+                has_stage_change = isinstance(stage, str) and stage != operation.last_log_message
+                should_log = not operation.has_logged_progress or has_stage_change or now - operation.last_log_at >= 5.0
+                if should_log:
+                    operation.has_logged_progress = True
+                    operation.last_log_message = stage if isinstance(stage, str) else ""
+                    operation.last_log_at = now
+            if should_log:
+                self._logger.debug("后台任务进度：%.0f%%；阶段：%s", percent, message)
 
         def finalize(action: Callable[[], object]) -> object:
             with self._lock:
@@ -169,15 +219,24 @@ class OperationManager:
                 operation.message = "操作已取消" if operation.cancel_event.is_set() else str(exc)
                 operation.error = str(exc)
                 operation.error_code = getattr(exc, "error_code", "GAME_OPERATION_FAILED")
-            self._logger.warning(
-                "游戏长任务失败: id=%s, kind=%s, error=%s", operation.operation_id, operation.kind, exc
-            )
+            if operation.status == "cancelled":
+                self._logger.info(
+                    "后台任务已取消并停止执行；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind)
+                )
+            else:
+                self._logger.exception(
+                    "后台任务执行失败；任务类型：%s；错误码：%s",
+                    self.kind_titles.get(operation.kind, operation.kind),
+                    operation.error_code,
+                )
         else:
             with self._lock:
                 operation.status = "completed"
                 operation.percent = 100.0
                 operation.message = "操作完成"
                 operation.result = result
+            if operation.trace is not None:
+                operation.trace.log(self._logger, "后台任务执行完成")
         self._persist(operation)
         self._emit(operation)
 
@@ -254,6 +313,7 @@ class OperationManager:
             operation.cancel_event.set()
             operation.message = "正在取消"
         self._emit(operation)
+        self._logger.info("已请求取消后台任务，等待安全检查点；任务编号：%s", operation_id)
         return True
 
     def close(self) -> None:
@@ -267,3 +327,15 @@ class OperationManager:
                 if operation.can_cancel and operation.status in {"pending", "running"}:
                     operation.cancel_event.set()
         self._executor.shutdown(wait=False, cancel_futures=True)
+        for operation in operations:
+            if operation.future is not None and operation.future.cancelled():
+                with self._lock:
+                    if operation.status == "cancelled":
+                        continue
+                    operation.status = "cancelled"
+                    operation.message = "操作已取消"
+                    operation.error_code = "OPERATION_CANCELLED"
+                with trace_scope(operation.trace):
+                    self._logger.info("排队中的后台任务已取消，未开始执行")
+                    self._persist(operation)
+                    self._emit(operation)

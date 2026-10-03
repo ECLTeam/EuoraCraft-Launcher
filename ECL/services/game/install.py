@@ -19,6 +19,7 @@ import functools
 import json
 import shutil
 from collections.abc import Callable, Mapping
+from contextvars import copy_context
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any
@@ -147,7 +148,7 @@ class InstallCoordinator(_GameState):
             raise GameServiceError(f"暂不支持安装加载器: {body.get('loader_type')}", "UNSUPPORTED_LOADER")
 
         self.logger.debug(
-            "开始安装版本: version=%s, loader=%s, path=%s, source=%s, save_name=%s",
+            "开始安装版本：版本：%s；加载器：%s；目录：%s；来源：%s；保存名称：%s",
             version_id,
             loader,
             path,
@@ -235,7 +236,7 @@ class InstallCoordinator(_GameState):
                 abandon_on_cancel=True,
             )
         except asyncio.CancelledError:
-            self.logger.info("安装任务已取消: %s", task_id)
+            self.logger.info("已请求取消安装，后台下载线程仍等待清理；任务编号：%s", task_id)
             cancel_event.set()
             with self._lock:
                 downloader = self._active_downloads.get(task_id)
@@ -386,8 +387,8 @@ class InstallCoordinator(_GameState):
         watcher: Thread | None = None
         if cancel_event is not None:
             watcher = Thread(
-                target=self._watch_downloader_cancel,
-                args=(cancel_event, finished, downloader),
+                target=copy_context().run,
+                args=(self._watch_downloader_cancel, cancel_event, finished, downloader),
                 name=f"ECLInstallCancel-{task_id}",
                 daemon=True,
             )
@@ -475,7 +476,7 @@ class InstallCoordinator(_GameState):
         name = self._normalize_version_name(version_id)
         root = self._normalize_game_path(game_path) / "versions"
         target = (root / name).resolve(strict=False)
-        self.logger.debug("卸载实例: version=%s, path=%s", name, target)
+        self.logger.debug("卸载实例：版本：%s；目录：%s", name, target)
         if target.parent != root.resolve(strict=False):
             raise GameServiceError("实例目录超出允许范围", "INVALID_VERSION_PATH")
         if not target.exists():

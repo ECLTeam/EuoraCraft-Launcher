@@ -11,6 +11,7 @@
 #       - easytier_available() -> bool — EasyTier 是否可用。
 #       - easytier_version() -> str — EasyTier 版本号。
 #       - fetch_nodes(force) -> list[str] — 获取可用的 EasyTier 中继节点 URI 列表。
+#       - preload_nodes() -> list[str] — 仅预热公共节点，不验证用户地址。
 #       - get_status() -> dict[str, Any] — 获取当前联机状态。
 #       - get_easytier_status() -> dict[str, Any] — 获取 EasyTier 安装状态。
 #       - get_nat_type() -> dict[str, Any] — 使用 EasyTier 内置 STUN 探测检测 NAT 类型。
@@ -35,6 +36,7 @@ import socket
 import struct
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from ipaddress import ip_address
 from threading import Lock, RLock
 from time import monotonic, sleep
@@ -50,9 +52,10 @@ from ECL.plugins.connector import (
     ConnectorProtocolRequest,
     ConnectorSessionContext,
 )
-from ECL.services.connector_nodes import ConnectorNodeSettings
+from ECL.services.connector_nodes import ConnectorNodeConfig, ConnectorNodeError, ConnectorNodeSettings
 from ECL.services.florolding import Florolding, find_free_port, validate_code
 from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
+from ECL.utils.operation_logging import current_operation, trace_scope
 
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
@@ -128,7 +131,7 @@ class ConnectorService:
         node_cache_ttl: float | None = None,
         extensions: ConnectorExtensionRegistry | None = None,
         local_player_icon_provider: Callable[[], str | None] | None = None,
-        node_settings_provider: Callable[[], ConnectorNodeSettings] | None = None,
+        node_settings_provider: Callable[[], ConnectorNodeConfig] | None = None,
     ) -> None:
         self._launcher_info = launcher_info
         self._player_name = player_name or "Player"
@@ -220,11 +223,23 @@ class ConnectorService:
         :param force: 是否强制刷新公共节点缓存
         :return: 保序去重的 EasyTier 节点 URI
         """
-        settings = self._node_settings_provider() if self._node_settings_provider else ConnectorNodeSettings()
+        settings = self._node_settings_provider() if self._node_settings_provider else ConnectorNodeConfig()
+        if settings.mode == "automatic":
+            return self._fetch_public_nodes(force=force)
+        settings = ConnectorNodeSettings.for_connection(settings)
         if settings.mode == "custom":
             return list(settings.nodes)
         public_nodes = self._fetch_public_nodes(force=force)
         return list(dict.fromkeys([*settings.nodes, *public_nodes])) if settings.mode == "append" else public_nodes
+
+    def preload_nodes(self) -> list[str]:
+        """
+        预热公共节点缓存，不校验或连接用户填写的节点。
+
+        :return: 公共节点缓存；仅自定义模式不请求公共节点
+        """
+        settings = self._node_settings_provider() if self._node_settings_provider else ConnectorNodeConfig()
+        return [] if settings.mode == "custom" else self._fetch_public_nodes()
 
     def _fetch_public_nodes(self, *, force: bool = False) -> list[str]:
         """
@@ -289,8 +304,11 @@ class ConnectorService:
 
             if aggregate_urls:
                 with ThreadPoolExecutor(max_workers=min(len(aggregate_urls), self.max_aggregate_workers)) as pool:
-                    for resolved in pool.map(self._resolve_aggregate_node, aggregate_urls):
-                        nodes.extend(resolved)
+                    futures = [
+                        pool.submit(copy_context().run, self._resolve_aggregate_node, url) for url in aggregate_urls
+                    ]
+                    for future in futures:
+                        nodes.extend(future.result())
             resolved = list(dict.fromkeys(nodes)) or list(self.default_nodes)
             logger.debug("联机节点列表已刷新并写入内存缓存，共 %d 个节点", len(resolved))
             return self._remember_nodes(resolved)
@@ -511,9 +529,9 @@ class ConnectorService:
                         sleep(self.nat_probe_interval_seconds)
                         continue
                     logger.info(
-                        "NAT 检测完成: detail=%s, ipv6=%s",
+                        "NAT 检测完成：详细结果：%s；IPv6：%s",
                         result["detailType"],
-                        result["supportsIpv6"],
+                        ("是" if result["supportsIpv6"] else "否"),
                     )
                     return result
                 sleep(self.nat_probe_interval_seconds)
@@ -632,16 +650,20 @@ class ConnectorService:
         self._begin_transition()
         self._mode = "starting"
 
-        logger.debug("开始创建联机房间: minecraft_port=%s, easytier=%s", port, self.easytier_available)
+        logger.debug(
+            "开始创建联机房间；游戏端口：%s；EasyTier：%s", port, "可用" if self.easytier_available else "不可用"
+        )
         try:
+            logger.info("准备创建联机房间，开始检查节点配置")
+            self._nodes = self.fetch_nodes()
+            logger.info("联机节点准备完成；节点数量：%s", len(self._nodes))
             florolding = Florolding(
                 launcher_info=self._launcher_info,
-                log_callback=self._log_callback,
+                log_callback=self._scoped_log_callback(),
             )
             logger.debug("Florolding 实例已创建")
 
             # 设置 EasyTier 节点列表
-            self._nodes = self.fetch_nodes()
             florolding.set_nodes(self._nodes)
             logger.debug("已设置 EasyTier 节点列表")
 
@@ -656,8 +678,8 @@ class ConnectorService:
                 **create_kwargs,
             )
             logger.debug(
-                "房间已创建: room_code=%s, server=%s, easytier_id=%s",
-                room_code,
+                "房间已创建：房间码：%s；服务端：%s；EasyTier节点编号：%s",
+                "<已隐藏>",
                 type(server).__name__,
                 easy_tier_node.peer_id() if easy_tier_node else "N/A",
             )
@@ -670,13 +692,15 @@ class ConnectorService:
             self._easy_tier_node = easy_tier_node
             self._error = None
 
-            logger.info("联机房间创建成功: room_code=%s, minecraft_port=%s", room_code, port)
+            logger.info("联机房间创建成功：房间码：%s；游戏端口：%s", "<已隐藏>", port)
             return {"roomCode": room_code}
         except Exception as exc:
             self._mode = "idle"
             self._error = str(exc)
             self._end_transition()
             logger.exception("创建联机房间失败: %s", exc)
+            if isinstance(exc, ConnectorNodeError):
+                raise
             raise ConnectorError(f"创建房间失败: {exc}") from exc
         finally:
             if self._mode == "host":
@@ -702,7 +726,7 @@ class ConnectorService:
         if not isinstance(detected, int):
             raise ConnectorError("未检测到运行中的实例服务端口，请先启动实例后再联机")
         logger.debug(
-            "实例联机建房: game_path=%s, version_id=%s, detected_port=%s",
+            "实例联机建房：游戏目录：%s；版本标识：%s；检测端口：%s",
             game_path,
             version_id,
             detected,
@@ -730,14 +754,15 @@ class ConnectorService:
         self._room_code = code
         self._error = None
         logger.debug("开始获取联机节点")
-        self._nodes = self.fetch_nodes()
         try:
+            self._nodes = self.fetch_nodes()
+            logger.info("加入房间前的节点准备完成；节点数量：%s", len(self._nodes))
             florolding = Florolding(
                 launcher_info=self._launcher_info,
-                log_callback=self._log_callback,
+                log_callback=self._scoped_log_callback(),
             )
             florolding.set_nodes(self._nodes)
-            logger.debug("开始加入联机房间: room_code=%s, player_name=%s", code, self._player_name)
+            logger.debug("开始加入联机房间：房间码：%s；玩家名称：%s", "<已隐藏>", "<已隐藏>")
 
             node, mc_port = self._join_room(florolding, code, self._player_name)
             self._mc_host = "127.0.0.1"
@@ -746,7 +771,7 @@ class ConnectorService:
             self._mode = "guest"
             self._error = None
 
-            logger.info("已加入联机房间: room_code=%s, mc_port=%s", code, mc_port)
+            logger.info("已加入联机房间：房间码：%s；游戏端口：%s", "<已隐藏>", mc_port)
             return {"mcHost": self._mc_host, "mcPort": self._mc_port}
         except Exception as exc:
             self._mode = "idle"
@@ -754,10 +779,26 @@ class ConnectorService:
             self._stop_async_thread_client()
             self._end_transition()
             logger.exception("加入联机房间失败: %s", exc)
+            if isinstance(exc, ConnectorNodeError):
+                raise
             raise ConnectorError(f"加入房间失败: {exc}") from exc
         finally:
             if self._mode == "guest":
                 self._end_transition()
+
+    def _scoped_log_callback(self) -> Callable[[str, str], None]:
+        """
+        为本次联机保存日志关联，避免第三方回调线程丢失创建操作上下文。
+
+        :return: 保留原回调语义并临时恢复操作上下文的日志回调
+        """
+        trace = current_operation()
+
+        def emit(level: str, message: str) -> None:
+            with trace_scope(trace):
+                self._log_callback(level, message)
+
+        return emit
 
     def _join_room(
         self,
@@ -796,6 +837,7 @@ class ConnectorService:
         :returns: 包含 status 的字典
         """
         previous_context = self._session_context()
+        logger.info("开始退出联机房间并清理网络资源")
         if self._mode != "idle":
             self.extensions.before_leave(previous_context)
         self._stop_async_thread_client()
@@ -832,6 +874,7 @@ class ConnectorService:
                 game_info=None,
             )
         )
+        logger.info("联机房间资源清理完成，已恢复空闲状态")
         return {"status": "left"}
 
     def close(self) -> None:
@@ -888,6 +931,7 @@ class ConnectorService:
                 except Exception:
                     logger.warning("房间服务器移除玩家失败: %s", machine_id, exc_info=True)
         self._players = [p for p in self._players if p.get("machineId") != machine_id]
+        logger.info("已处理移出玩家请求；当前玩家数量：%s", len(self._players))
         return {"status": "kicked"}
 
     def detect_ports(self) -> dict[str, Any]:

@@ -395,7 +395,7 @@ class UpdateApplier:
                 hasher.update(chunk)
         actual = hasher.hexdigest()
         if not actual.lower().startswith(expected.lower().strip()):
-            self.logger.error("安装包哈希不匹配：期望 %s=%s，实际 %s", algorithm, expected, actual)
+            self.logger.error("安装包哈希不匹配：期望 %s：%s，实际 %s", algorithm, expected, actual)
             package.unlink(missing_ok=True)
             raise AppUpdateError(
                 "请升级包校验失败，已删除下载内容",

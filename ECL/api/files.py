@@ -315,7 +315,7 @@ class FileHandlers(_FrontendState):
         except (OSError, ValueError):
             self.logger.exception("背景图落盘失败，仅返回内存数据: %s", url)
 
-        self.logger.info("远程背景图已原样保存: %s, ext=%s, base64_len=%d", url, ext, len(b64))
+        self.logger.info("远程背景图已原样保存：%s；扩展名：%s；编码长度：%d", url, ext, len(b64))
         return {
             "success": True,
             "data": {"dataUrl": data_url, "base64": b64, "url": url, "path": local_path},
@@ -437,7 +437,9 @@ class FileHandlers(_FrontendState):
         data_url, mime, base64_len = await to_thread.run_sync(
             _read_image_data_url, file_path, stat.st_mtime_ns, stat.st_size
         )
-        self.logger.debug("图片读取成功: %s, mime=%s, base64_len=%d", file_path, mime, base64_len)
+        self.logger.debug(
+            "图片读取成功：%s；媒体类型：%s；编码长度：%d", ("是" if file_path else "否"), mime, base64_len
+        )
         return {
             "success": True,
             "data": {"dataUrl": data_url},
@@ -711,7 +713,9 @@ class FileHandlers(_FrontendState):
             primary_ext = extensions[0] if extensions else "zip"
             if Path(selected).suffix.casefold() != f".{primary_ext.casefold()}":
                 selected = str(Path(selected).with_suffix(f".{primary_ext}"))
-        self.logger.info("导出文件保存路径选择完成: purpose=%s, selected=%s", request.purpose.value, bool(selected))
+        self.logger.info(
+            "导出文件保存路径选择完成：用途：%s；已选择：%s", request.purpose.value, ("是" if bool(selected) else "否")
+        )
         return success({"path": selected})
 
     @_ipc_handler("OPEN_FOLDER_FAILED")

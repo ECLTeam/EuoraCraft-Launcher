@@ -93,5 +93,5 @@ class CrashAnalysisExtensionRegistry:
                     result["reasons"].extend(extra_reasons)
                 result.update(extra)
             except Exception:
-                self._logger.exception("插件崩溃富化回调失败: plugin=%s, extension=%s", entry["owner"], entry["name"])
+                self._logger.exception("插件崩溃富化回调失败：插件：%s；扩展：%s", entry["owner"], entry["name"])
         return result

@@ -18,6 +18,8 @@
 #       - stop_instance(instance_id) -> None — 通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
 # ============================================================
 
+from __future__ import annotations
+
 import ctypes
 import json
 import os
@@ -27,6 +29,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
+from contextvars import copy_context
 from pathlib import Path
 from threading import Event, Thread
 from time import monotonic, sleep, time
@@ -41,6 +44,7 @@ from ECL.game import LaunchConfig
 from ECL.plugins.launch_hooks import LaunchContext
 from ECL.services.authlib import AuthlibError
 from ECL.utils.files import atomic_write_text
+from ECL.utils.operation_logging import current_operation, trace_scope
 
 from .base import GameServiceError, _GameState, _RunningGame
 from .crash.capture import CrashRunSnapshot
@@ -353,6 +357,7 @@ class LaunchCoordinator(_GameState):
             if remaining <= 0:
                 raise GameServiceError("启动前命令执行超时", "PRE_LAUNCH_COMMAND_TIMEOUT")
             try:
+                self.logger.info("开始执行启动前命令；序号：%s；总数：%s", index, len(commands))
                 completed = subprocess.run(
                     item,
                     cwd=working_directory,
@@ -369,6 +374,7 @@ class LaunchCoordinator(_GameState):
             except OSError as exc:
                 raise GameServiceError(f"启动前命令无法执行: {exc}", "PRE_LAUNCH_COMMAND_FAILED") from exc
             output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+            self.logger.info("启动前命令已退出；序号：%s；退出码：%s", index, completed.returncode)
             if output:
                 self.logger.info("启动前命令第 %s 条输出:\n%s", index, output)
             if completed.returncode != 0:
@@ -395,6 +401,7 @@ class LaunchCoordinator(_GameState):
                 self.logger.warning("后退出命令执行超时，已放弃剩余命令")
                 return
             try:
+                self.logger.info("开始执行后退出命令；序号：%s；总数：%s", index, len(commands))
                 completed = subprocess.run(
                     item,
                     cwd=working_directory,
@@ -413,6 +420,7 @@ class LaunchCoordinator(_GameState):
                 self.logger.warning("后退出命令第 %s 条无法执行: %s", index, exc)
                 continue
             output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+            self.logger.info("后退出命令已退出；序号：%s；退出码：%s", index, completed.returncode)
             if output:
                 self.logger.info("后退出命令第 %s 条输出:\n%s", index, output)
             if completed.returncode != 0:
@@ -666,7 +674,7 @@ class LaunchCoordinator(_GameState):
         version_name = self._normalize_version_name(body.get("version_id"))
         path = self._normalize_game_path(game_path)
         self.logger.debug(
-            "准备启动实例: version=%s, path=%s, memory=%s, java=%s",
+            "准备启动实例：版本：%s；目录：%s；内存：%s；Java：%s",
             version_name,
             path,
             memory,
@@ -997,23 +1005,33 @@ class LaunchCoordinator(_GameState):
                 started_at=monotonic(),
                 started_wall_time=time(),
                 crash_analysis_disabled=crash_analysis_disabled,
+                trace=current_operation(),
             )
             with self._lock:
                 self._running_games[run_token] = run
             self.launch_hooks.pre_launch(launch_context)
             try:
 
-                def on_instance_exit(code: int, name: str) -> None:
+                def handle_instance_exit(code: int, name: str) -> None:
                     self._handle_instance_exit(run_token, code, name)
                     self.launch_hooks.on_exit(launch_context)
                     if post_exit_text:
                         # 后退出命令在独立线程执行，避免阻塞退出结算与崩溃分析。
                         Thread(
-                            target=self._run_post_exit_command,
-                            args=(post_exit_text, launch_context.working_directory or game_directory, code),
+                            target=copy_context().run,
+                            args=(
+                                self._run_post_exit_command,
+                                post_exit_text,
+                                launch_context.working_directory or game_directory,
+                                code,
+                            ),
                             name=f"ECL-PostExit-{run_token[:8]}",
                             daemon=True,
                         ).start()
+
+                def on_instance_exit(code: int, name: str) -> None:
+                    with trace_scope(run.trace):
+                        handle_instance_exit(code, name)
 
                 # 插件 env 是覆写/追加语义，必须合并进父进程环境后再传给子进程，
                 # 否则游戏进程会丢失 PATH/SystemRoot 等系统变量导致启动失败。
@@ -1051,6 +1069,7 @@ class LaunchCoordinator(_GameState):
                 self._finalize_instance_run(run_token, action="exited")
             else:
                 self._emit_instance_change(run, "started")
+            self.logger.info("Minecraft 进程已创建；实例编号：%s；进程号：%s", instance_id, process.pid)
             self._emit_launch_progress("launched", f"{version_name} 已启动", 100)
             if title_template:
                 mc_version = str(version_info.get("VanillaVersion") or version_name)
@@ -1099,6 +1118,7 @@ class LaunchCoordinator(_GameState):
         cancel_event.set()
         if downloader is not None:
             downloader.stop()
+        self.logger.info("已请求取消游戏启动，等待执行方清理")
         return True
 
     def _emit_instance_change(self, run: _RunningGame, action: str) -> None:
@@ -1117,7 +1137,10 @@ class LaunchCoordinator(_GameState):
     def _handle_instance_log(self, run_token: str, line: str, instance_id: str) -> None:
         # 缓冲单个游戏进程的近期输出，并记录不依赖退出码的生命周期信号。
         normalized = str(line or "").rstrip("\r\n")
-        self.logger.debug("[%s] %s", instance_id, normalized)
+        with self._lock:
+            trace_run = self._running_games.get(run_token)
+        with trace_scope(trace_run.trace if trace_run else None):
+            self.logger.debug("[%s] %s", instance_id, normalized)
         folded = normalized.casefold()
         self._crash_capture.handle_line(run_token, normalized)
         with self._lock:
@@ -1151,11 +1174,14 @@ class LaunchCoordinator(_GameState):
             self._running_games.pop(run_token, None)
         duration_seconds = max(0, int(monotonic() - run.started_at))
         self._version_stats.record_duration(run.game_path, run.version_id, duration_seconds)
-        self.logger.debug(
-            "游戏运行已结算: version=%s, action=%s",
-            run.version_id,
-            action,
-        )
+        if action == "stopped":
+            action_title = "已停止"
+        elif action == "launcher_closed":
+            action_title = "启动器已关闭"
+        else:
+            action_title = "已退出"
+        with trace_scope(run.trace):
+            self.logger.debug("游戏运行已结算；版本：%s；处理结果：%s", run.version_id, action_title)
         if action != "launcher_closed":
             self._emit_instance_change(run, action)
         self._crash_capture.finalize(self._crash_snapshot(run_token, run, action))

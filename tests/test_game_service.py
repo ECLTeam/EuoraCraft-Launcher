@@ -1749,3 +1749,25 @@ def test_download_resource_to_path_rejects_unsupported_source_and_missing_dir(tm
     with pytest.raises(GameServiceError) as error:
         service.download_resource_to_path("modrinth", "p", "v", str(missing_dir))
     assert error.value.error_code == "INVALID_SAVE_PATH"
+
+
+@pytest.mark.parametrize("phase", ["pre", "post"])
+def test_silent_user_commands_log_start_and_exit(tmp_path, monkeypatch, phase) -> None:
+    service = _build_service()
+    messages = []
+    monkeypatch.setattr(service.logger, "info", lambda message, *args: messages.append(message % args))
+    monkeypatch.setattr(
+        "ECL.services.game.launch.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="", stderr="", returncode=0),
+    )
+    try:
+        if phase == "pre":
+            service._run_pre_launch_command("secret-command", tmp_path)
+        else:
+            service._run_post_exit_command("secret-command", tmp_path, 0)
+        assert len(messages) == 2
+        assert "开始执行" in messages[0]
+        assert "退出码：0" in messages[1]
+        assert "secret-command" not in str(messages)
+    finally:
+        service.close()

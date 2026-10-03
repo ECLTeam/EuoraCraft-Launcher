@@ -81,10 +81,10 @@ class EuoraCraftLauncher:
         self.logging = configure_logging(self.data_path)  # 日志系统实例
         self.logger = self.logging.get_logger("EuoraCraft_Launcher")  # 启动器专用日志器
         self.logger.debug(
-            "启动器运行环境: app_path=%s, resource_path=%s, frozen=%s, python=%s",
+            "启动器运行环境：程序目录：%s；资源目录：%s；打包运行：%s；Python版本：%s",
             self.app_path,
             self.resource_path,
-            self.is_frozen,
+            ("是" if self.is_frozen else "否"),
             sys.version.split()[0],
         )
 
@@ -159,7 +159,7 @@ class EuoraCraftLauncher:
         self.context.events.subscribe("config:updated", self._on_config_updated)
         self.context.events.subscribe("launcher:request_restart", lambda _data: self._schedule_update_restart())
         self.logger.debug(
-            "后端服务已就绪: accounts=%s, game=%s, plugins=%s",
+            "后端服务已就绪：账户服务：%s；游戏服务：%s；插件服务：%s",
             type(self.context.accounts).__name__,
             type(self.context.game).__name__,
             type(self.context.plugins).__name__,

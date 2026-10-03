@@ -303,7 +303,9 @@ class ScanCoordinator(_GameState):
         """
         scanned_versions: list[dict[str, Any]] = []
         normalized_paths = list(self._normalize_scan_paths(paths))
-        self.logger.debug("开始扫描版本目录，共 %d 个路径，force=%s", len(normalized_paths), force)
+        self.logger.debug(
+            "开始扫描版本目录，共 %d 个路径，强制刷新：%s", len(normalized_paths), ("是" if force else "否")
+        )
         for game_path in normalized_paths:
             key = self._watch_version_path(game_path, compatibility_options)
             # 确保每个游戏路径下都有 ecl.json
@@ -331,7 +333,7 @@ class ScanCoordinator(_GameState):
 
     def _ecl_json_path(self, game_path: Any) -> Path:
         path = self._normalize_game_path(game_path)
-        return path / self._ECL_JSON_NAME
+        return path / self.ecl_json_name
 
     def _ensure_ecl_config(self, game_path: Any) -> None:
         # 如果游戏路径下不存在 ecl.json，则创建默认配置文件。
@@ -364,7 +366,9 @@ class ScanCoordinator(_GameState):
             raw = ecl_path.read_text(encoding="utf-8")
             data = json.loads(raw)
             result = data if isinstance(data, dict) else {}
-            self.logger.debug("读取 ecl.json 成功: %s，activeVersion=%s", ecl_path, result.get("activeVersion", ""))
+            self.logger.debug(
+                "读取 ecl.json 成功：%s，活动版本：%s", ("是" if ecl_path else "否"), result.get("activeVersion", "")
+            )
             return result
         except (OSError, ValueError, UnicodeDecodeError) as exc:
             self.logger.warning("读取 ecl.json 失败 %s: %s", ecl_path, exc)
@@ -390,7 +394,7 @@ class ScanCoordinator(_GameState):
                     if existing == data:
                         self.logger.debug("跳过未变化的 ecl.json 写入: %s", ecl_path)
                         return
-                self.logger.debug("写入 ecl.json: %s，activeVersion=%s", ecl_path, data.get("activeVersion", ""))
+                self.logger.debug("写入 ecl.json：%s，活动版本：%s", ecl_path, data.get("activeVersion", ""))
                 ecl_path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(ecl_path, json.dumps(data, ensure_ascii=False, indent=2))
         except OSError as exc:
@@ -413,7 +417,7 @@ class ScanCoordinator(_GameState):
             if not changed:
                 self.logger.debug("跳过未变化的 ecl.json 增量更新: %s", self._ecl_json_path(game_path))
                 return current
-            self.logger.debug("增量更新 ecl.json: %s，字段=%s", self._ecl_json_path(game_path), list(changed.keys()))
+            self.logger.debug("增量更新 ecl.json：%s，字段：%s", self._ecl_json_path(game_path), list(changed.keys()))
             current.update(changed)
             self.write_ecl_config(game_path, current)
             return current

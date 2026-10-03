@@ -132,7 +132,7 @@ class _PluginState:
         if failed_installs:
             self.logger.error("插件安装恢复失败，启动时跳过这些用户插件: %s", sorted(failed_installs))
         self.logger.info(
-            "正在初始化插件框架: user_dir=%s, system_dir=%s",
+            "正在初始化插件框架：用户插件目录：%s；系统插件目录：%s",
             self._plugin_dir,
             self._resource_path / "resources" / "system_plugins",
         )
@@ -161,7 +161,7 @@ class _PluginState:
         candidates.extend(system_candidates)
         candidates.extend(self._package_candidates.values())
         self.logger.debug(
-            "插件发现完成: candidates=%d, disabled=%d, user_dir=%s",
+            "插件发现完成：候选数量：%d；禁用数量：%d；用户插件目录：%s",
             len(candidates),
             len(self._disabled_plugins),
             self._plugin_dir,
@@ -173,7 +173,7 @@ class _PluginState:
         )
         self._dependency_resolution = self._resolve_candidate_dependencies(candidates)
         self.logger.debug(
-            "插件依赖解析完成: load_order=%s, errors=%d",
+            "插件依赖解析完成：加载顺序：%s；错误数量：%d",
             self._dependency_resolution.load_order,
             len(self._dependency_resolution.errors),
         )

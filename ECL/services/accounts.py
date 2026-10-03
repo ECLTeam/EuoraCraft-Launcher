@@ -276,11 +276,11 @@ class AccountManager:
         self._deduplicate_microsoft_accounts()
         self._ensure_current_account()
         self.logger.debug(
-            "账户服务已加载: offline=%d, microsoft=%d, authlib=%d, current_selected=%s",
+            "账户服务已加载：离线账户数：%d；微软账户数：%d；外置账户数：%d；已选择当前账户：%s",
             len(self._offline_accounts),
             len(self.microsoft_manager.get_microsoft_accounts()),
             len(self.authlib_manager.list_accounts()),
-            self._current_account_id is not None,
+            ("是" if self._current_account_id is not None else "否"),
         )
 
     def microsoft_login_config(self) -> dict[str, bool]:
@@ -316,10 +316,10 @@ class AccountManager:
                     str(account_id): info for account_id, info in plugin_accounts.items() if isinstance(info, dict)
                 }
             self.logger.debug(
-                "已读取账户聚合状态: offline=%d, plugin=%d, current_selected=%s",
+                "已读取账户聚合状态：离线账户数：%d；插件：%d；已选择当前账户：%s",
                 len(self._offline_accounts),
                 len(self._plugin_accounts),
-                self._current_account_id is not None,
+                ("是" if self._current_account_id is not None else "否"),
             )
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             self.logger.warning("读取账号状态失败，将使用空账号列表: %s", exc)
@@ -548,6 +548,7 @@ class AccountManager:
             }
             self._current_account_id = account_id
             self._save_state()
+        self.logger.info("当前账户已切换并保存")
         self._emit_changed()
         return self._plugin_account(account_id, self._plugin_accounts[account_id])
 
@@ -908,6 +909,7 @@ class AccountManager:
                 self._current_account_id = remaining_accounts[0]["id"] if remaining_accounts else None
             self._account_prefs.pop(account_id, None)
             self._save_state()
+        self.logger.info("账户已移除，当前账户选择已保存")
         self._emit_changed()
 
     async def refresh_account(self, account_id: Any) -> dict[str, Any]:
@@ -920,10 +922,12 @@ class AccountManager:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
         is_microsoft = False
         is_authlib = False
+        self.logger.info("开始刷新账户资料")
         with self._lock:
             if account_id in self._offline_accounts:
                 account = deepcopy(self._offline_accounts[account_id])
             elif account_id in self._plugin_accounts:
+                self.logger.info("账户资料刷新完成，使用插件提供的资料")
                 return self._plugin_account(account_id, deepcopy(self._plugin_accounts[account_id]))
             elif account_id in self.microsoft_manager.get_microsoft_accounts():
                 is_microsoft = True
@@ -942,6 +946,7 @@ class AccountManager:
             with self._lock:
                 account = self._authlib_account(account_id, info)
         self._emit_changed()
+        self.logger.info("账户资料刷新完成")
         return account
 
     def texture_urls(self, account_id: str) -> dict[str, str]:
@@ -1228,7 +1233,7 @@ class AccountManager:
         取消仍在运行的认证任务并释放认证客户端。
         """
         cancelled = self.cancel_microsoft_login()
-        self.logger.debug("正在关闭账户服务: login_cancelled=%s", cancelled)
+        self.logger.debug("正在关闭账户服务：已请求取消登录：%s", ("是" if cancelled else "否"))
         if self._login_task is not None and not self._login_task.done():
             self._login_task.cancel()
             with suppress(asyncio.CancelledError, Exception):

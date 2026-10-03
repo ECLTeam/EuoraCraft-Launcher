@@ -232,7 +232,7 @@ class WardrobeStore:
                 None,
             )
             if existing is not None:
-                logger.debug("衣柜导入命中重复纹理: kind=%s, hash=%s", kind, digest[:12])
+                logger.debug("衣柜导入命中重复纹理：类型：%s；摘要：%s", kind, digest[:12])
                 return deepcopy(existing), True
 
             normalized_name = name.strip()[:80] or "未命名纹理"
@@ -258,7 +258,7 @@ class WardrobeStore:
                 self._items.pop()
                 self._texture_path(item).unlink(missing_ok=True)
                 raise
-            logger.info("已导入本地衣柜纹理: kind=%s, size=%dx%d, hash=%s", kind, width, height, digest[:12])
+            logger.info("已导入本地衣柜纹理：类型：%s；尺寸：%dx%d；摘要：%s", kind, width, height, digest[:12])
             return deepcopy(item), False
 
     def update_item(
@@ -306,7 +306,7 @@ class WardrobeStore:
                 self._texture_path(item).unlink(missing_ok=True)
             except OSError:
                 logger.warning("删除衣柜纹理失败，后续启动会再次清理: %s", item["sha256"][:12])
-            logger.info("已删除本地衣柜纹理: kind=%s, hash=%s", item["kind"], item["sha256"][:12])
+            logger.info("已删除本地衣柜纹理：类型：%s；摘要：%s", item["kind"], item["sha256"][:12])
 
     def read_texture(self, item_id: str) -> tuple[WardrobeItem, bytes]:
         """

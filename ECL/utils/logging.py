@@ -34,6 +34,8 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
+from ECL.utils.operation_logging import OperationLogFilter, ReadableLogFormatter
+
 if TYPE_CHECKING:
     from ECL.events.event_bus import EventBus
 
@@ -54,7 +56,7 @@ class LoggingPolicy:
     reset = "\033[0m"
 
 
-class ColoredFormatter(logging.Formatter):
+class ColoredFormatter(ReadableLogFormatter):
     """
     为交互式终端中的日志级别和消息添加 ANSI 颜色。
 
@@ -164,7 +166,7 @@ class LoggingRuntime:
         for handler in tuple(self.root_logger.handlers):
             handler.close()
             self.root_logger.removeHandler(handler)
-        plain = logging.Formatter(
+        plain = ReadableLogFormatter(
             "%(asctime)s [%(levelname)s] [%(name)s] [%(filename)s:%(lineno)d] - %(message)s",
             "%Y-%m-%d %H:%M:%S",
         )
@@ -182,6 +184,8 @@ class LoggingRuntime:
         self.root_logger.addHandler(console)
         self.root_logger.addHandler(self._file_handler("EuoraCraft-Launcher.log", logging.DEBUG, plain))
         self.root_logger.addHandler(self._file_handler("error.log", logging.ERROR, plain))
+        for handler in self.root_logger.handlers:
+            handler.addFilter(OperationLogFilter())
 
     def _file_handler(
         self,
@@ -235,7 +239,9 @@ class LoggingRuntime:
             if FrontendLogRuntimeState.buffer is not None:
                 return
             buffer: deque[dict[str, Any]] = deque(maxlen=history_limit)
-            self.root_logger.addHandler(FrontendLogHandler(events, buffer))
+            handler = FrontendLogHandler(events, buffer)
+            handler.addFilter(OperationLogFilter())
+            self.root_logger.addHandler(handler)
             FrontendLogRuntimeState.buffer = buffer
 
     def shutdown(self) -> None:

@@ -52,7 +52,7 @@ class PluginLifecycle(_PluginState):
             if name in self._plugins:
                 enabled, _reason = self._enable(name)
                 enabled_count += int(enabled)
-        self.logger.debug("插件批量启用完成: enabled=%d", enabled_count)
+        self.logger.debug("插件批量启用完成：启用数量：%d", enabled_count)
 
     def enable(self, name: str) -> PluginActionResult:
         """
@@ -538,7 +538,7 @@ class PluginLifecycle(_PluginState):
         if self._sidebar_collapsed is not None:
             self.events.emit("frontend:sidebar_changed", {"collapsed": self._sidebar_collapsed})
         self.logger.info(
-            "插件前端就绪通知完成: notified=%d",
+            "插件前端就绪通知完成：通知数量：%d",
             notified,
         )
 

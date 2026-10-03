@@ -15,6 +15,7 @@ import asyncio
 import base64
 import functools
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -40,6 +41,7 @@ from ECL.api.models import (
     ProcessInputRequest,
     ProcessStopRequest,
 )
+from ECL.api.operation_logging import IpcLogPolicy, IpcLogRuntime, IpcLogSpec
 from ECL.application import ApplicationContext
 from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.game import AuthException, NetException
@@ -52,6 +54,7 @@ from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.config import default_config
 from ECL.utils.logging import get_frontend_log_history
 from ECL.utils.network import download_proxy_url
+from ECL.utils.operation_logging import operation_scope
 
 
 class ImagePolicy:
@@ -212,7 +215,8 @@ def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) 
     message = "启动器执行操作时发生内部错误，请导出日志以便排查"
     title = "启动器发生内部错误"
     raw_message = str(exc).strip() or type(exc).__name__
-    state.logger.exception("%s 发生未预期异常，错误编号: %s", operation, error_id)
+    if _should_report_failure(state, operation, "INTERNAL_ERROR"):
+        state.logger.exception("%s发生内部异常；错误编号：%s", _log_spec(operation).title, error_id)
     state.events.emit(
         "launcher:error", {"error_id": error_id, "title": title, "message": message, "detail": raw_message}
     )
@@ -228,7 +232,8 @@ def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) 
 
 def _make_timeout_response(state: Any, operation: str) -> ApiResponse:
     # 为操作超时构造失败响应，提示用户检查网络。
-    state.logger.warning("%s 操作超时，已取消", operation)
+    if _should_report_failure(state, operation, "OPERATION_TIMEOUT"):
+        state.logger.warning("%s请求超时，已请求取消；后台执行是否停止由执行方确认", _log_spec(operation).title)
     return failure("操作超时，请检查网络后重试", "OPERATION_TIMEOUT")
 
 
@@ -243,29 +248,88 @@ async def _guarded_call(
     except TimeoutError:
         return _make_timeout_response(state, operation)
     except _FrontendState.ipc_errors as exc:
-        if isinstance(exc, httpx.HTTPError):
-            state.logger.warning("%s 远程请求失败: %s", operation, exc)
-        else:
-            state.logger.exception("%s 执行失败", operation)
+        if _should_report_failure(state, operation, getattr(exc, "error_code", fallback_code)):
+            if isinstance(exc, ValidationError):
+                state.logger.warning("%s请求未通过结构检查；错误码：%s", _log_spec(operation).title, fallback_code)
+            elif isinstance(exc, httpx.HTTPError):
+                state.logger.warning("%s远程请求失败：%s", _log_spec(operation).title, exc)
+            elif isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError):
+                state.logger.exception("%s执行失败", _log_spec(operation).title)
+            else:
+                state.logger.warning("%s执行失败：%s", _log_spec(operation).title, exc)
         return _make_error_response(exc, fallback_code, state.events)
     except Exception as exc:
         return _make_unexpected_error_response(state, operation, exc)
 
 
+def _log_spec(operation: str) -> IpcLogSpec:
+    return IpcLogPolicy.commands.get(operation, IpcLogSpec("未分类操作", "query"))
+
+
+def _should_report_failure(state: Any, operation: str, code: str) -> bool:
+    spec = _log_spec(operation)
+    if spec.kind == "channel":
+        return False
+    runtime = getattr(state, "_ipc_log_runtime", None)
+    return spec.kind != "poll" or runtime is None or runtime.record_failure(operation, code)
+
+
 def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float | None = None) -> Any:
     """
-    为正式 IPC 命令补齐统一的异常边界与严重错误呈现元数据。
+    为正式 IPC 命令记录操作生命周期并补齐统一异常边界。
+
+    日志通道不记录自身调用，查询使用 DEBUG，轮询仅记录限频失败和恢复。
+    后台任务返回时只记录提交，不宣称执行完成；不输出请求体和配置值。
 
     :param state: 拥有日志与应用事件总线的前端 API 门面
     :param operation: 注册到 PyTauri 的稳定命令名
     :param handler: 原始异步命令处理器
-    :param timeout: 可选的总操作超时秒数，超时后取消任务
+    :param timeout: 可选的请求超时秒数；取消等待不代表后台线程已停止
     :return: 捕获所有异常并返回 ``ApiResponse`` 的异步处理器
     """
 
+    if getattr(state, "_ipc_log_runtime", None) is None:
+        state._ipc_log_runtime = IpcLogRuntime()
+    runtime = state._ipc_log_runtime
+    spec = _log_spec(operation)
+
     @functools.wraps(handler)
     async def guarded(*args: Any, **kwargs: Any) -> ApiResponse:
-        return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
+        if spec.kind == "channel":
+            return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
+        level = logging.INFO if spec.kind == "action" else logging.DEBUG
+        with operation_scope(spec.title) as trace:
+            if spec.kind != "poll":
+                trace.log(state.logger, f"开始{spec.title}", level)
+            try:
+                response = await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
+            except asyncio.CancelledError:
+                trace.log(state.logger, f"{spec.title}请求已取消；后台任务仍以执行方状态为准", logging.WARNING)
+                raise
+            if isinstance(response, dict) and response.get("success") is False:
+                code = str(response.get("errorCode", "INTERNAL_ERROR"))
+                if spec.kind != "poll" or runtime.record_failure(operation, code):
+                    trace.log(state.logger, f"{spec.title}失败；错误码：{code}", logging.WARNING)
+            elif spec.kind == "poll":
+                if runtime.record_recovery(operation):
+                    trace.log(state.logger, f"{spec.title}已恢复", logging.INFO)
+            else:
+                data = response.get("data") if isinstance(response, dict) else None
+                task_id = (
+                    (data.get("operationId") or data.get("taskId") or data.get("task_id"))
+                    if isinstance(data, dict)
+                    else None
+                )
+                message = f"{spec.title}任务已提交；任务编号：{task_id}" if task_id else f"完成{spec.title}"
+                if (
+                    not task_id
+                    and isinstance(data, dict)
+                    and isinstance(data.get("status"), str)
+                    and data.get("status") in {"pending", "running", "downloading"}
+                ):
+                    message = f"{spec.title}请求已受理，等待执行结果"
+                trace.log(state.logger, message, level)
+            return response
 
     return guarded
 
@@ -781,7 +845,7 @@ class _FrontendState:
         # 非主窗口身份只能来自后端 window_open 创建的注册项，不能信任前端自报。
         if known_metadata is None and label != "main":
             # 未经后端注册的窗口不得自报为主窗口，避免顶替主窗口身份与事件目标。
-            self.logger.warning("未注册的前端窗口调用 frontend_ready: label=%s", label)
+            self.logger.warning("未注册的前端窗口调用 frontend_ready：窗口标识：%s", label)
             window_type = "unregistered"
             session_id = None
         else:
@@ -796,7 +860,7 @@ class _FrontendState:
             metadata = {"label": label, "descriptorId": "main", "windowType": "main"}
         metadata.update({"label": label, "sessionId": session_id, "ready": True})
         self._window_metadata[label] = metadata
-        self.logger.info("前端窗口已就绪: label=%s, type=%s", label, window_type)
+        self.logger.info("前端窗口已就绪：窗口标识：%s；类型：%s", label, window_type)
         if window_type not in {"main", "unregistered"}:
             self.emit_to_frontend("window:ready", metadata)
         if window_type == "main" or label == "main":
@@ -968,11 +1032,11 @@ class _FrontendState:
             elif world_target:
                 body["quick_target"] = {"type": "world", "world_id": world_target}
         except GameServiceError as exc:
-            self.logger.warning("快捷启动目标解析失败: target=%s, code=%s", target, exc.error_code)
+            self.logger.warning("快捷启动目标解析失败：目标：%s；错误码：%s", target, exc.error_code)
             self.emit_popup_to_frontend({"id": "cli-launch-failed", "title": "快捷启动失败", "content": str(exc)})
             return
         except Exception:
-            self.logger.exception("快捷启动目标解析出现意外错误: target=%s", target)
+            self.logger.exception("快捷启动目标解析出现意外错误：目标：%s", target)
             self.emit_popup_to_frontend(
                 {
                     "id": "cli-launch-failed",
@@ -981,11 +1045,11 @@ class _FrontendState:
                 }
             )
             return
-        self.logger.info("正在通过命令行启动实例: version=%s, path=%s", version_id, game_path)
+        self.logger.info("正在通过命令行启动实例：版本：%s；目录：%s", version_id, game_path)
         try:
             response = await self.game_launch(body)
         except Exception:
-            self.logger.exception("命令行启动实例失败: version=%s", version_id)
+            self.logger.exception("命令行启动实例失败：版本：%s", version_id)
             self.emit_popup_to_frontend(
                 {
                     "id": "cli-launch-failed",
@@ -996,7 +1060,7 @@ class _FrontendState:
             return
         if not isinstance(response, dict) or response.get("success") is not True:
             message = str((response or {}).get("message") or "未知错误")
-            self.logger.warning("命令行启动实例被拒绝: version=%s, message=%s", version_id, message)
+            self.logger.warning("命令行启动实例被拒绝：版本：%s；说明：%s", version_id, message)
             self.emit_popup_to_frontend({"id": "cli-launch-failed", "title": "快捷启动失败", "content": message})
             return
-        self.logger.info("命令行实例启动流程完成: version=%s", version_id)
+        self.logger.info("命令行实例启动流程完成：版本：%s", version_id)

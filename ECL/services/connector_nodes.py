@@ -3,10 +3,12 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：校验用户配置的 EasyTier 连接节点，隔离房间协调服务地址。
+# 文件作用：区分原始联机配置与连接时可用节点，隔离房间协调服务地址。
 #
 # 公开接口：
-#   - class ConnectorNodeSettings — 保存节点策略及规范化 URI 列表。
+#   - class ConnectorNodeConfig — 保存尚未做地址业务校验的节点配置。
+#   - class ConnectorNodeSettings — 连接时校验并规范化节点。
+#   - class ConnectorNodeError — 节点配置无法用于连接时的领域错误。
 # ============================================================
 
 from __future__ import annotations
@@ -14,21 +16,57 @@ from __future__ import annotations
 from typing import ClassVar, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from ECL.utils.errors import ConnectorError
 
 
-class ConnectorNodeSettings(BaseModel):
+class ConnectorNodeConfig(BaseModel):
+    """
+    保存原始节点配置，允许空地址和尚未完成的输入。
+
+    配置边界只检查结构和字段类型；地址规则在连接准备阶段处理。
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    mode: Literal["automatic", "append", "custom"] = "automatic"
+    nodes: list[str] = Field(default_factory=list)
+
+
+class ConnectorNodeError(ConnectorError):
+    """
+    节点配置无法用于连接，提供不包含原始输入的简短提示。
+    """
+
+    error_code: str = "CONNECTOR_NODES_INVALID"
+
+
+class ConnectorNodeSettings(ConnectorNodeConfig):
     """
     校验联机节点设置，仅影响下一次连接而不迁移活动房间。
 
     自定义模式要求至少一个有效节点，不允许退回公共节点。
     """
 
-    model_config = ConfigDict(extra="forbid")
-
-    mode: Literal["automatic", "append", "custom"] = "automatic"
     nodes: list[str] = Field(default_factory=list, max_length=32)
     schemes: ClassVar[frozenset[str]] = frozenset({"tcp", "udp", "quic", "faketcp", "ws", "wss"})
+
+    @classmethod
+    def for_connection(cls, settings: ConnectorNodeConfig) -> ConnectorNodeSettings:
+        """
+        在建立连接前清理并校验自定义节点，不改写保存的配置。
+
+        :param settings: 已通过结构校验的原始配置
+        :return: 规范化的连接节点
+        :raises ConnectorNodeError: 自定义地址无效或仅自定义地址为空
+        """
+        nodes = [node.strip() for node in settings.nodes if node.strip()]
+        if settings.mode == "custom" and not nodes:
+            raise ConnectorNodeError("仅自定义模式尚未填写节点，请在联机设置中添加地址")
+        try:
+            return cls(mode=settings.mode, nodes=nodes)
+        except ValidationError as exc:
+            raise ConnectorNodeError("自定义节点地址无效，请检查协议、地址和端口") from exc
 
     @field_validator("nodes")
     @classmethod

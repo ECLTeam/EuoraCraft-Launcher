@@ -96,7 +96,7 @@ class SingleInstanceService:
             daemon=True,
         )
         self._thread.start()
-        self.logger.info("单实例监听已开启: port=%d", port)
+        self.logger.info("单实例监听已开启：端口：%d", port)
 
     def close(self) -> None:
         """

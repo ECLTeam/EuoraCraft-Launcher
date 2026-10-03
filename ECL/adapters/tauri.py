@@ -142,7 +142,7 @@ class Adapter:
         handlers = command_handlers(api)
         for name, handler in handlers.items():
             self.commands.command(name)(handler)
-        logger.debug("IPC 命令注册完成: count=%d", len(handlers))
+        logger.debug("IPC 命令注册完成：数量：%d", len(handlers))
 
     def _register_events(self) -> None:
         # 复用共享事件桥完成「后端事件 → 前端事件」的纯转换，仅保留含副作用的订阅。

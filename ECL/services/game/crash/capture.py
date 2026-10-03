@@ -176,7 +176,7 @@ class CrashCapture:
             except Exception:
                 error_id = uuid4().hex
                 self.logger.exception(
-                    "Minecraft 崩溃分析失败: version=%s, error_id=%s",
+                    "Minecraft 崩溃分析失败：版本：%s；错误编号：%s",
                     snapshot.version_id,
                     error_id,
                 )
@@ -202,7 +202,7 @@ class CrashCapture:
                 },
             )
             self.logger.warning(
-                "Minecraft 崩溃分析完成: version=%s, exit_code=%s, report_id=%s",
+                "Minecraft 崩溃分析完成：版本：%s；退出码：%s；报告编号：%s",
                 snapshot.version_id,
                 exit_code,
                 report_id,

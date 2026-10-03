@@ -20,7 +20,7 @@
 #       - connector_search_mc_port(body) -> ApiResponse — 在候选端口中搜索确认 Minecraft 服务端口。
 #       - connector_nat_type(body) -> ApiResponse — 查询本机网络的 NAT 类型。
 #       - connector_nodes_get(body) -> ApiResponse — 读取下一次连接的节点策略。
-#       - connector_nodes_set(body) -> ApiResponse — 校验并保存节点策略。
+#       - connector_nodes_set(body) -> ApiResponse — 检查配置结构并保存原始节点策略。
 # ============================================================
 
 from __future__ import annotations
@@ -29,12 +29,13 @@ import asyncio
 import concurrent.futures
 import functools
 import threading
+from contextvars import copy_context
 from typing import Any
 
 from ECL.api.contracts import ApiResponse, failure, success
 from ECL.api.models import InstanceTarget, KickRequest, PortRequest, PortsRequest, RoomCodeRequest
 from ECL.services.connector import ConnectorError, ConnectorNatError, ConnectorNotAvailableError
-from ECL.services.connector_nodes import ConnectorNodeSettings
+from ECL.services.connector_nodes import ConnectorNodeConfig
 
 from .bridge import _FrontendState, _ipc_handler
 
@@ -42,14 +43,20 @@ from .bridge import _FrontendState, _ipc_handler
 def _run_in_daemon(func, *args):
     # 在守护线程中执行阻塞调用，避免窗口关闭后进程等待该线程退出。
     future = concurrent.futures.Future()
+    context = copy_context()
 
     def runner() -> None:
+        if not future.set_running_or_notify_cancel():
+            return
         try:
-            future.set_result(func(*args))
+            result = func(*args)
+            if not future.cancelled():
+                future.set_result(result)
         except BaseException as exc:
-            future.set_exception(exc)
+            if not future.cancelled():
+                future.set_exception(exc)
 
-    threading.Thread(target=runner, daemon=True, name="ECL-connector").start()
+    threading.Thread(target=context.run, args=(runner,), daemon=True, name="ECL-connector").start()
     return asyncio.wrap_future(future)
 
 
@@ -64,7 +71,7 @@ def _connector_guard(error_code: str):
             except ConnectorNotAvailableError as exc:
                 return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
             except ConnectorError as exc:
-                return failure(str(exc), error_code)
+                return failure(str(exc), getattr(exc, "error_code", error_code))
 
         return wrapper
 
@@ -82,9 +89,9 @@ class ConnectorHandlers(_FrontendState):
         读取下一次连接的节点策略，不改变活动房间。
 
         :param body: 空请求体
-        :return: 已校验的节点设置
+        :return: 通过结构校验的原始节点配置，地址规则在连接时处理
         """
-        return success(ConnectorNodeSettings.model_validate(self.config.get_config("connector") or {}).model_dump())
+        return success(ConnectorNodeConfig.model_validate(self.config.get_config("connector") or {}).model_dump())
 
     @_ipc_handler("CONNECTOR_NODE_SETTINGS_FAILED")
     async def connector_nodes_set(self, body: dict[str, Any]) -> ApiResponse:
@@ -92,9 +99,9 @@ class ConnectorHandlers(_FrontendState):
         原子持久化节点策略，下一次创建或加入房间时应用。
 
         :param body: 节点策略和 URI 列表
-        :return: 规范化后的设置
+        :return: 原始配置；允许空地址和尚未完成的输入
         """
-        settings = ConnectorNodeSettings.model_validate(body).model_dump()
+        settings = ConnectorNodeConfig.model_validate(body).model_dump()
         await asyncio.to_thread(self.config.save_config, "connector", settings)
         return success(settings)
 

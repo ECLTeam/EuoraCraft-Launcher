@@ -225,7 +225,7 @@ class SystemHandlers(_FrontendState):
                 "message": "launcher_preload_connector 不接受参数",
                 "errorCode": "INVALID_REQUEST",
             }
-        await to_thread.run_sync(self.connector.fetch_nodes)
+        await to_thread.run_sync(self.connector.preload_nodes)
         return success()
 
     async def info_card_get(self, body: dict[str, Any]) -> dict[str, Any]:

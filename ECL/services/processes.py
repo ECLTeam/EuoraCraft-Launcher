@@ -21,6 +21,8 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from ECL.game import InstancesManager
+from ECL.utils import get_logger
+from ECL.utils.operation_logging import OperationTrace, current_operation, trace_scope
 
 if TYPE_CHECKING:
     from ECL.events.event_bus import EventBus
@@ -49,6 +51,8 @@ class ProcessService:
         self._lock = RLock()
         self._meta: dict[str, dict[str, Any]] = {}
         self._buffers: dict[str, deque[str]] = {}
+        self._traces: dict[str, OperationTrace] = {}
+        self._logger = get_logger("ProcessService")
         self._off_game_changed = event_bus.subscribe("game:instances_changed", self._on_game_changed)
 
     def _on_game_changed(self, payload: dict[str, Any]) -> None:
@@ -92,6 +96,7 @@ class ProcessService:
         """
         if not name or not type_ or not args:
             raise ValueError("实例名称、类型与启动参数不能为空")
+        self._logger.info("开始创建子进程")
         instance_id, _process = self._manager.create_instance(
             instance_name=name,
             instance_type=type_,
@@ -102,6 +107,10 @@ class ProcessService:
         with self._lock:
             self._meta[instance_id] = {"name": name, "type": type_, "stdin": stdin}
             self._buffers[instance_id] = deque(maxlen=self.buffer_limit)
+            trace = current_operation()
+            if trace is not None:
+                self._traces[instance_id] = trace
+        self._logger.info("子进程已创建；实例编号：%s；进程号：%s", instance_id, _process.pid)
         self._events.emit("process:instances_changed", self.list())
         return instance_id
 
@@ -129,7 +138,10 @@ class ProcessService:
         :param wait_timeout: 等待进程结束的秒数，None 表示不等待
         :return: 进程是否已结束
         """
-        return self._manager.stop_instance(instance_id, force=force, wait_timeout=wait_timeout)
+        self._logger.info("已请求%s子进程；实例编号：%s", "强制结束" if force else "停止", instance_id)
+        has_stopped = self._manager.stop_instance(instance_id, force=force, wait_timeout=wait_timeout)
+        self._logger.info("子进程停止结果：%s；实例编号：%s", "已结束" if has_stopped else "尚未确认结束", instance_id)
+        return has_stopped
 
     def list(self) -> list[dict[str, Any]]:
         """
@@ -189,6 +201,9 @@ class ProcessService:
         with self._lock:
             self._meta.pop(instance_id, None)
             self._buffers.pop(instance_id, None)
+            trace = self._traces.pop(instance_id, None)
+        with trace_scope(trace):
+            self._logger.info("子进程已退出；实例编号：%s；退出码：%s", instance_id, exit_code)
         self._events.emit("process:instances_changed", self.list())
 
 

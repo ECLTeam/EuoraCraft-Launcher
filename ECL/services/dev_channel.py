@@ -221,7 +221,7 @@ class DevChannelService:
         """
         self._frontend_handlers.clear()
         self._frontend_handlers.update(handlers)
-        self.logger.debug("前端命令表已装入: count=%d", len(handlers))
+        self.logger.debug("前端命令表已装入：数量：%d", len(handlers))
 
     def start(self) -> None:
         """

@@ -67,8 +67,10 @@ class PluginPackages(_PluginState):
         if confirm_unverified_source is not True or type(allow_network) is not bool:
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "安装无签名插件前必须确认来源未验证")
         try:
+            self.logger.info("开始检查插件归档并准备安装")
             preflight = self.inspect_package(source_path)
             name = preflight.package.name
+            self.logger.info("插件归档检查完成；插件：%s", name)
             with _exclusive_lock(self._data_path / "plugin_packages" / f"{name}.install.lock"), self._package_lock:
                 candidate = self._candidate_map.get(name)
                 if candidate is not None and name not in self._package_entries:
@@ -90,6 +92,7 @@ class PluginPackages(_PluginState):
                     expected_package=preflight.package,
                 )
                 reason = self._dependency_policy().conflict(prepared.dependency_directory) or previous_error
+                self.logger.info("插件安装文件与依赖准备完成，开始切换激活指针；插件：%s", name)
                 active = store.activate(prepared, enabled=not reason and (previous.enabled if previous else True))
                 self._package_store = store
                 self._set_package_entry(active, status="pending_restart", error=reason)
@@ -100,8 +103,12 @@ class PluginPackages(_PluginState):
                 message = "插件已安装，重启后生效" if not reason else f"插件已安装但保持禁用: {reason}"
                 if prepared.dependency_directory and prepared.dependency_directory.warnings:
                     message += "; " + "; ".join(prepared.dependency_directory.warnings)
+                self.logger.info(
+                    "插件安装已提交，重启后生效；插件：%s；状态：%s", name, "保持禁用" if reason else "待启用"
+                )
                 return PluginActionResult(name, PluginAction.INSTALL, "installed", message)
         except (OSError, PluginPackageError, PluginDependencyError) as exc:
+            self.logger.exception("插件安装失败，激活指针未提交")
             return PluginActionResult("", PluginAction.INSTALL, "failed", str(exc))
 
     def is_package_plugin(self, name: str) -> bool:

@@ -1415,7 +1415,7 @@ def test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path,
 def test_startup_preload_warms_connector_nodes_without_arguments(tmp_path) -> None:
     api = _build_api(tmp_path)
     calls: list[str] = []
-    api.connector.fetch_nodes = lambda: calls.append("warmed")
+    api.connector.preload_nodes = lambda: calls.append("warmed")
 
     result = asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
 

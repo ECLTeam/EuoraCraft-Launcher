@@ -127,10 +127,10 @@ class PluginDiscovery(_PluginState):
             return
         entry_point = metadata.get("entry_point", "main:Plugin")
         self.logger.debug(
-            "开始加载插件: name=%s, entry_point=%s, system=%s, path=%s",
+            "开始加载插件：名称：%s；入口：%s；系统插件：%s；目录：%s",
             name,
             entry_point,
-            is_system,
+            ("是" if is_system else "否"),
             plugin_dir,
         )
         # 在实例化之前注册权限声明，使 __init__ 中的装饰器注册能立即生效
@@ -195,7 +195,7 @@ class PluginDiscovery(_PluginState):
         # 安全调用插件生命周期钩子；失败时记录日志并可选择恢复状态。
         started = perf_counter()
         succeeded = False
-        self.logger.debug("开始执行插件钩子: plugin=%s, hook=%s", plugin.name, method_name)
+        self.logger.debug("开始执行插件钩子：插件：%s；钩子：%s", plugin.name, method_name)
         try:
             getattr(plugin, method_name)()
             succeeded = True
@@ -216,15 +216,15 @@ class PluginDiscovery(_PluginState):
             duration = perf_counter() - started
             if duration >= 2.0:
                 self.logger.warning(
-                    "插件钩子执行缓慢: plugin=%s, hook=%s, success=%s",
+                    "插件钩子执行缓慢：插件：%s；钩子：%s；成功：%s",
                     plugin.name,
                     method_name,
-                    succeeded,
+                    ("是" if succeeded else "否"),
                 )
             else:
                 self.logger.debug(
-                    "插件钩子执行完成: plugin=%s, hook=%s, success=%s",
+                    "插件钩子执行完成：插件：%s；钩子：%s；成功：%s",
                     plugin.name,
                     method_name,
-                    succeeded,
+                    ("是" if succeeded else "否"),
                 )

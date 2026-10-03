@@ -213,7 +213,7 @@ class WindowHandlers(_FrontendState):
             },
         }
         self._window_metadata[label] = metadata
-        self.logger.info("已创建受控窗口: label=%s, type=%s", label, descriptor["type"])
+        self.logger.info("已创建受控窗口：窗口标识：%s；类型：%s", label, descriptor["type"])
         on_window_event = getattr(webview, "on_window_event", None)
         if callable(on_window_event):
 
