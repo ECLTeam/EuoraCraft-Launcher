@@ -21,7 +21,7 @@ dependencies = [
     "mcstatus>=12.0.0",
     "psutil>=7.2.0",
     "packaging>=23.0",
-    "installer==0.7.0",
+    "installer==1.0.1",
     "easytier-pyo3>=0.1.2",
     "websockets>=13.0"
 ]
