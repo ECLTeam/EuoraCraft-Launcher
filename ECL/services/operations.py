@@ -32,7 +32,7 @@ from uuid import uuid4
 
 from ECL.events import EventBus
 from ECL.utils import atomic_write_text, get_logger
-from ECL.utils.operation_logging import OperationTrace, current_operation, trace_scope
+from ECL.utils.operation_logging import OperationTrace, trace_scope
 
 OperationWorker = Callable[["OperationContext"], object]
 
@@ -159,14 +159,11 @@ class OperationManager:
                 raise GameServiceError("启动器正在关闭，无法创建新任务", "OPERATION_MANAGER_CLOSED")
             operation_id = uuid4().hex
             operation = _Operation(operation_id, kind, datetime.now(UTC).isoformat())
-            operation.trace = OperationTrace(operation_id, "后台任务", monotonic())
+            operation.trace = OperationTrace(self.kind_titles.get(kind, kind), monotonic())
             self._operations[operation_id] = operation
-            parent = current_operation()
             self._logger.info(
-                "后台任务已提交；任务编号：%s；任务类型：%s；来源操作：%s",
-                operation_id,
+                "后台任务已提交；任务类型：%s",
                 self.kind_titles.get(kind, kind),
-                parent.operation_id if parent else "内部调用",
             )
             operation.future = self._executor.submit(copy_context().run, self._run, operation, worker)
         self._emit(operation)
@@ -268,7 +265,9 @@ class OperationManager:
                 json.dumps(self._payload(operation), ensure_ascii=False, indent=2),
             )
         except OSError:
-            self._logger.exception("持久化游戏长任务结果失败: %s", operation.operation_id)
+            self._logger.exception(
+                "持久化后台任务结果失败；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind)
+            )
 
     def get(self, operation_id: str) -> dict[str, object]:
         """
@@ -313,7 +312,9 @@ class OperationManager:
             operation.cancel_event.set()
             operation.message = "正在取消"
         self._emit(operation)
-        self._logger.info("已请求取消后台任务，等待安全检查点；任务编号：%s", operation_id)
+        self._logger.info(
+            "已请求取消后台任务，等待安全检查点；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind)
+        )
         return True
 
     def close(self) -> None:

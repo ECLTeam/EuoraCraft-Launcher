@@ -11,7 +11,7 @@
 #   - current_operation — 获取当前线程或异步任务的操作上下文。
 #   - trace_scope — 在退出回调等边界恢复已保存的操作上下文。
 #   - safe_log_text — 脱敏项目日志文本。
-#   - class OperationLogFilter — 为日志记录添加关联编号和脱敏后的消息。
+#   - class OperationLogFilter — 为日志记录添加耗时和脱敏后的消息。
 #   - class ReadableLogFormatter — 脱敏异常堆栈，保留原日志格式。
 # ============================================================
 
@@ -24,7 +24,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from time import monotonic
-from uuid import uuid4
 
 
 class LogTextPolicy:
@@ -60,16 +59,15 @@ def safe_log_text(text: str) -> str:
 @dataclass(frozen=True, slots=True)
 class OperationTrace:
     """
-    保存操作编号和开始时间，用于关联异步任务、线程与后续退出事件。
+    保存中文操作名称和开始时间，向异步任务、线程与退出回调传递计时上下文。
     """
 
-    operation_id: str
     action: str
     started_at: float
 
     def log(self, logger: logging.Logger, message: str, level: int = logging.INFO) -> None:
         """
-        记录一个操作阶段，附带关联编号和累计耗时。
+        记录一个操作阶段，附带累计耗时。
 
         :param logger: 使用项目日志处理器的日志器
         :param message: 不包含请求体或凭据的阶段说明
@@ -77,11 +75,10 @@ class OperationTrace:
         """
         logger.log(
             level,
-            "%s；操作编号：%s；耗时：%.0f 毫秒",
+            "%s；耗时：%.0f 毫秒",
             safe_log_text(message),
-            self.operation_id,
             (monotonic() - self.started_at) * 1000,
-            extra={"operation_id": self.operation_id, "operation_action": self.action},
+            extra={"operation_action": self.action, "has_operation_duration": True},
         )
 
 
@@ -118,15 +115,14 @@ def trace_scope(trace: OperationTrace | None) -> Iterator[None]:
 
 
 @contextmanager
-def operation_scope(action: str, operation_id: str | None = None) -> Iterator[OperationTrace]:
+def operation_scope(action: str) -> Iterator[OperationTrace]:
     """
     为一次操作建立上下文，结束时恢复调用方上下文。
 
     :param action: 面向人的操作名称
-    :param operation_id: 可选的既有任务编号；缺省时创建唯一编号
     :return: 可记录阶段和累计耗时的操作上下文
     """
-    trace = OperationTrace(operation_id or uuid4().hex, action, monotonic())
+    trace = OperationTrace(action, monotonic())
     token = OperationLogState.current.set(trace)
     try:
         yield trace
@@ -150,12 +146,10 @@ class OperationLogFilter(logging.Filter):
             return True
         message = safe_log_text(record.getMessage())
         trace = current_operation()
-        if trace is not None and not getattr(record, "operation_id", None):
-            record.operation_id = trace.operation_id
+        if trace is not None and not getattr(record, "has_operation_duration", False):
             record.operation_action = trace.action
-            message = (
-                f"{message}；操作编号：{trace.operation_id}；耗时：{(monotonic() - trace.started_at) * 1000:.0f} 毫秒"
-            )
+            record.has_operation_duration = True
+            message = f"{message}；耗时：{(monotonic() - trace.started_at) * 1000:.0f} 毫秒"
         record.msg = message
         record.args = ()
         record.is_operation_processed = True

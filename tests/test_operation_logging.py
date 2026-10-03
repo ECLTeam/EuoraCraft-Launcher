@@ -60,7 +60,8 @@ def test_ipc_records_returned_failure_without_request_body(records) -> None:
     response = asyncio.run(guard_ipc_handler(state, "settings_set", handler)({"password": "never-log-this"}))
     assert response["success"] is False
     assert len(logs) == 2
-    assert logs[0].operation_id == logs[1].operation_id
+    assert logs[0].operation_action == logs[1].operation_action == "保存设置"
+    assert all("操作编号" not in record.getMessage() for record in logs)
     assert "错误码：INVALID_REQUEST" in logs[1].getMessage()
     assert "never-log-this" not in str([record.getMessage() for record in logs])
     assert current_operation() is None
@@ -75,7 +76,8 @@ def test_async_task_submission_is_not_reported_as_completion(records) -> None:
 
     asyncio.run(guard_ipc_handler(state, "game_install", handler)({}))
     assert "任务已提交" in logs[-1].getMessage()
-    assert "任务编号：install-123" in logs[-1].getMessage()
+    assert "任务编号" not in logs[-1].getMessage()
+    assert "install-123" not in logs[-1].getMessage()
     assert "完成" not in logs[-1].getMessage()
 
 
@@ -193,10 +195,10 @@ def test_background_task_lifecycle_sampling_and_thread_context(tmp_path, records
     manager = OperationManager(tmp_path, EventBus(), max_workers=1)
     manager._logger = logger
     entered, release = Event(), Event()
-    worker_ids = []
+    worker_actions = []
 
     def worker(context):
-        worker_ids.append(current_operation().operation_id)
+        worker_actions.append(current_operation().action)
         context.progress(1, "下载")
         context.progress(2, "已下载 2 个文件")
         entered.set()
@@ -207,7 +209,7 @@ def test_background_task_lifecycle_sampling_and_thread_context(tmp_path, records
         return "done"
 
     try:
-        with operation_scope("父操作", "parent-id"):
+        with operation_scope("父操作"):
             submitted = manager.submit("resource_install", worker)
         assert entered.wait(3)
         if outcome == "cancelled":
@@ -215,10 +217,12 @@ def test_background_task_lifecycle_sampling_and_thread_context(tmp_path, records
         release.set()
         manager._operations[submitted["operationId"]].future.result(3)
         assert manager.get(submitted["operationId"])["status"] == outcome
-        assert worker_ids == [submitted["operationId"]]
+        assert worker_actions == ["安装资源"]
         assert sum("后台任务进度" in record.getMessage() for record in logs) == 1
         text = "\n".join(record.getMessage() for record in logs)
-        assert "来源操作：parent-id" in text
+        assert "来源操作" not in text
+        assert "任务编号" not in text and "操作编号" not in text
+        assert submitted["operationId"] not in text
         assert {"completed": "执行完成", "failed": "执行失败", "cancelled": "已取消并停止执行"}[outcome] in text
         assert (tmp_path / "operations" / (submitted["operationId"] + ".json")).is_file()
     finally:
@@ -253,10 +257,10 @@ def test_plugin_command_timeout_keeps_worker_context_and_reports_real_result(rec
 
     logger, logs = records
     entered, release = Event(), Event()
-    worker_ids = []
+    worker_actions = []
 
     def handler(**params):
-        worker_ids.append(current_operation().operation_id)
+        worker_actions.append(current_operation().action)
         entered.set()
         assert release.wait(3)
         return "done"
@@ -269,12 +273,12 @@ def test_plugin_command_timeout_keeps_worker_context_and_reports_real_result(rec
             _plugins={"demo": SimpleNamespace(_commands={"run": handler})},
         )
         try:
-            with operation_scope("插件调用", "plugin-parent"), pytest.raises(PluginCommandError):
+            with operation_scope("插件调用"), pytest.raises(PluginCommandError):
                 PluginRegistry.call_command(state, "demo:run", {"password": "never-log-params"}, timeout=0.01)
             assert entered.wait(3)
         finally:
             release.set()
-    assert worker_ids == ["plugin-parent"]
+    assert worker_actions == ["插件调用"]
     messages = [record.getMessage() for record in logs]
     assert any("后台线程可能仍在执行" in message for message in messages)
     assert "插件命令执行完成" in messages[-1]
@@ -299,13 +303,13 @@ def test_daemon_thread_preserves_context_when_waiter_cancels(monkeypatch) -> Non
     monkeypatch.setattr(threading, "excepthook", errors.append)
 
     def worker():
-        seen.append(current_operation().operation_id)
+        seen.append(current_operation().action)
         entered.set()
         assert release.wait(3)
         return "result"
 
     async def request():
-        with operation_scope("联机调用", "daemon-parent"):
+        with operation_scope("联机调用"):
             future = _run_in_daemon(worker)
             await asyncio.to_thread(entered.wait, 3)
             future.cancel()
@@ -319,7 +323,7 @@ def test_daemon_thread_preserves_context_when_waiter_cancels(monkeypatch) -> Non
         release.set()
         for thread in threads:
             thread.join(timeout=3)
-    assert seen == ["daemon-parent"]
+    assert seen == ["联机调用"]
     assert errors == []
 
 
@@ -361,3 +365,21 @@ def test_validation_exception_does_not_dump_request_into_logs(records) -> None:
     assert any("未通过结构检查" in record.getMessage() for record in logs)
     assert "private-input" not in str([record.getMessage() for record in logs])
     assert all(record.exc_info is None for record in logs)
+
+
+@pytest.mark.parametrize("explicit_duration", [False, True])
+def test_stage_logs_have_duration_once_without_identifiers(records, explicit_duration) -> None:
+    logger, logs = records
+    with operation_scope("保存设置") as trace:
+        assert not hasattr(trace, "operation_id")
+        if explicit_duration:
+            trace.log(logger, "配置已保存")
+        else:
+            logger.info("配置已保存")
+    record = logs[-1]
+    OperationLogFilter().filter(record)
+    message = record.getMessage()
+    assert message.startswith("配置已保存；耗时：")
+    assert message.count("耗时：") == 1
+    assert "编号" not in message
+    assert not hasattr(record, "operation_id")

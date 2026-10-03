@@ -236,7 +236,7 @@ class InstallCoordinator(_GameState):
                 abandon_on_cancel=True,
             )
         except asyncio.CancelledError:
-            self.logger.info("已请求取消安装，后台下载线程仍等待清理；任务编号：%s", task_id)
+            self.logger.info("已请求取消安装，后台下载线程仍等待清理；实例名称：%s", save_name)
             cancel_event.set()
             with self._lock:
                 downloader = self._active_downloads.get(task_id)

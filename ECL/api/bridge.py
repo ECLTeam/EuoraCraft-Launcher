@@ -320,7 +320,7 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float |
                     if isinstance(data, dict)
                     else None
                 )
-                message = f"{spec.title}任务已提交；任务编号：{task_id}" if task_id else f"完成{spec.title}"
+                message = f"{spec.title}任务已提交" if task_id else f"完成{spec.title}"
                 if (
                     not task_id
                     and isinstance(data, dict)
