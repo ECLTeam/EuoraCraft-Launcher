@@ -6,7 +6,7 @@
 # 文件作用：针对 config_defaults 模块的自动化测试。
 #
 # 公开接口：
-#   - test_ui_defaults_start_collapsed_with_full_background_brightness() -> None
+#   - test_ui_defaults_exclude_sidebar_state_with_full_background_brightness() -> None
 #   - test_launcher_network_defaults_are_bounded() -> None
 #   - test_game_defaults_use_full_instance_isolation() -> None
 # ============================================================
@@ -14,10 +14,10 @@
 from ECL.utils.config import default_config
 
 
-def test_ui_defaults_start_collapsed_with_full_background_brightness() -> None:
+def test_ui_defaults_exclude_sidebar_state_with_full_background_brightness() -> None:
     ui_config = default_config["ui"]
 
-    assert ui_config["theme"]["sidebar_collapsed"] is True
+    assert "sidebar_collapsed" not in ui_config["theme"]
     assert ui_config["theme"]["primary_color"] == "#5B6FF5"
     assert ui_config["theme"]["background_opacity"] == 1.0
     assert ui_config["background"]["opacity"] == 1.0
