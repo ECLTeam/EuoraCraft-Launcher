@@ -15,13 +15,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
 Confidence = Literal["certain", "likely", "possible"]
-
-_EMPTY_GROUPS: Mapping[str, str] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +40,7 @@ class CrashRule:
     confidence: Confidence
     priority: int
     patterns: tuple[re.Pattern[str], ...]
-    parameter_groups: Mapping[str, str] = _EMPTY_GROUPS
+    parameter_groups: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     mod_hint_keys: tuple[str, ...] = ()
 
 

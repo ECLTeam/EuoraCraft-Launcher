@@ -20,7 +20,15 @@ from pathlib import Path
 import pytest
 
 from ECL.services.game.crash.analyzer import CrashAnalyzer
-from ECL.services.game.crash.rules import CrashRuleCatalog
+from ECL.services.game.crash.rules import CrashRule, CrashRuleCatalog
+
+
+def test_default_parameter_groups_are_empty_and_read_only() -> None:
+    rule = CrashRule("test.default", "certain", 0, ())
+
+    assert dict(rule.parameter_groups) == {}
+    with pytest.raises(TypeError):
+        rule.parameter_groups["group"] = "parameter"
 
 
 def test_catalog_codes_are_unique_and_groups_declared() -> None:
