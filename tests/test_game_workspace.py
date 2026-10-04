@@ -46,6 +46,27 @@ def test_resolve_instance_target_matches_isolation_semantics(tmp_path: Path) -> 
     assert isolated.data_path == tmp_path / "versions" / "1.21.8"
 
 
+def test_instance_identity_distinguishes_roots_and_directory_from_game_version(tmp_path: Path) -> None:
+    first = resolve_instance_target(tmp_path / "first", "my-pack", True)
+    second = resolve_instance_target(tmp_path / "second", "my-pack", True)
+    assert first.instance_key != second.instance_key
+    assert first.instance_directory_name == "my-pack"
+    assert first.minecraft_root_path == first.game_path
+    assert first.game_data_path == first.instance_path == first.data_path
+
+
+def test_scan_identity_does_not_fold_case_sensitive_paths(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    from ECL.services.game.scan import ScanCoordinator
+
+    # 即使在 Windows 运行，也验证 POSIX 路径策略；不依赖本机卷是否开启目录大小写敏感。
+    with patch.object(Path, "resolve", lambda path, **_: path):
+        roots = ScanCoordinator._normalize_scan_paths([tmp_path / "Pack", tmp_path / "pack"])
+        assert len(roots) == 2
+        assert ScanCoordinator._version_path_key(roots[0]) != ScanCoordinator._version_path_key(roots[1])
+
+
 @pytest.mark.parametrize("relative_id", ["../secret", "/absolute", "a/../../b", ""])
 def test_resolve_relative_id_rejects_escape(tmp_path: Path, relative_id: str) -> None:
     with pytest.raises(GameServiceError, match="资源 ID"):

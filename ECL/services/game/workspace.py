@@ -41,17 +41,62 @@ from .base import GameServiceError
 from .operations import OperationContext
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResolvedInstanceTarget:
     """
     保存经校验的实例目录和与启动参数一致的实际游戏数据目录。
     """
 
-    game_path: Path
-    version_id: str
+    minecraft_root_path: Path
+    instance_directory_name: str
     version_isolation: bool
     instance_path: Path
-    data_path: Path
+    game_data_path: Path
+
+    @property
+    def game_path(self) -> Path:
+        """
+        兼容旧调用方的 Minecraft 根目录字段。
+
+        :return: 经校验的实际根目录
+        """
+        return self.minecraft_root_path
+
+    @property
+    def version_id(self) -> str:
+        """
+        兼容旧调用方的实例目录名字段，不表示原版版本号。
+
+        :return: 磁盘实例目录名
+        """
+        return self.instance_directory_name
+
+    @property
+    def data_path(self) -> Path:
+        """
+        兼容旧调用方的实际游戏数据目录字段。
+
+        :return: 按现有隔离规则解析的目录
+        """
+        return self.game_data_path
+
+    @property
+    def root_key(self) -> str:
+        """
+        返回实际目录身份，保留大小写敏感目录之间的区别。
+
+        :return: 服务端解析的规范根目录
+        """
+        return str(self.minecraft_root_path)
+
+    @property
+    def instance_key(self) -> str:
+        """
+        返回根目录与磁盘实例组成的身份，不作为文件访问授权。
+
+        :return: 可用于前端比较的实例键
+        """
+        return f"{self.root_key}\0{self.instance_directory_name}"
 
 
 def resolve_instance_target(game_path: Any, version_id: Any, version_isolation: Any = False) -> ResolvedInstanceTarget:

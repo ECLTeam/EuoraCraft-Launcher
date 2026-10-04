@@ -18,6 +18,8 @@
 #       - scan_java(user_java_paths=…) -> list[dict[str, Any]] — 扫描 Java 运行时。
 # ============================================================
 
+from __future__ import annotations
+
 import json
 import re
 from copy import deepcopy
@@ -30,6 +32,7 @@ from ECL.utils import ConfigError, atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
 from .launch_settings import InstanceLaunchOverrides
+from .workspace import resolve_instance_target
 
 
 class ScanCoordinator(_GameState):
@@ -57,7 +60,7 @@ class ScanCoordinator(_GameState):
             path = Path(path_value).expanduser()
             if path.name.casefold() == "versions":
                 path = path.parent
-            path_key = str(path.resolve(strict=False)).casefold()
+            path_key = str(path.resolve(strict=False))
             if path_key in seen:
                 continue
             seen.add(path_key)
@@ -101,7 +104,10 @@ class ScanCoordinator(_GameState):
             loader_version = ""
         required_java_value = str(info.get("RequestJava") or "").strip()
         required_java = int(required_java_value) if required_java_value.isdigit() else None
+        target = resolve_instance_target(game_path, version_name)
         return {
+            "rootKey": target.root_key,
+            "instanceKey": target.instance_key,
             "id": version_name,
             "versionId": version_name,
             "versionType": version_type,
@@ -123,7 +129,7 @@ class ScanCoordinator(_GameState):
 
     @staticmethod
     def _version_path_key(game_path: Path) -> str:
-        return str(game_path.resolve(strict=False)).casefold()
+        return str(game_path.resolve(strict=False))
 
     @staticmethod
     def _version_metadata_snapshot(version_directory: Path) -> list[tuple[str, int, int]]:
