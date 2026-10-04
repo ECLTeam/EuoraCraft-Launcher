@@ -156,3 +156,67 @@ def test_concurrent_node_and_game_writes_preserve_both_sections(tmp_path, monkey
     persisted = ConfigStore(tmp_path)
     assert persisted.get_config("connector")["mode"] == "custom"
     assert persisted.get_config("game")["memory_size"] == 6144
+
+
+def test_backend_node_preload_is_nonblocking_and_runs_once(monkeypatch) -> None:
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    service = ConnectorService()
+
+    def preload():
+        calls.append("network")
+        entered.set()
+        assert release.wait(timeout=3)
+        return service._remember_nodes(["tcp://review.test:1"])
+
+    monkeypatch.setattr(service, "preload_nodes", preload)
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _: service.start_node_preload(), range(16)))
+        assert entered.wait(timeout=3)
+        assert sum(results) == 1
+        assert calls == ["network"]
+        release.set()
+        service._node_preload_thread.join(timeout=3)
+        assert service.fetch_nodes() == ["tcp://review.test:1"]
+        assert not service.start_node_preload()
+        assert calls == ["network"]
+    finally:
+        release.set()
+        service.close()
+
+
+def test_close_discards_pending_node_result_and_prevents_restart(monkeypatch) -> None:
+    entered, release = threading.Event(), threading.Event()
+    service = ConnectorService()
+
+    def preload():
+        entered.set()
+        assert release.wait(timeout=3)
+        return service._remember_nodes(["tcp://late.test:1"])
+
+    monkeypatch.setattr(service, "preload_nodes", preload)
+    try:
+        assert service.start_node_preload()
+        assert entered.wait(timeout=3)
+        service.close()
+        assert not service.start_node_preload()
+        release.set()
+        service._node_preload_thread.join(timeout=3)
+        assert service._node_cache_refreshed_at is None
+        assert service.fetch_nodes() == service.default_nodes
+    finally:
+        release.set()
+        service.close()
+
+
+def test_custom_node_startup_never_accesses_public_network(monkeypatch) -> None:
+    service = ConnectorService(node_settings_provider=lambda: ConnectorNodeConfig(mode="custom", nodes=[]))
+    calls = []
+    monkeypatch.setattr(service, "_fetch_public_nodes", lambda **kwargs: calls.append("network"))
+    try:
+        assert service.start_node_preload()
+        service._node_preload_thread.join(timeout=3)
+        assert calls == []
+    finally:
+        service.close()

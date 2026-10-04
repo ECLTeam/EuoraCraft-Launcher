@@ -401,7 +401,7 @@ def _build_api(tmp_path) -> FrontendApi:
         config=ConfigStore(tmp_path / "ECL_data", bus),
         http=FakeHttp(),
         accounts=FakeAccounts(),
-        connector=SimpleNamespace(),
+        connector=SimpleNamespace(start_node_preload=lambda: False),
         wardrobe=FakeWardrobe(),
         info_card=FakeInfoCard(),
         game=FakeGame(),
@@ -1415,14 +1415,66 @@ def test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path,
 def test_startup_preload_warms_connector_nodes_without_arguments(tmp_path) -> None:
     api = _build_api(tmp_path)
     calls: list[str] = []
-    api.connector.preload_nodes = lambda: calls.append("warmed")
+    api.connector.start_node_preload = lambda: calls.append("scheduled")
 
     result = asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
 
     assert result["success"] is True
-    assert calls == ["warmed"]
+    assert calls == ["scheduled"]
     invalid = asyncio.run(command_handlers(api)["launcher_preload_connector"]({"unexpected": True}))
     assert invalid["errorCode"] == "INVALID_REQUEST"
+
+
+def test_main_ready_owns_backend_node_preload_across_frontend_reload(tmp_path) -> None:
+    from ECL.services.connector import ConnectorService
+
+    api = _build_api(tmp_path)
+    service = ConnectorService()
+    calls = []
+    service.preload_nodes = lambda: calls.append("network")
+    api.connector = service
+    try:
+        asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
+        service._node_preload_thread.join(timeout=3)
+        asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
+        asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
+        assert calls == ["network"]
+        service.close()
+        asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
+        assert calls == ["network"]
+    finally:
+        service.close()
+
+
+def test_vanilla_search_shares_unfiltered_backend_session(tmp_path, monkeypatch) -> None:
+    from ECL.services.game import GameService
+
+    calls = []
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs["params"]))
+        body = {"hits": [], "total_hits": 0} if "modrinth" in url else {"data": [], "pagination": {"totalCount": 0}}
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: body)
+
+    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+    api = _build_api(tmp_path)
+    api.game = GameService(
+        FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test", enable_version_watcher=False
+    )
+    try:
+        first = asyncio.run(api.search_mods({"source": "all", "loader_type": " Vanilla "}))
+        assert first["success"]
+        second = asyncio.run(api.search_mods({"source": "all", "loader_type": ""}))
+        assert second["success"]
+        assert first["data"]["sessionId"] == second["data"]["sessionId"]
+        assert len(calls) == 2
+        assert all("modLoaderType" not in params for url, params in calls if "curseforge" in url)
+        mr = next(params for url, params in calls if "modrinth" in url)
+        assert json.loads(mr["facets"]) == [["project_type:mod"]]
+        invalid = asyncio.run(api.search_mods({"source": "curseforge", "loader_type": "unknown-loader"}))
+        assert not invalid["success"]
+    finally:
+        api.game.close()
 
 
 def test_guarded_call_timeout_cancels_slow_operation(tmp_path) -> None:

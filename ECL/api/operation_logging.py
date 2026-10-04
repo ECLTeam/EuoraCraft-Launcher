@@ -251,7 +251,7 @@ class IpcLogPolicy:
             "connector_nodes_get": IpcLogSpec("读取联机节点配置", "query"),
             "connector_nodes_set": IpcLogSpec("保存联机节点配置", "action"),
             "connector_status": IpcLogSpec("查询联机服务的当前状态", "poll"),
-            "launcher_preload_connector": IpcLogSpec("预热公共联机节点", "action"),
+            "launcher_preload_connector": IpcLogSpec("请求后台加载公共联机节点", "query"),
             "connector_host_port": IpcLogSpec("创建联机房间", "action"),
             "connector_host_instance": IpcLogSpec("为游戏实例创建联机房间", "action"),
             "connector_join": IpcLogSpec("加入联机房间", "action"),

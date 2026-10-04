@@ -12,6 +12,7 @@
 #       - easytier_version() -> str — EasyTier 版本号。
 #       - fetch_nodes(force) -> list[str] — 获取可用的 EasyTier 中继节点 URI 列表。
 #       - preload_nodes() -> list[str] — 仅预热公共节点，不验证用户地址。
+#       - start_node_preload() -> bool — 在服务生命周期内调度一次后台节点预热。
 #       - get_status() -> dict[str, Any] — 获取当前联机状态。
 #       - get_easytier_status() -> dict[str, Any] — 获取 EasyTier 安装状态。
 #       - get_nat_type() -> dict[str, Any] — 使用 EasyTier 内置 STUN 探测检测 NAT 类型。
@@ -38,7 +39,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from ipaddress import ip_address
-from threading import Lock, RLock
+from threading import Event, Lock, RLock, Thread, current_thread
 from time import monotonic, sleep
 from typing import Any
 from uuid import uuid4
@@ -55,7 +56,7 @@ from ECL.plugins.connector import (
 from ECL.services.connector_nodes import ConnectorNodeConfig, ConnectorNodeError, ConnectorNodeSettings
 from ECL.services.florolding import Florolding, find_free_port, validate_code
 from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
-from ECL.utils.operation_logging import current_operation, trace_scope
+from ECL.utils.operation_logging import current_operation, operation_scope, trace_scope
 
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
@@ -164,6 +165,9 @@ class ConnectorService:
         self._node_cache_refreshed_at: float | None = None
         self._node_cache_lock = RLock()
         self._node_refreshing = False
+        self._node_preload_started = False
+        self._node_preload_thread: Thread | None = None
+        self._node_preload_stopped = Event()
         self._error: str | None = None
         self._started: bool = False
         self._game_info: dict[str, Any] | None = None
@@ -199,10 +203,15 @@ class ConnectorService:
             return "unknown"
 
     def _remember_nodes(self, nodes: list[str]) -> list[str]:
-        # 更新进程内节点缓存并返回副本。
-        self._nodes = list(nodes)
-        self._node_cache_refreshed_at = monotonic()
-        return list(self._nodes)
+        """
+        在缓存锁内提交节点副本；服务关闭后拒绝迟到的预热结果。
+        """
+        with self._node_cache_lock:
+            if not self._node_preload_stopped.is_set():
+                self._nodes = list(nodes)
+                self._node_cache_refreshed_at = monotonic()
+                logger.debug("联机节点列表已刷新并写入内存缓存，共 %d 个节点", len(nodes))
+            return list(self._nodes)
 
     def _begin_transition(self) -> None:
         # 进入建房/加入流程前占用状态迁移；非 idle 或已有迁移进行中时拒绝并发。
@@ -241,6 +250,42 @@ class ConnectorService:
         settings = self._node_settings_provider() if self._node_settings_provider else ConnectorNodeConfig()
         return [] if settings.mode == "custom" else self._fetch_public_nodes()
 
+    def start_node_preload(self) -> bool:
+        """
+        在后端服务生命周期内调度一次节点预热，不等待网络结果。
+
+        主窗口就绪或兼容 IPC 可以重复调用；线程和去重状态由后端拥有，前端重载
+        不会重新创建任务。仅自定义节点模式仍由 preload_nodes 保证不访问公共节点。
+
+        :return: 首次启动返回 True；已启动或已关闭返回 False
+        """
+        with self._node_cache_lock:
+            if self._node_preload_started or self._node_preload_stopped.is_set():
+                return False
+            context = copy_context()
+            thread = Thread(target=lambda: context.run(self._run_node_preload), name="ECL-NodePreload", daemon=True)
+            self._node_preload_thread = thread
+            self._node_preload_started = True
+            thread.start()
+            return True
+
+    def _run_node_preload(self) -> None:
+        """
+        使用继承的操作上下文执行节点预热，关闭后忽略结果及网络失败。
+        """
+        if self._node_preload_stopped.is_set():
+            return
+        with operation_scope("后台加载公共联机节点") as operation:
+            operation.log(logger, "开始后台加载公共联机节点", logging.DEBUG)
+            try:
+                self.preload_nodes()
+            except Exception:
+                if not self._node_preload_stopped.is_set():
+                    logger.exception("后台加载公共联机节点发生未预期异常")
+            else:
+                if not self._node_preload_stopped.is_set():
+                    operation.log(logger, "后台公共联机节点已就绪", logging.DEBUG)
+
     def _fetch_public_nodes(self, *, force: bool = False) -> list[str]:
         """
         获取可用的 EasyTier 中继节点 URI 列表。
@@ -252,6 +297,8 @@ class ConnectorService:
         :returns: 去重保序的节点 URI 列表
         """
         with self._node_cache_lock:
+            if self._node_preload_stopped.is_set():
+                return list(self._nodes)
             now = monotonic()
             if (
                 not force
@@ -310,9 +357,10 @@ class ConnectorService:
                     for future in futures:
                         nodes.extend(future.result())
             resolved = list(dict.fromkeys(nodes)) or list(self.default_nodes)
-            logger.debug("联机节点列表已刷新并写入内存缓存，共 %d 个节点", len(resolved))
             return self._remember_nodes(resolved)
         except Exception as exc:
+            if self._node_preload_stopped.is_set():
+                return cached_nodes or list(self.default_nodes)
             fallback = cached_nodes or list(self.default_nodes)
             logger.warning(
                 "拉取联机节点列表失败，使用%s: %s",
@@ -323,6 +371,8 @@ class ConnectorService:
 
     def _resolve_aggregate_node(self, url: str) -> list[str]:
         # 解析一个聚合节点地址，得到可用的 EasyTier URI。
+        if self._node_preload_stopped.is_set():
+            return []
         try:
             response = self._http.get(
                 url,
@@ -881,9 +931,14 @@ class ConnectorService:
         """
         关闭联机服务，停止运行中的房间与 EasyTier 节点。
 
-        应用关闭时由上下文按依赖逆序调用；进行中的加入房间操作运行在守护线程，
-        由解释器退出时一并回收，不在此处等待。
+        应用关闭时由上下文按依赖逆序调用。节点预热停止提交后续网络请求，已进入的
+        有限超时请求仅短暂等待收尾，结果不再写入缓存；加入房间守护线程由退出回收。
         """
+        self._node_preload_stopped.set()
+        with self._node_cache_lock:
+            preload_thread = self._node_preload_thread
+        if preload_thread is not None and preload_thread is not current_thread():
+            preload_thread.join(timeout=0.1)
         try:
             self.leave()
         except Exception:

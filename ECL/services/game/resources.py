@@ -46,6 +46,7 @@ import tomllib
 import zipfile
 import zlib
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypedDict
@@ -804,6 +805,9 @@ class ResourceCoordinator:
         :param offset: 分页偏移量，用于翻页加载更多结果
         :param sort: 排序方式（relevance/downloads/follows/newest/updated），Modrinth 映射为 index 参数，CurseForge 映射为 sortField（默认人气排序）
         """
+        loader = loader.strip().casefold()
+        if loader == "vanilla":
+            loader = ""
         if resource_type in {"mod", "datapack"} and re.search(r"[\u4e00-\u9fff]", query):
             query = self._mcmod.to_english_query(query) or query
         if source == "modrinth":
@@ -955,6 +959,8 @@ class ResourceCoordinator:
         :return: 稳定页面、合并来源与渐进分页状态
         :raises GameServiceError: 搜索失败或会话无效
         """
+        loader = criteria.loader.strip().casefold()
+        criteria = replace(criteria, loader="" if loader == "vanilla" else loader)
         with self._lock:
             self._mcmod.lookup_by_modrinth_slug("")
 

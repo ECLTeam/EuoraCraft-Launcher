@@ -214,10 +214,10 @@ class SystemHandlers(_FrontendState):
     @_ipc_handler("CONNECTOR_PRELOAD_FAILED")
     async def launcher_preload_connector(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        在首屏就绪后预热联机节点列表缓存。
+        请求后端调度一次节点预热，兼容仍使用该命令的调用方。
 
-        前端不会等待此请求；节点请求在工作线程中运行，失败时由调用方静默忽略，
-        不影响启动器正常使用。
+        主窗口首次就绪会自动调度；重复 IPC 或前端重载不再创建新的网络任务，
+        此命令只返回调度结果，不等待网络。
         """
         if body:
             return {
@@ -225,7 +225,7 @@ class SystemHandlers(_FrontendState):
                 "message": "launcher_preload_connector 不接受参数",
                 "errorCode": "INVALID_REQUEST",
             }
-        await to_thread.run_sync(self.connector.preload_nodes)
+        self.connector.start_node_preload()
         return success()
 
     async def info_card_get(self, body: dict[str, Any]) -> dict[str, Any]:

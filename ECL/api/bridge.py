@@ -952,6 +952,7 @@ class _FrontendState:
             if startup_update_result is not None:
                 self.emit_to_frontend("update:check_completed", startup_update_result)
         if window_type == "main":
+            self.connector.start_node_preload()
             self._cli_event_loop = asyncio.get_running_loop()
             if not self._cli_launch_dispatched:
                 self._cli_launch_dispatched = True
