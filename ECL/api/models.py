@@ -131,6 +131,7 @@ from ECL.services.game.base import GameServiceError
 from ECL.services.game.world_seeds import WorldSeedStore
 from ECL.services.skin_avatar import SkinAvatarExporter
 from ECL.utils.config import default_config
+from ECL.utils.download_settings import DownloadSettingsPatch
 
 
 def _validate_safe_path(value: Any) -> Any:
@@ -917,6 +918,7 @@ class RequestModelRegistry:
         "select_directory": DirectorySelectionRequest,
         "settings_get": SettingsQuery,
         "settings_set": SettingsUpdate,
+        "settings_download_patch": DownloadSettingsPatch,
         "frontend_log": FrontendLogRequest,
         "window_open": WindowOpenRequest,
         "window_focus": WindowLabelRequest,

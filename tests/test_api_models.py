@@ -227,6 +227,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "select_directory",
         "settings_get",
         "settings_set",
+        "settings_download_patch",
         "frontend_log",
         "window_open",
         "window_focus",

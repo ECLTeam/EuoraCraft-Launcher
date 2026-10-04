@@ -92,9 +92,34 @@ class GameHandlers(_FrontendState):
         legacy = self._get_effective_config().get("version_settings")
         if not isinstance(legacy, dict):
             return {}
-        normalized_path = str(game_path).strip().replace("\\", "/").rstrip("/").lower()
-        value = legacy.get(f"{normalized_path}::{version_id.strip()}")
+        key = await to_thread.run_sync(self._legacy_launch_settings_key, game_path, version_id)
+        value = legacy.get(key) if key is not None else None
         return dict(value) if isinstance(value, dict) else {}
+
+    def _legacy_launch_settings_key(self, game_path: str | Path, version_id: str) -> str | None:
+        """
+        仅在旧小写路径键唯一对应一个实际根目录时恢复或清理实例设置。
+
+        旧键有歧义时保留原配置，不让一个实例读入或删除另一个实例的覆盖。
+        目录解析由线程边界调用，避免在异步 IPC 内阻塞磁盘。
+
+        :param game_path: 请求指定的游戏根目录
+        :param version_id: 磁盘实例目录名
+        :return: 唯一对应的历史键；存在歧义时为 None
+        """
+        normalized_path = str(game_path).strip().replace("\\", "/").rstrip("/").lower()
+        roots = {str(Path(game_path).expanduser().resolve(strict=False))}
+        game_config = self.config.get_config("game")
+        entries = game_config.get("minecraft_paths", []) if isinstance(game_config, dict) else []
+        for entry in entries if isinstance(entries, list) else []:
+            configured_path = entry.get("path") if isinstance(entry, dict) else entry
+            if not isinstance(configured_path, str):
+                continue
+            if configured_path.strip().replace("\\", "/").rstrip("/").lower() == normalized_path:
+                roots.add(str(Path(configured_path).expanduser().resolve(strict=False)))
+        if len(roots) > 1:
+            return None
+        return f"{normalized_path}::{version_id.strip()}"
 
     def _download_source(self, requested_source: str | None) -> str:
         # 选择请求显式指定的下载源，缺失时使用启动器配置。
@@ -339,10 +364,9 @@ class GameHandlers(_FrontendState):
             request.version_id,
             request.data,
         )
-        normalized_path = str(request.game_path).strip().replace("\\", "/").rstrip("/").lower()
-        await to_thread.run_sync(
-            self.config.remove_legacy_instance_settings, f"{normalized_path}::{request.version_id.strip()}"
-        )
+        legacy_key = await to_thread.run_sync(self._legacy_launch_settings_key, request.game_path, request.version_id)
+        if legacy_key is not None:
+            await to_thread.run_sync(self.config.remove_legacy_instance_settings, legacy_key)
         return success(saved)
 
     @_ipc_handler("INSTANCE_PROFILE_FAILED")

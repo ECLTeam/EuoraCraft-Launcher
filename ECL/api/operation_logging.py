@@ -66,6 +66,7 @@ class IpcLogPolicy:
             "debug_devtools_open": IpcLogSpec("打开 WebView 开发者工具（F12 调试窗口）", "action"),
             "settings_get": IpcLogSpec("读取设置", "query"),
             "settings_set": IpcLogSpec("保存设置", "action"),
+            "settings_download_patch": IpcLogSpec("保存下载源与资源目标", "action"),
             "frontend_log": IpcLogSpec("记录前端通过 IPC 上报的运行日志，供统一归档排查", "channel"),
             "window_list": IpcLogSpec("窗口：读取列表", "query"),
             "window_open": IpcLogSpec("窗口：打开", "action"),

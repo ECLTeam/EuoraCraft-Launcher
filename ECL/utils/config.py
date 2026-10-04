@@ -12,6 +12,7 @@
 #       - list_sections() -> list[str] — 获取全部配置分区名称
 #       - get_many(sections) -> dict[str, Any] — 批量获取配置分区
 #       - save_config(section, data) -> None — 保存配置分区
+#       - patch_download(patch) -> dict[str, JsonValue] — 在同一个锁中合并下载配置并原子落盘。
 #       - remove_legacy_instance_settings(key) -> None — 实例设置落盘后清理对应旧全局条目。
 # ============================================================
 
@@ -24,7 +25,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from pydantic import JsonValue, TypeAdapter
+
 from ECL.events import EventBus
+from ECL.utils.download_settings import DownloadSettingsPatch
 from ECL.utils.errors import ConfigError, ConfigValidationError
 from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import get_logger
@@ -283,3 +287,29 @@ class ConfigStore:
         # 广播配置变更事件，通知订阅组件。
         self.logger.debug("配置已保存；分区：%s", normalized_section)
         self.events.emit("config:updated", normalized_section, deepcopy(data))
+
+    def patch_download(self, patch: DownloadSettingsPatch) -> dict[str, JsonValue]:
+        """
+        在同一个配置锁中合并下载配置，并原子写入完整配置文件。
+
+        未提供的字段及未知历史字段保留；资源映射按键更新。落盘失败时不更新
+        内存快照，不广播成功事件，调用方可使用同一个补丁重试。
+
+        :param patch: 经模型校验的下载设置补丁
+        :return: 已确认落盘的下载配置副本
+        :raises ConfigError: 原子写入失败时抛出
+        """
+        with self._lock:
+            config_data = self.get_config()
+            next_download = TypeAdapter(dict[str, JsonValue]).validate_python(config_data.get("download") or {})
+            updates = patch.model_dump(by_alias=True, exclude_unset=True, mode="json")
+            for field_name, value in updates.items():
+                if field_name in {"resourceInstallCache", "resourceSaveDirectories"}:
+                    existing = next_download.get(field_name)
+                    next_download[field_name] = {**(existing if isinstance(existing, dict) else {}), **value}
+                else:
+                    next_download[field_name] = value
+            config_data["download"] = next_download
+            self._write_config(config_data)
+        self.events.emit("config:updated", "download", deepcopy(next_download))
+        return deepcopy(next_download)

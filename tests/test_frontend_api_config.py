@@ -944,6 +944,32 @@ def test_launch_uses_legacy_global_instance_overrides_until_saved(tmp_path, monk
     assert asyncio.run(api.game_version_settings_get(body))["data"] == {}
 
 
+def test_ambiguous_legacy_instance_key_is_neither_restored_nor_removed(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    first = tmp_path / "Pack"
+    second = tmp_path / "pack"
+    api.config.save_config("game", {"minecraft_paths": [str(first), str(second)]})
+    key = f"{str(first).replace(chr(92), '/').lower()}::demo"
+    api.config._write_config({**api.config.get_config(), "version_settings": {key: {"memory": 8192}}})
+    monkeypatch.setattr(Path, "resolve", lambda path, **_: path)
+    monkeypatch.setattr(api.game, "write_version_settings", lambda *_args: {}, raising=False)
+    body = {"game_path": str(first), "version_id": "demo"}
+    assert asyncio.run(api.game_version_settings_get(body))["data"] == {}
+    assert asyncio.run(api.game_version_settings_set({**body, "data": {}}))["success"] is True
+    assert api.config.get_config("version_settings") == {key: {"memory": 8192}}
+
+
+def test_download_patch_ipc_merges_and_validates_before_persisting(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api.config.save_config("download", {"mirror_source": "official", "resourceSaveDirectories": {"mod": "A"}})
+    result = asyncio.run(api.settings_download_patch({"resourceSaveDirectories": {"world": "B"}}))
+    assert result["success"] is True
+    assert result["data"]["resourceSaveDirectories"] == {"mod": "A", "world": "B"}
+    invalid = asyncio.run(api.settings_download_patch({"mirror_source": "unsupported"}))
+    assert invalid["success"] is False
+    assert api.config.get_config("download")["mirror_source"] == "official"
+
+
 def test_select_file_modpack_purpose_filters_modpack_extensions(tmp_path, monkeypatch) -> None:
     api = _build_api(tmp_path)
     api._webview = object()

@@ -60,6 +60,7 @@ class IpcCommandRegistry:
         "debug_devtools_open",
         "settings_get",
         "settings_set",
+        "settings_download_patch",
         "frontend_log",
         "window_list",
         "window_open",

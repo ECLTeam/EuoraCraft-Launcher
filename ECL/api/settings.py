@@ -9,6 +9,7 @@
 #   - class SettingsHandlers — 提供启动器设置和 Java 运行时查询的正式 IPC 边界。
 #       - settings_get(body) -> ApiResponse — 按单个分区、多个分区或完整配置读取启动器设置。
 #       - settings_set(body) -> ApiResponse — 校验并全量保存一个配置分区。
+#       - settings_download_patch(body) -> ApiResponse — 原子合并下载配置的指定字段与资源类型键。
 #       - game_java_scan(body) -> ApiResponse — 扫描系统和用户配置路径中的 Java 运行时。
 # ============================================================
 
@@ -20,6 +21,7 @@ from anyio import to_thread
 
 from ECL.api.contracts import ApiResponse, success
 from ECL.api.models import JavaScanRequest, SettingsQuery, SettingsUpdate
+from ECL.utils.download_settings import DownloadSettingsPatch
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body
 
@@ -76,6 +78,19 @@ class SettingsHandlers(_FrontendState):
             requested_paths = [configured_java] if isinstance(configured_java, str) and configured_java.strip() else []
         installations = await to_thread.run_sync(self.game.scan_java, [str(path) for path in requested_paths])
         return success(installations)
+
+    async def settings_download_patch(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        校验下载配置补丁并在线程边界执行原子合并。
+
+        :param body: 指定下载源或按资源类型更新的目标、保存目录
+        :return: 已确认落盘的下载分区
+        """
+        request, invalid = _validate_body(DownloadSettingsPatch, body)
+        if invalid is not None:
+            return invalid
+        saved = await to_thread.run_sync(self.config.patch_download, request)
+        return success(saved)
 
 
 __all__ = ["SettingsHandlers"]
