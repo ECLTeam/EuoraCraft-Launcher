@@ -191,6 +191,7 @@ class IpcCommandRegistry:
         "image_save_url",
         "image_fetch_data_url",
         "image_save_as",
+        "skin_avatar_export",
         "image_read_file",
         "image_list_files",
         "background_video_open",

@@ -105,6 +105,7 @@
 #   - class AccountTextureRequest
 #   - class MicrosoftCapeRequest
 #   - class ImageSelectionRequest
+#   - class SkinAvatarExportRequest — 校验头像导出的图片、尺寸与源文件路径。
 #   - class FileSelectionRequest
 #   - class DirectorySelectionRequest — 校验目录选择用途和初始位置。
 #   - class FileSaveRequest
@@ -128,6 +129,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, f
 from ECL.services.custom_downloads import CustomDownloadRequest
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.world_seeds import WorldSeedStore
+from ECL.services.skin_avatar import SkinAvatarExporter
 from ECL.utils.config import default_config
 
 
@@ -764,6 +766,29 @@ class ImageSelectionRequest(RequestModel):
     purpose: ImagePurpose = ImagePurpose.BACKGROUND
 
 
+class SkinAvatarExportRequest(RequestModel):
+    """
+    校验头像导出的有界图片、允许尺寸和源文件路径，不接受保存目标路径。
+    """
+
+    data_url: str = Field(min_length=1, max_length=SkinAvatarExporter.max_data_url_chars)
+    size: Literal[64, 128, 256, 512]
+    source_path: SafePath
+
+    @field_validator("source_path")
+    @classmethod
+    def validate_source_path(cls, value: Path) -> Path:
+        """
+        拒绝相对路径，保证后续源文件保护不依赖进程当前工作目录。
+
+        :param value: IPC 中的源皮肤路径
+        :return: 通过检查的绝对路径
+        """
+        if not value.is_absolute():
+            raise ValueError("源皮肤路径必须是绝对路径")
+        return value
+
+
 class FileSelectionRequest(RequestModel):
     purpose: FileSelectionPurpose | None = None
     resource_type: Literal["mod", "resourcepack", "shaderpack", "datapack", "schematic"] | None = None
@@ -935,6 +960,7 @@ class RequestModelRegistry:
         "microsoft_set_cape": MicrosoftCapeRequest,
         "microsoft_reset_cape": AccountTextureRequest,
         "select_image": ImageSelectionRequest,
+        "skin_avatar_export": SkinAvatarExportRequest,
         "select_file": FileSelectionRequest,
         "select_save_file": FileSaveRequest,
         "connector_host_port": PortRequest,
@@ -1008,6 +1034,7 @@ __all__ = [
     "RoomCodeRequest",
     "SettingsQuery",
     "SettingsUpdate",
+    "SkinAvatarExportRequest",
     "SkinModel",
     "WardrobeApplySkinRequest",
     "WardrobeImportRequest",

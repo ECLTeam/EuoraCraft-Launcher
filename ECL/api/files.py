@@ -14,6 +14,7 @@
 #       - image_fetch_data_url(body) -> dict[str, Any] — 下载远程图片并转换为受大小限制的 Data URL。
 #       - image_save_url(body) -> dict[str, Any] — 下载背景图片并缓存到本地数据目录。
 #       - image_save_as(body) -> dict[str, Any] — 保存背景图片。
+#       - skin_avatar_export(body) -> dict[str, Any] — 校验头像 PNG 并通过原生对话框原子导出。
 #       - image_read_file(body) -> dict[str, Any] — 读取图片（带 LRU 缓存）。
 #       - image_list_files(body) -> dict[str, Any] — 获取图片列表。
 #       - background_video_open(body) -> dict[str, Any] — 为当前已保存背景视频取得受控流地址。
@@ -50,8 +51,10 @@ from ECL.api.models import (
     FileSelectionRequest,
     ImagePurpose,
     ImageSelectionRequest,
+    SkinAvatarExportRequest,
 )
 from ECL.services.game.resources import ResourceCatalogPolicy
+from ECL.services.skin_avatar import SkinAvatarExporter
 from ECL.utils.files import atomic_write_bytes
 
 from .bridge import (
@@ -410,6 +413,36 @@ class FileHandlers(_FrontendState):
             parsed = urlsplit(path)
             return unquote(parsed.path)
         return path
+
+    @_ipc_handler("SKIN_AVATAR_EXPORT_FAILED")
+    async def skin_avatar_export(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        校验头像并通过原生保存对话框导出 PNG，取消时不写入文件。
+
+        文件位置只能来自原生对话框，不能由 IPC 提交目标路径。解码和原子
+        保存均在线程中执行，覆盖输入皮肤及其链接目标时拒绝写入。
+
+        :param body: 包含 PNG Data URL、输出尺寸和源皮肤路径的请求
+        :return: 已保存路径，取消时路径为空
+        """
+        request, invalid = _validate_body(SkinAvatarExportRequest, body)
+        if invalid is not None:
+            return invalid
+        png_bytes = await to_thread.run_sync(SkinAvatarExporter.decode_png, request.data_url, request.size)
+        if self._webview is None:
+            return {"success": False, "message": "窗口尚未就绪", "errorCode": "WEBVIEW_NOT_READY"}
+        picked = await to_thread.run_sync(
+            lambda: DialogExt.file(self._webview).blocking_save_file(
+                add_filter=("PNG 图片", ["png"]),
+                set_file_name="skin-avatar.png",
+                set_title="导出皮肤头像",
+            )
+        )
+        if not picked:
+            return {"success": True, "data": {"path": None}}
+        target_path = Path(str(picked))
+        await to_thread.run_sync(SkinAvatarExporter.save_png, target_path, request.source_path, png_bytes)
+        return {"success": True, "data": {"path": str(target_path)}}
 
     @_ipc_handler("IMAGE_READ_ERROR")
     async def image_read_file(self, body: dict[str, Any]) -> dict[str, Any]:

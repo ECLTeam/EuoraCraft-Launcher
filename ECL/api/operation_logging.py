@@ -205,6 +205,7 @@ class IpcLogPolicy:
             "image_save_url": IpcLogSpec("下载背景图片并缓存到本地数据目录", "action"),
             "image_fetch_data_url": IpcLogSpec("下载远程图片并转换为受大小限制的 Data URL", "query"),
             "image_save_as": IpcLogSpec("保存背景图片", "action"),
+            "skin_avatar_export": IpcLogSpec("导出皮肤头像", "action"),
             "image_read_file": IpcLogSpec("读取图片（带 LRU 缓存）", "query"),
             "image_list_files": IpcLogSpec("获取图片列表", "query"),
             "background_video_open": IpcLogSpec("为配置中的背景视频签发仅限当前进程使用的本地流 URL", "action"),
