@@ -67,22 +67,8 @@
 
 感谢所有为 EuoraCraft Launcher 做出贡献的开发者和社区支持者！
 
-### <a href="https://github.com/ECLTeam/EuoraCraft-Launcher">EuoraCraft-Launcher</a> 贡献者
-
 <a href="https://github.com/ECLTeam/EuoraCraft-Launcher/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ECLTeam/EuoraCraft-Launcher" />
-</a>
-
-### <a href="https://github.com/ECLTeam/EuoraCraft-Launcher.Frontend">EuoraCraft-Launcher.Frontend</a> 贡献者
-
-<a href="https://github.com/ECLTeam/EuoraCraft-Launcher.Frontend/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ECLTeam/EuoraCraft-Launcher.Frontend" />
-</a>
-
-### <a href="https://github.com/ECLTeam/EuoraCraft-Launcher.Core">EuoraCraft-Launcher.Core</a> 贡献者
-
-<a href="https://github.com/ECLTeam/EuoraCraft-Launcher.Core/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ECLTeam/EuoraCraft-Launcher.Core" />
 </a>
 
 ---
