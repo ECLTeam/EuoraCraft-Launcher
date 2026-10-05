@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,45 @@ from ECL.game import Downloader
 from ECL.services.custom_downloads import CustomDownloadRequest, CustomDownloadService, DownloadPolicy
 from ECL.services.operations import OperationManager
 from ECL.utils.errors import GameServiceError
+
+
+def test_download_filename_corpus_matches_frontend() -> None:
+    fixture_path = (
+        Path(__file__).resolve().parents[1] / "frontend/src/features/download/fixtures/downloadFilenameCases.json"
+    )
+    for sample in json.loads(fixture_path.read_text(encoding="utf-8")):
+        assert DownloadPolicy.is_valid_name(sample["name"]) is sample["valid"], sample["name"]
+
+
+def test_operation_revision_and_cancellation_are_executor_owned(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    manager = OperationManager(tmp_path, EventBus())
+
+    def worker(context) -> None:
+        context.progress(50, "等待安全退出")
+        started.set()
+        assert release.wait(timeout=3)
+        context.check_cancelled()
+
+    try:
+        operation_id = manager.submit("world_copy", worker)["operationId"]
+        assert started.wait(timeout=3)
+        running = manager.get(operation_id)
+        assert running["canCancel"] is True
+        assert manager.cancel(operation_id) is True
+        cancelling = manager.get(operation_id)
+        assert cancelling["status"] == "running"
+        assert cancelling["cancellationRequested"] is True
+        assert cancelling["revision"] > running["revision"]
+        release.set()
+        stopped = wait_operation(manager, operation_id)
+        assert stopped["status"] == "cancelled"
+        assert stopped["canCancel"] is False
+        assert stopped["revision"] > cancelling["revision"]
+    finally:
+        release.set()
+        manager.close()
 
 
 def wait_operation(manager, operation_id, timeout=15):

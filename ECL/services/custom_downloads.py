@@ -436,12 +436,12 @@ class CustomDownloadService:
         """
         监督 Core 下载循环，将取消传至下载器并收回辅助协程和客户端。
         """
-        speed = 0.0
+        speed_bytes_per_second = 0.0
         downloader: Downloader
 
-        def on_speed(value: float) -> None:
-            nonlocal speed
-            speed = value * 1024 * 1024
+        def on_speed(speed_mib_per_second: float) -> None:
+            nonlocal speed_bytes_per_second
+            speed_bytes_per_second = speed_mib_per_second * 1024 * 1024
 
         def on_progress(done: int, total: int) -> None:
             context.progress(
@@ -449,7 +449,7 @@ class CustomDownloadService:
                 "正在下载文件",
                 done=done,
                 total=total,
-                speed=speed,
+                speed=speed_bytes_per_second,
                 progressType="bytes" if downloader.use_byte_progress else "files",
                 name=staged_file.name,
             )

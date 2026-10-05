@@ -277,7 +277,7 @@ class WorldCoordinator:
             context.progress(100, "存档复制完成")
             return {"worldId": destination.name}
 
-        return self._game_operations.submit("world_copy", worker)
+        return self._application_operations.submit("world_copy", worker)
 
     def set_world_icon(
         self,
@@ -333,7 +333,7 @@ class WorldCoordinator:
             finally:
                 temp.unlink(missing_ok=True)
 
-        return self._game_operations.submit("world_export", worker)
+        return self._application_operations.submit("world_export", worker)
 
     def import_world(
         self, game_path: Any, version_id: Any, source_path: Any, version_isolation: Any = False
@@ -358,7 +358,7 @@ class WorldCoordinator:
         def worker(context: OperationContext) -> dict[str, str]:
             return self._import_world_source(root, source, context)
 
-        return self._game_operations.submit("world_import", worker)
+        return self._application_operations.submit("world_import", worker)
 
     def _import_world_source(
         self,
@@ -446,7 +446,7 @@ class WorldCoordinator:
             context.progress(100, "世界备份已创建")
             return result
 
-        return self._game_operations.submit("world_backup", worker)
+        return self._application_operations.submit("world_backup", worker)
 
     def list_world_backups(self, game_path: Any, version_id: Any, world_id: Any) -> list[dict[str, Any]]:
         target = self.resolve_instance(game_path, version_id)
@@ -525,7 +525,7 @@ class WorldCoordinator:
                 delete_path(old)
                 return {"worldId": current.name}
 
-        return self._game_operations.submit("world_restore", worker)
+        return self._application_operations.submit("world_restore", worker)
 
     def world_quick_play_capability(self, game_path: Any, version_id: Any) -> dict[str, Any]:
         target = self.resolve_instance(game_path, version_id)

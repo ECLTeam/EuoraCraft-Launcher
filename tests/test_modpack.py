@@ -359,7 +359,7 @@ def _await_operation(service: GameService, submitted: dict) -> dict:
     operation_id = submitted["operationId"]
     deadline = time.time() + 10
     while time.time() < deadline:
-        state = service._game_operations.get(operation_id)
+        state = service._application_operations.get(operation_id)
         if state["status"] in {"completed", "failed", "cancelled"}:
             return state
         time.sleep(0.02)

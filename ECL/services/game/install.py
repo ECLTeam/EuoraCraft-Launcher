@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping
 from contextvars import copy_context
 from pathlib import Path
 from threading import Event, Thread
-from typing import Any
+from typing import Any, TypedDict
 from uuid import uuid4
 
 import httpx
@@ -32,6 +32,12 @@ from .base import Downloader, GameServiceError, _GameState
 
 # install_blocking 的进度上报回调：签名与 _emit_install_progress 去掉 task_id 后一致。
 InstallProgressReporter = Callable[..., None]
+
+
+class _InstallDownloadState(TypedDict):
+    downloader: Downloader | None
+    speed_bytes_per_second: int
+    base_completed: int | None
 
 
 class InstallCoordinator(_GameState):
@@ -46,7 +52,7 @@ class InstallCoordinator(_GameState):
         source: str,
         failed_entries: set[tuple[str, str]],
         primary_downloader: Downloader,
-        progress_state: dict[str, Any],
+        progress_state: _InstallDownloadState,
         report: InstallProgressReporter,
         emit_progress: Callable[[int | None], None],
         loop: asyncio.AbstractEventLoop | None = None,
@@ -73,7 +79,7 @@ class InstallCoordinator(_GameState):
         fallback_downloader = self._downloader_factory(
             fallback_entries,
             progress_callback=lambda done, total: emit_progress(None),
-            speed_callback=lambda speed_mb: emit_progress(int(speed_mb * 1024 * 1024)),
+            speed_callback=lambda speed_mib_per_second: emit_progress(int(speed_mib_per_second * 1024 * 1024)),
         )
         progress_state["downloader"] = fallback_downloader
         with self._lock:
@@ -344,12 +350,17 @@ class InstallCoordinator(_GameState):
 
         # 进度事件闭包：同时上报字节/文件进度、文件计数与实时速度。
         # 通过可变容器持有 downloader 引用，避免闭包在赋值前被调用。
-        progress_state: dict[str, Any] = {"downloader": None, "speed": 0, "base_completed": None}
+        progress_state: _InstallDownloadState = {
+            "downloader": None,
+            "speed_bytes_per_second": 0,
+            "base_completed": None,
+        }
 
-        def _emit_download_progress(speed: int | None = None) -> None:
-            if speed is not None:
-                progress_state["speed"] = speed
+        def _emit_download_progress(speed_bytes_per_second: int | None = None) -> None:
+            if speed_bytes_per_second is not None:
+                progress_state["speed_bytes_per_second"] = speed_bytes_per_second
             downloader = progress_state["downloader"]
+            assert downloader is not None, "下载器开始执行后才允许上报进度"
             base_completed = progress_state["base_completed"]
             is_fallback = base_completed is not None
             report(
@@ -360,14 +371,16 @@ class InstallCoordinator(_GameState):
                 progress_type="files" if is_fallback or not downloader.use_byte_progress else "bytes",
                 total_files=len(download_list),
                 downloaded_files=(base_completed or 0) + len(downloader.completed_entries),
-                speed=progress_state["speed"],
+                speed=progress_state["speed_bytes_per_second"],
                 subtask="download_files",
             )
 
         downloader = self._downloader_factory(
             download_list,
             progress_callback=lambda done, total: _emit_download_progress(),
-            speed_callback=lambda speed_mb: _emit_download_progress(int(speed_mb * 1024 * 1024)),
+            speed_callback=lambda speed_mib_per_second: _emit_download_progress(
+                int(speed_mib_per_second * 1024 * 1024)
+            ),
         )
         progress_state["downloader"] = downloader
         with self._lock:

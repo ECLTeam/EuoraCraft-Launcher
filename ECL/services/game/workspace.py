@@ -348,7 +348,7 @@ class WorkspaceCoordinator:
                     shutil.rmtree(temp, ignore_errors=True)
                 raise
 
-        return self._game_operations.submit("instance_clone", worker)
+        return self._application_operations.submit("instance_clone", worker)
 
     def inspect_instance_files(self, game_path: Any, version_id: Any, source: Any = "official") -> dict[str, Any]:
         """
@@ -448,10 +448,10 @@ class WorkspaceCoordinator:
             context.progress(100, "文件补全完成")
             return {"versionId": target.version_id, "repaired": len(download_list)}
 
-        return self._game_operations.submit("instance_repair", worker)
+        return self._application_operations.submit("instance_repair", worker)
 
     def operation_get(self, operation_id: str) -> dict[str, Any]:
-        return self._game_operations.get(operation_id)
+        return self._application_operations.get(operation_id)
 
     def operation_cancel(self, operation_id: str) -> bool:
-        return self._game_operations.cancel(operation_id)
+        return self._application_operations.cancel(operation_id)

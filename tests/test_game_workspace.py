@@ -141,7 +141,7 @@ def test_world_import_accepts_folder_and_zip(tmp_path: Path, source_kind: str) -
         source = archive_path
     service = _WorldHarness(tmp_path / "app-data")
     context = SimpleNamespace(check_cancelled=lambda: None)
-    service._game_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
+    service._application_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
     result = service.import_world(tmp_path, "demo", source, True)
     assert result == {"worldId": "world"}
     assert service.list_worlds(tmp_path, "demo", True)[0]["name"] == "测试世界"
@@ -157,7 +157,7 @@ def test_local_world_import_rejects_non_zip_but_download_helper_accepts_archive(
         archive.write(source / "level.dat", "world/level.dat")
     service = _WorldHarness(tmp_path / "app-data")
     calls = []
-    service._game_operations = SimpleNamespace(submit=lambda *args: calls.append(args))
+    service._application_operations = SimpleNamespace(submit=lambda *args: calls.append(args))
     with pytest.raises(GameServiceError) as raised:
         service.import_world(tmp_path, "demo", archive_path, True)
     assert raised.value.error_code == "UNSUPPORTED_WORLD_IMPORT"

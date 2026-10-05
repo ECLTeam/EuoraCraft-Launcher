@@ -612,7 +612,7 @@ class ResourceCoordinator:
                 context.progress(index * 100 / len(sources), "正在安装资源")
             return {"installed": installed}
 
-        return self._game_operations.submit("resource_install", worker)
+        return self._application_operations.submit("resource_install", worker)
 
     @staticmethod
     def _patch_options_list(path: Path, key: str, filename: str, enabled: bool) -> None:
@@ -1698,4 +1698,4 @@ class ResourceCoordinator:
             finally:
                 temp.unlink(missing_ok=True)
 
-        return self._game_operations.submit("resource_update", worker)
+        return self._application_operations.submit("resource_update", worker)

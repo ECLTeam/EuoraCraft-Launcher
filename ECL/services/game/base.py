@@ -175,7 +175,7 @@ class _GameState:
             compatibility_reader=InstanceCompatibilityReader(self.instance_compatibility),
         )
         self._owns_operations = operations is None
-        self._game_operations = operations or OperationManager(self._data_path, self.events)
+        self._application_operations = operations or OperationManager(self._data_path, self.events)
         self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._server_status_lock = RLock()
         self._schematic_sessions: dict[str, SchematicSession] = {}
@@ -439,7 +439,7 @@ class _GameState:
                 self.logger.exception("关闭游戏 API 客户端失败")
         self._crash_executor.shutdown(wait=True, cancel_futures=True)
         if self._owns_operations:
-            self._game_operations.close()
+            self._application_operations.close()
         self._crash_analyzer.close()
         if self.authlib_injector is not None:
             self.authlib_injector.close()

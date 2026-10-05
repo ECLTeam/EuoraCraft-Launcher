@@ -128,7 +128,7 @@ def test_install_prevalidates_entire_batch_before_submitting(
     service = ResourceService()
     (tmp_path / "versions" / "demo" / "saves" / "world").mkdir(parents=True)
     submitted = []
-    service._game_operations = SimpleNamespace(submit=lambda *args: submitted.append(args))
+    service._application_operations = SimpleNamespace(submit=lambda *args: submitted.append(args))
     valid = tmp_path / "valid.zip"
     if resource_type == "schematic":
         valid = tmp_path / "valid.schematic"
@@ -149,7 +149,7 @@ def test_datapack_install_rejects_directory_even_if_list_accepts_it(tmp_path: Pa
     source.mkdir()
     (source / "pack.mcmeta").write_text('{"pack":{"description":"Pack","pack_format":34}}', encoding="utf-8")
     service = ResourceService()
-    service._game_operations = SimpleNamespace(submit=lambda *_args: {})
+    service._application_operations = SimpleNamespace(submit=lambda *_args: {})
     with pytest.raises(GameServiceError):
         service.install_resources(tmp_path, "demo", "datapack", [source], True, "world")
 
@@ -256,7 +256,7 @@ def test_valid_install_copies_to_visible_resource(tmp_path: Path, resource_type:
         write_pack(source, shader=resource_type == "shaderpack")
     context = SimpleNamespace(check_cancelled=lambda: None, progress=lambda *_args: None)
     service = ResourceService()
-    service._game_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
+    service._application_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
     result = service.install_resources(tmp_path, "demo", resource_type, [source], True)
     assert result["installed"] == [source.name]
     assert [item["id"] for item in service.list_resources(tmp_path, "demo", resource_type, True)] == [source.name]
@@ -275,7 +275,7 @@ def test_install_rechecks_copied_content_before_commit(tmp_path: Path, monkeypat
     monkeypatch.setattr(shutil, "copy2", changed_copy)
     service = ResourceService()
     context = SimpleNamespace(check_cancelled=lambda: None, progress=lambda *_args: None)
-    service._game_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
+    service._application_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
     with pytest.raises(GameServiceError):
         service.install_resources(tmp_path, "demo", "shaderpack", [source], True)
     assert list(service._resource_root(tmp_path, "demo", "shaderpack", True).iterdir()) == []

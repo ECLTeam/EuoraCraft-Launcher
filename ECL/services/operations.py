@@ -46,7 +46,7 @@ class OperationContext:
     operation_id: str
     event_bus: EventBus
     cancel_event: Event
-    update_callback: Callable[[float, str, dict[str, object]], None] | None = None
+    update_callback: Callable[[float, str, dict[str, object]], dict[str, object] | None] | None = None
     kind: str = ""
     finalize_callback: Callable[[Callable[[], object]], object] | None = None
 
@@ -72,7 +72,9 @@ class OperationContext:
             **details,
         }
         if self.update_callback is not None:
-            self.update_callback(payload["percent"], message, details)
+            snapshot = self.update_callback(payload["percent"], message, details)
+            if snapshot is not None:
+                payload.update(snapshot)
         self.event_bus.emit("game:operation_progress", payload)
 
     def finalize(self, action: Callable[[], object]) -> object:
@@ -107,6 +109,7 @@ class _Operation:
     last_log_at: float = 0.0
     last_log_message: str = ""
     has_logged_progress: bool = False
+    revision: int = 0
 
 
 class OperationManager:
@@ -142,7 +145,7 @@ class OperationManager:
         """
         self._data_path = data_path / "operations"
         self._events = event_bus
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ECL-GameOperation")
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ECL-ApplicationOperation")
         self._operations: dict[str, _Operation] = {}
         self._lock = RLock()
         self._closing = False
@@ -180,11 +183,12 @@ class OperationManager:
         self._emit(operation)
         self._logger.info("后台任务开始执行；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind))
 
-        def update(percent: float, message: str, details: dict[str, object]) -> None:
+        def update(percent: float, message: str, details: dict[str, object]) -> dict[str, object]:
             with self._lock:
                 operation.percent = percent
                 operation.message = message
                 operation.details.update(details)
+                operation.revision += 1
                 now = monotonic()
                 stage = details.get("stage") or details.get("subtask")
                 has_stage_change = isinstance(stage, str) and stage != operation.last_log_message
@@ -195,6 +199,7 @@ class OperationManager:
                     operation.last_log_at = now
             if should_log:
                 self._logger.debug("后台任务进度：%.0f%%；阶段：%s", percent, message)
+            return self._payload(operation)
 
         def finalize(action: Callable[[], object]) -> object:
             with self._lock:
@@ -250,10 +255,16 @@ class OperationManager:
                 "result": operation.result,
                 "error": operation.error,
                 "errorCode": operation.error_code,
+                "canCancel": operation.can_cancel and operation.status in {"pending", "running"},
+                "cancellationRequested": operation.cancel_event.is_set(),
+                "revision": operation.revision,
             }
 
     def _emit(self, operation: _Operation) -> None:
-        self._events.emit("game:operation_progress", self._payload(operation))
+        with self._lock:
+            operation.revision += 1
+            snapshot = self._payload(operation)
+        self._events.emit("game:operation_progress", snapshot)
 
     def _persist(self, operation: _Operation) -> None:
         try:

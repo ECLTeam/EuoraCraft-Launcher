@@ -686,7 +686,7 @@ class ModpackCoordinator(_GameState):
         def worker(context: OperationContext) -> dict[str, Any]:
             return self._import_archive_worker(source, target, context)
 
-        return self._game_operations.submit("instance_import", worker)
+        return self._application_operations.submit("instance_import", worker)
 
     def _import_archive_worker(
         self, archive_path: Path, target: ResolvedInstanceTarget, context: OperationContext
@@ -770,7 +770,7 @@ class ModpackCoordinator(_GameState):
                 context.progress(8, "整合包下载完成，正在识别")
                 return self._import_archive_worker(archive, target, context)
 
-        return self._game_operations.submit("modpack_online_install", worker)
+        return self._application_operations.submit("modpack_online_install", worker)
 
     def _fetch_ftb_plan(self, project_id: str, version_id: str) -> ModpackPlan:
         """
@@ -1142,7 +1142,7 @@ class ModpackCoordinator(_GameState):
             finally:
                 temp.unlink(missing_ok=True)
 
-        return self._game_operations.submit("instance_export", worker)
+        return self._application_operations.submit("instance_export", worker)
 
     def _collect_export_mods(self, instance_path: Path) -> list[dict[str, Any]]:
         # 收集 mods 目录下启用 jar 的哈希与 CurseForge 指纹；禁用模组不参与反查，随 overrides 打包。

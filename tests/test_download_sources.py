@@ -266,7 +266,7 @@ def test_instance_repair_uses_preferred_source_then_retries_failed_file(tmp_path
 
     service._context = Mock(side_effect=context)
     operation = service.repair_instance_files(game_path, "1.21", source="bmclapi")
-    service._game_operations._operations[operation["operationId"]].future.result(timeout=3)
+    service._application_operations._operations[operation["operationId"]].future.result(timeout=3)
 
     assert service.operation_get(operation["operationId"])["status"] == "completed"
     assert checked_sources == ["bmclapi", "official"]
