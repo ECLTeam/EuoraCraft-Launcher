@@ -18,6 +18,7 @@
 # ============================================================
 
 import json
+import zipfile
 from types import SimpleNamespace
 
 import pytest
@@ -49,6 +50,8 @@ def _write_version_json(game_path, version_name: str, data: dict) -> None:
         json.dumps(data, ensure_ascii=False),
         encoding="utf-8",
     )
+    with zipfile.ZipFile(version_path / f"{version_name}.jar", "w") as archive:
+        archive.writestr("version.json", json.dumps({"id": version_name}))
 
 
 def test_version_service_normalizes_scanner_output(tmp_path) -> None:

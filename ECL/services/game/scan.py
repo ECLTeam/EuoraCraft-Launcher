@@ -23,16 +23,48 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Thread
 from time import monotonic
 from typing import Any
 
+from pydantic import JsonValue
+
 from ECL.utils import ConfigError, atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
+from .instance_health import InstanceInspection
 from .launch_settings import InstanceLaunchOverrides
 from .workspace import resolve_instance_target
+
+
+@dataclass(frozen=True, slots=True)
+class _JavaInstallation:
+    executable_path: str
+    full_version: str
+    major_version: int
+    vendor: str
+    runtime_kind: str
+    architecture: str
+    sources: tuple[str, ...]
+
+    def to_protocol(self) -> dict[str, JsonValue]:
+        """
+        在 IPC 边界保留旧别名，并独立输出供应商和运行时种类。
+        """
+        return {
+            "path": self.executable_path,
+            "executable_path": self.executable_path,
+            "version": self.full_version,
+            "major_version": self.major_version,
+            "java_type": self.vendor or self.runtime_kind,
+            "vendor": self.vendor,
+            "runtime_kind": self.runtime_kind,
+            "arch": self.architecture,
+            "architecture": self.architecture,
+            "sources": list(self.sources),
+        }
 
 
 class ScanCoordinator(_GameState):
@@ -103,13 +135,26 @@ class ScanCoordinator(_GameState):
         )
         version_type = str(info.get("VanillaType") or "").strip() or "release"
         primary_loader = ScanCoordinator._normalize_scanned_loader(info.get("LoaderType"))
-        loader_key = primary_loader.casefold()
-        has_optifine = loader_key == "optifine"
+        inspection = InstanceInspection.inspect(game_path, version_name)
+        components = dict(inspection.components)
+        if not components and primary_loader != "Vanilla":
+            components[primary_loader] = str(info.get("LoaderVersion") or "")
+        if primary_loader == "Vanilla" and components:
+            primary_loader = next(iter(components))
+        component_keys = {name.casefold() for name in components}
         loader_version = str(info.get("LoaderVersion") or "").strip()
         if loader_version == "Unknown":
             loader_version = ""
+        loader_version = components.get(primary_loader) or loader_version
         required_java_value = str(info.get("RequestJava") or "").strip()
         required_java = int(required_java_value) if required_java_value.isdigit() else None
+        if required_java is None:
+            for document in inspection.documents:
+                java_version = document.get("javaVersion")
+                major = java_version.get("majorVersion") if isinstance(java_version, dict) else None
+                if isinstance(major, int) and not isinstance(major, bool) and major > 0:
+                    required_java = major
+                    break
         target = resolve_instance_target(game_path, version_name)
         return {
             "rootKey": target.root_key,
@@ -123,12 +168,14 @@ class ScanCoordinator(_GameState):
             "loaderVersion": loader_version,
             "vanillaName": vanilla_name,
             "requiredJava": required_java,
-            "hasForge": loader_key == "forge",
-            "hasNeoForge": "neoforged" in loader_key or loader_key == "neoforge",
-            "hasFabric": loader_key in {"fabric", "legacyfabric", "babric"},
-            "hasQuilt": loader_key == "quilt",
-            "hasOptiFine": has_optifine,
-            "isBroken": not json_path.is_file(),
+            "installedComponents": [{"name": name, "version": version} for name, version in components.items()],
+            "hasForge": "forge" in component_keys,
+            "hasNeoForge": bool(component_keys & {"neoforged", "neoforge"}),
+            "hasFabric": bool(component_keys & {"fabric", "legacyfabric", "babric"}),
+            "hasQuilt": "quilt" in component_keys,
+            "hasOptiFine": "optifine" in component_keys,
+            "health": inspection.to_health(),
+            "isBroken": not inspection.to_health()["canLaunch"],
             "jsonPath": str(json_path),
             "sourceName": game_path.name or str(game_path),
         }
@@ -141,6 +188,7 @@ class ScanCoordinator(_GameState):
     def _version_metadata_snapshot(version_directory: Path) -> list[tuple[str, int, int]]:
         records: list[tuple[str, int, int]] = []
         candidates = list(version_directory.glob("*.json"))
+        candidates.extend(version_directory.glob("*.jar"))
         candidates.extend(
             (
                 version_directory / "eclversion.json",
@@ -170,7 +218,7 @@ class ScanCoordinator(_GameState):
         game_path: Path,
         compatibility_options: dict[str, Any] | None = None,
     ) -> tuple[tuple[str, int, int], ...]:
-        # 生成轻量版本目录快照，只跟踪目录项和直接 JSON 文件。
+        # 主 Jar 的增删和替换也会改变实例健康状态。
         versions_path = game_path / "versions"
         records: list[tuple[str, int, int]] = []
 
@@ -278,6 +326,14 @@ class ScanCoordinator(_GameState):
             raise VersionScanError(f"扫描游戏目录失败: {game_path}: {exc}") from exc
         if not isinstance(versions, dict):
             raise VersionScanError(f"版本扫描器返回了无效数据: {game_path}")
+        versions = dict(versions)
+        for directory in versions_path.iterdir():
+            if (
+                directory.is_dir()
+                and not directory.name.startswith(".")
+                and directory.resolve().parent == versions_path.resolve()
+            ):
+                versions.setdefault(directory.name, {})
         normalized_versions = [
             self._normalize_scanned_version(game_path, version_name.strip(), info)
             for version_name, info in versions.items()
@@ -632,9 +688,13 @@ class ScanCoordinator(_GameState):
 
     def scan_java(self, user_java_paths: list[str] | None = None) -> list[dict[str, Any]]:
         """
-        扫描 Java 运行时。
+        扫描并缓存实际 Java 运行时，独立输出供应商、种类、版本与架构。
+
+        更新服务持有的运行时快照，供后续自动选择使用；扫描器维护其磁盘
+        缓存。旧 java_type 字段仅用于协议兼容，不再作为内部运行时种类。
 
         :param user_java_paths: 用户配置的 Java 搜索路径
+        :return: 按主版本排序的运行时清单，缺失供应商保持为空
         """
         user_paths = [path for path in user_java_paths or [] if isinstance(path, str) and path.strip()]
         self.logger.debug("开始扫描 Java 运行时，用户自定义路径: %s", user_paths)
@@ -656,14 +716,15 @@ class ScanCoordinator(_GameState):
             }.get(architecture, architecture)
             path = str(runtime.path)
             installations.append(
-                {
-                    "path": path,
-                    "version": str(runtime.version),
-                    "major_version": self._java_major_version(runtime.version),
-                    "java_type": runtime.vendor or ("JDK" if runtime.is_jdk else "JRE"),
-                    "arch": architecture,
-                    "sources": ["user" if path in user_paths else "system"],
-                }
+                _JavaInstallation(
+                    executable_path=path,
+                    full_version=str(runtime.version),
+                    major_version=self._java_major_version(runtime.version),
+                    vendor=runtime.vendor or "",
+                    runtime_kind="JDK" if runtime.is_jdk else "JRE",
+                    architecture=architecture,
+                    sources=("user" if path in user_paths else "system",),
+                ).to_protocol()
             )
         return sorted(
             installations,
