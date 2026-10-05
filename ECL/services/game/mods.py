@@ -25,7 +25,8 @@ from typing import Any
 from uuid import uuid4
 
 from .base import GameServiceError, _GameState
-from .resources import ResourceCoordinator
+from .mod_metadata import LocalModParser, ModDependencyDiagnostics
+from .resources import ResourceCoordinator, _sha512
 
 
 def _icon_mime(filename: str) -> str:
@@ -57,22 +58,31 @@ class ModCoordinator(_GameState):
         """
         return self._list_mods_at(self._normalize_game_path(game_path))
 
-    def _list_mods_at(self, data_path: Path) -> list[dict[str, Any]]:
+    def _list_mods_at(
+        self, data_path: Path, environment: dict[str, str | None] | None = None, manifest: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """
         从已解析的实际游戏数据目录列出模组，避免再次归一化隔离目录。
         """
         mods_dir = data_path / "mods"
         if not mods_dir.is_dir():
             return []
+        paths = [
+            path
+            for path in sorted(mods_dir.iterdir(), key=lambda item: item.name.casefold())
+            if path.is_file() and path.name.casefold().endswith((".jar", ".jar.disabled"))
+        ]
+        parsed_files = tuple(LocalModParser.parse(path) for path in paths)
+        diagnostics = ModDependencyDiagnostics.evaluate(parsed_files, environment)
         result = []
-        for path in sorted(mods_dir.iterdir(), key=lambda item: item.name.casefold()):
-            if not path.is_file() or not (path.name.endswith(".jar") or path.name.endswith(".jar.disabled")):
-                continue
-            enabled = path.name.endswith(".jar")
-            metadata = ResourceCoordinator._parse_mod(path)
+        for path, parsed in zip(paths, parsed_files, strict=True):
+            enabled = parsed.enabled
+            metadata = parsed.legacy_summary()
+            digest = _sha512(path)
+            recorded = ResourceCoordinator._resource_source(self, manifest or {}, "mod", path.name, digest)
             original_name = str(metadata.get("name") or path.stem.removesuffix(".disabled"))
-            project_id = str(metadata.get("projectId") or "")
-            wiki_mod = self._mcmod.lookup_by_alias(project_id, original_name, path.stem.removesuffix(".disabled"))
+            mod_id = str(metadata.get("modId") or "")
+            wiki_mod = self._mcmod.lookup_by_alias(mod_id, original_name, path.stem.removesuffix(".disabled"))
             wiki = self._mcmod.to_wiki_info(wiki_mod) if wiki_mod is not None else None
             result.append(
                 {
@@ -85,11 +95,20 @@ class ModCoordinator(_GameState):
                     "author": metadata.get("author") or "",
                     "loader_type": metadata.get("loader") or "",
                     "game_version": metadata.get("gameVersion") or "",
-                    "project_id": project_id,
+                    "project_id": mod_id,
+                    "mod_id": mod_id,
+                    "source": recorded.get("source", "local"),
+                    "source_project_id": recorded.get("projectId"),
+                    "source_version_id": recorded.get("versionId"),
+                    "sha512": digest,
+                    "declared_mod_ids": metadata["declaredModIds"],
+                    "provided_mod_ids": metadata["providedModIds"],
+                    "dependency_declarations": metadata["dependencyDeclarations"],
+                    "diagnostics": diagnostics[path.name],
                     "dependencies": metadata.get("dependencies") or [],
                     "enabled": enabled,
                     "size": path.stat().st_size,
-                    "icon_data": self._read_mod_icon(path, metadata.get("icon"), [project_id, original_name]),
+                    "icon_data": self._read_mod_icon(path, metadata.get("icon"), [mod_id, original_name]),
                     "modified_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
                 }
             )
@@ -209,7 +228,21 @@ class ModCoordinator(_GameState):
     def list_instance_mods(
         self, game_path: Any, version_id: Any, version_isolation: Any = None
     ) -> list[dict[str, Any]]:
-        return self._list_mods_at(self._instance_mod_root(game_path, version_id, version_isolation))
+        """
+        从实例实际数据目录读取模组、来源身份与启用状态诊断。
+
+        解析与资源清单共用模型，来源证据失效或无法解析时仍保留本地文件。
+
+        :param game_path: Minecraft 根目录
+        :param version_id: 实例目录名
+        :param version_isolation: 可选的版本隔离覆盖
+        :return: 模组清单及不自动修改文件的诊断
+        """
+        return self._list_mods_at(
+            self._instance_mod_root(game_path, version_id, version_isolation),
+            ResourceCoordinator._mod_environment(self, game_path, version_id),
+            ResourceCoordinator._read_resource_manifest(self, game_path, version_id),
+        )
 
     def toggle_instance_mod(
         self, game_path: Any, version_id: Any, filename: Any, version_isolation: Any = None

@@ -21,11 +21,12 @@
 #       - fetch_project_versions(source, project_id, game_version=…, loader=…) -> list[dict[str, Any]] — 获取 Modrinth 项目版本列表，映射为前端 ``ModVersion`` 结构。
 #       - install_online_resource(game_path, version_id, resource_type, source, project_id, version_id_str, version_isolation=…, task_id=…, world_id=…) -> dict[str, Any] — 按版本 ID 下载在线资源到目标目录，并记录来源到清单。
 #       - download_resource_to_path(source, project_id, version_id_str, save_path, task_id=…) -> dict[str, Any] — 按版本 ID 下载在线资源文件到用户指定的保存路径，不写入任何实例目录。
-#       - identify_resource_hash(sha512, curseforge_key=…) -> dict[str, Any] — 用完整文件哈希查询 Modrinth 和 CurseForge，歧义时不猜测来源。
+#       - identify_resource_hash(sha512, curseforge_key=…) -> ResourceIdentity — 有界查询并缓存 Modrinth 的完整文件哈希来源。
 #       - check_resource_updates(game_path, version_id, resource_type, game_version, loader, version_isolation=…, world_id=…) -> list[dict[str, Any]] — 查询与当前游戏版本和加载器严格兼容的 Modrinth 更新候选。
 #       - update_resource(game_path, version_id, resource_type, resource_id, update, version_isolation=…, world_id=…) -> dict[str, str] — 下载校验更新文件后原子替换，旧文件直接删除。
 #       （整合包导入导出已移交 ModpackCoordinator，见 modpack.py）
 #   - ResourceDeleteResult — 批量删除中已删除资源及逐项失败的结果。
+#   - ResourceIdentity — 哈希确认的平台项目与版本身份或未识别状态。
 # ============================================================
 
 from __future__ import annotations
@@ -42,13 +43,13 @@ import shutil
 import struct
 import tempfile
 import time
-import tomllib
 import zipfile
 import zlib
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import BoundedSemaphore, Lock
 from typing import Any, TypedDict
 
 import httpx
@@ -59,6 +60,8 @@ from ECL.utils.nbt import Compound, List, String, load
 from ECL.utils.network import download_proxy_url
 
 from .base import GameServiceError
+from .instance_health import InstanceInspection
+from .mod_metadata import LocalModMetadata, LocalModParser, ModDependencyDiagnostics
 from .operations import OperationContext
 from .resource_files import ResourceFilePolicy
 from .resource_search import SearchBatch, SearchCriteria, SearchItem, SearchResult, SearchSource
@@ -81,6 +84,18 @@ class ResourceDeleteResult(TypedDict):
 
     deleted: list[str]
     failed: list[ResourceDeleteFailure]
+
+
+class ResourceIdentity(TypedDict, total=False):
+    """
+    描述内容哈希确认的平台来源，未识别和网络不可用分别表示。
+    """
+
+    matched: bool
+    unavailable: bool
+    source: str
+    projectId: str
+    versionId: str
 
 
 def _proxied_get(url: str, **kwargs: Any) -> httpx.Response:
@@ -280,6 +295,10 @@ class ResourceCoordinator:
     统一管理模组、资源包、光影包、数据包和原理图。
     """
 
+    identity_lock: Lock = Lock()
+    identity_slots: BoundedSemaphore = BoundedSemaphore(2)
+    identity_cache: dict[tuple[str, str], tuple[float, ResourceIdentity]] = {}
+
     resourcepack_icon_max_bytes: int = 1024 * 1024
     resourcepack_icon_max_dimension: int = 4096
 
@@ -362,93 +381,30 @@ class ResourceCoordinator:
 
     @staticmethod
     def _parse_mod(path: Path) -> dict[str, Any]:
-        result: dict[str, Any] = {"name": path.stem.removesuffix(".disabled"), "dependencies": []}
-        if not zipfile.is_zipfile(path):
-            return result
-        try:
-            with zipfile.ZipFile(path) as archive:
-                names = set(archive.namelist())
-                if "fabric.mod.json" in names:
-                    data = _safe_json(archive.read("fabric.mod.json"))
-                    depends = data.get("depends") or {}
-                    icon = data.get("icon")
-                    # fabric 的 icon 可为路径字符串或 {尺寸: 路径} 映射，取第一个有效路径。
-                    if isinstance(icon, dict) and icon:
-                        icon = next(iter(icon.values()))
-                    result.update(
-                        {
-                            "loader": "fabric",
-                            "projectId": data.get("id"),
-                            "name": data.get("name") or data.get("id") or result["name"],
-                            "version": data.get("version"),
-                            "author": _join_authors(data.get("authors")),
-                            "gameVersion": str(depends.get("minecraft")) if depends.get("minecraft") else None,
-                            "dependencies": list(depends.keys()),
-                            "icon": icon if isinstance(icon, str) else None,
-                        }
-                    )
-                elif "quilt.mod.json" in names:
-                    data = _safe_json(archive.read("quilt.mod.json"))
-                    quilt = data.get("quilt_loader") or {}
-                    metadata = quilt.get("metadata") or {}
-                    contributors = metadata.get("contributors") or {}
-                    depends = quilt.get("depends") or []
-                    minecraft = next(
-                        (
-                            item.get("versions")
-                            for item in depends
-                            if isinstance(item, dict) and item.get("id") == "minecraft"
-                        ),
-                        None,
-                    )
-                    result.update(
-                        {
-                            "loader": "quilt",
-                            "projectId": quilt.get("id"),
-                            "name": metadata.get("name") or quilt.get("id") or result["name"],
-                            "version": quilt.get("version"),
-                            "author": ", ".join(contributors.keys()) if isinstance(contributors, dict) else "",
-                            "gameVersion": str(minecraft) if minecraft else None,
-                            "dependencies": [item.get("id") for item in depends if isinstance(item, dict)],
-                        }
-                    )
-                else:
-                    toml_name = (
-                        "META-INF/neoforge.mods.toml"
-                        if "META-INF/neoforge.mods.toml" in names
-                        else "META-INF/mods.toml"
-                    )
-                    if toml_name in names:
-                        data = tomllib.loads(archive.read(toml_name).decode("utf-8-sig"))
-                        mods = data.get("mods") or []
-                        first = mods[0] if mods and isinstance(mods[0], dict) else {}
-                        mod_id = str(first.get("modId") or "")
-                        dependencies: list[str] = []
-                        minecraft_range: str | None = None
-                        dep_map = data.get("dependencies") or {}
-                        for dep in dep_map.get(mod_id) or []:
-                            if not isinstance(dep, dict) or not dep.get("modId"):
-                                continue
-                            if dep.get("modId") == "minecraft":
-                                minecraft_range = str(dep.get("versionRange") or "")
-                            elif dep.get("mandatory"):
-                                dependencies.append(str(dep["modId"]))
-                        logo = first.get("icon") or first.get("logoFile")
-                        result.update(
-                            {
-                                "loader": "neoforge" if "neoforge" in toml_name else "forge",
-                                "projectId": mod_id or None,
-                                "name": first.get("displayName") or mod_id or result["name"],
-                                "version": first.get("version"),
-                                "author": str(first.get("authors") or ""),
-                                "gameVersion": minecraft_range,
-                                "dependencies": dependencies,
-                                "icon": logo if isinstance(logo, str) else None,
-                            }
-                        )
-        except (OSError, ValueError, KeyError, zipfile.BadZipFile):
-            pass
-        return result
+        return LocalModParser.parse(path).legacy_summary()
+
+    def _mod_environment(self, game_path: Any, version_id: Any) -> dict[str, str | None]:
+        """
+        从实际继承链读取游戏和加载器版本，不用 Java 最低要求代替运行版本。
+        """
+        target = self.resolve_instance(game_path, version_id)
+        return InstanceInspection.inspect(target.minecraft_root_path, target.instance_directory_name).mod_environment()
+
+    def _resource_source(
+        self, manifest: dict[str, Any], resource_type: str, filename: str, digest: str | None
+    ) -> dict[str, Any]:
+        """
+        优先读取安装清单；禁用后缀不改变来源，文件内容改变则失效。
+        """
+        records = manifest.get("resources")
+        if not isinstance(records, dict):
+            return {}
+        recorded = records.get(f"{resource_type}:{filename}") or records.get(
+            f"{resource_type}:{filename.removesuffix('.disabled')}"
+        )
+        if not isinstance(recorded, dict) or recorded.get("sha512") != digest or not digest:
+            return {}
+        return recorded
 
     @staticmethod
     def _parse_pack(path: Path) -> dict[str, Any]:
@@ -490,7 +446,8 @@ class ResourceCoordinator:
         root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
         if not root.is_dir():
             return []
-        manifest = self._read_resource_manifest(game_path, version_id).get("resources") or {}
+        manifest = self._read_resource_manifest(game_path, version_id)
+        mod_files: list[LocalModMetadata] = []
         resources: list[dict[str, Any]] = []
         for path in root.iterdir():
             if path.name.startswith(".") or not (
@@ -508,8 +465,11 @@ class ResourceCoordinator:
                         "资源已过滤：%s %s (%s)", resource_type, path.name, exc.error_code
                     )
                     continue
+            parsed_mod = LocalModParser.parse(path) if resource_type == "mod" else None
+            if parsed_mod is not None:
+                mod_files.append(parsed_mod)
             metadata = (
-                self._parse_mod(path)
+                parsed_mod.legacy_summary()
                 if resource_type == "mod"
                 else {"name": inspection.name or path.stem, "packFormat": inspection.pack_format}
                 if resource_type in {"resourcepack", "datapack"}
@@ -518,7 +478,7 @@ class ResourceCoordinator:
             if resource_type == "resourcepack":
                 metadata["iconData"] = self._read_resourcepack_icon(path)
             digest = _sha512(path) if path.is_file() else None
-            recorded = manifest.get(f"{resource_type}:{path.name}") or {}
+            recorded = self._resource_source(manifest, resource_type, path.name, digest)
             resources.append(
                 {
                     "id": path.name,
@@ -535,23 +495,20 @@ class ResourceCoordinator:
                 }
             )
         hashes: dict[str, int] = {}
-        ids: dict[str, int] = {}
+        diagnostics = (
+            ModDependencyDiagnostics.evaluate(tuple(mod_files), self._mod_environment(game_path, version_id))
+            if mod_files
+            else {}
+        )
         for item in resources:
             if item.get("sha512"):
                 hashes[item["sha512"]] = hashes.get(item["sha512"], 0) + 1
-            if resource_type == "mod" and item.get("projectId"):
-                key = str(item["projectId"]).casefold()
-                ids[key] = ids.get(key, 0) + 1
-        installed_ids = set(ids)
-        ignored_dependencies = {"minecraft", "java", "fabricloader", "forge", "neoforge", "quilt_loader"}
         for item in resources:
             item["duplicateHash"] = bool(item.get("sha512") and hashes.get(item["sha512"], 0) > 1)
-            key = str(item.get("projectId") or "").casefold()
-            item["duplicateProjectId"] = bool(key and ids.get(key, 0) > 1)
+            item["diagnostics"] = diagnostics.get(item["id"], [])
+            item["duplicateProjectId"] = any(issue["code"] == "duplicate_provider" for issue in item["diagnostics"])
             item["missingDependencies"] = [
-                dependency
-                for dependency in item.get("dependencies") or []
-                if str(dependency).casefold() not in installed_ids | ignored_dependencies
+                issue["modId"] for issue in item["diagnostics"] if issue["code"] == "missing_required"
             ]
         return sorted(resources, key=lambda item: str(item.get("name") or item["id"]).casefold())
 
@@ -653,11 +610,13 @@ class ResourceCoordinator:
         if resource_type == "schematic":
             raise GameServiceError("原理图不支持启用或禁用", "RESOURCE_TOGGLE_UNSUPPORTED")
         if resource_type == "mod":
-            if enabled and path.name.endswith(".disabled"):
-                destination = path.with_name(path.name.removesuffix(".disabled"))
-                path.rename(destination)
-            elif not enabled and not path.name.endswith(".disabled"):
-                destination = path.with_name(f"{path.name}.disabled")
+            is_enabled = not path.name.endswith(".disabled")
+            if enabled != is_enabled:
+                destination = path.with_name(
+                    path.name.removesuffix(".disabled") if enabled else f"{path.name}.disabled"
+                )
+                if destination.exists():
+                    raise GameServiceError("目标模组文件已存在", "RESOURCE_ALREADY_EXISTS")
                 path.rename(destination)
         elif resource_type == "resourcepack":
             self._patch_options_list(target.game_data_path / "options.txt", "resourcePacks", path.name, enabled)
@@ -1568,34 +1527,59 @@ class ResourceCoordinator:
         finally:
             temp.unlink(missing_ok=True)
 
-    def identify_resource_hash(self, sha512: str, curseforge_key: str | None = None) -> dict[str, Any]:
+    def identify_resource_hash(self, sha512: str, curseforge_key: str | None = None) -> ResourceIdentity:
         """
-        用完整文件哈希查询 Modrinth 和 CurseForge，歧义时不猜测来源。
+        按内容哈希查询 Modrinth，结果缓存十分钟且最多保留 256 项。
+
+        CurseForge 指纹不是 SHA-512，此接口不冒充支持该平台的反查。
+        网络失败不缓存；并发查询最多两个，等待也有超时。
+
+        :param sha512: 完整文件 SHA-512
+        :param curseforge_key: 保留旧协议参数，不用于 SHA-512 反查
+        :return: 明确的来源身份或未识别状态
+        :raises GameServiceError: 哈希无效时抛出
         """
         if not re.fullmatch(r"[a-fA-F0-9]{128}", sha512):
             raise GameServiceError("资源 SHA-512 格式无效", "INVALID_RESOURCE_HASH")
-        candidates: list[dict[str, Any]] = []
+        digest = sha512.lower()
+        cache_key = ("modrinth", digest)
+        with self.identity_lock:
+            cached = self.identity_cache.get(cache_key)
+            if cached and time.monotonic() - cached[0] < 600:
+                return dict(cached[1])
+        if not self.identity_slots.acquire(timeout=10):
+            return {"matched": False, "unavailable": True}
         try:
             response = _proxied_post(
                 "https://api.modrinth.com/v2/version_files",
-                json={"hashes": [sha512], "algorithm": "sha512"},
+                json={"hashes": [digest], "algorithm": "sha512"},
                 headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
                 timeout=10,
             )
             response.raise_for_status()
-            if version := response.json().get(sha512):
-                candidates.append(
-                    {"source": "modrinth", "projectId": version.get("project_id"), "versionId": version.get("id")}
-                )
-        except httpx.HTTPError:
-            pass
-        key = os.getenv("CURSEFORGE_API_KEY") or curseforge_key
-        if key:
-            # CurseForge 指纹使用 MurmurHash2 而非 SHA-512，未能识别的本地文件在此保持为本地。
-            pass
-        if len(candidates) != 1:
-            return {"matched": False, "ambiguous": len(candidates) > 1, "candidates": candidates}
-        return {"matched": True, **candidates[0]}
+            payload = response.json()
+            version = payload.get(digest) if isinstance(payload, dict) else None
+            result: ResourceIdentity = {"matched": False}
+            if (
+                isinstance(version, dict)
+                and isinstance(version.get("project_id"), str)
+                and isinstance(version.get("id"), str)
+            ):
+                result = {
+                    "matched": True,
+                    "source": "modrinth",
+                    "projectId": version["project_id"],
+                    "versionId": version["id"],
+                }
+            with self.identity_lock:
+                if len(self.identity_cache) >= 256:
+                    self.identity_cache.pop(next(iter(self.identity_cache)))
+                self.identity_cache[cache_key] = (time.monotonic(), dict(result))
+            return result
+        except (httpx.HTTPError, ValueError):
+            return {"matched": False, "unavailable": True}
+        finally:
+            self.identity_slots.release()
 
     def check_resource_updates(
         self,
