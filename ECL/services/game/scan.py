@@ -41,7 +41,13 @@ class ScanCoordinator(_GameState):
     non_release_version_types = frozenset({"snapshot", "april_fools", "old_alpha", "old_beta"})
 
     @staticmethod
-    def _normalize_scan_paths(value: Any) -> list[Path]:
+    def _normalize_scan_paths(value: Any, *, preserve_aliases: bool = False) -> list[Path]:
+        """
+        校验扫描根目录，并按实际解析路径合并可确认的别名。
+
+        内部扫描可保留原始别名，以便在响应中说明哪些输入路径属于同一根目录。
+        不进行无条件大小写转换，无法确认的目录继续区分。
+        """
         if isinstance(value, (str, Path)):
             raw_paths = [value]
         elif isinstance(value, list):
@@ -61,7 +67,7 @@ class ScanCoordinator(_GameState):
             if path.name.casefold() == "versions":
                 path = path.parent
             path_key = str(path.resolve(strict=False))
-            if path_key in seen:
+            if path_key in seen and not preserve_aliases:
                 continue
             seen.add(path_key)
             paths.append(path)
@@ -308,7 +314,15 @@ class ScanCoordinator(_GameState):
         :param compatibility_options: 按来源标识分组的插件兼容配置
         """
         scanned_versions: list[dict[str, Any]] = []
-        normalized_paths = list(self._normalize_scan_paths(paths))
+        requested_paths_by_root_key: dict[str, list[str]] = {}
+        path_by_root_key: dict[str, Path] = {}
+        for requested_path in self._normalize_scan_paths(paths, preserve_aliases=True):
+            root_key = self._version_path_key(requested_path)
+            path_by_root_key.setdefault(root_key, requested_path)
+            aliases = requested_paths_by_root_key.setdefault(root_key, [])
+            if str(requested_path) not in aliases:
+                aliases.append(str(requested_path))
+        normalized_paths = list(path_by_root_key.values())
         self.logger.debug(
             "开始扫描版本目录，共 %d 个路径，强制刷新：%s", len(normalized_paths), ("是" if force else "否")
         )
@@ -330,7 +344,9 @@ class ScanCoordinator(_GameState):
             else:
                 self.logger.debug("扫描版本目录: %s，共 %d 个版本", game_path, len(cached_versions))
                 versions = deepcopy(cached_versions)
-            scanned_versions.extend(versions)
+            scanned_versions.extend(
+                {**version, "rootAliases": list(requested_paths_by_root_key[key])} for version in versions
+            )
         self.logger.debug("版本扫描完成，共 %d 个实例", len(scanned_versions))
         return sorted(
             scanned_versions,

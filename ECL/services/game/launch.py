@@ -519,12 +519,18 @@ class LaunchCoordinator(_GameState):
         return None
 
     def _known_java_runtime(self, java_path: str) -> Any | None:
-        target = str(Path(java_path).resolve(strict=False)).casefold()
+        """
+        按解析后的可执行文件路径查找已经扫描的 Java，不执行额外探测。
+
+        不将目录转换为小写，避免把大小写敏感目录中的另一套运行时
+        当成用户选择的 Java。
+        """
+        target_java_path_key = str(Path(java_path).resolve(strict=False))
         return next(
             (
                 runtime
                 for runtime in self._java_runtimes
-                if str(Path(runtime.path).resolve(strict=False)).casefold() == target
+                if str(Path(runtime.path).resolve(strict=False)) == target_java_path_key
             ),
             None,
         )

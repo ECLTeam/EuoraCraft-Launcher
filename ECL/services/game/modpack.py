@@ -804,20 +804,20 @@ class ModpackCoordinator(_GameState):
 
         保留历史行为：不下载文件、不校验基础版本。
         """
-        staging = target.instance_path.with_name(f".{target.version_id}.ecl-import")
+        staging = target.instance_path.with_name(f".{target.instance_directory_name}.ecl-import")
         try:
             shutil.copytree(extracted, staging, ignore=shutil.ignore_patterns("ecl-pack.json"))
             manifests = list(staging.glob("*.json"))
             original = next((path for path in manifests if path.name != "ecl-pack.json"), None)
-            if original and original.name != f"{target.version_id}.json":
-                original.rename(staging / f"{target.version_id}.json")
+            if original and original.name != f"{target.instance_directory_name}.json":
+                original.rename(staging / f"{target.instance_directory_name}.json")
             context.check_cancelled()
             staging.replace(target.instance_path)
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
         return {
-            "versionId": target.version_id,
+            "versionId": target.instance_directory_name,
             "path": str(target.instance_path),
             "format": "ecl-legacy",
             "downloadedFiles": 0,
@@ -837,7 +837,7 @@ class ModpackCoordinator(_GameState):
         """
         if not plan.minecraft_version:
             raise GameServiceError("整合包缺少 Minecraft 版本声明", "INVALID_PACK_ARCHIVE")
-        staging = target.instance_path.with_name(f".{target.version_id}.ecl-import")
+        staging = target.instance_path.with_name(f".{target.instance_directory_name}.ecl-import")
         try:
             entries, skipped = self._resolve_pack_entries(plan, context)
             base_name = self._ensure_pack_base_version(plan, target, context)
@@ -851,7 +851,7 @@ class ModpackCoordinator(_GameState):
             context.check_cancelled()
             staging.replace(target.instance_path)
             return {
-                "versionId": target.version_id,
+                "versionId": target.instance_directory_name,
                 "path": str(target.instance_path),
                 "format": plan.format_name,
                 "downloadedFiles": len(entries),
@@ -946,7 +946,7 @@ class ModpackCoordinator(_GameState):
             loader=plan.loader_type,
             loader_version=loader_version,
             fabric_api_version=None,
-            game_path=target.game_path,
+            game_path=target.minecraft_root_path,
             source="official",
             java_path=java_path,
             report=report,
@@ -1064,8 +1064,8 @@ class ModpackCoordinator(_GameState):
     def _write_pack_version_json(base_name: str, target: ResolvedInstanceTarget, staging: Path) -> None:
         # 写入继承基础版本的实例描述，包内自带同名描述时统一覆盖为新实例名。
         atomic_write_text(
-            staging / f"{target.version_id}.json",
-            json.dumps({"id": target.version_id, "inheritsFrom": base_name}, ensure_ascii=False, indent=2),
+            staging / f"{target.instance_directory_name}.json",
+            json.dumps({"id": target.instance_directory_name, "inheritsFrom": base_name}, ensure_ascii=False, indent=2),
         )
 
     # 导出时排除的隐私目录与文件；与导入语义对齐，避免存档/截图随包外泄。
@@ -1123,10 +1123,12 @@ class ModpackCoordinator(_GameState):
                                 "formatVersion": 1,
                                 "game": "minecraft",
                                 "versionId": 1,
-                                "name": target.version_id,
+                                "name": target.instance_directory_name,
                                 "summary": "Exported by ECL",
                                 "files": [online_files[key] for key in sorted(online_files)],
-                                "dependencies": {"minecraft": _extract_minecraft_version(target.version_id)},
+                                "dependencies": {
+                                    "minecraft": _extract_minecraft_version(target.instance_directory_name)
+                                },
                             },
                             ensure_ascii=False,
                         ),

@@ -335,12 +335,12 @@ class ResourceCoordinator:
         if resource_type == "datapack":
             if not world_id:
                 raise GameServiceError("数据包管理需要先选择世界", "WORLD_REQUIRED")
-            world = resolve_relative_id(target.data_path / "saves", world_id)
+            world = resolve_relative_id(target.game_data_path / "saves", world_id)
             return world / "datapacks"
         directory = ResourceCatalogPolicy.directories.get(resource_type)
         if directory is None:
             raise GameServiceError("未知资源类型", "INVALID_RESOURCE_TYPE")
-        return target.data_path / directory
+        return target.game_data_path / directory
 
     def _resource_manifest_path(self, game_path: Any, version_id: Any) -> Path:
         return self.resolve_instance(game_path, version_id).instance_path / ".ecl" / "resources.json"
@@ -660,15 +660,15 @@ class ResourceCoordinator:
                 destination = path.with_name(f"{path.name}.disabled")
                 path.rename(destination)
         elif resource_type == "resourcepack":
-            self._patch_options_list(target.data_path / "options.txt", "resourcePacks", path.name, enabled)
+            self._patch_options_list(target.game_data_path / "options.txt", "resourcePacks", path.name, enabled)
         elif resource_type == "shaderpack":
-            options = target.data_path / "optionsshaders.txt"
+            options = target.game_data_path / "optionsshaders.txt"
             lines = options.read_text(encoding="utf-8", errors="replace").splitlines() if options.is_file() else []
             lines = [line for line in lines if not line.startswith("shaderPack=")]
             lines.append(f"shaderPack={path.name if enabled else 'OFF'}")
             atomic_write_text(options, "\n".join(lines) + "\n")
         elif resource_type == "datapack":
-            world = resolve_relative_id(target.data_path / "saves", world_id)
+            world = resolve_relative_id(target.game_data_path / "saves", world_id)
             level_path = world / "level.dat"
             document = load(level_path)
             data = document.get("Data", document)

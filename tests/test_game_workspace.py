@@ -24,6 +24,8 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from threading import RLock
+from types import SimpleNamespace
 
 import pytest
 
@@ -65,6 +67,85 @@ def test_scan_identity_does_not_fold_case_sensitive_paths(tmp_path: Path) -> Non
         roots = ScanCoordinator._normalize_scan_paths([tmp_path / "Pack", tmp_path / "pack"])
         assert len(roots) == 2
         assert ScanCoordinator._version_path_key(roots[0]) != ScanCoordinator._version_path_key(roots[1])
+
+
+def test_running_guards_distinguish_resolved_case_sensitive_roots(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "resolve", lambda path, **_: path)
+    root = tmp_path / "Pack"
+    other_root = tmp_path / "pack"
+    service = WorkspaceCoordinator.__new__(WorkspaceCoordinator)
+    service.events = SimpleNamespace(emit=lambda *_args: None)
+    service.list_instances = lambda: [{"gamePath": str(other_root), "versionId": "same"}]
+    deleted_paths = []
+    monkeypatch.setattr("ECL.services.game.workspace.delete_path", deleted_paths.append)
+    service.delete_instance(root, "same")
+    assert deleted_paths == [root / "versions" / "same"]
+    worlds = WorldCoordinator.__new__(WorldCoordinator)
+    worlds.list_instances = service.list_instances
+    worlds._assert_world_writable(resolve_instance_target(root, "same"), root / "world")
+
+
+def test_core_context_does_not_reuse_a_case_folded_root(tmp_path: Path, monkeypatch) -> None:
+    from ECL.services.game.base import _GameState
+
+    root = tmp_path / "Pack"
+    service = _GameState.__new__(_GameState)
+    service._normalize_game_path = lambda _value: root
+    service._lock = RLock()
+    service._contexts = {(str(root).casefold(), "official"): SimpleNamespace(owner="other-root")}
+    service.logger = SimpleNamespace(debug=lambda *_args: None)
+    # 创建新核心时故意中断，以区分创建动作和错误复用，不访问网络。
+    service._api_client_factory = lambda _config: (_ for _ in ()).throw(RuntimeError("create current root"))
+    with pytest.raises(RuntimeError, match="create current root"):
+        service._context(root)
+
+
+def test_java_lookup_distinguishes_resolved_case_sensitive_paths(tmp_path: Path, monkeypatch) -> None:
+    from ECL.services.game.launch import LaunchCoordinator
+
+    monkeypatch.setattr(Path, "resolve", lambda path, **_: path)
+    java_path = tmp_path / "JavaA" / "java"
+    other_path = tmp_path / "javaa" / "java"
+    runtime = SimpleNamespace(path=java_path)
+    service = LaunchCoordinator.__new__(LaunchCoordinator)
+    service._java_runtimes = [runtime]
+    assert service._known_java_runtime(str(other_path)) is None
+    assert service._known_java_runtime(str(java_path)) is runtime
+
+
+def test_scan_reports_verified_root_aliases_without_scanning_twice(tmp_path: Path, monkeypatch) -> None:
+    from ECL.services.game.scan import ScanCoordinator
+
+    first_root = tmp_path / "Pack"
+    second_root = tmp_path / "pack"
+    monkeypatch.setattr(Path, "resolve", lambda path, **_: first_root if path in (first_root, second_root) else path)
+    service = ScanCoordinator.__new__(ScanCoordinator)
+    service._lock = RLock()
+    service.logger = SimpleNamespace(debug=lambda *_args: None)
+    service._version_scan_cache = {}
+    service._version_watch_snapshots = {}
+    service._version_watch_pending = {}
+    service._watch_version_path = lambda path, _options: str(path.resolve(strict=False))
+    service._ensure_ecl_config = lambda _path: None
+    service._version_directory_snapshot = lambda *_args: ()
+    scans = []
+
+    def scan(path, _options):
+        scans.append(path)
+        return [
+            {
+                "versionId": "same",
+                "path": str(path),
+                "rootKey": str(first_root),
+                "sourceName": "root",
+                "displayName": "same",
+            }
+        ]
+
+    service._scan_game_path = scan
+    result = service.scan_versions([first_root, second_root])
+    assert scans == [first_root]
+    assert result[0]["rootAliases"] == [str(first_root), str(second_root)]
 
 
 @pytest.mark.parametrize("relative_id", ["../secret", "/absolute", "a/../../b", ""])

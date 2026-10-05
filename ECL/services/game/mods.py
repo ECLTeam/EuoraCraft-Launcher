@@ -204,7 +204,7 @@ class ModCoordinator(_GameState):
         解析实例实际数据目录，确保模组操作与游戏启动使用同一隔离语义。
         """
         isolated = self.resolve_version_isolation(game_path, version_id, version_isolation)
-        return self.resolve_instance(game_path, version_id, isolated).data_path
+        return self.resolve_instance(game_path, version_id, isolated).game_data_path
 
     def list_instance_mods(
         self, game_path: Any, version_id: Any, version_isolation: Any = None

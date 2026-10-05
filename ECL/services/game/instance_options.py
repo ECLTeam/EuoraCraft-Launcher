@@ -58,7 +58,7 @@ class InstanceOptionsCoordinator:
         return None
 
     def _options_path(self, game_path: Any, version_id: Any, version_isolation: Any = False):
-        return self.resolve_instance(game_path, version_id, version_isolation).data_path / "options.txt"
+        return self.resolve_instance(game_path, version_id, version_isolation).game_data_path / "options.txt"
 
     @staticmethod
     def _load_lines(path) -> list[str]:

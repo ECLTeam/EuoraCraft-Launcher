@@ -212,7 +212,7 @@ class WorkspaceCoordinator:
         校验快速目标并按版本能力生成世界或服务器启动参数。
         """
         target = self.resolve_instance(game_path, version_id, version_isolation)
-        manifest_path = target.instance_path / f"{target.version_id}.json"
+        manifest_path = target.instance_path / f"{target.instance_directory_name}.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, ValueError) as exc:
@@ -221,7 +221,7 @@ class WorkspaceCoordinator:
         kind = quick_target.get("type")
         if kind == "world":
             world_id = str(quick_target.get("world_id") or "")
-            resolve_relative_id(target.data_path / "saves", world_id)
+            resolve_relative_id(target.game_data_path / "saves", world_id)
             if not any("quickPlaySingleplayer" in str(item) for item in game_arguments):
                 raise GameServiceError("该版本不支持快速进入世界", "QUICK_PLAY_WORLD_UNSUPPORTED")
             return ["--quickPlaySingleplayer", world_id]
@@ -246,11 +246,11 @@ class WorkspaceCoordinator:
         target = self.resolve_instance(game_path, version_id, version_isolation)
         folders = {
             "instance": target.instance_path,
-            "mods": target.data_path / "mods",
-            "saves": target.data_path / "saves",
-            "screenshots": target.data_path / "screenshots",
-            "logs": target.data_path / "logs",
-            "crash-reports": target.data_path / "crash-reports",
+            "mods": target.game_data_path / "mods",
+            "saves": target.game_data_path / "saves",
+            "screenshots": target.game_data_path / "screenshots",
+            "logs": target.game_data_path / "logs",
+            "crash-reports": target.game_data_path / "crash-reports",
         }
         if folder not in folders:
             raise GameServiceError("不支持的实例目录类型", "INVALID_FOLDER_KIND")
@@ -269,15 +269,18 @@ class WorkspaceCoordinator:
         阻止运行中实例后，仅回收版本目录，不触碰共享资源和第三方配置。
         """
         target = self.resolve_instance(game_path, version_id)
-        game_key = str(target.game_path).casefold()
+        game_key = target.root_key
         for instance in self.list_instances():
             if (
-                str(instance.get("gamePath") or "").casefold() == game_key
-                and instance.get("versionId") == target.version_id
+                bool(instance.get("gamePath"))
+                and str(Path(str(instance["gamePath"])).expanduser().resolve(strict=False)) == game_key
+                and instance.get("versionId") == target.instance_directory_name
             ):
                 raise GameServiceError("游戏正在运行，无法删除实例", "INSTANCE_IS_RUNNING")
         delete_path(target.instance_path)
-        self.events.emit("game:instances_changed", {"reason": "instance_deleted", "versionId": target.version_id})
+        self.events.emit(
+            "game:instances_changed", {"reason": "instance_deleted", "versionId": target.instance_directory_name}
+        )
 
     def clone_instance(  # noqa: C901 - clone transaction keeps cleanup and atomic commit in one boundary
         self,
@@ -297,21 +300,23 @@ class WorkspaceCoordinator:
             raise GameServiceError("目标实例名称已存在", "INSTANCE_ALREADY_EXISTS")
 
         def worker(context: OperationContext) -> dict[str, str]:  # noqa: C901
-            temp = destination.instance_path.with_name(f".{destination.version_id}.ecl-copy-{context.operation_id}")
+            temp = destination.instance_path.with_name(
+                f".{destination.instance_directory_name}.ecl-copy-{context.operation_id}"
+            )
             try:
                 context.progress(5, "正在复制版本文件")
                 shutil.copytree(source.instance_path, temp)
                 context.check_cancelled()
                 for suffix in (".json", ".jar"):
-                    old = temp / f"{source.version_id}{suffix}"
+                    old = temp / f"{source.instance_directory_name}{suffix}"
                     if old.exists():
-                        old.rename(temp / f"{destination.version_id}{suffix}")
-                config_path = temp / f"{destination.version_id}.json"
+                        old.rename(temp / f"{destination.instance_directory_name}{suffix}")
+                config_path = temp / f"{destination.instance_directory_name}.json"
                 if config_path.is_file():
                     try:
                         config = json.loads(config_path.read_text(encoding="utf-8"))
                         if isinstance(config, dict):
-                            config["id"] = destination.version_id
+                            config["id"] = destination.instance_directory_name
                             atomic_write_text(config_path, json.dumps(config, ensure_ascii=False, indent=2))
                     except (OSError, UnicodeDecodeError, ValueError):
                         pass
@@ -328,7 +333,7 @@ class WorkspaceCoordinator:
                     except (OSError, UnicodeDecodeError, ValueError):
                         profile = {}
                     if isinstance(profile, dict):
-                        original_alias = str(profile.get("alias") or source.version_id)
+                        original_alias = str(profile.get("alias") or source.instance_directory_name)
                         profile["alias"] = f"{original_alias} 副本"
                         for key in ("favorite", "hidden", "pinned", "pinOrder", "preferredExternalSource"):
                             profile.pop(key, None)
@@ -342,7 +347,7 @@ class WorkspaceCoordinator:
                 context.progress(90, "正在提交实例副本")
                 temp.replace(destination.instance_path)
                 self.events.emit("game:instances_changed", {"reason": "instance_cloned"})
-                return {"versionId": destination.version_id, "path": str(destination.instance_path)}
+                return {"versionId": destination.instance_directory_name, "path": str(destination.instance_path)}
             except Exception:
                 if temp.exists():
                     shutil.rmtree(temp, ignore_errors=True)
@@ -355,7 +360,7 @@ class WorkspaceCoordinator:
         只读检查版本 JSON、主 JAR 和已声明库文件，不执行下载或写入。
         """
         target = self.resolve_instance(game_path, version_id)
-        json_path = target.instance_path / f"{target.version_id}.json"
+        json_path = target.instance_path / f"{target.instance_directory_name}.json"
         problems: list[dict[str, Any]] = []
         if not json_path.is_file():
             problems.append({"kind": "missing", "path": str(json_path), "size": 0})
@@ -368,8 +373,8 @@ class WorkspaceCoordinator:
                 "downloadBytes": 0,
                 "canRepair": False,
             }
-        jar_id = str(manifest.get("jar") or manifest.get("id") or target.version_id)
-        jar_path = target.game_path / "versions" / jar_id / f"{jar_id}.jar"
+        jar_id = str(manifest.get("jar") or manifest.get("id") or target.instance_directory_name)
+        jar_path = target.minecraft_root_path / "versions" / jar_id / f"{jar_id}.jar"
         if not jar_path.is_file():
             downloads = manifest.get("downloads") if isinstance(manifest.get("downloads"), dict) else {}
             client = downloads.get("client") if isinstance(downloads.get("client"), dict) else {}
@@ -379,7 +384,7 @@ class WorkspaceCoordinator:
             relative = artifact.get("path")
             if not isinstance(relative, str):
                 continue
-            path = target.game_path / "libraries" / relative
+            path = target.minecraft_root_path / "libraries" / relative
             if not path.is_file():
                 problems.append({"kind": "missing", "path": str(path), "size": int(artifact.get("size") or 0)})
             elif artifact.get("size") and path.stat().st_size != int(artifact["size"]):
@@ -400,11 +405,11 @@ class WorkspaceCoordinator:
         def worker(context: OperationContext) -> dict[str, Any]:
             context.progress(5, "正在准备文件补全")
             context.check_cancelled()
-            core = self._context(target.game_path, normalized_source)
+            core = self._context(target.minecraft_root_path, normalized_source)
             # Core 检查器在修复阶段允许写入；扫描阶段由 inspect_instance_files 保证纯只读。
             import asyncio
 
-            download_list = core.files_checker.check_files(target.game_path, target.version_id)
+            download_list = core.files_checker.check_files(target.minecraft_root_path, target.instance_directory_name)
             context.check_cancelled()
             if download_list:
                 downloader = self._downloader_factory(
@@ -418,8 +423,8 @@ class WorkspaceCoordinator:
                 if failed_entries:
                     context.check_cancelled()
                     fallback_entries = self._fallback_download_entries(
-                        target.game_path,
-                        target.version_id,
+                        target.minecraft_root_path,
+                        target.instance_directory_name,
                         normalized_source,
                         failed_entries,
                         getattr(downloader, "local_failed_paths", set()),
@@ -446,7 +451,7 @@ class WorkspaceCoordinator:
                         "GAME_DOWNLOAD_FAILED",
                     )
             context.progress(100, "文件补全完成")
-            return {"versionId": target.version_id, "repaired": len(download_list)}
+            return {"versionId": target.instance_directory_name, "repaired": len(download_list)}
 
         return self._application_operations.submit("instance_repair", worker)
 

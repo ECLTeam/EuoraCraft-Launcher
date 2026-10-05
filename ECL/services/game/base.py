@@ -268,13 +268,19 @@ class _GameState:
         return BmclApiUrl() if source == "bmclapi" else ApiUrlConfig()
 
     def _context(self, game_path: Any, source: Any = "official") -> _CoreContext:
+        """
+        复用经实际路径解析的根目录核心，来源与目录身份共同确定缓存。
+
+        创建与查询由服务锁保护；路径解析保留大小写敏感目录的区别，
+        不以 Windows 常规大小写行为推断其他目录相同。
+        """
         path = self._normalize_game_path(game_path)
         normalized_source = self._normalize_source(source)
-        key = (str(path).casefold(), normalized_source)
+        key = (str(path), normalized_source)
         with self._lock:
             existing = self._contexts.get(key)
             if existing is not None:
-                self.logger.debug("复用游戏核心：目录：%s；来源：%s", path, normalized_source)
+                self.logger.debug("复用游戏核心；下载源：%s", "BMCLAPI" if normalized_source == "bmclapi" else "官方")
                 return existing
 
             preferred_client = self._api_client_factory(self._api_config(normalized_source))
@@ -301,7 +307,7 @@ class _GameState:
                 api_client.close()
                 raise
             self._contexts[key] = context
-            self.logger.debug("创建游戏核心：目录：%s；来源：%s", path, normalized_source)
+            self.logger.debug("创建游戏核心；下载源：%s", "BMCLAPI" if normalized_source == "bmclapi" else "官方")
             return context
 
     def _query_context(self, source: Any = "official") -> _CoreContext:

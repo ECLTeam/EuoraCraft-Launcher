@@ -44,7 +44,7 @@ from ECL.utils.nbt import Byte, Compound, Int, load
 
 from .base import GameServiceError
 from .operations import OperationContext
-from .workspace import delete_path, resolve_relative_id, safe_extract_zip
+from .workspace import ResolvedInstanceTarget, delete_path, resolve_relative_id, safe_extract_zip
 from .world_seeds import WorldSeedStore
 
 
@@ -80,7 +80,7 @@ class WorldCoordinator:
     """
 
     def _world_root(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> Path:
-        return self.resolve_instance(game_path, version_id, version_isolation).data_path / "saves"
+        return self.resolve_instance(game_path, version_id, version_isolation).game_data_path / "saves"
 
     def _world_path(self, game_path: Any, version_id: Any, world_id: Any, version_isolation: Any = False) -> Path:
         root = self._world_root(game_path, version_id, version_isolation)
@@ -169,10 +169,18 @@ class WorldCoordinator:
     ) -> dict[str, Any]:
         return self._read_world(self._world_path(game_path, version_id, world_id, version_isolation))
 
-    def _assert_world_writable(self, target: Any, world_path: Path) -> None:
-        game_key = str(target.game_path).casefold()
+    def _assert_world_writable(self, target: ResolvedInstanceTarget, world_path: Path) -> None:
+        """
+        阻止当前实例运行时改写存档，并检查存档文件锁。
+
+        运行记录按解析后的根目录和实例目录名匹配；大小写敏感目录中的
+        另一个实例不会阻止本目标，无法取得文件锁时保留原存档。
+        """
+        game_key = target.root_key
         if any(
-            str(item.get("gamePath") or "").casefold() == game_key and item.get("versionId") == target.version_id
+            bool(item.get("gamePath"))
+            and str(Path(str(item["gamePath"])).expanduser().resolve(strict=False)) == game_key
+            and item.get("versionId") == target.instance_directory_name
             for item in self.list_instances()
         ):
             raise GameServiceError("游戏运行时不能修改存档", "INSTANCE_IS_RUNNING")
@@ -391,7 +399,7 @@ class WorldCoordinator:
             return {"worldId": destination.name}
 
     def _backup_root(self, target: Any, world_id: str) -> Path:
-        return target.game_path / "ECLBackups" / target.version_id / world_id
+        return target.minecraft_root_path / "ECLBackups" / target.instance_directory_name / world_id
 
     def create_world_backup(
         self,
@@ -529,7 +537,7 @@ class WorldCoordinator:
 
     def world_quick_play_capability(self, game_path: Any, version_id: Any) -> dict[str, Any]:
         target = self.resolve_instance(game_path, version_id)
-        manifest_path = target.instance_path / f"{target.version_id}.json"
+        manifest_path = target.instance_path / f"{target.instance_directory_name}.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             game_args = (manifest.get("arguments") or {}).get("game") or []
