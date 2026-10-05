@@ -50,6 +50,44 @@ def test_all_registered_commands_have_explicit_log_policies() -> None:
     )
 
 
+def test_sidebar_notification_success_uses_debug(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        return success()
+
+    asyncio.run(guard_ipc_handler(state, "plugin_notify_sidebar_state", handler)({"collapsed": False}))
+    assert len(logs) == 2
+    assert all(record.levelno == logging.DEBUG for record in logs)
+    assert "开始通知插件侧栏的折叠状态" in logs[0].getMessage()
+    assert "完成通知插件侧栏的折叠状态" in logs[1].getMessage()
+
+
+def test_sidebar_notification_failure_remains_visible(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        return failure("通知失败", "SIDEBAR_NOTIFY_FAILED")
+
+    asyncio.run(guard_ipc_handler(state, "plugin_notify_sidebar_state", handler)({"collapsed": True}))
+    assert logs[-1].levelno == logging.WARNING
+    assert "SIDEBAR_NOTIFY_FAILED" in logs[-1].getMessage()
+
+
+def test_settings_save_success_keeps_info(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        return success()
+
+    asyncio.run(guard_ipc_handler(state, "settings_set", handler)({"section": "ui", "data": {}}))
+    assert len(logs) == 2
+    assert all(record.levelno == logging.INFO for record in logs)
+
+
 def test_ipc_records_returned_failure_without_request_body(records) -> None:
     logger, logs = records
     state = SimpleNamespace(logger=logger, events=EventBus())

@@ -279,6 +279,7 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float |
     为正式 IPC 命令记录操作生命周期并补齐统一异常边界。
 
     日志通道不记录自身调用，查询使用 DEBUG，轮询仅记录限频失败和恢复。
+    操作按声明记录普通生命周期日志，界面状态同步可使用 DEBUG。
     后台任务返回时只记录提交，不宣称执行完成；不输出请求体和配置值。
 
     :param state: 拥有日志与应用事件总线的前端 API 门面
@@ -297,7 +298,7 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float |
     async def guarded(*args: Any, **kwargs: Any) -> ApiResponse:
         if spec.kind == "channel":
             return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
-        level = logging.INFO if spec.kind == "action" else logging.DEBUG
+        level = logging.INFO if spec.kind == "action" and spec.normal_level == "info" else logging.DEBUG
         with operation_scope(spec.title) as trace:
             if spec.kind != "poll":
                 trace.log(state.logger, f"开始{spec.title}", level)

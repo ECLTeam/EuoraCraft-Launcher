@@ -24,11 +24,15 @@ from typing import ClassVar, Literal
 @dataclass(frozen=True, slots=True)
 class IpcLogSpec:
     """
-    描述操作名称与输出策略，不保存请求体或结果数据。
+    描述操作名称、输出策略和普通生命周期日志级别。
+
+    界面状态同步可以降低开始与成功记录的级别，失败记录仍由统一边界
+    按原策略输出；不保存请求体或结果数据。
     """
 
     title: str
     kind: Literal["action", "query", "poll", "channel"]
+    normal_level: Literal["info", "debug"] = "info"
 
 
 class IpcLogPolicy:
@@ -249,7 +253,7 @@ class IpcLogPolicy:
             "plugin_call_command": IpcLogSpec("调用插件命令", "action"),
             "plugin_get_settings": IpcLogSpec("获取插件设置", "query"),
             "plugin_update_setting": IpcLogSpec("更新插件设置", "action"),
-            "plugin_notify_sidebar_state": IpcLogSpec("通知插件侧栏的折叠状态", "action"),
+            "plugin_notify_sidebar_state": IpcLogSpec("通知插件侧栏的折叠状态", "action", normal_level="debug"),
             "connector_nodes_get": IpcLogSpec("读取联机节点配置", "query"),
             "connector_nodes_set": IpcLogSpec("保存联机节点配置", "action"),
             "connector_status": IpcLogSpec("查询联机服务的当前状态", "poll"),

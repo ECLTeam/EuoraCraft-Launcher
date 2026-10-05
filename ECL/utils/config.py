@@ -101,7 +101,6 @@ default_config: dict[str, Any] = {
             "mode": "system",
             "primary_color": "#5B6FF5",
             "blur_amount": 0,
-            "sidebar_collapsed": True,
             "navigation_mode": "sidebar",
             "titlebar_hidden": False,
             "window_chrome": "system_shadow",
