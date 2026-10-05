@@ -2,7 +2,7 @@
 
 日期：2026-10-05。基线：主仓库 `6319626`、前端 `220069b`、Core `f8c7a64`。
 
-状态：用户已选择“统一管理页：下载、手动登记、启用/停用、更新、移除启动器安装的 Java”。本文提交审阅；确认开始实施后再修改功能代码。
+状态：用户已确认开始实施，功能与必要检查已完成。交付范围为统一管理页及全局、实例和缺失 Java 时的快捷入口。
 
 ## 1. 已选择的方案与目标
 
@@ -142,7 +142,7 @@ Java 选择器保留即时选择和刷新，浏览选中的 Java 验证并登记
 
 ## 7. IPC、任务与日志
 
-建议正式命令：game_java_inventory、game_java_register、game_java_set_enabled、game_java_forget、game_java_catalog、game_java_install_plan、game_java_install、game_java_check_updates、game_java_remove。
+正式命令：game_java_inventory、game_java_register、game_java_set_enabled、game_java_forget、game_java_select、game_java_catalog、game_java_install_plan、game_java_install、game_java_check_updates、game_java_remove、game_java_cleanup。
 
 所有新命令采用明确 Pydantic 请求/响应模型并加入 registry、命令类型、IpcLogPolicy 和覆盖测试。安装/移除返回既有 ApplicationOperation，前端回执观察器与清单变更事件负责刷新；不新增独立的无界轮询。
 
@@ -176,4 +176,14 @@ Java 选择器保留即时选择和刷新，浏览选中的 Java 验证并登记
 
 参考项目的一些目录把架构与版本列为固定选项；本方案以官方实际包为准。自动下载后继续启动的行为也未直接复制，避免改变用户已取消或已经切换目标的启动意图。
 
-本次审阅需确认：统一管理页与上下文弹窗、首批 Temurin 官方下载源、托管目录策略、手动选用与受保护移除。用户可调整来源或能力；明确“开始实施”后才进入功能编辑。
+用户已确认统一管理页与上下文弹窗、首批 Temurin 官方下载源、托管目录策略、手动选用与受保护移除，并授权实施。
+
+## 11. 完成与验证记录
+
+- 已完成统一登记、系统发现、启用/停用、官方目录与安装计划、下载校验、同主版本更新、受保护移除及失败清理重试；启动选择接入统一清单与运行进程使用记录。
+- Core 用例 8 个通过；主仓库 pytest 1245 个通过、7 个跳过；Ruff 与格式检查通过。
+- 实机收尾发现扫描与移除并发时可能重新登记已移除路径，已在登记锁内复核文件存在性并补回归；最后相关用例 18 个通过、1 个跳过，Ruff 与格式检查再次通过。
+- 前端 pnpm check 通过：145 个测试文件、760 个用例通过、1 个待实现；pnpm build 通过。
+- Windows Tauri/WebView2 使用隔离数据目录实际下载 Temurin Java 21 x64 JRE，完成 SHA256 校验、解压、运行时探测和持久化；真实验证全局选用、停用/启用、引用阻止移除、清除引用后的物理移除。页面重载后仍可识别已安装运行时。
+- Windows/POSIX 分支有自动化覆盖；未进行 macOS/Linux 实机验收，也未启动 Minecraft 验证游戏运行。
+- 按 Core、前端、主仓库顺序提交并集成本地 main；保留原前端工具页未提交修改。本次未授权远程推送。

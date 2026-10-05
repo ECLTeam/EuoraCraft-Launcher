@@ -277,6 +277,9 @@ class LaunchCoordinator(_GameState):
                 raise GameServiceError("Java 可执行文件不存在", "JAVA_NOT_FOUND")
             return str(path.resolve())
 
+        if self.java_manager is not None:
+            return str(self.java_manager.select(required_major))
+
         if not self._java_runtimes:
             self.scan_java()
         candidates = self._java_runtimes
@@ -733,6 +736,7 @@ class LaunchCoordinator(_GameState):
             game_directory /= version_name
 
         cancel_event = Event()
+        java_lease = None
         with self._lock:
             if self._launch_cancel_event is not None:
                 raise GameServiceError("已有游戏启动任务正在运行", "LAUNCH_ALREADY_RUNNING")
@@ -839,6 +843,8 @@ class LaunchCoordinator(_GameState):
             self._emit_launch_progress("environment_check", "正在校验 Java 与实例运行环境", 22)
             java = await to_thread.run_sync(self._resolve_java_path, java_path, required_java)
             java = self._prefer_java_executable(java, use_console_java)
+            if self.java_manager is not None:
+                java_lease = await to_thread.run_sync(self.java_manager.acquire, Path(java))
             await to_thread.run_sync(
                 self._validate_launch_environment,
                 java,
@@ -1010,6 +1016,7 @@ class LaunchCoordinator(_GameState):
                 game_directory=game_directory,
                 started_at=monotonic(),
                 started_wall_time=time(),
+                java_lease=java_lease,
                 crash_analysis_disabled=crash_analysis_disabled,
                 trace=current_operation(),
             )
@@ -1053,6 +1060,8 @@ class LaunchCoordinator(_GameState):
                     log_callback=lambda line, current_id: self._handle_instance_log(run_token, line, current_id),
                     exit_callback=on_instance_exit,
                 )
+                if java_lease is not None:
+                    java_lease.attach_process(process.pid)
             except Exception:
                 with self._lock:
                     self._running_games.pop(run_token, None)
@@ -1109,6 +1118,8 @@ class LaunchCoordinator(_GameState):
             self._emit_launch_progress("error", str(error), 0, error.error_code)
             raise error from exc
         finally:
+            if java_lease is not None and not java_lease.is_game:
+                java_lease.release()
             with self._lock:
                 self._launch_cancel_event = None
 
@@ -1166,6 +1177,8 @@ class LaunchCoordinator(_GameState):
                 return
             run.exited = True
             run.exit_code = exit_code
+            if run.java_lease is not None:
+                run.java_lease.release()
             if run.pending:
                 return
             action = "stopped" if run.stopping else "exited"

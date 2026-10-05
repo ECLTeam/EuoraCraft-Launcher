@@ -43,6 +43,8 @@ from ECL.services.custom_downloads import CustomDownloadService
 from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
 from ECL.services.info_card import InfoCardManager
+from ECL.services.java import JavaManager
+from ECL.services.java.models import JavaReferenceConfig
 from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
 from ECL.services.single_instance import SingleInstanceService
@@ -265,6 +267,7 @@ class ApplicationContext:
     processes: ProcessService
     operations: OperationManager | None = None
     downloads: CustomDownloadService | None = None
+    java: JavaManager | None = None
     background_media: BackgroundMediaService | None = None
     startup_update: StartupUpdateService | None = None
     single_instance: SingleInstanceService | None = None  # 按配置启动的单实例互斥监听
@@ -290,6 +293,7 @@ class ApplicationContext:
                 self.plugins,
                 self.processes,
                 self.game,
+                self.java,
                 self.connector,
                 self.operations,
                 self.accounts,
@@ -428,6 +432,14 @@ def create_application(
         operations = OperationManager(state.data_path, events)
         created.append(operations)
         downloads = CustomDownloadService(operations, data_path=state.data_path)
+        java = JavaManager(
+            state.data_path,
+            http,
+            operations,
+            events,
+            config_provider=lambda: JavaReferenceConfig.model_validate(config.get_config("game") or {}),
+        )
+        created.append(java)
         game = GameService(
             accounts,
             data_path=state.data_path,
@@ -439,6 +451,7 @@ def create_application(
             isolation_policy_provider=lambda: (config.get_config("game") or {}).get("instance_isolation_policy"),
             instances_manager=shared_instances,
             operations=operations,
+            java_manager=java,
         )
         created.append(game)
         logger.info("游戏服务初始化完成")
@@ -530,6 +543,7 @@ def create_application(
         processes=processes,
         operations=operations,
         downloads=downloads,
+        java=java,
         background_media=background_media,
         startup_update=startup_update,
         single_instance=single_instance,

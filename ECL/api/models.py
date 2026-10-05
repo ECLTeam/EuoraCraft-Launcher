@@ -31,6 +31,14 @@
 #   - class LoaderCatalogRequest
 #   - class GameScanRequest
 #   - class JavaScanRequest
+#   - class JavaInventoryRequest
+#   - class JavaRegisterRequest
+#   - class JavaRuntimeRequest
+#   - class JavaEnabledRequest
+#   - class JavaSelectionRequest
+#   - class JavaCatalogRequest
+#   - class JavaPackageRequest
+#   - class JavaPlanRequest
 #   - class GamePathRequest
 #   - class GameConfigUpdate
 #   - class GameConfigPatch
@@ -306,6 +314,83 @@ class GameScanRequest(RequestModel):
 
 class JavaScanRequest(RequestModel):
     paths: list[Path] | None = None
+
+
+class JavaInventoryRequest(RequestModel):
+    """
+    请求统一 Java 清单，可显式重新扫描系统。
+    """
+
+    force: bool = False
+
+
+class JavaRegisterRequest(RequestModel):
+    """
+    登记用户明确选择的可执行路径，不接受安装或删除目录。
+    """
+
+    path: SafePath
+
+
+class JavaRuntimeRequest(RequestModel):
+    """
+    用后端运行时身份引用登记条目。
+    """
+
+    runtime_id: str = Field(pattern=r"^[a-f0-9]{24}$")
+
+
+class JavaEnabledRequest(JavaRuntimeRequest):
+    """
+    修改后续启动的运行时启用状态。
+    """
+
+    is_enabled: bool
+
+
+class JavaSelectionRequest(JavaRuntimeRequest):
+    """
+    在回填设置前验证运行时及当前实例要求。
+    """
+
+    required_major: int | None = Field(default=None, ge=1, le=99)
+    game_path: SafePath | None = None
+    version_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_context(self) -> JavaSelectionRequest:
+        """
+        实例目标必须同时给出根目录和目录名。
+        """
+        if (self.game_path is None) != (self.version_id is None):
+            raise ValueError("实例目标必须同时包含根目录和实例名")
+        return self
+
+
+class JavaCatalogRequest(RequestModel):
+    """
+    查询实际平台可用包，未知要求使用来源提供的当前 LTS。
+    """
+
+    major_version: int | None = Field(default=None, ge=1, le=99)
+    runtime_kind: Literal["JRE", "JDK"] = "JRE"
+    force: bool = False
+
+
+class JavaPackageRequest(RequestModel):
+    """
+    生成已验证下载候选的服务端计划。
+    """
+
+    package_id: str = Field(pattern=r"^[a-f0-9]{24}$")
+
+
+class JavaPlanRequest(RequestModel):
+    """
+    提交有有效期的后端安装计划。
+    """
+
+    plan_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
 class GamePathRequest(RequestModel):
@@ -928,6 +1013,17 @@ class RequestModelRegistry:
         "game_loader_versions": LoaderCatalogRequest,
         "game_scan": GameScanRequest,
         "game_java_scan": JavaScanRequest,
+        "game_java_inventory": JavaInventoryRequest,
+        "game_java_register": JavaRegisterRequest,
+        "game_java_set_enabled": JavaEnabledRequest,
+        "game_java_forget": JavaRuntimeRequest,
+        "game_java_select": JavaSelectionRequest,
+        "game_java_catalog": JavaCatalogRequest,
+        "game_java_install_plan": JavaPackageRequest,
+        "game_java_install": JavaPlanRequest,
+        "game_java_check_updates": JavaInventoryRequest,
+        "game_java_remove": JavaRuntimeRequest,
+        "game_java_cleanup": JavaInventoryRequest,
         "game_install": InstallRequest,
         "game_launch": LaunchRequest,
         "game_uninstall": GameUninstallRequest,

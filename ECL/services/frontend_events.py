@@ -44,6 +44,7 @@ class FrontendEventPolicy:
         "game:versions_changed": [("game:versions_changed", lambda payload: payload)],
         "game:instances_changed": [("game:instances_changed", lambda payload: payload)],
         "game:operation_progress": [("game:operation_progress", lambda payload: payload)],
+        "java:runtimes_changed": [("java:runtimes_changed", lambda payload: payload)],
         "launcher:log": [("launcher:log", lambda payload: payload)],
         "process:instance_log": [("process:instance_log", lambda payload: payload)],
         "process:instances_changed": [("process:instances_changed", lambda payload: payload)],

@@ -120,6 +120,9 @@ class OperationManager:
     kind_titles: ClassVar[MappingProxyType[str, str]] = MappingProxyType(
         {
             "custom_download": "自定义下载",
+            "java_install": "安装 Java",
+            "java_remove": "移除托管 Java",
+            "java_cleanup": "清理 Java 遗留文件",
             "instance_import": "导入实例",
             "instance_export": "导出实例",
             "modpack_online_install": "在线安装整合包",

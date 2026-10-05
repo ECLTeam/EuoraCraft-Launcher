@@ -38,6 +38,8 @@ from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
+from ECL.services.java import JavaManager
+from ECL.services.java.lifecycle import RuntimeLease
 from ECL.services.operations import OperationManager
 from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
 from ECL.utils.operation_logging import OperationTrace
@@ -80,6 +82,7 @@ class _RunningGame:
     game_directory: Path
     started_at: float
     started_wall_time: float
+    java_lease: RuntimeLease | None = None
     instance_id: str | None = None
     pending: bool = True
     exited: bool = False
@@ -116,6 +119,7 @@ class _GameState:
         event_bus: EventBus | None = None,
         isolation_policy_provider: IsolationPolicyProvider | None = None,
         operations: OperationManager | None = None,
+        java_manager: JavaManager | None = None,
     ):
         """
         创建游戏服务共享状态，并注入可替换的 Core 边界实现。
@@ -147,6 +151,7 @@ class _GameState:
         self._downloader_factory = downloader_factory
         self._command_builder = command_builder
         self._java_scanner_factory = java_scanner_factory
+        self.java_manager: JavaManager | None = java_manager
         self._data_path = (
             Path(data_path).resolve(strict=False)
             if data_path

@@ -686,6 +686,27 @@ class ScanCoordinator(_GameState):
         match = re.match(r"\d+", value)
         return int(match.group()) if match else 0
 
+    def java_requirement(self, game_path: str, version_id: str) -> int | None:
+        """
+        从当前元数据和继承链读取 Java 要求，不采信旧界面快照。
+
+        :param game_path: Minecraft 根目录
+        :param version_id: 实例目录名
+        :return: 已知最低主版本，无法确认时保留未知
+        """
+        target = self.resolve_instance(game_path, version_id)
+        inspection = InstanceInspection.inspect(target.minecraft_root_path, target.instance_directory_name)
+        for document in inspection.documents:
+            java_version = document.get("javaVersion")
+            major = java_version.get("majorVersion") if isinstance(java_version, dict) else None
+            if isinstance(major, int) and not isinstance(major, bool) and major > 0:
+                return major
+        raw = self._search_factory(target.minecraft_root_path).search_minecraft()
+        info = raw.get(target.instance_directory_name) if isinstance(raw, dict) else None
+        normalized = self._normalize_scanned_version(target.minecraft_root_path, target.instance_directory_name, info)
+        required = normalized.get("requiredJava")
+        return required if isinstance(required, int) else self._fallback_required_java(normalized.get("vanillaName"))
+
     def scan_java(self, user_java_paths: list[str] | None = None) -> list[dict[str, Any]]:
         """
         扫描并缓存实际 Java 运行时，独立输出供应商、种类、版本与架构。
@@ -697,6 +718,41 @@ class ScanCoordinator(_GameState):
         :return: 按主版本排序的运行时清单，缺失供应商保持为空
         """
         user_paths = [path for path in user_java_paths or [] if isinstance(path, str) and path.strip()]
+        if self.java_manager is not None:
+            inventory = self.java_manager.inventory(force=True, extra_paths=tuple(Path(path) for path in user_paths))
+            from ECL.game import JavaRuntime
+
+            self._java_runtimes = [
+                JavaRuntime(
+                    record.executable_path,
+                    record.full_version,
+                    record.vendor,
+                    record.architecture,
+                    record.runtime_kind == "JDK",
+                )
+                for record in inventory.runtimes
+                if record.validation_status == "valid" and record.is_enabled
+            ]
+            return [
+                {
+                    **_JavaInstallation(
+                        str(record.executable_path),
+                        record.full_version,
+                        record.major_version,
+                        record.vendor,
+                        record.runtime_kind,
+                        record.architecture,
+                        (
+                            "user"
+                            if str(record.executable_path) in user_paths or record.origin == "manual"
+                            else record.origin,
+                        ),
+                    ).to_protocol(),
+                    "runtime_id": record.runtime_id,
+                }
+                for record in inventory.runtimes
+                if record.validation_status == "valid" and record.is_enabled
+            ]
         self.logger.debug("开始扫描 Java 运行时，用户自定义路径: %s", user_paths)
         scanner = self._java_scanner_factory(
             cache_file=self._java_cache_file,

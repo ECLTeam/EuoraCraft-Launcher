@@ -20,6 +20,7 @@ from ECL.api.bridge import (
 from ECL.api.connector import ConnectorHandlers
 from ECL.api.files import FileHandlers
 from ECL.api.game import GameHandlers
+from ECL.api.java import JavaHandlers
 from ECL.api.mods import ModHandlers
 from ECL.api.plugins import PluginHandlers
 from ECL.api.settings import SettingsHandlers
@@ -37,6 +38,7 @@ class FrontendApi(
     AccountHandlers,
     GameHandlers,
     SettingsHandlers,
+    JavaHandlers,
     SystemHandlers,
     WindowHandlers,
 ):
