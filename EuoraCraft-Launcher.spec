@@ -51,8 +51,15 @@ _wheel_datas, _wheel_binaries, _wheel_hiddenimports = _collect_all_safe("pytauri
 _plugin_datas, _plugin_binaries, _plugin_hiddenimports = _collect_all_safe("pytauri_plugins")
 def _resolve_icon() -> str | None:
     if IS_MACOS:
+        # 缺少 .icns 时 PyInstaller 会静默回退到自带的 Python 图标，导致应用包和 Dock 图标都显示为 Python，
+        # 因此这里必须直接失败并给出重新生成命令。
         icns = SPEC_DIR / "resources" / "img" / "logo.icns"
-        return str(icns) if icns.is_file() else None
+        if not icns.is_file():
+            raise SystemExit(
+                "缺少 macOS 应用图标 resources/img/logo.icns，"
+                "请先执行 `python packaging/build-macos-icon.py` 从 resources/img/logo.ico 生成。"
+            )
+        return str(icns)
     if IS_WINDOWS:
         ico = SPEC_DIR / "resources" / "img" / "logo.ico"
         return str(ico) if ico.is_file() else None
@@ -243,6 +250,10 @@ if IS_MACOS:
             "CFBundleDisplayName": APP_NAME,
             "CFBundleShortVersionString": "1.0.0",
             "NSHighResolutionCapable": True,
+            # PyInstaller 在 console=True 时会写入 LSBackgroundOnly=True，系统据此把应用当作后台应用：
+            # 不显示 Dock 图标也没有菜单栏。启动器始终以带窗口的应用运行，这里显式关闭该模式，
+            # 使 alpha/dev 与 beta/release 构建的 Dock 行为保持一致。
+            "LSBackgroundOnly": False,
         },
     )
 else:
