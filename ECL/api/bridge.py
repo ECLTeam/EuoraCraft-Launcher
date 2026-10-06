@@ -47,7 +47,7 @@ from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.game import AuthException, GameDataError, NetException
 from ECL.services.accounts import AccountError
 from ECL.services.game import GameServiceError
-from ECL.services.game.launch_target import candidate_roots, resolve_launch_target
+from ECL.services.game.launch import candidate_roots, resolve_launch_target
 from ECL.services.maintenance import DebugMaintenanceError
 from ECL.services.wardrobe import WardrobeError
 from ECL.utils import atomic_write_text, get_logger

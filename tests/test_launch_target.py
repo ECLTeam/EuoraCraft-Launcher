@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：针对 launch_target 模块的自动化测试。
+# 文件作用：针对快捷启动目标解析的自动化测试。
 #
 # 公开接口：
 #   - test_candidate_roots_orders_and_dedupes(tmp_path) -> None
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.services.game.launch_target import candidate_roots, resolve_launch_target
+from ECL.services.game.launch import candidate_roots, resolve_launch_target
 from ECL.utils.errors import GameServiceError
 
 
