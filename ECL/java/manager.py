@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from threading import RLock
 from time import monotonic, time
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
@@ -22,12 +23,9 @@ from pydantic import JsonValue
 
 from ECL.events import EventBus
 from ECL.game import JavaRuntime, JavaScanner
-from ECL.services.operations import OperationContext, OperationManager
 from ECL.utils.logging import get_logger
 
-from .catalog import JavaCatalog
-from .installer import JavaInstaller
-from .lifecycle import JavaLifecycle, RuntimeLease
+from .installer import JavaInstaller, JavaLifecycle, RuntimeLease
 from .models import (
     CleanupRecord,
     JavaError,
@@ -35,10 +33,14 @@ from .models import (
     JavaInventory,
     JavaPolicy,
     JavaReferenceConfig,
+    JavaRegistry,
     RuntimeRecord,
     RuntimeView,
 )
-from .registry import JavaRegistry
+from .packages import JavaCatalog
+
+if TYPE_CHECKING:
+    from ECL.services.operations import OperationContext, OperationManager
 
 
 class JavaManager:
@@ -60,15 +62,17 @@ class JavaManager:
         operations: OperationManager,
         events: EventBus,
         config_provider: Callable[[], JavaReferenceConfig] | None = None,
+        reference_provider: Callable[[Path, tuple[Path, ...]], tuple[str, ...]] | None = None,
     ) -> None:
         """
-        归属登记及安装根目录，并注入当前配置的只读引用提供者。
+        归属登记及安装根目录，并注入当前配置与实例引用的只读提供者。
 
         :param data_path: 当前启动器数据目录
         :param client: 应用拥有的元数据 HTTP 客户端
         :param operations: 应用唯一任务管理器
         :param events: 应用事件总线
         :param config_provider: 读取全局及实例引用所需的配置快照
+        :param reference_provider: 扫描实例独立设置，返回引用该 Java 的实例标签
         """
         self.registry = JavaRegistry(JavaPolicy.storage_root(data_path))
         self.lifecycle = JavaLifecycle(self.registry)
@@ -77,6 +81,7 @@ class JavaManager:
         self._operations = operations
         self._events = events
         self._config_provider = config_provider or JavaReferenceConfig
+        self._reference_provider = reference_provider
         self._inventory_lock = RLock()
         self._task_lock = RLock()
         self._probe_lock = RLock()
@@ -206,34 +211,15 @@ class JavaManager:
         """
         核对当前全局配置和已配置实例的手动引用，坏文件保留未知状态。
         """
-        from ECL.services.game.launch_settings import InstanceLaunchOverrides
-
         config = self._config_provider()
         references: list[str] = []
         if not config.java_auto and config.java_path and self._same_home(Path(config.java_path), record):
             references.append("全局设置")
-        for root in config.minecraft_paths:
-            versions = root / "versions"
-            if not root.is_dir():
-                raise JavaError("实例根目录暂不可访问，无法确认 Java 引用", "JAVA_REFERENCES_UNKNOWN")
-            if not versions.is_dir():
-                continue
-            for directory in versions.iterdir():
-                settings_file = directory / ".ecl" / "settings.json"
-                if not directory.is_dir() or not settings_file.is_file():
-                    continue
-                try:
-                    if settings_file.stat().st_size > 2 * 1024 * 1024:
-                        raise ValueError("settings limit")
-                    settings = InstanceLaunchOverrides.model_validate_json(settings_file.read_bytes())
-                except (OSError, ValueError) as exc:
-                    raise JavaError("实例设置暂无法读取，无法确认 Java 引用", "JAVA_REFERENCES_UNKNOWN") from exc
-                if (
-                    settings.java_mode == "manual"
-                    and settings.java_path
-                    and self._same_home(Path(settings.java_path), record)
-                ):
-                    references.append(f"实例：{directory.name}")
+        if self._reference_provider is not None:
+            try:
+                references.extend(self._reference_provider(record.java_home_path, config.minecraft_paths))
+            except ValueError as exc:
+                raise JavaError(str(exc), "JAVA_REFERENCES_UNKNOWN") from exc
         return tuple(dict.fromkeys(references))
 
     @staticmethod

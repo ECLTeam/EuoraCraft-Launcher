@@ -33,13 +33,12 @@ from ECL.game import (
     SearchMinecraft,
     build_minecraft_cmd,
 )
+from ECL.java import JavaManager, RuntimeLease
 from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.services.accounts import AccountManager
 from ECL.services.authlib import AuthlibInjector
-from ECL.services.java import JavaManager
-from ECL.services.java.lifecycle import RuntimeLease
 from ECL.services.operations import OperationManager
 from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
 from ECL.utils.operation_logging import OperationTrace

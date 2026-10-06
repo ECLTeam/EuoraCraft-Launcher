@@ -36,15 +36,16 @@ from ECL.common import BuildEnvironment, __version__, __version_type__
 from ECL.common.runtime import RuntimeInfo
 from ECL.events import EventBus
 from ECL.game import InstancesManager
+from ECL.java import JavaManager
+from ECL.java.models import JavaReferenceConfig
 from ECL.plugins import PluginManager
 from ECL.services.accounts import AccountManager
 from ECL.services.background_media import BackgroundMediaService
 from ECL.services.custom_downloads import CustomDownloadService
 from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
+from ECL.services.game.launch_settings import scan_instance_java_references
 from ECL.services.info_card import InfoCardManager
-from ECL.services.java import JavaManager
-from ECL.services.java.models import JavaReferenceConfig
 from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
 from ECL.services.single_instance import SingleInstanceService
@@ -438,6 +439,7 @@ def create_application(
             operations,
             events,
             config_provider=lambda: JavaReferenceConfig.model_validate(config.get_config("game") or {}),
+            reference_provider=scan_instance_java_references,
         )
         created.append(java)
         game = GameService(

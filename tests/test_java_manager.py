@@ -16,9 +16,10 @@ import pytest
 
 from ECL.events import EventBus
 from ECL.game import JavaRuntime, JavaScanner
-from ECL.services.java.archives import JavaArchive
-from ECL.services.java.manager import JavaManager
-from ECL.services.java.models import JavaError, JavaPolicy, JavaReferenceConfig
+from ECL.java.manager import JavaManager
+from ECL.java.models import JavaError, JavaPolicy, JavaReferenceConfig
+from ECL.java.packages import JavaArchive
+from ECL.services.game.launch_settings import scan_instance_java_references
 from ECL.services.operations import OperationContext, OperationManager
 
 
@@ -45,7 +46,7 @@ def manager(tmp_path, monkeypatch):
     events = EventBus()
     operations = OperationManager(tmp_path, events)
     client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
-    service = JavaManager(tmp_path, client, operations, events)
+    service = JavaManager(tmp_path, client, operations, events, reference_provider=scan_instance_java_references)
     yield service
     service.close()
     operations.close()
@@ -66,7 +67,7 @@ def _archive_bytes():
 
 
 def _plan(manager, archive_bytes):
-    from ECL.services.java.models import JavaPackage
+    from ECL.java.models import JavaPackage
 
     system, architecture = JavaPolicy.host()
     checksum = hashlib.sha256(archive_bytes).hexdigest()
@@ -206,7 +207,7 @@ def test_install_uses_checksum_and_registry_write_failure_rolls_back_only_new_fi
     plan = _plan(manager, archive_bytes)
     real_client = httpx.Client
     monkeypatch.setattr(
-        "ECL.services.java.installer.httpx.Client",
+        "ECL.java.installer.httpx.Client",
         lambda **kwargs: real_client(
             transport=httpx.MockTransport(lambda request: httpx.Response(200, content=archive_bytes))
         ),
@@ -239,7 +240,7 @@ def test_hash_mismatch_and_cancellation_keep_existing_runtime(manager, tmp_path,
     plan = _plan(manager, archive_bytes)
     real_client = httpx.Client
     monkeypatch.setattr(
-        "ECL.services.java.installer.httpx.Client",
+        "ECL.java.installer.httpx.Client",
         lambda **kwargs: real_client(
             transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"wrong"))
         ),
