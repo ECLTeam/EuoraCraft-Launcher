@@ -26,8 +26,7 @@ from ECL.api.models import (
     JavaRuntimeRequest,
     JavaSelectionRequest,
 )
-from ECL.services.java import JavaManager
-from ECL.services.java.models import JavaError, JavaPolicy
+from ECL.java import JavaError, JavaManager, JavaPolicy
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body
 

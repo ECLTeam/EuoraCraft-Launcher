@@ -28,7 +28,7 @@ from threading import Event
 import httpx
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services.updates import StartupUpdateService, UpdateChecker, UpdateCheckResult, compare_versions, parse_version
 
 

@@ -10,7 +10,6 @@
 # ============================================================
 
 from .base import GameServiceError, VersionScanError
-from .catalog import CatalogCoordinator
 from .install import InstallCoordinator
 from .instance_options import InstanceOptionsCoordinator
 from .launch import LaunchCoordinator
@@ -40,7 +39,6 @@ class GameService(
     LaunchCoordinator,
     InstallCoordinator,
     ScanCoordinator,
-    CatalogCoordinator,
 ):
     """
     面向 IPC 边界公开的统一游戏服务门面。

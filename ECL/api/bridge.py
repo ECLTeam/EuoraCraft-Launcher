@@ -44,12 +44,11 @@ from ECL.api.models import (
 from ECL.api.operation_logging import IpcLogPolicy, IpcLogRuntime, IpcLogSpec
 from ECL.application import ApplicationContext
 from ECL.cli import LaunchOptions, apply_launch_overrides
-from ECL.game import AuthException, NetException
-from ECL.services.accounts import AccountError
+from ECL.game import AuthException, GameDataError, NetException
+from ECL.host.maintenance import DebugMaintenanceError
+from ECL.services.account import AccountError, WardrobeError
 from ECL.services.game import GameServiceError
-from ECL.services.game.launch_target import candidate_roots, resolve_launch_target
-from ECL.services.maintenance import DebugMaintenanceError
-from ECL.services.wardrobe import WardrobeError
+from ECL.services.game.launch import candidate_roots, resolve_launch_target
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.config import default_config
 from ECL.utils.logging import get_frontend_log_history
@@ -382,6 +381,7 @@ class _FrontendState:
         AccountError,
         WardrobeError,
         GameServiceError,
+        GameDataError,
         DebugMaintenanceError,
         AuthException,
         NetException,

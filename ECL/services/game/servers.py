@@ -26,8 +26,8 @@ from typing import Any
 
 from mcstatus import JavaServer
 
+from ECL.game import Compound, File, List, String, load
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Compound, File, List, String, load
 
 from .base import GameServiceError
 

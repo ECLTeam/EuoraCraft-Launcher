@@ -117,8 +117,8 @@ from ECL.api.models import (
     WorldRequest,
     WorldTransferRequest,
 )
-from ECL.services.instance_shortcuts import InstanceShortcutService, ShortcutIcon
 from ECL.utils.errors import GameServiceError
+from ECL.utils.instance_shortcuts import InstanceShortcutService, ShortcutIcon
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body
 

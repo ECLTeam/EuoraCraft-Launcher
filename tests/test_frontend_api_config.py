@@ -138,12 +138,12 @@ sys.modules["pytauri.ipc"] = pytauri_ipc_module
 sys.modules["pytauri_plugins.dialog"] = pytauri_plugins_dialog_module
 
 FrontendApi = import_module("ECL.api").FrontendApi
-Adapter = import_module("ECL.adapters.tauri").Adapter
+Adapter = import_module("ECL.host.tauri").Adapter
 frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
 ConfigStore = import_module("ECL.utils").ConfigStore
-EventBus = import_module("ECL.events").EventBus
-AccountError = import_module("ECL.services.accounts").AccountError
+EventBus = import_module("ECL.foundation").EventBus
+AccountError = import_module("ECL.services.account.accounts").AccountError
 LaunchOptions = import_module("ECL.cli").LaunchOptions
 command_handlers = import_module("ECL.api.registry").command_handlers
 _guarded_call = import_module("ECL.api.bridge")._guarded_call
@@ -1245,7 +1245,7 @@ def test_adapter_main_window_is_visible_without_native_shadow() -> None:
 def test_new_config_creates_platform_appropriate_window_chrome(
     tmp_path, monkeypatch, platform: str, expected_mode: str, is_transparent: bool, has_shadow: bool
 ) -> None:
-    monkeypatch.setattr(import_module("ECL.adapters.tauri"), "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(import_module("ECL.host.tauri"), "sys", SimpleNamespace(platform=platform))
     adapter = object.__new__(Adapter)
     adapter.config = ConfigStore(tmp_path / "ECL_data").get_config()
     adapter.launcher_version = "0.0.1-alpha"
@@ -1261,7 +1261,7 @@ def test_new_config_creates_platform_appropriate_window_chrome(
 @pytest.mark.parametrize("platform", ["win32", "linux"])
 @pytest.mark.parametrize("window_chrome", ["custom", "system_shadow", "native", "unsupported", None])
 def test_adapter_main_window_chrome_follows_ui_setting(window_chrome: str | None, platform: str, monkeypatch) -> None:
-    monkeypatch.setattr(import_module("ECL.adapters.tauri"), "sys", SimpleNamespace(platform=platform))
+    monkeypatch.setattr(import_module("ECL.host.tauri"), "sys", SimpleNamespace(platform=platform))
     adapter = object.__new__(Adapter)
     adapter.config = {"tauri": {}, "ui": {"theme": {"window_chrome": window_chrome}}}
     adapter.launcher_version = "0.0.1-alpha"
@@ -1282,7 +1282,7 @@ def test_adapter_main_window_chrome_follows_ui_setting(window_chrome: str | None
 
 
 def test_adapter_focuses_main_window_once_at_startup_ready(monkeypatch) -> None:
-    adapter_module = import_module("ECL.adapters.tauri")
+    adapter_module = import_module("ECL.host.tauri")
     adapter = object.__new__(Adapter)
     adapter._startup_focus_attempted = False
     adapter.logger = SimpleNamespace(warning=lambda *_args: None, exception=lambda *_args: None)
@@ -1311,7 +1311,7 @@ def test_adapter_focuses_main_window_once_at_startup_ready(monkeypatch) -> None:
 
 @pytest.mark.parametrize("failure", [None, OSError("focus denied"), RuntimeError("window closed")])
 def test_adapter_startup_focus_failure_does_not_block_startup(monkeypatch, failure: Exception | None) -> None:
-    adapter_module = import_module("ECL.adapters.tauri")
+    adapter_module = import_module("ECL.host.tauri")
     adapter = object.__new__(Adapter)
     adapter._startup_focus_attempted = False
     warnings: list[str] = []
@@ -1794,7 +1794,7 @@ def test_frontend_ready_cli_launch_failure_emits_popup(tmp_path) -> None:
 
 def test_authenticated_launch_requests_wait_for_ready_and_use_temporary_overrides(tmp_path, monkeypatch) -> None:
     import ECL.api.bridge as bridge_module
-    from ECL.services.single_instance import SingleInstanceService
+    from ECL.host.single_instance import SingleInstanceService
 
     api = _build_api(tmp_path)
     service = SingleInstanceService(api.events, tmp_path, "test")

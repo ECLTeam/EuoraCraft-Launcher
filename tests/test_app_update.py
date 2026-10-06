@@ -22,7 +22,7 @@ import json
 
 import pytest
 
-from ECL.services.app_update import (
+from ECL.host.app_update import (
     StagedUpdate,
     UpdateApplier,
     clear_stale_pending_update,

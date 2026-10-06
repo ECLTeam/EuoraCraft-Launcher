@@ -22,7 +22,7 @@ def _resolve_console_mode() -> bool:
     explicit = os.environ.get("ECL_CONSOLE")
     if explicit is not None:
         return explicit == "1"
-    version_path = SPEC_DIR / "ECL" / "common" / "version.py"
+    version_path = SPEC_DIR / "ECL" / "foundation" / "version.py"
     try:
         text = version_path.read_text(encoding="utf-8")
     except OSError:

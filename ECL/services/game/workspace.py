@@ -35,10 +35,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError
-from .operations import OperationContext
 
 
 @dataclass(frozen=True, slots=True)

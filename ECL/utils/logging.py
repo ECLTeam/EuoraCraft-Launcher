@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 from ECL.utils.operation_logging import OperationLogFilter, ReadableLogFormatter
 
 if TYPE_CHECKING:
-    from ECL.events.event_bus import EventBus
+    from ECL.foundation.event_bus import EventBus
 
 
 class LoggingPolicy:

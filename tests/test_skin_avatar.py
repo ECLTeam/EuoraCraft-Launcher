@@ -12,8 +12,8 @@ from pydantic import ValidationError
 
 from ECL.api.files import FileHandlers
 from ECL.api.models import SkinAvatarExportRequest, request_schemas
-from ECL.events import EventBus
-from ECL.services.skin_avatar import SkinAvatarError, SkinAvatarExporter
+from ECL.foundation import EventBus
+from ECL.services.account.skin_avatar import SkinAvatarError, SkinAvatarExporter
 
 
 def png_bytes(size: int = 128) -> bytes:
@@ -115,7 +115,7 @@ def test_source_protection_respects_platform_path_semantics(source, target, shou
     target_path.resolve.return_value = target
     target_path.exists.return_value = False
     write = MagicMock()
-    monkeypatch.setattr("ECL.services.skin_avatar.atomic_write_bytes", write)
+    monkeypatch.setattr("ECL.services.account.skin_avatar.atomic_write_bytes", write)
     if should_conflict:
         with pytest.raises(SkinAvatarError, match="不能覆盖"):
             SkinAvatarExporter.save_png(target_path, source_path, b"validated")

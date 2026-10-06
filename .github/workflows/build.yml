@@ -172,7 +172,7 @@ jobs:
         run: |
           python - <<'PY'
           import os, re
-          path = "ECL/common/build_env.py"
+          path = "ECL/foundation/build_env.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
           cid = os.environ.get("CLIENT_ID", "")
@@ -220,8 +220,8 @@ jobs:
             echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
           else
             # 无 tag 时回退到 version.py 中的版本，避免产物命名为 dev
-            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
-            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
+            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
+            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
             if [ -n "$VER_PY" ]; then
               # version.py 已含预发布/构建元数据时直接使用；旧格式（纯版本号+类型）再拼上类型
               if [[ "$VER_PY" != *-* ]] && [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
@@ -245,7 +245,7 @@ jobs:
           vtype = os.environ.get("VTYPE", "")
           vver = os.environ.get("VVER", "")
           if vtype and vver:
-              path = "ECL/common/version.py"
+              path = "ECL/foundation/version.py"
               with open(path, encoding="utf-8") as f:
                   text = f.read()
               # Update __version__ with the full version (pre-release and build metadata included)
@@ -454,8 +454,8 @@ jobs:
             echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
           else
             # 无 tag 时回退到 version.py 中的版本，避免产物命名为 dev
-            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
-            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/common/version.py)
+            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
+            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
             if [ -n "$VER_PY" ]; then
               # version.py 已含预发布/构建元数据时直接使用；旧格式（纯版本号+类型）再拼上类型
               if [[ "$VER_PY" != *-* ]] && [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
@@ -500,7 +500,7 @@ jobs:
         run: |
           .venv-arch/bin/python - <<'PY'
           import os, re
-          path = "ECL/common/build_env.py"
+          path = "ECL/foundation/build_env.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
           cid = os.environ.get("CLIENT_ID", "")
@@ -522,7 +522,7 @@ jobs:
           vtype = os.environ.get("VTYPE", "")
           vver = os.environ.get("VVER", "")
           if vtype and vver != "0.0.0":
-              path = "ECL/common/version.py"
+              path = "ECL/foundation/version.py"
               with open(path, encoding="utf-8") as f:
                   text = f.read()
               text = re.sub(

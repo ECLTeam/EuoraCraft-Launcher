@@ -29,7 +29,7 @@ from typing import Any
 import psutil
 
 from ECL.cli import LaunchOptions, parse_launch_options
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.utils import atomic_write_text
 from ECL.utils.logging import get_logger
 

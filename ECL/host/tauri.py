@@ -24,8 +24,9 @@ from pytauri_wheel.lib import builder_factory, context_factory
 from ECL.api import FrontendApi
 from ECL.api.registry import command_handlers
 from ECL.application import ApplicationContext
-from ECL.services.frontend_events import subscribe_all_frontend_events
 from ECL.utils import get_logger
+
+from .frontend_events import subscribe_all_frontend_events
 
 
 class Adapter:

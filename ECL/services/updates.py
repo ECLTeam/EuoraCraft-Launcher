@@ -24,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.utils import get_logger, get_with_retries
 
 

@@ -24,8 +24,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ECL.game import LocalModParser, ModDependencyDiagnostics
+
 from .base import GameServiceError, _GameState
-from .mod_metadata import LocalModParser, ModDependencyDiagnostics
 from .resources import ResourceCoordinator, _sha512
 
 

@@ -51,7 +51,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services.game import GameService
 from ECL.services.game import modpack as modpack_module
 from ECL.services.game.modpack import (

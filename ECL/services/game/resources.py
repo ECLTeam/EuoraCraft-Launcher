@@ -55,16 +55,24 @@ from typing import Any, TypedDict
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from ECL.game import (
+    Compound,
+    GameDataError,
+    InstanceInspection,
+    List,
+    LocalModMetadata,
+    LocalModParser,
+    ModDependencyDiagnostics,
+    ResourceFilePolicy,
+    String,
+    load,
+)
+from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Compound, List, String, load
 from ECL.utils.network import download_proxy_url
 
 from .base import GameServiceError
-from .instance_health import InstanceInspection
-from .mod_metadata import LocalModMetadata, LocalModParser, ModDependencyDiagnostics
 from .mod_sources import ModSourceAware, mod_api_base, mod_user_agent, rewrite_mod_file_url
-from .operations import OperationContext
-from .resource_files import ResourceFilePolicy
 from .resource_search import SearchBatch, SearchCriteria, SearchItem, SearchResult, SearchSource
 from .workspace import delete_path, resolve_relative_id
 
@@ -461,7 +469,7 @@ class ResourceCoordinator(ModSourceAware):
             if resource_type != "mod":
                 try:
                     inspection = ResourceFilePolicy.validate(path, resource_type, allow_directory=True, use_cache=True)
-                except GameServiceError as exc:
+                except (GameServiceError, GameDataError) as exc:
                     logging.getLogger(__name__).debug(
                         "资源已过滤：%s %s (%s)", resource_type, path.name, exc.error_code
                     )

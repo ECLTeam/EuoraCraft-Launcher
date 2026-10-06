@@ -81,7 +81,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.game import LaunchConfig, build_minecraft_cmd
 from ECL.services.game import GameService, GameServiceError
 

@@ -36,5 +36,16 @@ jobs:
       - name: Run ruff
         run: ruff check ECL tests
 
+      # Core 子模块自带 ruff.toml；其 per-file-ignores 以子仓库为根解析，
+      # 因此必须在子仓库目录内执行。主仓库 pyproject 的 exclude 会把 ECL/game 排除，
+      # 该步骤是 Core 代码唯一的质量门禁。
+      - name: Run ruff (Core submodule)
+        working-directory: ECL/game
+        run: ruff check .
+
       - name: Run pytest
         run: python -m pytest --tb=short -q
+
+      # Core 测试导入 ECL.game.* 命名空间，依赖主仓库目录结构，只能在主仓库根目录执行。
+      - name: Run pytest (Core submodule)
+        run: python -m pytest ECL/game/tests --tb=short -q

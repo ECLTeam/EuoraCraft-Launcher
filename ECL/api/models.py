@@ -134,10 +134,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, field_validator, model_validator
 
+from ECL.game import GameDataError, WorldSeedStore
+from ECL.services.account.skin_avatar import SkinAvatarExporter
 from ECL.services.custom_downloads import CustomDownloadRequest
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.world_seeds import WorldSeedStore
-from ECL.services.skin_avatar import SkinAvatarExporter
 from ECL.utils.config import default_config
 from ECL.utils.download_settings import DownloadSettingsPatch
 
@@ -653,7 +652,7 @@ class WorldPatchData(RequestModel):
             return None
         try:
             return str(WorldSeedStore.parse_input(value))
-        except GameServiceError as exc:
+        except GameDataError as exc:
             raise ValueError(str(exc)) from exc
 
 

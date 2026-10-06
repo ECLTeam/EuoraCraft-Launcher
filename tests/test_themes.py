@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from ECL.services.themes import ThemeCatalog, normalize_theme_id
+from ECL.foundation.themes import ThemeCatalog, normalize_theme_id
 
 
 def test_builtin_theme_ids_are_classic_and_folia() -> None:

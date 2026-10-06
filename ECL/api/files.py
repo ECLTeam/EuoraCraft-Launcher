@@ -53,8 +53,8 @@ from ECL.api.models import (
     ImageSelectionRequest,
     SkinAvatarExportRequest,
 )
+from ECL.services.account.skin_avatar import SkinAvatarExporter
 from ECL.services.game.resources import ResourceCatalogPolicy
-from ECL.services.skin_avatar import SkinAvatarExporter
 from ECL.utils.files import atomic_write_bytes
 
 from .bridge import (

@@ -9,11 +9,14 @@
 #   - class InstanceLaunchOverrides — 校验并迁移实例独立设置。
 #   - class EffectiveLaunchSettings — 各启动入口共用的有效启动选项。
 #   - class LaunchSettingsResolver — 按全局、实例和单次覆盖顺序解析设置。
+#   - scan_instance_java_references(java_home_path, minecraft_paths) -> tuple[str, ...]
+#     — 扫描实例独立设置，返回以手动 Java 指向该运行时的实例标签。
 # ============================================================
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Literal
 
 import psutil
@@ -82,6 +85,45 @@ class InstanceLaunchOverrides(BaseModel):
                 name for name in ("wrapperCommand", "postExitCommand", "envVars", "windowTitle") if migrated.get(name)
             ]
         return migrated
+
+
+def scan_instance_java_references(java_home_path: Path, minecraft_paths: tuple[Path, ...]) -> tuple[str, ...]:
+    """
+    扫描实例独立设置，返回以手动 Java 指向该运行时的实例标签。
+
+    仅当实例设置明确选择手动 Java 且解析后的路径归属该运行时根目录时计入引用。
+    实例根目录不可访问或设置文件损坏时抛出 ValueError，由调用方保留未知状态，
+    避免在无法确认占用关系时误判 Java 未被引用。
+
+    :param java_home_path: 目标 Java 运行时的根目录
+    :param minecraft_paths: 当前配置的实例根目录集合
+    :return: 引用该运行时的实例标签
+    :raises ValueError: 实例根目录不可访问或设置文件无法解析
+    """
+    references: list[str] = []
+    for root in minecraft_paths:
+        versions = root / "versions"
+        if not root.is_dir():
+            raise ValueError("实例根目录暂不可访问，无法确认 Java 引用")
+        if not versions.is_dir():
+            continue
+        for directory in versions.iterdir():
+            settings_file = directory / ".ecl" / "settings.json"
+            if not directory.is_dir() or not settings_file.is_file():
+                continue
+            try:
+                if settings_file.stat().st_size > 2 * 1024 * 1024:
+                    raise ValueError("settings limit")
+                settings = InstanceLaunchOverrides.model_validate_json(settings_file.read_bytes())
+            except (OSError, ValueError) as exc:
+                raise ValueError("实例设置暂无法读取，无法确认 Java 引用") from exc
+            if (
+                settings.java_mode == "manual"
+                and settings.java_path
+                and Path(settings.java_path).expanduser().resolve(strict=False).parent.parent == java_home_path
+            ):
+                references.append(f"实例：{directory.name}")
+    return tuple(references)
 
 
 class EffectiveLaunchSettings(BaseModel):

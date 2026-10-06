@@ -22,13 +22,13 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-from ECL.adapters import Adapter
 from ECL.application import ApplicationContext, ApplicationState, create_application
 from ECL.cli import LaunchOptions
-from ECL.common import __version__, __version_type__, get_runtime_info
-from ECL.services.app_update import clear_stale_pending_update
-from ECL.services.maintenance import apply_pending_debug_maintenance
-from ECL.services.single_instance import probe_running_instance
+from ECL.foundation import __version__, __version_type__, get_runtime_info
+from ECL.host.app_update import clear_stale_pending_update
+from ECL.host.maintenance import apply_pending_debug_maintenance
+from ECL.host.single_instance import probe_running_instance
+from ECL.host.tauri import Adapter
 from ECL.utils import configure_logging
 from ECL.utils.logging import resolve_log_level
 

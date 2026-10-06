@@ -26,7 +26,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from ECL.common.version import __version__
+from ECL.foundation.version import __version__
 
 result_type = TypeVar("result_type")
 

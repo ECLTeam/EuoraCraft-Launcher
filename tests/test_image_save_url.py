@@ -131,7 +131,7 @@ FrontendApi = import_module("ECL.api").FrontendApi
 frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
 ConfigStore = import_module("ECL.utils").ConfigStore
-EventBus = import_module("ECL.events").EventBus
+EventBus = import_module("ECL.foundation").EventBus
 
 
 class FakeAccounts:

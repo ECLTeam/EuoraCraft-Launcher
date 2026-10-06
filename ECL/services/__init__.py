@@ -3,15 +3,19 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：领域服务包。
+# 文件作用：领域服务包：账户与皮肤域、游戏领域服务。
 # ============================================================
 
-from ECL.services.accounts import AccountError, AccountManager
-from ECL.services.authlib import AuthlibAccountManager, AuthlibError, AuthlibInjector
-from ECL.services.dev_channel import DevChannelError, DevChannelService
+from ECL.services.account import (
+    AccountError,
+    AccountManager,
+    AuthlibAccountManager,
+    AuthlibError,
+    AuthlibInjector,
+    WardrobeError,
+    WardrobeStore,
+)
 from ECL.services.game import GameService, GameServiceError, VersionScanError
-from ECL.services.info_card import InfoCardManager
-from ECL.services.wardrobe import WardrobeError, WardrobeStore
 
 __all__ = [
     "AccountError",
@@ -19,11 +23,8 @@ __all__ = [
     "AuthlibAccountManager",
     "AuthlibError",
     "AuthlibInjector",
-    "DevChannelError",
-    "DevChannelService",
     "GameService",
     "GameServiceError",
-    "InfoCardManager",
     "VersionScanError",
     "WardrobeError",
     "WardrobeStore",

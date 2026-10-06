@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from ECL.api.workspace import WorkspaceHandlers
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services.game.resources import ResourceCoordinator
 from ECL.services.game.workspace import WorkspaceCoordinator, resolve_instance_target
 

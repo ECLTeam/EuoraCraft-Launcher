@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from ECL.services.instance_shortcuts import InstanceShortcutService, ShortcutIcon
 from ECL.utils.errors import GameServiceError
+from ECL.utils.instance_shortcuts import InstanceShortcutService, ShortcutIcon
 
 
 def test_shortcut_command_quotes_unicode_and_spaces(tmp_path) -> None:

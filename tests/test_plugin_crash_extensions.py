@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from ECL.plugins import PluginManager
-from ECL.services.game.crash_analysis import CrashAnalyzer
+from ECL.services.game.crash.analyzer import CrashAnalyzer
 
 
 def _game(tmp_path: Path) -> Path:

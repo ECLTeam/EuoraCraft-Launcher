@@ -34,7 +34,7 @@ import ECL.application as application_module
 import ECL.services.connector as connector_service_module
 from ECL.application import ApplicationContext, create_application
 from ECL.cli import LaunchOptions
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 
 
 class Closable:

@@ -53,12 +53,12 @@ from uuid import UUID
 
 import httpx
 
-from ECL.common import BuildEnvironment
-from ECL.events import EventBus
+from ECL.foundation import BuildEnvironment, EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
 from ECL.plugins.auth_providers import AuthProviderRegistry
-from ECL.services.authlib import AuthlibAccountManager, AuthlibError
 from ECL.utils import AccountError, atomic_write_text, get_logger
+
+from .authlib import AuthlibAccountManager, AuthlibError
 
 
 def _load_default_skins(resource_path: Path | None) -> dict[str, tuple[str, str]]:

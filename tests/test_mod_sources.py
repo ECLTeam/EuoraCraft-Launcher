@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from ECL.common.version import __version__
+from ECL.foundation.version import __version__
 from ECL.services.game.mod_sources import (
     ModSourcePolicy,
     ModSourceRequestPolicy,

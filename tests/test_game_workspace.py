@@ -29,6 +29,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ECL.game import Byte, Compound, File, GameDataError, Int, Long, String, load
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.workspace import (
     WorkspaceCoordinator,
@@ -37,7 +38,6 @@ from ECL.services.game.workspace import (
     safe_extract_zip,
 )
 from ECL.services.game.worlds import WorldCoordinator
-from ECL.utils.nbt import Byte, Compound, File, Int, Long, String, load
 
 
 def test_resolve_instance_target_matches_isolation_semantics(tmp_path: Path) -> None:
@@ -343,7 +343,7 @@ def test_world_patch_rejects_invalid_values(tmp_path: Path, field: str, value, c
     _write_level_dat(version / "saves" / "world")
     harness = _WorldHarness(tmp_path / "app-data")
 
-    with pytest.raises(GameServiceError) as raised:
+    with pytest.raises((GameServiceError, GameDataError)) as raised:
         harness.patch_world(tmp_path, "test", "world", {field: value}, version_isolation=True)
     assert raised.value.error_code == code
 
@@ -408,6 +408,6 @@ def test_options_patch_replaces_and_appends_keeping_unknown(tmp_path: Path) -> N
 )
 def test_options_patch_rejects_invalid_keys_and_values(tmp_path: Path, patch: dict, code: str) -> None:
     harness = _options_harness(tmp_path)
-    with pytest.raises(GameServiceError) as raised:
+    with pytest.raises(GameDataError) as raised:
         harness.patch_options(tmp_path, "iso", patch, version_isolation=True)
     assert raised.value.error_code == code

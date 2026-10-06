@@ -32,8 +32,8 @@ from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile, ZipFile
 
+from ECL.game import Compound, IntArray, List, load, load_limited
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Compound, IntArray, List, load, load_limited
 
 from .base import GameServiceError
 from .resources import ResourceCatalogPolicy

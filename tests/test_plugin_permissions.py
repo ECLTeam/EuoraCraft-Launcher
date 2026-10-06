@@ -28,7 +28,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.plugins import Plugin, PluginManager
 from ECL.plugins.permissions import Permission, PermissionAction, PermissionManager, PermissionScope
 
