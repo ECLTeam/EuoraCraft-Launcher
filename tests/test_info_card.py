@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from ECL.services import InfoCardManager
+from ECL.host import InfoCardManager
 
 now = datetime(2026, 7, 30, 12, tzinfo=UTC)
 

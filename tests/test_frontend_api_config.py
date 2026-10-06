@@ -143,7 +143,7 @@ frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
 ConfigStore = import_module("ECL.utils").ConfigStore
 EventBus = import_module("ECL.foundation").EventBus
-AccountError = import_module("ECL.services.accounts").AccountError
+AccountError = import_module("ECL.services.account.accounts").AccountError
 LaunchOptions = import_module("ECL.cli").LaunchOptions
 command_handlers = import_module("ECL.api.registry").command_handlers
 _guarded_call = import_module("ECL.api.bridge")._guarded_call
@@ -1794,7 +1794,7 @@ def test_frontend_ready_cli_launch_failure_emits_popup(tmp_path) -> None:
 
 def test_authenticated_launch_requests_wait_for_ready_and_use_temporary_overrides(tmp_path, monkeypatch) -> None:
     import ECL.api.bridge as bridge_module
-    from ECL.services.single_instance import SingleInstanceService
+    from ECL.host.single_instance import SingleInstanceService
 
     api = _build_api(tmp_path)
     service = SingleInstanceService(api.events, tmp_path, "test")

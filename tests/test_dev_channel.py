@@ -59,10 +59,10 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from ECL.foundation import EventBus
+from ECL.host.dev_channel import DevChannelService
 from ECL.plugins import PluginAction, PluginActionResult
 from ECL.plugins.package_archive import PluginPackageInfo
 from ECL.plugins.package_preparation import PluginPackagePreflight
-from ECL.services.dev_channel import DevChannelService
 from ECL.utils.logging import LoggingPolicy
 
 

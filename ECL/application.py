@@ -35,21 +35,20 @@ from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.foundation import BuildEnvironment, EventBus, __version__, __version_type__
 from ECL.foundation.runtime import RuntimeInfo
 from ECL.game import InstancesManager
+from ECL.host.background_media import BackgroundMediaService
+from ECL.host.dev_channel import DevChannelService
+from ECL.host.info_card import InfoCardManager
+from ECL.host.single_instance import SingleInstanceService
 from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
 from ECL.plugins import PluginManager
-from ECL.services.accounts import AccountManager
-from ECL.services.background_media import BackgroundMediaService
+from ECL.services.account import AccountManager, WardrobeStore
 from ECL.services.custom_downloads import CustomDownloadService
-from ECL.services.dev_channel import DevChannelService
 from ECL.services.game import GameService
 from ECL.services.game.launch_settings import scan_instance_java_references
-from ECL.services.info_card import InfoCardManager
 from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
-from ECL.services.single_instance import SingleInstanceService
 from ECL.services.updates import StartupUpdateService
-from ECL.services.wardrobe import WardrobeStore
 from ECL.utils import ConfigStore, Environment
 
 if TYPE_CHECKING:

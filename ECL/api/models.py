@@ -135,8 +135,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from ECL.game import GameDataError, WorldSeedStore
+from ECL.services.account.skin_avatar import SkinAvatarExporter
 from ECL.services.custom_downloads import CustomDownloadRequest
-from ECL.services.skin_avatar import SkinAvatarExporter
 from ECL.utils.config import default_config
 from ECL.utils.download_settings import DownloadSettingsPatch
 

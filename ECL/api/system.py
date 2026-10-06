@@ -43,9 +43,9 @@ from anyio import to_thread
 from pydantic import ValidationError
 
 from ECL.api.contracts import ApiResponse, failure, success
-from ECL.services.app_update import AppUpdateError, UpdateApplier
+from ECL.host.app_update import AppUpdateError, UpdateApplier
+from ECL.host.maintenance import schedule_debug_maintenance
 from ECL.services.custom_downloads import CustomDownloadRequest
-from ECL.services.maintenance import schedule_debug_maintenance
 from ECL.services.updates import UpdateChecker
 
 from .bridge import _FrontendState, _ipc_handler

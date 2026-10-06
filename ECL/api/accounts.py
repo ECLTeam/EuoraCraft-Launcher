@@ -60,7 +60,7 @@ from ECL.api.models import (
     WardrobeItemRequest,
     WardrobeUpdateRequest,
 )
-from ECL.services.wardrobe import WardrobeError, WardrobeStore
+from ECL.services.account.wardrobe import WardrobeError, WardrobeStore
 from ECL.utils import atomic_write_bytes
 
 from .bridge import _FrontendState, _ipc_handler, _normalize_image_url, _validate_body

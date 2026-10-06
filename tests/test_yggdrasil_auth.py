@@ -36,7 +36,7 @@ from pathlib import Path
 import httpx
 
 from ECL.game import YggdrasilClient
-from ECL.services.authlib import AuthlibAccountManager, AuthlibInjector
+from ECL.services.account.authlib import AuthlibAccountManager, AuthlibInjector
 
 
 class OfflineClient:

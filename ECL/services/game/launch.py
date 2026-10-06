@@ -44,7 +44,7 @@ from anyio import to_thread
 
 from ECL.game import LaunchConfig
 from ECL.plugins.launch_hooks import LaunchContext
-from ECL.services.authlib import AuthlibError
+from ECL.services.account.authlib import AuthlibError
 from ECL.utils.files import atomic_write_text
 from ECL.utils.operation_logging import current_operation, trace_scope
 

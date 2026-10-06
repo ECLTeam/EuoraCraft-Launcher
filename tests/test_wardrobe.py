@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.services.wardrobe import WardrobeError, WardrobeStore
+from ECL.services.account.wardrobe import WardrobeError, WardrobeStore
 
 
 def png_header(width: int, height: int, suffix: bytes = b"") -> bytes:

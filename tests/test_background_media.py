@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from ECL.services.background_media import BackgroundMediaService
+from ECL.host.background_media import BackgroundMediaService
 
 
 def test_background_media_serves_only_the_authorized_video_range(tmp_path) -> None:

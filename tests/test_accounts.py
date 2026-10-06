@@ -76,10 +76,10 @@ from typing import Any
 import httpx
 import pytest
 
-import ECL.services.accounts as accounts_service
+import ECL.services.account.accounts as accounts_service
 from ECL.foundation import EventBus
 from ECL.services import AccountManager
-from ECL.services.accounts import LauncherMicrosoftAccountManager
+from ECL.services.account.accounts import LauncherMicrosoftAccountManager
 
 
 class FakeMicrosoftManager:
