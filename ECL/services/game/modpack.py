@@ -33,10 +33,10 @@ from typing import Any
 
 import httpx
 
+from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError, _GameState
-from .operations import OperationContext
 from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
 
