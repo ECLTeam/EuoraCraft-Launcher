@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.api.models import WorldPatchData
-from ECL.game import Compound, File, Long, String, load
+from ECL.game import Compound, File, GameDataError, Long, String, WorldSeedStore, load
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.workspace import WorkspaceCoordinator
 from ECL.services.game.worlds import WorldCoordinator
@@ -102,7 +102,7 @@ def test_seed_ipc_accepts_exact_text_and_legacy_safe_numbers(seed: str | int) ->
 def test_invalid_seed_patch_does_not_change_files_or_create_backup(tmp_path: Path, value: object) -> None:
     world_path = write_world(tmp_path, "modern", 123)
     original = (world_path / "level.dat").read_bytes()
-    with pytest.raises(GameServiceError) as raised:
+    with pytest.raises(GameDataError) as raised:
         WorldHarness(tmp_path / "app-data").patch_world(tmp_path, "demo", "world", {"seed": value}, True)
     assert raised.value.error_code == "INVALID_WORLD_SEED"
     assert (world_path / "level.dat").read_bytes() == original
@@ -188,8 +188,6 @@ def test_legacy_vanilla_generator_seed_references_follow_world_seed(tmp_path: Pa
 
 
 def test_split_file_read_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from ECL.services.game.world_seeds import WorldSeedStore
-
     world_path = write_world(tmp_path, "split", 123)
     monkeypatch.setattr(WorldSeedStore, "max_nbt_bytes", 8)
     assert WorldCoordinator._read_world(world_path)["seed"] == ""
@@ -207,7 +205,7 @@ def test_seed_path_cannot_follow_external_symlink(tmp_path: Path) -> None:
         pytest.skip("系统未授予符号链接权限")
     assert WorldCoordinator._read_world(world_path)["seed"] == ""
     original = outside.read_bytes()
-    with pytest.raises(GameServiceError):
+    with pytest.raises(GameDataError):
         WorldHarness(tmp_path / "app-data").patch_world(tmp_path, "demo", "world", {"seed": "456"}, True)
     assert outside.read_bytes() == original
 

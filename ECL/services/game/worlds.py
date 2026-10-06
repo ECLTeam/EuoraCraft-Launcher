@@ -39,13 +39,12 @@ from urllib.parse import quote_plus
 
 from PIL import Image, UnidentifiedImageError
 
-from ECL.game import Byte, Compound, Int, load
+from ECL.game import Byte, Compound, GameDataError, Int, WorldSeedStore, load
 from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError
 from .workspace import ResolvedInstanceTarget, delete_path, resolve_relative_id, safe_extract_zip
-from .world_seeds import WorldSeedStore
 
 
 def _nbt_scalar(value: Any, default: Any = None) -> Any:
@@ -236,7 +235,7 @@ class WorldCoordinator:
                         documents.append((source.file_path, source.document))
                 self.create_world_backup(game_path, version_id, world_id, version_isolation, automatic=True)
                 WorldSeedStore.commit(documents)
-            except GameServiceError:
+            except (GameServiceError, GameDataError):
                 raise
             except Exception as exc:
                 raise GameServiceError(f"修改世界数据失败：{exc}", "WORLD_UPDATE_FAILED") from exc

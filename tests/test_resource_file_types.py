@@ -9,9 +9,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.game import ByteArray, Compound, File, Float, Int, List, LongArray, String, load
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.resource_files import ResourceFilePolicy
+from ECL.game import (
+    ByteArray,
+    Compound,
+    File,
+    Float,
+    GameDataError,
+    Int,
+    List,
+    LongArray,
+    ResourceFilePolicy,
+    String,
+    load,
+)
 from ECL.services.game.resources import ResourceCoordinator
 from ECL.services.game.workspace import WorkspaceCoordinator
 
@@ -137,7 +147,7 @@ def test_install_prevalidates_entire_batch_before_submitting(
         write_pack(valid, shader=resource_type == "shaderpack")
     invalid = tmp_path / invalid_name
     invalid.write_bytes(b"invalid")
-    with pytest.raises(GameServiceError):
+    with pytest.raises(GameDataError):
         service.install_resources(tmp_path, "demo", resource_type, [valid, invalid], True, "world")
     assert submitted == []
     assert not service._resource_root(tmp_path, "demo", resource_type, True, "world").exists()
@@ -150,7 +160,7 @@ def test_datapack_install_rejects_directory_even_if_list_accepts_it(tmp_path: Pa
     (source / "pack.mcmeta").write_text('{"pack":{"description":"Pack","pack_format":34}}', encoding="utf-8")
     service = ResourceService()
     service._application_operations = SimpleNamespace(submit=lambda *_args: {})
-    with pytest.raises(GameServiceError):
+    with pytest.raises(GameDataError):
         service.install_resources(tmp_path, "demo", "datapack", [source], True, "world")
 
 
@@ -175,7 +185,7 @@ def test_invalid_schematic_storage_is_rejected(tmp_path: Path, kind: str, field:
     document = load(path)
     document[field] = value
     document.save(path)
-    with pytest.raises(GameServiceError):
+    with pytest.raises(GameDataError):
         ResourceFilePolicy.validate(path, "schematic")
 
 
@@ -223,7 +233,7 @@ def test_cache_limits_expiry_and_directory_changes(tmp_path: Path, monkeypatch: 
     metadata_path.write_text('{"pack":{"description":"Good","pack_format":34}}', encoding="utf-8")
     ResourceFilePolicy.validate(directory, "datapack", allow_directory=True, use_cache=True)
     metadata_path.write_text("{}", encoding="utf-8")
-    with pytest.raises(GameServiceError):
+    with pytest.raises(GameDataError):
         ResourceFilePolicy.validate(directory, "datapack", allow_directory=True, use_cache=True)
     monkeypatch.setattr(ResourceFilePolicy, "cache_seconds", -1)
     ResourceFilePolicy.validate(tmp_path / "pack2.zip", "resourcepack", use_cache=True)
@@ -234,13 +244,13 @@ def test_read_budgets_report_size_instead_of_invalid_format(tmp_path: Path, monk
     path = tmp_path / "valid.schematic"
     write_schematic(path, "schematic")
     monkeypatch.setattr(ResourceFilePolicy, "max_nbt_bytes", 8)
-    with pytest.raises(GameServiceError) as raised:
+    with pytest.raises(GameDataError) as raised:
         ResourceFilePolicy.validate(path, "schematic")
     assert raised.value.error_code == "RESOURCE_TOO_LARGE"
     pack_path = tmp_path / "valid.zip"
     write_pack(pack_path)
     monkeypatch.setattr(ResourceFilePolicy, "max_metadata_bytes", 8)
-    with pytest.raises(GameServiceError) as raised:
+    with pytest.raises(GameDataError) as raised:
         ResourceFilePolicy.validate(pack_path, "datapack")
     assert raised.value.error_code == "RESOURCE_TOO_LARGE"
 
@@ -276,7 +286,7 @@ def test_install_rechecks_copied_content_before_commit(tmp_path: Path, monkeypat
     service = ResourceService()
     context = SimpleNamespace(check_cancelled=lambda: None, progress=lambda *_args: None)
     service._application_operations = SimpleNamespace(submit=lambda _name, worker: worker(context))
-    with pytest.raises(GameServiceError):
+    with pytest.raises(GameDataError):
         service.install_resources(tmp_path, "demo", "shaderpack", [source], True)
     assert list(service._resource_root(tmp_path, "demo", "shaderpack", True).iterdir()) == []
 
