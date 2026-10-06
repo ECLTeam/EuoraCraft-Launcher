@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from .base import GameServiceError, _GameState
+from .mod_sources import mod_api_base, mod_user_agent
 
 
 class CatalogCoordinator(_GameState):
@@ -111,24 +112,35 @@ class CatalogCoordinator(_GameState):
         """
         查询指定 Minecraft 版本可用的 Fabric API 版本。
 
+        Fabric API 属于 Modrinth 模组资源，跟随模组源请求，并在远端失败时
+        切换到另一模组源重试。
+
         :param game_version: 目标 Minecraft 游戏版本
         :return: Fabric API 版本号列表，按发布时间降序
+        :raises GameServiceError: 两个模组源均请求失败时抛出
         """
         version = self._normalize_version_name(game_version, "Minecraft 版本")
         params = {
             "game_versions": '["' + version + '"]',
             "loaders": '["fabric"]',
         }
-        response = httpx.get(
-            f"https://api.modrinth.com/v2/project/{self.fabric_api_project}/version",
-            params=params,
-            headers={"User-Agent": "EuoraCraft-Launcher/version-install"},
-            timeout=self.fabric_api_timeout_seconds,
+
+        def fetch_versions(mod_source: str) -> list[Any]:
+            response = httpx.get(
+                f"{mod_api_base(mod_source, 'modrinth')}/project/{self.fabric_api_project}/version",
+                params=params,
+                headers={"User-Agent": mod_user_agent()},
+                timeout=self.fabric_api_timeout_seconds,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return payload if isinstance(payload, list) else []
+
+        versions = self.mod_request(
+            "Fabric API 版本",
+            fetch_versions,
+            is_valid=lambda payload: isinstance(payload, list),
         )
-        response.raise_for_status()
-        versions = response.json()
-        if not isinstance(versions, list):
-            return []
         return [
             str(item.get("version_number") or "").strip()
             for item in versions

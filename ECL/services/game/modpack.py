@@ -36,6 +36,7 @@ import httpx
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError, _GameState
+from .mod_sources import mod_api_base, mod_user_agent, rewrite_mod_file_url
 from .operations import OperationContext
 from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
@@ -1180,20 +1181,21 @@ class ModpackCoordinator(_GameState):
         warnings: list[str] = []
         if not hashed_mods:
             return resolved, warnings
+        mod_source = self.mod_source()
         try:
             for start in range(0, len(hashed_mods), self._online_lookup_batch_size):
                 context.check_cancelled()
                 batch = hashed_mods[start : start + self._online_lookup_batch_size]
                 response = _proxied_post(
-                    "https://api.modrinth.com/v2/version_files",
+                    f"{mod_api_base(mod_source, 'modrinth')}/version_files",
                     json={"hashes": [mod["sha1"] for mod in batch], "algorithm": "sha1"},
-                    headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+                    headers={"User-Agent": mod_user_agent()},
                     timeout=15,
                 )
                 response.raise_for_status()
                 versions = response.json()
                 for mod in batch:
-                    entry = self._modrinth_file_entry(mod, versions)
+                    entry = self._modrinth_file_entry(mod, versions, mod_source)
                     if entry is not None:
                         resolved[mod["relative"]] = entry
         except (httpx.HTTPError, GameServiceError) as exc:
@@ -1204,8 +1206,17 @@ class ModpackCoordinator(_GameState):
         return resolved, warnings
 
     @staticmethod
-    def _modrinth_file_entry(mod: dict[str, Any], versions: Any) -> dict[str, Any] | None:
-        # 从批量反查响应中取该模组的主文件；无有效主文件视为未命中。
+    def _modrinth_file_entry(mod: dict[str, Any], versions: Any, mod_source: str) -> dict[str, Any] | None:
+        """
+        从批量反查响应中取该模组的主文件。
+
+        文件地址按模组源重写后才能走镜像下载；无有效主文件视为未命中。
+
+        :param mod: 含相对路径、哈希与指纹的本地模组条目
+        :param versions: Modrinth 批量反查响应
+        :param mod_source: 本次请求使用的模组源
+        :return: mrpack ``files[]`` 条目；未命中时返回 None
+        """
         version = versions.get(mod["sha1"]) if isinstance(versions, dict) else None
         files = version.get("files") if isinstance(version, dict) else None
         if not isinstance(files, list):
@@ -1218,7 +1229,7 @@ class ModpackCoordinator(_GameState):
             "path": mod["relative"],
             "hashes": {"sha1": mod["sha1"], "sha512": mod["sha512"]},
             "env": {"client": "required", "server": "required"},
-            "downloads": [str(candidate["url"])],
+            "downloads": [rewrite_mod_file_url(str(candidate["url"]), mod_source)],
             "fileSize": candidate.get("size") if isinstance(candidate.get("size"), int) else mod["size"],
         }
 
@@ -1228,11 +1239,13 @@ class ModpackCoordinator(_GameState):
         """
         对 Modrinth 未命中的模组做 CurseForge 指纹批量反查。
 
-        未配置 API Key 或接口失败时记录警告并返回空，不阻塞导出。
+        模组源为 MCIM 时镜像不需要 API Key；官方源未配置 Key 或接口失败时记录
+        警告并返回空，不阻塞导出。
         """
         resolved: dict[str, dict[str, Any]] = {}
+        mod_source = self.mod_source()
         try:
-            headers = self._curseforge_headers()
+            headers = self._curseforge_headers(mod_source)
         except GameServiceError as exc:
             warnings.append(f"CurseForge 指纹反查已跳过：{exc}")
             return resolved
@@ -1241,7 +1254,7 @@ class ModpackCoordinator(_GameState):
                 context.check_cancelled()
                 batch = mods[start : start + self._online_lookup_batch_size]
                 response = _proxied_post(
-                    "https://api.curseforge.com/v1/fingerprints/432",
+                    f"{mod_api_base(mod_source, 'curseforge')}/fingerprints/432",
                     json={"fingerprints": [mod["fingerprint"] for mod in batch]},
                     headers=headers,
                     timeout=15,
@@ -1261,7 +1274,7 @@ class ModpackCoordinator(_GameState):
                         "path": mod["relative"],
                         "hashes": {"sha1": mod["sha1"], "sha512": mod["sha512"]},
                         "env": {"client": "required", "server": "required"},
-                        "downloads": [str(file_info["downloadUrl"])],
+                        "downloads": [rewrite_mod_file_url(str(file_info["downloadUrl"]), mod_source)],
                         "fileSize": mod["size"],
                     }
         except (httpx.HTTPError, GameServiceError) as exc:

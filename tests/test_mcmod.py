@@ -27,6 +27,16 @@
 #   - test_curseforge_world_detail_and_files_are_mapped(tmp_path) -> None
 #   - test_curseforge_file_uses_download_url_endpoint_as_fallback(tmp_path) -> None
 #   - test_install_online_world_downloads_then_imports_archive(tmp_path) -> None
+#   - test_mcim_mod_source_enables_curseforge_without_key(tmp_path) -> None
+#   - test_curseforge_search_uses_mcim_host_without_key_header(tmp_path) -> None
+#   - test_modrinth_search_uses_mcim_host(tmp_path) -> None
+#   - test_official_mod_source_keeps_official_hosts(tmp_path) -> None
+#   - test_project_info_rewrites_curseforge_icon_for_mcim(tmp_path) -> None
+#   - test_project_info_keeps_official_icon_for_official_source(tmp_path) -> None
+#   - test_select_online_file_rewrites_modrinth_download_url_for_mcim(tmp_path) -> None
+#   - test_select_online_file_falls_back_to_alternate_mod_source(tmp_path) -> None
+#   - test_fabric_api_versions_follow_mod_source(tmp_path) -> None
+#   - test_mediafilez_host_is_never_rewritten(tmp_path) -> None
 # ============================================================
 
 from __future__ import annotations
@@ -35,6 +45,7 @@ import json
 from pathlib import Path
 from zipfile import ZipFile
 
+import httpx
 import pytest
 
 from ECL.services.game import GameService
@@ -617,3 +628,230 @@ def test_install_online_world_downloads_then_imports_archive(tmp_path: Path) -> 
         )
 
     assert result == {"filename": "Sky World", "source": "curseforge", "skipped": False}
+
+
+def _mod_source_service(tmp_path: Path, source: str, **kwargs):
+    # 构造按指定模组源工作的游戏服务，用于验证镜像与回退行为。
+    return GameService(
+        _FakeAccounts(),
+        resource_path=tmp_path,
+        mod_source_provider=lambda: source,
+        **kwargs,
+    )
+
+
+def test_mcim_mod_source_enables_curseforge_without_key(tmp_path: Path) -> None:
+    official = GameService(_FakeAccounts(), resource_path=tmp_path)
+    assert official.curseforge_available() is False
+
+    mcim = _mod_source_service(tmp_path, "mcim")
+    assert mcim.curseforge_available() is True
+
+
+def test_curseforge_search_uses_mcim_host_without_key_header(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = _mod_source_service(tmp_path, "mcim")
+    captured: dict[str, object] = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        captured["url"] = url
+        captured["headers"] = headers
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {"data": [], "pagination": {"totalCount": 0}}
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        service.search_online_resources("jei", "", "", source="curseforge", resource_type="mod")
+
+    assert captured["url"] == "https://mod.mcimirror.top/curseforge/v1/mods/search"
+    assert "x-api-key" not in captured["headers"]
+    assert captured["headers"]["User-Agent"].startswith("EuoraCraft-Launcher/")
+
+
+def test_modrinth_search_uses_mcim_host(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = _mod_source_service(tmp_path, "mcim")
+    captured: dict[str, object] = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        captured["url"] = url
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {"hits": [], "total_hits": 0}
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        service.search_online_resources("sodium", "1.21.1", "fabric")
+
+    assert captured["url"] == "https://mod.mcimirror.top/modrinth/v2/search"
+
+
+def test_official_mod_source_keeps_official_hosts(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
+    urls: list[str] = []
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        urls.append(url)
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {"data": [], "pagination": {"totalCount": 0}, "hits": [], "total_hits": 0}
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        service.search_online_resources("sodium", "1.21.1", "fabric")
+        service.search_online_resources("jei", "", "", source="curseforge", resource_type="mod")
+
+    assert urls == [
+        "https://api.modrinth.com/v2/search",
+        "https://api.curseforge.com/v1/mods/search",
+    ]
+
+
+def test_project_info_rewrites_curseforge_icon_for_mcim(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = _mod_source_service(tmp_path, "mcim")
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {
+            "data": {
+                "id": 238222,
+                "slug": "jei",
+                "name": "Just Enough Items",
+                "summary": "查看物品配方",
+                "authors": [{"name": "mezz"}],
+                "logo": {"url": "https://media.forgecdn.net/avatars/29/69/a.jpeg"},
+                "latestFiles": [],
+                "links": {},
+            }
+        }
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        info = service.fetch_project_info("curseforge", "238222", "mod")
+
+    assert info["iconUrl"] == "https://mod.mcimirror.top/avatars/29/69/a.jpeg"
+
+
+def test_project_info_keeps_official_icon_for_official_source(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {
+            "data": {
+                "id": 238222,
+                "slug": "jei",
+                "name": "Just Enough Items",
+                "summary": "查看物品配方",
+                "authors": [],
+                "logo": {"url": "https://media.forgecdn.net/avatars/29/69/a.jpeg"},
+                "latestFiles": [],
+                "links": {},
+            }
+        }
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        info = service.fetch_project_info("curseforge", "238222", "mod")
+
+    assert info["iconUrl"] == "https://media.forgecdn.net/avatars/29/69/a.jpeg"
+
+
+def test_select_online_file_rewrites_modrinth_download_url_for_mcim(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = _mod_source_service(tmp_path, "mcim")
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {
+            "files": [
+                {
+                    "primary": True,
+                    "url": "https://cdn.modrinth.com/data/AANobbMI/versions/abc/sodium.jar",
+                    "filename": "sodium.jar",
+                }
+            ]
+        }
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        selected = service._select_online_file("modrinth", "sodium", "abc")
+
+    assert selected["url"] == "https://mod.mcimirror.top/data/AANobbMI/versions/abc/sodium.jar"
+    assert selected["filename"] == "sodium.jar"
+
+
+def test_select_online_file_falls_back_to_alternate_mod_source(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = _mod_source_service(tmp_path, "official")
+    urls: list[str] = []
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        urls.append(url)
+        if "api.modrinth.com" in url:
+            raise httpx.ConnectError("official down")
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: {
+            "files": [{"primary": True, "url": "https://cdn.modrinth.com/data/A/v/f.jar", "filename": "f.jar"}]
+        }
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        selected = service._select_online_file("modrinth", "sodium", "v")
+
+    assert urls == [
+        "https://api.modrinth.com/v2/version/v",
+        "https://mod.mcimirror.top/modrinth/v2/version/v",
+    ]
+    # 回退到 MCIM 后，文件地址同步改写为镜像地址。
+    assert selected["url"] == "https://mod.mcimirror.top/data/A/v/f.jar"
+
+
+def test_fabric_api_versions_follow_mod_source(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    service = _mod_source_service(tmp_path, "mcim")
+    captured: dict[str, object] = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None, **kwargs):
+        captured["url"] = url
+        response = type("R", (), {})()
+        response.status_code = 200
+        response.raise_for_status = lambda: None
+        response.json = lambda: [{"version_number": "0.100.0+1.21.1"}]
+        return response
+
+    with patch("httpx.get", side_effect=fake_get):
+        versions = service.fabric_api_versions("1.21.1")
+
+    assert captured["url"] == "https://mod.mcimirror.top/modrinth/v2/project/fabric-api/version"
+    assert versions == ["0.100.0+1.21.1"]
+
+
+def test_mediafilez_host_is_never_rewritten(tmp_path: Path) -> None:
+    # MCIM 文档明确要求 mediafilez.forgecdn.net 不得替换。
+    service = _mod_source_service(tmp_path, "mcim")
+    url = "https://mediafilez.forgecdn.net/files/1/2/f.jar"
+    assert service.rewrite_mod_file_url(url) == url

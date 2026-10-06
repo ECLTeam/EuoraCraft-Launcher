@@ -48,6 +48,7 @@ from .download_sources import PreferredApiClient, alternate_source
 from .instance_compat import InstanceCompatibilityReader
 from .instance_profiles import InstanceProfileStore
 from .mcmod import McmodTranslator
+from .mod_sources import ModSourceAware, ModSourceRequestPolicy
 from .resource_search import ResourceSearchService
 from .version_stats import VersionStatsStore
 
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 
 ApiClientFactory = Callable[[ApiUrlConfig], BaseApiClient]
 DownloaderFactory = Callable[..., Downloader]
+ModSourceProvider = Callable[[], str]
 CommandBuilder = Callable[[LaunchConfig], str]
 SearchFactory = Callable[[Path], Any]
 JavaScannerFactory = Callable[..., JavaScanner]
@@ -94,7 +96,7 @@ class _RunningGame:
     trace: OperationTrace | None = None
 
 
-class _GameState:
+class _GameState(ModSourceAware):
     # 保存游戏目录、安装、启动协调器共享的运行状态与资源。
 
     ecl_json_name = "ecl.json"
@@ -120,6 +122,7 @@ class _GameState:
         isolation_policy_provider: IsolationPolicyProvider | None = None,
         operations: OperationManager | None = None,
         java_manager: JavaManager | None = None,
+        mod_source_provider: ModSourceProvider | None = None,
     ):
         """
         创建游戏服务共享状态，并注入可替换的 Core 边界实现。
@@ -140,10 +143,12 @@ class _GameState:
         :param version_watch_debounce: 版本变化事件的防抖时间，单位为秒
         :param event_bus: 当前应用上下文拥有的事件总线
         :param isolation_policy_provider: 读取全局实例隔离策略的延迟提供器
+        :param mod_source_provider: 读取当前模组源的延迟提供器；缺省时固定为官方源
         """
         self.logger = get_logger("GameService")
         self.events = event_bus or EventBus()
         self._isolation_policy_provider = isolation_policy_provider
+        self._mod_sources = ModSourceRequestPolicy(mod_source_provider or (lambda: "official"), self.logger)
         self.accounts = accounts
         self._search_factory = search_factory
         self.instances = instances_manager or InstancesManager()

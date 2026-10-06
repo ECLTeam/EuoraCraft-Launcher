@@ -62,6 +62,7 @@ from ECL.utils.network import download_proxy_url
 from .base import GameServiceError
 from .instance_health import InstanceInspection
 from .mod_metadata import LocalModMetadata, LocalModParser, ModDependencyDiagnostics
+from .mod_sources import ModSourceAware, mod_api_base, mod_user_agent, rewrite_mod_file_url
 from .operations import OperationContext
 from .resource_files import ResourceFilePolicy
 from .resource_search import SearchBatch, SearchCriteria, SearchItem, SearchResult, SearchSource
@@ -290,7 +291,7 @@ def _join_authors(authors: Any) -> str:
     return ", ".join(names)
 
 
-class ResourceCoordinator:
+class ResourceCoordinator(ModSourceAware):
     """
     统一管理模组、资源包、光影包、数据包和原理图。
     """
@@ -733,13 +734,30 @@ class ResourceCoordinator:
 
     def curseforge_available(self) -> bool:
         """
-        返回 CurseForge 在线搜索是否已配置 API Key。
+        返回 CurseForge 在线搜索当前是否可用。
 
-        :return: 已配置时返回 True，未配置时返回 False
+        模组源为 MCIM 时镜像不需要 API Key，因此未配置 Key 也可用；模组源为
+        官方源时仍要求已配置 Key。
+
+        :return: 当前模组源下 CurseForge 可用时返回 True
         """
+        if self.mod_source() == "mcim":
+            return True
         return bool(os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key)
 
-    def _curseforge_headers(self) -> dict[str, str]:
+    def _curseforge_headers(self, mod_source: str = "") -> dict[str, str]:
+        """
+        返回 CurseForge 请求头。
+
+        模组源为 MCIM 时镜像不校验 Key，因此不发送 ``x-api-key``；模组源为
+        官方源时缺少 Key 会拒绝请求。
+
+        :param mod_source: 本次请求使用的模组源；空值表示读取当前设置
+        :return: 供 CurseForge API 使用的请求头
+        :raises GameServiceError: 官方源下未配置 API Key 时抛出
+        """
+        if (mod_source or self.mod_source()) == "mcim":
+            return {"Accept": "application/json"}
         key = os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key
         if not key:
             raise GameServiceError("尚未配置 CurseForge API Key", "CURSEFORGE_KEY_REQUIRED")
@@ -758,7 +776,10 @@ class ResourceCoordinator:
         sort: str = "relevance",
     ) -> dict[str, Any]:
         """
-        搜索 Modrinth 或 CurseForge；无 Key 时只禁用 CurseForge。
+        搜索 Modrinth 或 CurseForge，失败时切换到另一模组源重试。
+
+        模组源为 MCIM 时 CurseForge 镜像不需要 API Key，因此无 Key 也可搜索；
+        模组源为官方源时无 Key 只禁用 CurseForge，不影响 Modrinth。
 
         :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），决定 Modrinth project_type 过滤
         :param offset: 分页偏移量，用于翻页加载更多结果
@@ -769,6 +790,49 @@ class ResourceCoordinator:
             loader = ""
         if resource_type in {"mod", "datapack"} and re.search(r"[\u4e00-\u9fff]", query):
             query = self._mcmod.to_english_query(query) or query
+        if source not in {"modrinth", "curseforge", "ftb"}:
+            raise GameServiceError("未知在线资源来源", "INVALID_RESOURCE_SOURCE")
+        if source == "ftb":
+            return self._search_ftb_modpacks(query, resource_type, limit)
+        return self.mod_request(
+            "在线资源搜索",
+            lambda mod_source: self._search_platform(
+                source,
+                mod_source,
+                query=query,
+                game_version=game_version,
+                loader=loader,
+                limit=limit,
+                resource_type=resource_type,
+                offset=offset,
+                sort=sort,
+                curseforge_key=curseforge_key,
+            ),
+            is_valid=lambda payload: isinstance(payload, dict) and isinstance(payload.get("items"), list),
+        )
+
+    def _search_platform(
+        self,
+        source: str,
+        mod_source: str,
+        *,
+        query: str,
+        game_version: str,
+        loader: str,
+        limit: int,
+        resource_type: str,
+        offset: int,
+        sort: str,
+        curseforge_key: str | None,
+    ) -> dict[str, Any]:
+        """
+        按指定模组源执行单平台搜索，供换源回退复用。
+
+        :param source: 平台来源（modrinth/curseforge）
+        :param mod_source: 本次尝试使用的模组源
+        :return: 平台命中与总数
+        :raises GameServiceError: 资源类型未知、加载器不支持或 Key 缺失时抛出
+        """
         if source == "modrinth":
             project_type = ResourceCatalogPolicy.project_types.get(resource_type)
             if project_type is None:
@@ -792,9 +856,9 @@ class ResourceCoordinator:
             if sort:
                 params["index"] = sort
             response = _proxied_get(
-                "https://api.modrinth.com/v2/search",
+                f"{mod_api_base(mod_source, 'modrinth')}/search",
                 params=params,
-                headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+                headers={"User-Agent": mod_user_agent()},
                 timeout=10,
             )
             response.raise_for_status()
@@ -805,20 +869,17 @@ class ResourceCoordinator:
                 "total": data.get("total_hits", 0),
                 "resource_type": resource_type,
             }
-        if source == "ftb":
-            return self._search_ftb_modpacks(query, resource_type, limit)
-        if source == "curseforge":
-            return self._search_curseforge(
-                query,
-                game_version,
-                resource_type,
-                limit,
-                offset,
-                sort,
-                os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key or curseforge_key,
-                loader=loader,
-            )
-        raise GameServiceError("未知在线资源来源", "INVALID_RESOURCE_SOURCE")
+        return self._search_curseforge(
+            query,
+            game_version,
+            resource_type,
+            limit,
+            offset,
+            sort,
+            os.getenv("CURSEFORGE_API_KEY") or self._curseforge_api_key or curseforge_key,
+            loader=loader,
+            mod_source=mod_source,
+        )
 
     def _search_curseforge(
         self,
@@ -831,14 +892,20 @@ class ResourceCoordinator:
         key: str | None,
         *,
         loader: str = "",
+        mod_source: str = "",
     ) -> dict[str, Any]:
         """
         调用 CurseForge API 按分类搜索资源。
 
-        :raises GameServiceError: 未配置 Key（CURSEFORGE_KEY_REQUIRED）、Key 失效
-            （CURSEFORGE_KEY_INVALID）或请求失败时抛出
+        模组源为 MCIM 时镜像不校验 Key，仅官方源要求 Key 且会对失效 Key 返回
+        403，此时给出可操作指引而非原始错误。
+
+        :param mod_source: 本次请求使用的模组源；空值表示读取当前设置
+        :raises GameServiceError: 官方源未配置 Key（CURSEFORGE_KEY_REQUIRED）、
+            Key 失效（CURSEFORGE_KEY_INVALID）或请求失败时抛出
         """
-        if not key:
+        mod_source = mod_source or self.mod_source()
+        if mod_source != "mcim" and not key:
             raise GameServiceError("尚未配置 CurseForge API Key", "CURSEFORGE_KEY_REQUIRED")
         # 始终带全 classId/gameVersion/searchFilter/sortField，
         # 默认按人气排序，classId 保证只返回对应资源类型（mod 不混入整合包）。
@@ -857,14 +924,16 @@ class ResourceCoordinator:
             if loader_id is None:
                 raise GameServiceError("CurseForge 不支持此加载器筛选", "INVALID_RESOURCE_LOADER")
             params["modLoaderType"] = loader_id
+        headers: dict[str, str] = {"User-Agent": mod_user_agent()}
+        if mod_source != "mcim" and key:
+            headers["x-api-key"] = key
         response = _proxied_get(
-            "https://api.curseforge.com/v1/mods/search",
+            f"{mod_api_base(mod_source, 'curseforge')}/mods/search",
             params=params,
-            headers={"x-api-key": key},
+            headers=headers,
             timeout=10,
         )
         if response.status_code == 403:
-            # CurseForge 对无效或过期的 Key 返回 403，此时给出可操作的指引而非原始错误。
             raise GameServiceError(
                 "CurseForge API Key 无效或已过期，请到 console.curseforge.com 重新生成后更新 .env 配置",
                 "CURSEFORGE_KEY_INVALID",
@@ -890,7 +959,7 @@ class ResourceCoordinator:
             response = _proxied_get(
                 f"{ResourceCatalogPolicy.ftb_base_url}/modpack/search/{min(limit, 30)}/detailed",
                 params={"platform": "modpacksch", "term": query},
-                headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+                headers={"User-Agent": mod_user_agent()},
                 timeout=15,
             )
             response.raise_for_status()
@@ -1023,17 +1092,48 @@ class ResourceCoordinator:
         resource_type: str = "mod",
     ) -> dict[str, Any]:
         """
-        获取 Modrinth 项目详情，映射为前端 ``ModInfo`` 结构。
+        获取在线项目详情，失败时切换到另一模组源重试。
 
-        :param source: 数据来源（仅支持 modrinth）
-        :param project_id: Modrinth 项目 ID
+        FTB 社区源不受模组源影响；Modrinth 与 CurseForge 的图标地址按当前
+        模组源重写，项目主页仍指向平台官方站点。
+
+        :param source: 数据来源（modrinth/curseforge/ftb）
+        :param project_id: 平台项目标识
         :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），用于兜底项目页 URL
         :return: 项目详情字典
+        :raises GameServiceError: 来源未知或远端响应结构无效时抛出
+        """
+        if source == "ftb":
+            return self._fetch_ftb_project_info(project_id, resource_type)
+        if source not in {"modrinth", "curseforge"}:
+            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        return self.mod_request(
+            "项目详情",
+            lambda mod_source: self._fetch_platform_project_info(source, mod_source, project_id, resource_type),
+            is_valid=lambda payload: isinstance(payload, dict) and bool(payload.get("id")),
+        )
+
+    def _fetch_platform_project_info(
+        self,
+        source: str,
+        mod_source: str,
+        project_id: str,
+        resource_type: str,
+    ) -> dict[str, Any]:
+        """
+        按指定模组源获取 Modrinth 或 CurseForge 项目详情。
+
+        :param source: 平台来源（modrinth/curseforge）
+        :param mod_source: 本次尝试使用的模组源
+        :param project_id: 平台项目标识
+        :param resource_type: 资源类型
+        :return: 项目详情字典
+        :raises GameServiceError: CurseForge 详情无效时抛出
         """
         if source == "curseforge":
             response = _proxied_get(
-                f"https://api.curseforge.com/v1/mods/{project_id}",
-                headers=self._curseforge_headers(),
+                f"{mod_api_base(mod_source, 'curseforge')}/mods/{project_id}",
+                headers=self._curseforge_headers(mod_source),
                 timeout=10,
             )
             response.raise_for_status()
@@ -1056,6 +1156,7 @@ class ResourceCoordinator:
             slug = str(data.get("slug") or "")
             section = ResourceCatalogPolicy.curseforge_web_paths.get(resource_type, "mc-mods")
             links = data.get("links") or {}
+            icon_url = logo.get("url") if isinstance(logo, dict) else None
             return {
                 "id": str(data.get("id") or project_id),
                 "slug": slug,
@@ -1063,73 +1164,86 @@ class ResourceCoordinator:
                 "description": str(data.get("summary") or ""),
                 "author": str(authors[0].get("name") or "") if authors and isinstance(authors[0], dict) else "",
                 "body": str(data.get("summary") or ""),
-                "iconUrl": logo.get("url") if isinstance(logo, dict) else None,
+                "iconUrl": rewrite_mod_file_url(str(icon_url), mod_source) if icon_url else None,
                 "source": "curseforge",
                 "resourceType": resource_type,
                 "loaders": [],
                 "gameVersions": game_versions,
                 "projectUrl": str(links.get("websiteUrl") or f"https://www.curseforge.com/minecraft/{section}/{slug}"),
             }
-        if source == "ftb":
-            try:
-                response = _proxied_get(
-                    f"{ResourceCatalogPolicy.ftb_base_url}/modpack/{project_id}",
-                    headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
-                    timeout=15,
-                )
-                response.raise_for_status()
-                data = response.json()
-            except httpx.HTTPError as exc:
-                raise GameServiceError(f"FTB 在线源不可用：{exc}", "FTB_SOURCE_UNAVAILABLE") from exc
-            if not isinstance(data, dict) or data.get("status") != "success":
-                raise GameServiceError("FTB 整合包详情无效", "FTB_SOURCE_UNAVAILABLE")
-            authors = data.get("authors") or []
-            arts = data.get("art") if isinstance(data.get("art"), list) else []
-            icon_url = next(
-                (item.get("url") for item in arts if isinstance(item, dict) and item.get("type") == "square"),
-                None,
-            )
-            versions = data.get("versions") if isinstance(data.get("versions"), list) else []
-            game_versions = sorted(
-                {
-                    str(target.get("version"))
-                    for version in versions
-                    if isinstance(version, dict)
-                    for target in (version.get("targets") or [])
-                    if isinstance(target, dict) and target.get("name") == "minecraft"
-                }
-            )
-            slug = str(data.get("slug") or "")
-            return {
-                "id": str(data.get("id") or project_id),
-                "slug": slug,
-                "title": str(data.get("name") or slug),
-                "description": str(data.get("synopsis") or ""),
-                "author": str(authors[0].get("name") or "") if authors and isinstance(authors[0], dict) else "",
-                "body": str(data.get("description") or data.get("synopsis") or ""),
-                "iconUrl": icon_url,
-                "source": "ftb",
-                "resourceType": resource_type,
-                "loaders": [],
-                "gameVersions": game_versions,
-                "projectUrl": f"https://www.feed-the-beast.com/modpack/{slug or project_id}",
-            }
-        if source != "modrinth":
-            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
         response = _proxied_get(
-            f"https://api.modrinth.com/v2/project/{project_id}",
-            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+            f"{mod_api_base(mod_source, 'modrinth')}/project/{project_id}",
+            headers={"User-Agent": mod_user_agent()},
             timeout=10,
         )
         response.raise_for_status()
         data = response.json()
+        if not isinstance(data, dict):
+            raise GameServiceError("Modrinth 项目详情无效", "MODRINTH_PROJECT_INVALID")
         slug = str(data.get("slug") or "")
         project_type = str(data.get("project_type") or ResourceCatalogPolicy.project_types.get(resource_type, "mod"))
         dto = _ModrinthProjectInfo.model_validate(data)
         dto.slug = slug
         dto.resource_type = resource_type
+        if dto.icon_url:
+            dto.icon_url = rewrite_mod_file_url(str(dto.icon_url), mod_source)
         dto.project_url = f"https://modrinth.com/{project_type}/{slug}"
         return dto.model_dump(by_alias=True)
+
+    def _fetch_ftb_project_info(self, project_id: str, resource_type: str) -> dict[str, Any]:
+        """
+        获取 FTB 社区整合包详情。
+
+        FTB 不属于 Modrinth 与 CurseForge，不受模组源影响。
+
+        :param project_id: FTB 整合包标识
+        :param resource_type: 资源类型
+        :return: 项目详情字典
+        :raises GameServiceError: FTB 在线源不可用或详情无效时抛出
+        """
+        try:
+            response = _proxied_get(
+                f"{ResourceCatalogPolicy.ftb_base_url}/modpack/{project_id}",
+                headers={"User-Agent": mod_user_agent()},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPError as exc:
+            raise GameServiceError(f"FTB 在线源不可用：{exc}", "FTB_SOURCE_UNAVAILABLE") from exc
+        if not isinstance(data, dict) or data.get("status") != "success":
+            raise GameServiceError("FTB 整合包详情无效", "FTB_SOURCE_UNAVAILABLE")
+        authors = data.get("authors") or []
+        arts = data.get("art") if isinstance(data.get("art"), list) else []
+        icon_url = next(
+            (item.get("url") for item in arts if isinstance(item, dict) and item.get("type") == "square"),
+            None,
+        )
+        versions = data.get("versions") if isinstance(data.get("versions"), list) else []
+        game_versions = sorted(
+            {
+                str(target.get("version"))
+                for version in versions
+                if isinstance(version, dict)
+                for target in (version.get("targets") or [])
+                if isinstance(target, dict) and target.get("name") == "minecraft"
+            }
+        )
+        slug = str(data.get("slug") or "")
+        return {
+            "id": str(data.get("id") or project_id),
+            "slug": slug,
+            "title": str(data.get("name") or slug),
+            "description": str(data.get("synopsis") or ""),
+            "author": str(authors[0].get("name") or "") if authors and isinstance(authors[0], dict) else "",
+            "body": str(data.get("description") or data.get("synopsis") or ""),
+            "iconUrl": icon_url,
+            "source": "ftb",
+            "resourceType": resource_type,
+            "loaders": [],
+            "gameVersions": game_versions,
+            "projectUrl": f"https://www.feed-the-beast.com/modpack/{slug or project_id}",
+        }
 
     def fetch_project_versions(
         self,
@@ -1139,10 +1253,43 @@ class ResourceCoordinator:
         loader: str = "",
     ) -> list[dict[str, Any]]:
         """
-        获取 Modrinth 项目版本列表，映射为前端 ``ModVersion`` 结构。
+        获取在线项目版本列表，失败时切换到另一模组源重试。
 
-        :param source: 数据来源（仅支持 modrinth）
-        :param project_id: Modrinth 项目 ID
+        FTB 社区源不受模组源影响。
+
+        :param source: 数据来源（modrinth/curseforge/ftb）
+        :param project_id: 平台项目标识
+        :param game_version: 兼容的 Minecraft 版本筛选
+        :param loader: 兼容的加载器筛选
+        :return: 版本字典列表
+        :raises GameServiceError: 来源未知时抛出
+        """
+        if source == "ftb":
+            return self._fetch_ftb_project_versions(project_id)
+        if source not in {"modrinth", "curseforge"}:
+            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        return self.mod_request(
+            "项目版本列表",
+            lambda mod_source: self._fetch_platform_project_versions(
+                source, mod_source, project_id, game_version, loader
+            ),
+            is_valid=lambda payload: isinstance(payload, list),
+        )
+
+    def _fetch_platform_project_versions(
+        self,
+        source: str,
+        mod_source: str,
+        project_id: str,
+        game_version: str,
+        loader: str,
+    ) -> list[dict[str, Any]]:
+        """
+        按指定模组源获取 Modrinth 或 CurseForge 项目版本列表。
+
+        :param source: 平台来源（modrinth/curseforge）
+        :param mod_source: 本次尝试使用的模组源
+        :param project_id: 平台项目标识
         :param game_version: 兼容的 Minecraft 版本筛选
         :param loader: 兼容的加载器筛选
         :return: 版本字典列表
@@ -1152,9 +1299,9 @@ class ResourceCoordinator:
             if game_version:
                 params["gameVersion"] = game_version
             response = _proxied_get(
-                f"https://api.curseforge.com/v1/mods/{project_id}/files",
+                f"{mod_api_base(mod_source, 'curseforge')}/mods/{project_id}/files",
                 params=params,
-                headers=self._curseforge_headers(),
+                headers=self._curseforge_headers(mod_source),
                 timeout=10,
             )
             response.raise_for_status()
@@ -1182,54 +1329,15 @@ class ResourceCoordinator:
                 for item in (files or [])
                 if isinstance(item, dict) and item.get("id") and item.get("fileName")
             ]
-        if source == "ftb":
-            try:
-                response = _proxied_get(
-                    f"{ResourceCatalogPolicy.ftb_base_url}/modpack/{project_id}",
-                    headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
-                    timeout=15,
-                )
-                response.raise_for_status()
-                data = response.json()
-            except httpx.HTTPError as exc:
-                raise GameServiceError(f"FTB 在线源不可用：{exc}", "FTB_SOURCE_UNAVAILABLE") from exc
-            versions = data.get("versions") if isinstance(data, dict) else []
-            return [
-                {
-                    "id": str(version.get("id") or ""),
-                    "projectId": str(project_id),
-                    "name": str(version.get("name") or ""),
-                    "versionNumber": str(version.get("name") or ""),
-                    "gameVersions": [
-                        str(target.get("version"))
-                        for target in (version.get("targets") or [])
-                        if isinstance(target, dict) and target.get("name") == "minecraft"
-                    ],
-                    "loaders": [
-                        str(target.get("name"))
-                        for target in (version.get("targets") or [])
-                        if isinstance(target, dict) and target.get("type") == "modloader"
-                    ],
-                    "filename": "",
-                    "datePublished": version.get("released"),
-                    "downloads": 0,
-                    "releaseType": str(version.get("type") or "release"),
-                    "dependencies": [],
-                }
-                for version in (versions or [])
-                if isinstance(version, dict) and version.get("id")
-            ]
-        if source != "modrinth":
-            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
         params: dict[str, Any] = {}
         if game_version:
             params["game_versions"] = json.dumps([game_version])
         if loader:
             params["loaders"] = json.dumps([loader.casefold()])
         response = _proxied_get(
-            f"https://api.modrinth.com/v2/project/{project_id}/version",
+            f"{mod_api_base(mod_source, 'modrinth')}/project/{project_id}/version",
             params=params,
-            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+            headers={"User-Agent": mod_user_agent()},
             timeout=10,
         )
         response.raise_for_status()
@@ -1269,11 +1377,68 @@ class ResourceCoordinator:
             )
         return result
 
-    def _fetch_online_version(self, version_id_str: str) -> dict[str, Any]:
-        # 获取 Modrinth 版本详情并返回主下载文件，无可用文件时抛出错误。
+    def _fetch_ftb_project_versions(self, project_id: str) -> list[dict[str, Any]]:
+        """
+        获取 FTB 社区整合包版本列表。
+
+        FTB 不属于 Modrinth 与 CurseForge，不受模组源影响。
+
+        :param project_id: FTB 整合包标识
+        :return: 版本字典列表
+        :raises GameServiceError: FTB 在线源不可用时抛出
+        """
+        try:
+            response = _proxied_get(
+                f"{ResourceCatalogPolicy.ftb_base_url}/modpack/{project_id}",
+                headers={"User-Agent": mod_user_agent()},
+                timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPError as exc:
+            raise GameServiceError(f"FTB 在线源不可用：{exc}", "FTB_SOURCE_UNAVAILABLE") from exc
+        versions = data.get("versions") if isinstance(data, dict) else []
+        return [
+            {
+                "id": str(version.get("id") or ""),
+                "projectId": str(project_id),
+                "name": str(version.get("name") or ""),
+                "versionNumber": str(version.get("name") or ""),
+                "gameVersions": [
+                    str(target.get("version"))
+                    for target in (version.get("targets") or [])
+                    if isinstance(target, dict) and target.get("name") == "minecraft"
+                ],
+                "loaders": [
+                    str(target.get("name"))
+                    for target in (version.get("targets") or [])
+                    if isinstance(target, dict) and target.get("type") == "modloader"
+                ],
+                "filename": "",
+                "datePublished": version.get("released"),
+                "downloads": 0,
+                "releaseType": str(version.get("type") or "release"),
+                "dependencies": [],
+            }
+            for version in (versions or [])
+            if isinstance(version, dict) and version.get("id")
+        ]
+
+    def _fetch_online_version(self, version_id_str: str, mod_source: str = "") -> dict[str, Any]:
+        """
+        获取 Modrinth 版本详情并返回主下载文件。
+
+        版本响应中的文件地址指向官方 CDN，按当前模组源重写后才能走镜像下载。
+
+        :param version_id_str: Modrinth 版本标识
+        :param mod_source: 本次请求使用的模组源；空值表示读取当前设置
+        :return: 含文件名、下载地址与哈希的主文件
+        :raises GameServiceError: 该版本没有可下载文件时抛出
+        """
+        mod_source = mod_source or self.mod_source()
         response = _proxied_get(
-            f"https://api.modrinth.com/v2/version/{version_id_str}",
-            headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
+            f"{mod_api_base(mod_source, 'modrinth')}/version/{version_id_str}",
+            headers={"User-Agent": mod_user_agent()},
             timeout=10,
         )
         response.raise_for_status()
@@ -1284,13 +1449,27 @@ class ResourceCoordinator:
         )
         if not isinstance(selected, dict) or not selected.get("url") or not selected.get("filename"):
             raise GameServiceError("该版本缺少可下载文件", "RESOURCE_UPDATE_FILE_MISSING")
-        return selected
+        result = dict(selected)
+        result["url"] = rewrite_mod_file_url(str(selected["url"]), mod_source)
+        return result
 
-    def _fetch_curseforge_file(self, project_id: str, file_id: str) -> dict[str, Any]:
-        # 获取 CurseForge 文件详情，并在详情未带地址时调用专用下载地址接口。
-        headers = self._curseforge_headers()
+    def _fetch_curseforge_file(self, project_id: str, file_id: str, mod_source: str = "") -> dict[str, Any]:
+        """
+        获取 CurseForge 文件详情，并在详情未带地址时调用专用下载地址接口。
+
+        镜像返回的 ``downloadUrl`` 仍指向官方 CDN，按当前模组源重写后才能走
+        镜像下载。
+
+        :param project_id: CurseForge 项目标识
+        :param file_id: CurseForge 文件标识
+        :param mod_source: 本次请求使用的模组源；空值表示读取当前设置
+        :return: 含文件名、下载地址与哈希的文件信息
+        :raises GameServiceError: 文件详情无效或不允许第三方下载时抛出
+        """
+        mod_source = mod_source or self.mod_source()
+        headers = self._curseforge_headers(mod_source)
         response = _proxied_get(
-            f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}",
+            f"{mod_api_base(mod_source, 'curseforge')}/mods/{project_id}/files/{file_id}",
             headers=headers,
             timeout=10,
         )
@@ -1302,7 +1481,7 @@ class ResourceCoordinator:
         url = data.get("downloadUrl")
         if not url:
             download_response = _proxied_get(
-                f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}/download-url",
+                f"{mod_api_base(mod_source, 'curseforge')}/mods/{project_id}/files/{file_id}/download-url",
                 headers=headers,
                 timeout=10,
             )
@@ -1319,14 +1498,29 @@ class ResourceCoordinator:
             algorithm = {1: "sha512", 2: "sha1"}.get(item.get("id"))
             if algorithm:
                 hashes[algorithm] = str(item["value"])
-        return {"filename": str(data["fileName"]), "url": str(url), "hashes": hashes}
+        return {"filename": str(data["fileName"]), "url": rewrite_mod_file_url(str(url), mod_source), "hashes": hashes}
 
     def _select_online_file(self, source: str, project_id: str, version_id_str: str) -> dict[str, Any]:
-        if source == "modrinth":
-            return self._fetch_online_version(version_id_str)
-        if source == "curseforge":
-            return self._fetch_curseforge_file(project_id, version_id_str)
-        raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        """
+        按平台获取待下载文件，失败时切换到另一模组源重试。
+
+        :param source: 平台来源（modrinth/curseforge）
+        :param project_id: 平台项目标识
+        :param version_id_str: 平台版本或文件标识
+        :return: 含文件名与下载地址的文件信息
+        :raises GameServiceError: 来源未知或缺少可下载文件时抛出
+        """
+        if source not in {"modrinth", "curseforge"}:
+            raise GameServiceError("暂不支持该来源", "INVALID_RESOURCE_SOURCE")
+        return self.mod_request(
+            "在线文件地址",
+            lambda mod_source: (
+                self._fetch_online_version(version_id_str, mod_source)
+                if source == "modrinth"
+                else self._fetch_curseforge_file(project_id, version_id_str, mod_source)
+            ),
+            is_valid=lambda payload: isinstance(payload, dict) and bool(payload.get("url")),
+        )
 
     def _download_online_file(self, url: str, temp: Path, filename: str, task_id: str | None) -> None:
         # 流式下载在线资源到临时文件，并按需上报字节进度与实时速度。
@@ -1550,14 +1744,10 @@ class ResourceCoordinator:
         if not self.identity_slots.acquire(timeout=10):
             return {"matched": False, "unavailable": True}
         try:
-            response = _proxied_post(
-                "https://api.modrinth.com/v2/version_files",
-                json={"hashes": [digest], "algorithm": "sha512"},
-                headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"},
-                timeout=10,
+            payload = self.mod_request(
+                "资源身份反查",
+                lambda mod_source: self._identify_modrinth_version(digest, mod_source),
             )
-            response.raise_for_status()
-            payload = response.json()
             version = payload.get(digest) if isinstance(payload, dict) else None
             result: ResourceIdentity = {"matched": False}
             if (
@@ -1581,6 +1771,24 @@ class ResourceCoordinator:
         finally:
             self.identity_slots.release()
 
+    def _identify_modrinth_version(self, digest: str, mod_source: str) -> dict[str, Any]:
+        """
+        按指定模组源以 SHA-512 反查 Modrinth 版本。
+
+        :param digest: 小写 SHA-512 摘要
+        :param mod_source: 本次尝试使用的模组源
+        :return: 以摘要为键的版本映射
+        """
+        response = _proxied_post(
+            f"{mod_api_base(mod_source, 'modrinth')}/version_files",
+            json={"hashes": [digest], "algorithm": "sha512"},
+            headers={"User-Agent": mod_user_agent()},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
+
     def check_resource_updates(
         self,
         game_path: Any,
@@ -1596,16 +1804,29 @@ class ResourceCoordinator:
         """
         resources = self.list_resources(game_path, version_id, resource_type, version_isolation, world_id)
         updates: list[dict[str, Any]] = []
-        with httpx.Client(headers={"User-Agent": "EuoraCraft-Launcher/resource-workspace"}, timeout=10) as client:
+        mod_source = self.mod_source()
+        with httpx.Client(headers={"User-Agent": mod_user_agent()}, timeout=10) as client:
             for item in resources:
                 if item.get("source") != "modrinth" or not item.get("sourceProjectId"):
                     continue
-                response = client.get(
-                    f"https://api.modrinth.com/v2/project/{item['sourceProjectId']}/version",
-                    params={"game_versions": json.dumps([game_version]), "loaders": json.dumps([loader.casefold()])},
+                project_id = str(item["sourceProjectId"])
+
+                def fetch_versions(source: str, project_id: str = project_id) -> list[Any]:
+                    # 状态码校验放进被重试的操作内，镜像 404 未命中时才会换源。
+                    response = client.get(
+                        f"{mod_api_base(source, 'modrinth')}/project/{project_id}/version",
+                        params={
+                            "game_versions": json.dumps([game_version]),
+                            "loaders": json.dumps([loader.casefold()]),
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    return payload if isinstance(payload, list) else []
+
+                versions = self.mod_request(
+                    "资源更新检查", fetch_versions, is_valid=lambda value: isinstance(value, list)
                 )
-                response.raise_for_status()
-                versions = response.json()
                 if not versions:
                     continue
                 latest = versions[0]
@@ -1621,7 +1842,14 @@ class ResourceCoordinator:
                         "publishedAt": latest.get("date_published"),
                         "dependencies": latest.get("dependencies") or [],
                         "changelog": re.sub(r"<[^>]+>", "", str(latest.get("changelog") or ""))[:12000],
-                        "files": latest.get("files") or [],
+                        "files": [
+                            {
+                                **file,
+                                "url": rewrite_mod_file_url(str(file.get("url") or ""), mod_source),
+                            }
+                            for file in (latest.get("files") or [])
+                            if isinstance(file, dict)
+                        ],
                     }
                 )
         return updates
@@ -1647,12 +1875,14 @@ class ResourceCoordinator:
         )
         if not isinstance(selected, dict) or not selected.get("url") or not selected.get("filename"):
             raise GameServiceError("更新版本缺少可下载文件", "RESOURCE_UPDATE_FILE_MISSING")
+        # 调用方可能直接传入官方地址；下载前按当前模组源再重写一次，避免绕过镜像设置。
+        download_url = rewrite_mod_file_url(str(selected["url"]), self.mod_source())
 
         def worker(context: OperationContext) -> dict[str, str]:
             destination = resolve_relative_id(root, str(selected["filename"]), must_exist=False)
             temp = root / f".{destination.name}.ecl-download"
             try:
-                with _proxied_stream("GET", str(selected["url"]), timeout=15, follow_redirects=True) as response:
+                with _proxied_stream("GET", download_url, timeout=15, follow_redirects=True) as response:
                     response.raise_for_status()
                     with temp.open("wb") as stream:
                         for chunk in response.iter_bytes(1024 * 1024):

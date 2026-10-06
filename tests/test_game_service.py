@@ -1720,7 +1720,7 @@ def test_download_resource_to_path_saves_to_target(tmp_path, monkeypatch) -> Non
     destination = tmp_path / "sodium.jar"
     downloaded = []
 
-    def fake_fetch(_version_id: str) -> dict:
+    def fake_fetch(_version_id: str, _mod_source: str = "") -> dict:
         return {"filename": "sodium.jar", "url": "https://example.com/sodium.jar", "hashes": {}}
 
     def fake_download(url: str, temp, filename: str, _task_id) -> None:

@@ -29,6 +29,7 @@ import httpx
 from anyio import to_thread
 
 from .base import Downloader, GameServiceError, _GameState
+from .mod_sources import mod_api_base, mod_user_agent, rewrite_mod_file_url
 
 # install_blocking 的进度上报回调：签名与 _emit_install_progress 去掉 task_id 后一致。
 InstallProgressReporter = Callable[..., None]
@@ -440,22 +441,41 @@ class InstallCoordinator(_GameState):
         self.logger.info("版本安装完成: %s", save_name)
         report("done", f"{save_name} 已安装完成", done=1, total=1)
 
-    @classmethod
-    def _resolve_fabric_api(cls, game_version: str, fabric_api_version: str | None) -> tuple[str, str]:
-        # 解析指定 Minecraft 版本下 Fabric API 的下载地址与文件名。
+    def _resolve_fabric_api(self, game_version: str, fabric_api_version: str | None) -> tuple[str, str]:
+        """
+        解析指定 Minecraft 版本下 Fabric API 的下载地址与文件名。
+
+        Fabric API 属于 Modrinth 模组资源，跟随模组源请求，并在远端失败时切换到
+        另一模组源重试；下载地址按当前模组源重写后才交给下载器。
+
+        :param game_version: 目标 Minecraft 游戏版本
+        :param fabric_api_version: 可选的 Fabric API 版本号；空值取最新版本
+        :return: (下载地址, 文件名)
+        :raises GameServiceError: 未找到可用版本或缺少可下载文件时抛出
+        """
         params = {
             "game_versions": json.dumps([game_version]),
             "loaders": json.dumps(["fabric"]),
         }
-        response = httpx.get(
-            f"https://api.modrinth.com/v2/project/{cls.fabric_api_project}/version",
-            params=params,
-            headers={"User-Agent": "EuoraCraft-Launcher/version-install"},
-            timeout=cls.fabric_api_timeout_seconds,
+
+        def fetch_versions(mod_source: str) -> list[Any]:
+            response = httpx.get(
+                f"{mod_api_base(mod_source, 'modrinth')}/project/{self.fabric_api_project}/version",
+                params=params,
+                headers={"User-Agent": mod_user_agent()},
+                timeout=self.fabric_api_timeout_seconds,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return payload if isinstance(payload, list) else []
+
+        mod_source = self.mod_source()
+        versions = self.mod_request(
+            "Fabric API 版本",
+            fetch_versions,
+            is_valid=lambda payload: isinstance(payload, list),
         )
-        response.raise_for_status()
-        versions = response.json()
-        if not isinstance(versions, list) or not versions:
+        if not versions:
             raise GameServiceError("未找到可用的 Fabric API 版本", "FABRIC_API_NOT_FOUND")
         if fabric_api_version:
             selected = next(
@@ -477,7 +497,7 @@ class InstallCoordinator(_GameState):
         )
         if not isinstance(primary, dict) or not primary.get("url") or not primary.get("filename"):
             raise GameServiceError("Fabric API 缺少可下载文件", "FABRIC_API_FILE_MISSING")
-        return primary["url"], primary["filename"]
+        return rewrite_mod_file_url(str(primary["url"]), mod_source), str(primary["filename"])
 
     def uninstall_version(self, version_id: Any, game_path: Any) -> None:
         """

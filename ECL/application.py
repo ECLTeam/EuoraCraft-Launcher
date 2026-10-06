@@ -452,6 +452,7 @@ def create_application(
             instances_manager=shared_instances,
             operations=operations,
             java_manager=java,
+            mod_source_provider=lambda: (config.get_config("download") or {}).get("mod_source"),
         )
         created.append(game)
         logger.info("游戏服务初始化完成")

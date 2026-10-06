@@ -54,10 +54,13 @@ class DownloadSettingsPatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
     mirror_source: Literal["official", "bmclapi"] | None = None
+    mod_source: Literal["official", "mcim"] | None = None
     resource_install_cache: dict[str, ResourceInstallBinding] | None = Field(default=None, alias="resourceInstallCache")
     resource_save_directories: dict[str, str] | None = Field(default=None, alias="resourceSaveDirectories")
 
-    @field_validator("mirror_source", "resource_install_cache", "resource_save_directories", mode="before")
+    @field_validator(
+        "mirror_source", "mod_source", "resource_install_cache", "resource_save_directories", mode="before"
+    )
     @classmethod
     def reject_null(cls, value: object) -> object:
         """

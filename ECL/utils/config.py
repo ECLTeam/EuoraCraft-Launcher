@@ -92,7 +92,7 @@ default_config: dict[str, Any] = {
         "last_install_path": "",
         "last_manage_path": "",
     },
-    "download": {"mirror_source": "official"},
+    "download": {"mirror_source": "official", "mod_source": "official"},
     "connector": {"mode": "automatic", "nodes": []},
     "ui": {
         "locale": "zh-CN",

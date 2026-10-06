@@ -22,12 +22,14 @@ def test_concurrent_download_patches_preserve_each_resource_type(tmp_path: Path)
         for kind in ("mod", "resourcepack", "shaderpack")
     ]
     patches.append(DownloadSettingsPatch(mirror_source="bmclapi"))
+    patches.append(DownloadSettingsPatch(mod_source="mcim"))
     patches.append(DownloadSettingsPatch(resourceSaveDirectories={"mod": "saved/mods"}))
     with ThreadPoolExecutor(max_workers=5) as workers:
         list(workers.map(store.patch_download, patches))
     saved = store.get_config("download")
     assert set(saved["resourceInstallCache"]) == {"mod", "resourcepack", "shaderpack"}
     assert saved["mirror_source"] == "bmclapi"
+    assert saved["mod_source"] == "mcim"
     assert saved["extension"] == {"keep": True}
     assert saved["resourceSaveDirectories"] == {"mod": "saved/mods"}
     assert json.loads(store.config_path.read_text(encoding="utf-8"))["download"] == saved
@@ -59,6 +61,9 @@ def test_download_patch_failure_preserves_memory_disk_and_input(
     [
         {"mirror_source": "unknown"},
         {"mirror_source": None},
+        {"mod_source": "unknown"},
+        {"mod_source": "bmclapi"},
+        {"mod_source": None},
         {"resourceInstallCache": None},
         {"resourceInstallCache": {"mod": {"gamePath": "bad\0path", "versionId": "demo"}}},
         {"resourceSaveDirectories": {"": "path"}},
