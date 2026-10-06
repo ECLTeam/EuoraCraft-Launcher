@@ -14,7 +14,7 @@
 3. **CurseForge 免 Key**：模组源为 MCIM 时，未配置 CurseForge API Key 也能正常搜索与下载 CurseForge 资源。
 4. **独立设置**：游戏本体的「下载源」与新增的「模组源」互不影响；现有「下载源」文案改为「游戏下载源」。
 
-5. **Fabric API 归属模组源**：`catalog.py` 与 `install.py` 的 Fabric API 版本查询与下载地址解析跟随模组源，不跟随游戏下载源。
+5. **Fabric API 归属模组源**：Fabric API 版本查询与下载地址解析跟随模组源，不跟随游戏下载源。该逻辑原位于 `catalog.py`，合并远端重构后归属 `scan.py`。
 6. **UA 已登记**：启动器名与 User-Agent `EuoraCraft-Launcher/{version}` 已在 MCIM 仓库完成登记。
 
 ## 2. 调研结论
@@ -234,7 +234,7 @@ cd frontend; pnpm check; pnpm build
 后端：
 
 - 新建 `ECL/services/game/mod_sources.py`：`ModSourcePolicy`（域名映射与文件地址重写）、`ModSourceRequestPolicy`（双向回退）、`ModSourceAware`（共享混入）。
-- 改造 `resources.py`（搜索/详情/版本/文件地址/图标/身份反查/更新检查）、`modpack.py`（Modrinth 批量反查与 CurseForge 指纹）、`catalog.py` 与 `install.py`（Fabric API，改为实例方法以读取模组源）。
+- 改造 `resources.py`（搜索/详情/版本/文件地址/图标/身份反查/更新检查）、`modpack.py`（Modrinth 批量反查与 CurseForge 指纹）、`scan.py` 与 `install.py`（Fabric API，改为实例方法以读取模组源）。
 - `curseforge_available()` 与 `_curseforge_headers()` 源感知：MCIM 下无需 Key 且不发送 `x-api-key`。
 - `config.py` 默认新增 `download.mod_source`；`DownloadSettingsPatch` 校验 `official`/`mcim`。
 - `application.py` 注入 `mod_source_provider`。
@@ -259,3 +259,15 @@ cd frontend; pnpm check; pnpm build
 - MCIM 返回缓存数据（实测同一项目版本号落后于官方），这是镜像的预期行为，也是默认「官方优先」的原因。
 - `mediafilez.forgecdn.net` 按 MCIM 要求不重写，映射表未收录该主机。
 - FTB 社区源不属于 Modrinth/CurseForge，不受模组源影响。
+
+## 8. 合并远端重构
+
+推送前发现远端 `main` 有 9 个后端分层重构提交，与本次改动大量重叠，已合并处理：
+
+- `catalog.py` 被远端删除并并入 `scan.py`，Fabric API 的模组源改造同步迁移至 `scan.py`。
+- `ECL/common/`、`ECL/events/` 等下沉为 `ECL/foundation/`，`mod_sources.py` 的版本导入改为 `ECL.foundation.version`。
+- `instance_health`、`mod_metadata`、`resource_files` 等下沉至 Core 子模块，`resources.py` 导入按新结构收敛。
+- `ECL/game` 子模块指针随远端更新至 `349af88`。
+- 合并后重新通过 `ruff check` / `ruff format --check` / `pytest -q`（1276 passed），以及远端新增的 Core 子模块门禁（`ruff check` 与 8 passed）。
+- 推送顺序：先推 `frontend`（`beec15d`），核对全部子模块指针均已在远端分支后，再推主仓库（`20ad2f7`）。
+- 已用全新浅克隆加 `git submodule update --init --recursive --depth=1` 验证远端可实际检出全部子模块。
