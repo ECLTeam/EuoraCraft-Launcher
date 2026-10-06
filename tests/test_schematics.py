@@ -28,10 +28,10 @@ from zipfile import ZipFile
 
 import pytest
 
+from ECL.game import ByteArray, Compound, File, Int, IntArray, List, LongArray, String, load_limited
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.schematics import SchematicCoordinator, _block_color
 from ECL.services.game.workspace import WorkspaceCoordinator
-from ECL.utils.nbt import ByteArray, Compound, File, Int, IntArray, List, LongArray, String, load_limited
 
 
 class _SchematicHarness(SchematicCoordinator, WorkspaceCoordinator):

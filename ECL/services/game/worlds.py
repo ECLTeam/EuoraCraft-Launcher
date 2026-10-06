@@ -39,9 +39,9 @@ from urllib.parse import quote_plus
 
 from PIL import Image, UnidentifiedImageError
 
+from ECL.game import Byte, Compound, Int, load
 from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Byte, Compound, Int, load
 
 from .base import GameServiceError
 from .workspace import ResolvedInstanceTarget, delete_path, resolve_relative_id, safe_extract_zip

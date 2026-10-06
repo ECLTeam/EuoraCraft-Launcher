@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.services.game.instance_health import InstanceInspection
+from ECL.game import InstanceInspection
 from ECL.services.game.scan import ScanCoordinator, _JavaInstallation
 
 

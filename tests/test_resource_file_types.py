@@ -9,11 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from ECL.game import ByteArray, Compound, File, Float, Int, List, LongArray, String, load
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.resource_files import ResourceFilePolicy
 from ECL.services.game.resources import ResourceCoordinator
 from ECL.services.game.workspace import WorkspaceCoordinator
-from ECL.utils.nbt import ByteArray, Compound, File, Float, Int, List, LongArray, String, load
 
 
 class ResourceService(ResourceCoordinator, WorkspaceCoordinator):

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from ECL.utils.nbt import Compound, File, Long, load_limited
+from ECL.game import Compound, File, Long, load_limited
 
 from .base import GameServiceError
 

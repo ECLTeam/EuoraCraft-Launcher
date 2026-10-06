@@ -8,10 +8,10 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.api.models import WorldPatchData
+from ECL.game import Compound, File, Long, String, load
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.workspace import WorkspaceCoordinator
 from ECL.services.game.worlds import WorldCoordinator
-from ECL.utils.nbt import Compound, File, Long, String, load
 
 
 class WorldHarness(WorldCoordinator, WorkspaceCoordinator):

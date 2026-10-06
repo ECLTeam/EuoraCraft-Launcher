@@ -29,6 +29,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ECL.game import Byte, Compound, File, Int, Long, String, load
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.workspace import (
     WorkspaceCoordinator,
@@ -37,7 +38,6 @@ from ECL.services.game.workspace import (
     safe_extract_zip,
 )
 from ECL.services.game.worlds import WorldCoordinator
-from ECL.utils.nbt import Byte, Compound, File, Int, Long, String, load
 
 
 def test_resolve_instance_target_matches_isolation_semantics(tmp_path: Path) -> None:

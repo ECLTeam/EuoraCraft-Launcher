@@ -55,14 +55,21 @@ from typing import Any, TypedDict
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from ECL.game import (
+    Compound,
+    InstanceInspection,
+    List,
+    LocalModMetadata,
+    LocalModParser,
+    ModDependencyDiagnostics,
+    String,
+    load,
+)
 from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
-from ECL.utils.nbt import Compound, List, String, load
 from ECL.utils.network import download_proxy_url
 
 from .base import GameServiceError
-from .instance_health import InstanceInspection
-from .mod_metadata import LocalModMetadata, LocalModParser, ModDependencyDiagnostics
 from .resource_files import ResourceFilePolicy
 from .resource_search import SearchBatch, SearchCriteria, SearchItem, SearchResult, SearchSource
 from .workspace import delete_path, resolve_relative_id

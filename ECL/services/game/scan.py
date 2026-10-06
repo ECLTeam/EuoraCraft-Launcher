@@ -31,10 +31,10 @@ from typing import Any
 
 from pydantic import JsonValue
 
+from ECL.game import InstanceInspection
 from ECL.utils import ConfigError, atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
-from .instance_health import InstanceInspection
 from .launch_settings import InstanceLaunchOverrides
 from .workspace import resolve_instance_target
 

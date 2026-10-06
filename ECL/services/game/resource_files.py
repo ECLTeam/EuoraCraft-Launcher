@@ -25,8 +25,8 @@ from pathlib import Path, PurePosixPath
 from threading import RLock
 from types import MappingProxyType
 
+from ECL.game import ByteArray, LongArray, load_limited
 from ECL.utils import GameServiceError
-from ECL.utils.nbt import ByteArray, LongArray, load_limited
 
 
 @dataclass(frozen=True, slots=True)
