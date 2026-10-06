@@ -20,7 +20,7 @@ import socket
 
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services.single_instance import SingleInstanceService, probe_running_instance
 
 

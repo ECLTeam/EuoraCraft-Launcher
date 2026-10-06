@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ECL.common.version import __version__, __version_type__
+from ECL.foundation.version import __version__, __version_type__
 
 _log_level_choices = ("debug", "info", "warning", "error")
 _url_schemes = ("http://", "https://")

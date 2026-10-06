@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ECL.events.event_bus import EventBus, Unsubscribe
+from ECL.foundation.event_bus import EventBus, Unsubscribe
 
 Emit = Callable[[str, Any], None]
 

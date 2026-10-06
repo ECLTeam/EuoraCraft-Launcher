@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.game import InstancesManager
 from ECL.services.processes import ProcessService
 

@@ -27,7 +27,7 @@ from typing import Any
 
 from pydantic import JsonValue, TypeAdapter
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.utils.download_settings import DownloadSettingsPatch
 from ECL.utils.errors import ConfigError, ConfigValidationError
 from ECL.utils.files import atomic_write_text

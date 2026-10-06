@@ -48,7 +48,7 @@ from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import LoggingPolicy, get_logger
 
 if TYPE_CHECKING:
-    from ECL.events import EventBus
+    from ECL.foundation import EventBus
     from ECL.plugins import PluginManager
 
 

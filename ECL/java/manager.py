@@ -21,7 +21,7 @@ from uuid import uuid4
 import httpx
 from pydantic import JsonValue
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.game import JavaRuntime, JavaScanner
 from ECL.utils.logging import get_logger
 

@@ -14,7 +14,7 @@ from time import monotonic
 import httpx
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaError, JavaPolicy, JavaReferenceConfig

@@ -30,7 +30,7 @@ from types import MappingProxyType
 from typing import ClassVar
 from uuid import uuid4
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.operation_logging import OperationTrace, trace_scope
 

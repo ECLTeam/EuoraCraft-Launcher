@@ -16,7 +16,7 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.game import ApiUrlConfig, BmclApiUrl
 from ECL.services.game import GameService
 from ECL.services.game.download_sources import PreferredApiClient

@@ -18,7 +18,7 @@ from tempfile import gettempdir
 from threading import Event, RLock, Thread
 from typing import TYPE_CHECKING, Any
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.game import (
     ApiUrlConfig,
     BaseApiClient,

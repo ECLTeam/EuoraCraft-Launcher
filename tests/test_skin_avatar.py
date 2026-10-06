@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from ECL.api.files import FileHandlers
 from ECL.api.models import SkinAvatarExportRequest, request_schemas
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services.skin_avatar import SkinAvatarError, SkinAvatarExporter
 
 

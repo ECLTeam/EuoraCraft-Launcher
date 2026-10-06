@@ -37,7 +37,7 @@ if (-not (Test-Path $Py)) { throw "未找到 .venv\Scripts\python.exe，请先�
 
 # 与 PyInstaller spec 保持一致的窗口策略：beta/release 隐藏控制台，其余保留
 $consoleMode = "force"
-$versionFile = Join-Path $Root "ECL\common\version.py"
+$versionFile = Join-Path $Root "ECL\foundation\version.py"
 if (Test-Path $versionFile) {
     $text = Get-Content $versionFile -Raw -Encoding UTF8
     if ($text -match '__version_type__\s*=\s*["'']([^"'']+)["'']') {

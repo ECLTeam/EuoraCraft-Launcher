@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.plugins.connector import ConnectorExtensionRegistry
 from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry

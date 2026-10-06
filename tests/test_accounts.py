@@ -77,7 +77,7 @@ import httpx
 import pytest
 
 import ECL.services.accounts as accounts_service
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services import AccountManager
 from ECL.services.accounts import LauncherMicrosoftAccountManager
 

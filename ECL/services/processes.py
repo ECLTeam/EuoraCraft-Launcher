@@ -25,7 +25,7 @@ from ECL.utils import get_logger
 from ECL.utils.operation_logging import OperationTrace, current_operation, trace_scope
 
 if TYPE_CHECKING:
-    from ECL.events.event_bus import EventBus
+    from ECL.foundation.event_bus import EventBus
 
 
 class ProcessService:

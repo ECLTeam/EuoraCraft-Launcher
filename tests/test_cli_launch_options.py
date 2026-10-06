@@ -31,7 +31,7 @@
 import pytest
 
 from ECL.cli import LaunchOptions, apply_launch_overrides, parse_launch_options
-from ECL.common.version import __version__
+from ECL.foundation.version import __version__
 
 
 def test_parse_defaults_returns_all_unset_options() -> None:

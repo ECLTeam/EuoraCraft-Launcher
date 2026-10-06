@@ -14,7 +14,7 @@
 from unittest.mock import Mock
 
 import ECL.launcher as launcher_module
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.plugins import PluginManager
 
 

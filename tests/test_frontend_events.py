@@ -21,7 +21,7 @@
 from types import SimpleNamespace
 from typing import Any
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services.frontend_events import (
     FrontendEventPolicy,
     subscribe_all_frontend_events,

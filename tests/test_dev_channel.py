@@ -58,7 +58,7 @@ import pytest
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.plugins import PluginAction, PluginActionResult
 from ECL.plugins.package_archive import PluginPackageInfo
 from ECL.plugins.package_preparation import PluginPackagePreflight

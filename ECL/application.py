@@ -32,9 +32,8 @@ from urllib.request import getproxies
 import httpx
 
 from ECL.cli import LaunchOptions, apply_launch_overrides
-from ECL.common import BuildEnvironment, __version__, __version_type__
-from ECL.common.runtime import RuntimeInfo
-from ECL.events import EventBus
+from ECL.foundation import BuildEnvironment, EventBus, __version__, __version_type__
+from ECL.foundation.runtime import RuntimeInfo
 from ECL.game import InstancesManager
 from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig

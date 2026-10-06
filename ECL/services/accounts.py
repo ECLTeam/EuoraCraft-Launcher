@@ -53,8 +53,7 @@ from uuid import UUID
 
 import httpx
 
-from ECL.common import BuildEnvironment
-from ECL.events import EventBus
+from ECL.foundation import BuildEnvironment, EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
 from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.services.authlib import AuthlibAccountManager, AuthlibError

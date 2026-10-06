@@ -17,7 +17,7 @@ import json
 import sys
 from unittest.mock import Mock, call
 
-from ECL.common import get_runtime_info
+from ECL.foundation import get_runtime_info
 from ECL.plugins import PluginManager
 
 

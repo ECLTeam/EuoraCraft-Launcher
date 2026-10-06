@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.services.game.crash.capture import CrashCapture, CrashRunSnapshot
 
 

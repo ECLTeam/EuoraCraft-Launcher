@@ -13,7 +13,7 @@
 
 from pathlib import Path
 
-from ECL.events import EventBus
+from ECL.foundation import EventBus
 from ECL.plugins import Plugin, PluginManager
 
 
