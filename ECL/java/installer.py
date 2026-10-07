@@ -16,13 +16,14 @@ import hashlib
 import logging
 import os
 import shutil
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp
-from time import monotonic
-from typing import TYPE_CHECKING
+from time import monotonic, sleep
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 import httpx
@@ -45,6 +46,9 @@ class JavaInstaller:
 
     每次提交只安装一个确定的包；安装失败保留旧版本和全部启动配置。
     """
+
+    registry: JavaRegistry
+    _move_retry_delays: ClassVar[tuple[float, ...]] = (0.1, 0.2, 0.4, 0.8, 1.0)
 
     def __init__(self, registry: JavaRegistry, ensure_unused: Callable[[RuntimeRecord], None]) -> None:
         """
@@ -145,6 +149,14 @@ class JavaInstaller:
         with self.registry.locked():
             state = self.registry.read()
             old_backup: Path | None = None
+            existing: RuntimeRecord | None = None
+            has_new_directory = False
+            installed_parent = self.registry.root_path / "installed"
+            if plan.install_path.parent != installed_parent or installed_parent.is_symlink():
+                raise JavaError("Java 安装目录已被替换", "JAVA_DIRECTORY_CHANGED")
+            installed_parent.mkdir(exist_ok=True)
+            if installed_parent.resolve().parent != self.registry.root_path:
+                raise JavaError("Java 安装目录已被替换", "JAVA_DIRECTORY_CHANGED")
             if plan.install_path.exists():
                 existing = next(
                     (
@@ -157,21 +169,18 @@ class JavaInstaller:
                 if existing:
                     self.registry.validate_owned_directory(existing)
                     self._ensure_unused(existing)
-                    old_backup = self.registry.root_path / ".trash" / uuid4().hex
-                    old_backup.parent.mkdir(exist_ok=True)
-                    if old_backup.parent.is_symlink():
+                    backup_path = self.registry.root_path / ".trash" / uuid4().hex
+                    backup_path.parent.mkdir(exist_ok=True)
+                    if backup_path.parent.is_symlink():
                         raise JavaError("Java 清理目录已被替换", "JAVA_DIRECTORY_CHANGED")
-                    plan.install_path.rename(old_backup)
                 else:
                     raise JavaError("Java 目标目录已有内容，安装未覆盖", "JAVA_INSTALL_TARGET_EXISTS")
-            plan.install_path.parent.mkdir(exist_ok=True)
-            if (
-                plan.install_path.parent.is_symlink()
-                or plan.install_path.parent.resolve().parent != self.registry.root_path
-            ):
-                raise JavaError("Java 安装目录已被替换", "JAVA_DIRECTORY_CHANGED")
             try:
-                unpacked.rename(plan.install_path)
+                if existing:
+                    self._move_directory(plan.install_path, backup_path)
+                    old_backup = backup_path
+                self._move_directory(unpacked, plan.install_path)
+                has_new_directory = True
                 previous = next((item for item in state.runtimes if item.runtime_id == record.runtime_id), None)
                 if previous:
                     record = record.model_copy(update={"is_enabled": previous.is_enabled})
@@ -183,12 +192,60 @@ class JavaInstaller:
                     state = state.model_copy(update={"cleanup_paths": (*state.cleanup_paths, cleanup)})
                 self.registry.replace(state, record)
             except Exception:
-                if plan.install_path.exists():
-                    plan.install_path.rename(unpacked)
-                if old_backup:
-                    old_backup.rename(plan.install_path)
+                self._rollback_commit(plan, unpacked, old_backup, has_new_directory)
                 raise
             return record
+
+    def _move_directory(self, source_path: Path, target_path: Path) -> None:
+        """
+        仅对 Windows 的短暂目录占用重试，移动始终限于当前 Java 管理根目录。
+
+        每次尝试重新检查路径和目标占用；不覆盖出现的未知目录，不复制后删除。
+        重试累计等待至多 2.5 秒，持续权限失败转换为不含个人路径的领域错误。
+        """
+        for attempt in range(len(self._move_retry_delays) + 1):
+            if (
+                source_path.is_symlink()
+                or not source_path.resolve().is_relative_to(self.registry.root_path)
+                or not target_path.parent.resolve().is_relative_to(self.registry.root_path)
+                or source_path.resolve() == self.registry.root_path
+                or target_path.is_symlink()
+            ):
+                raise JavaError("Java 安装目录已被替换", "JAVA_DIRECTORY_CHANGED")
+            if target_path.exists():
+                raise JavaError("Java 目标目录已有内容，安装未覆盖", "JAVA_INSTALL_TARGET_EXISTS")
+            try:
+                source_path.rename(target_path)
+                return
+            except OSError as error:
+                can_retry = sys.platform == "win32" and getattr(error, "winerror", None) in {5, 32, 33}
+                if not can_retry or attempt == len(self._move_retry_delays):
+                    raise JavaError(
+                        "Java 安装目录移动失败：目录被占用或没有移动权限，请解除占用并检查目录权限后重试",
+                        "JAVA_INSTALL_MOVE_FAILED",
+                    ) from error
+                self._logger.debug("Java 安装目录移动暂时受阻，正在等待后重试")
+                sleep(self._move_retry_delays[attempt])
+
+    def _rollback_commit(
+        self, plan: JavaInstallPlan, unpacked: Path, old_backup: Path | None, has_new_directory: bool
+    ) -> None:
+        """
+        仅恢复本次已移动的目录，恢复失败时保留旧备份并明确报告未完成状态。
+
+        未成功移入新目录时，目标可能属于外部写入方，不能依据其存在性回滚。
+        旧版本备份只有登记成功后才进入清理清单，恢复失败不能误删该备份。
+        """
+        try:
+            if has_new_directory:
+                self._move_directory(plan.install_path, unpacked)
+            if old_backup:
+                self._move_directory(old_backup, plan.install_path)
+        except JavaError as error:
+            message = "Java 安装回滚未完成，请解除目录占用并检查目录权限"
+            if old_backup:
+                message += "；旧版本备份已保留"
+            raise JavaError(message, "JAVA_INSTALL_ROLLBACK_FAILED") from error
 
     @staticmethod
     def _probe(root: Path, plan: JavaInstallPlan, context: OperationContext) -> JavaRuntime:

@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path
 from threading import Event
 from time import monotonic
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -17,7 +18,7 @@ import pytest
 from ECL.foundation import EventBus
 from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.manager import JavaManager
-from ECL.java.models import JavaError, JavaPolicy, JavaReferenceConfig
+from ECL.java.models import JavaError, JavaInstallPlan, JavaPolicy, JavaReferenceConfig, RuntimeRecord
 from ECL.java.packages import JavaArchive
 from ECL.services.game.launch_settings import scan_instance_java_references
 from ECL.services.operations import OperationContext, OperationManager
@@ -86,6 +87,159 @@ def _plan(manager, archive_bytes):
     manager.catalog._cache[(21, "JRE", system, architecture)] = (monotonic(), (package,))
     manager.catalog._package_by_id[package.package_id] = package
     return manager.install_plan(package.package_id)
+
+
+def _commit_inputs(manager: JavaManager) -> tuple[JavaInstallPlan, Path, RuntimeRecord]:
+    plan = _plan(manager, _archive_bytes())
+    unpacked = manager.registry.root_path / ".staging" / "move-test" / "unpacked"
+    executable = _java_path(unpacked / "runtime")
+    final_runtime = JavaRuntime(
+        plan.install_path / executable.relative_to(unpacked), "21.0.2", "Eclipse Adoptium", "amd64", False
+    )
+    record = JavaPolicy.record(final_runtime, "managed").model_copy(
+        update={
+            "install_path": plan.install_path,
+            "installed_files": tuple(path.relative_to(unpacked).as_posix() for path in unpacked.rglob("*")),
+            "package_checksum": plan.package.checksum,
+            "package_platform": plan.package.platform,
+        }
+    )
+    return plan, unpacked, record
+
+
+def _move_error(winerror: int) -> PermissionError:
+    error = PermissionError("directory move refused")
+    error.winerror = winerror
+    return error
+
+
+def test_install_commit_retries_transient_windows_directory_lock(
+    manager: JavaManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, unpacked, record = _commit_inputs(manager)
+    monkeypatch.setattr("ECL.java.installer.sys", SimpleNamespace(platform="win32"), raising=False)
+    waits: list[float] = []
+    monkeypatch.setattr("ECL.java.installer.sleep", waits.append, raising=False)
+    rename = Path.rename
+    attempts = 0
+
+    def locked_once(source: Path, target: Path) -> Path:
+        nonlocal attempts
+        if source == unpacked:
+            attempts += 1
+            if attempts == 1:
+                raise _move_error(5)
+        return rename(source, target)
+
+    monkeypatch.setattr(Path, "rename", locked_once)
+    installed = manager._installer._commit(plan, unpacked, record)
+    assert installed.runtime_id == record.runtime_id
+    assert attempts == 2 and len(waits) == 1
+    assert manager.registry.read().runtimes[0].runtime_id == record.runtime_id
+    assert installed.executable_path.is_file()
+
+
+@pytest.mark.parametrize("platform, winerror, expected_attempts", [("win32", 5, 6), ("win32", 32, 6), ("linux", 5, 1)])
+def test_install_commit_move_failure_is_bounded_and_keeps_staging(
+    manager: JavaManager,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    winerror: int,
+    expected_attempts: int,
+) -> None:
+    plan, unpacked, record = _commit_inputs(manager)
+    monkeypatch.setattr("ECL.java.installer.sys", SimpleNamespace(platform=platform), raising=False)
+    waits: list[float] = []
+    monkeypatch.setattr("ECL.java.installer.sleep", waits.append, raising=False)
+    attempts = 0
+
+    def refuse_move(source: Path, target: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        raise _move_error(winerror)
+
+    monkeypatch.setattr(Path, "rename", refuse_move)
+    with pytest.raises(JavaError) as failure:
+        manager._installer._commit(plan, unpacked, record)
+    assert failure.value.error_code == "JAVA_INSTALL_MOVE_FAILED"
+    assert attempts == expected_attempts
+    assert len(waits) == expected_attempts - 1 and sum(waits) <= 3
+    assert unpacked.is_dir() and not plan.install_path.exists()
+    assert not manager.registry.read().runtimes
+
+
+def test_install_failed_move_never_moves_an_unowned_target(
+    manager: JavaManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, unpacked, record = _commit_inputs(manager)
+    monkeypatch.setattr("ECL.java.installer.sys", SimpleNamespace(platform="win32"), raising=False)
+    monkeypatch.setattr("ECL.java.installer.sleep", lambda _: None, raising=False)
+    calls: list[tuple[Path, Path]] = []
+
+    def competing_target(source: Path, target: Path) -> Path:
+        calls.append((source, target))
+        if source == unpacked:
+            target.mkdir()
+            (target / "unrelated.txt").write_text("keep", encoding="utf-8")
+        raise _move_error(5)
+
+    monkeypatch.setattr(Path, "rename", competing_target)
+    with pytest.raises(JavaError):
+        manager._installer._commit(plan, unpacked, record)
+    assert calls == [(unpacked, plan.install_path)]
+    assert (plan.install_path / "unrelated.txt").read_text(encoding="utf-8") == "keep"
+    assert unpacked.is_dir()
+
+
+def test_install_registration_failure_restores_old_directory(
+    manager: JavaManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, unpacked, record = _commit_inputs(manager)
+    plan.install_path.parent.mkdir(exist_ok=True)
+    unpacked.rename(plan.install_path)
+    old_record = record.model_copy(update={"is_enabled": False})
+    manager.registry.replace(manager.registry.read(), old_record)
+    record.executable_path.write_bytes(b"old Java")
+    _java_path(unpacked / "runtime")
+
+    def refuse_registration(state, new_record) -> None:
+        raise JavaError("登记失败", "JAVA_REGISTRY_WRITE_FAILED")
+
+    monkeypatch.setattr(manager.registry, "replace", refuse_registration)
+    with pytest.raises(JavaError, match="登记失败"):
+        manager._installer._commit(plan, unpacked, record)
+    assert record.executable_path.read_bytes() == b"old Java"
+    assert (unpacked / "runtime" / "bin" / record.executable_path.name).read_bytes() == b"test Java"
+    assert not manager.registry.read().runtimes[0].is_enabled
+
+
+def test_install_rollback_lock_keeps_old_backup(manager: JavaManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan, unpacked, record = _commit_inputs(manager)
+    plan.install_path.parent.mkdir(exist_ok=True)
+    unpacked.rename(plan.install_path)
+    manager.registry.replace(manager.registry.read(), record)
+    record.executable_path.write_bytes(b"old Java")
+    _java_path(unpacked / "runtime")
+    monkeypatch.setattr("ECL.java.installer.sys", SimpleNamespace(platform="win32"), raising=False)
+    monkeypatch.setattr("ECL.java.installer.sleep", lambda _: None, raising=False)
+    rename = Path.rename
+
+    def refuse_restore(source: Path, target: Path) -> Path:
+        if source.parent.name == ".trash":
+            raise _move_error(32)
+        return rename(source, target)
+
+    def refuse_registration(state, new_record) -> None:
+        raise JavaError("登记失败", "JAVA_REGISTRY_WRITE_FAILED")
+
+    monkeypatch.setattr(Path, "rename", refuse_restore)
+    monkeypatch.setattr(manager.registry, "replace", refuse_registration)
+    with pytest.raises(JavaError) as failure:
+        manager._installer._commit(plan, unpacked, record)
+    assert failure.value.error_code == "JAVA_INSTALL_ROLLBACK_FAILED"
+    backups = list((manager.registry.root_path / ".trash").rglob(record.executable_path.name))
+    assert len(backups) == 1 and backups[0].read_bytes() == b"old Java"
+    assert not manager.registry.read().cleanup_paths
 
 
 def test_register_persists_disabled_and_missing_entries_and_preserves_external_files(manager, tmp_path):
