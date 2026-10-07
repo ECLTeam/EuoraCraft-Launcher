@@ -275,8 +275,8 @@ class ConnectorService:
         """
         if self._node_preload_stopped.is_set():
             return
-        with operation_scope("后台加载公共联机节点") as operation:
-            operation.log(logger, "开始后台加载公共联机节点", logging.DEBUG)
+        with operation_scope("后台加载公共联机节点", timed=True) as operation:
+            operation.log(logger, "开始后台加载公共联机节点", logging.DEBUG, include_duration=False)
             try:
                 self.preload_nodes()
             except Exception:

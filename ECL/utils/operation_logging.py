@@ -11,7 +11,7 @@
 #   - current_operation — 获取当前线程或异步任务的操作上下文。
 #   - trace_scope — 在退出回调等边界恢复已保存的操作上下文。
 #   - safe_log_text — 脱敏项目日志文本。
-#   - class OperationLogFilter — 为日志记录添加耗时和脱敏后的消息。
+#   - class OperationLogFilter — 为日志记录补充脱敏消息，并在计时操作中附带耗时。
 #   - class ReadableLogFormatter — 脱敏异常堆栈，保留原日志格式。
 # ============================================================
 
@@ -60,24 +60,44 @@ def safe_log_text(text: str) -> str:
 class OperationTrace:
     """
     保存中文操作名称和开始时间，向异步任务、线程与退出回调传递计时上下文。
+
+    只有声明为计时的操作才输出累计耗时：本地轻量读写本身耗时趋近于零，
+    逐行附带耗时只是噪声。开始阶段行恒为 0 毫秒，任何情况下都不输出耗时。
     """
 
     action: str
     started_at: float
+    timed: bool = False
 
-    def log(self, logger: logging.Logger, message: str, level: int = logging.INFO) -> None:
+    def log(
+        self,
+        logger: logging.Logger,
+        message: str,
+        level: int = logging.INFO,
+        *,
+        include_duration: bool = True,
+    ) -> None:
         """
-        记录一个操作阶段，附带累计耗时。
+        记录一个操作阶段；仅计时操作在需要时附带累计耗时。
 
         :param logger: 使用项目日志处理器的日志器
         :param message: 不包含请求体或凭据的阶段说明
         :param level: 标准库日志级别
+        :param include_duration: 该阶段是否允许输出耗时；开始阶段行应传 False
         """
+        if self.timed and include_duration:
+            logger.log(
+                level,
+                "%s；耗时：%.0f 毫秒",
+                safe_log_text(message),
+                (monotonic() - self.started_at) * 1000,
+                extra={"operation_action": self.action, "has_operation_duration": True},
+            )
+            return
         logger.log(
             level,
-            "%s；耗时：%.0f 毫秒",
+            "%s",
             safe_log_text(message),
-            (monotonic() - self.started_at) * 1000,
             extra={"operation_action": self.action, "has_operation_duration": True},
         )
 
@@ -115,14 +135,15 @@ def trace_scope(trace: OperationTrace | None) -> Iterator[None]:
 
 
 @contextmanager
-def operation_scope(action: str) -> Iterator[OperationTrace]:
+def operation_scope(action: str, *, timed: bool = False) -> Iterator[OperationTrace]:
     """
     为一次操作建立上下文，结束时恢复调用方上下文。
 
     :param action: 面向人的操作名称
+    :param timed: 是否为网络或重型操作输出累计耗时
     :return: 可记录阶段和累计耗时的操作上下文
     """
-    trace = OperationTrace(action, monotonic())
+    trace = OperationTrace(action, monotonic(), timed)
     token = OperationLogState.current.set(trace)
     try:
         yield trace
@@ -146,7 +167,7 @@ class OperationLogFilter(logging.Filter):
             return True
         message = safe_log_text(record.getMessage())
         trace = current_operation()
-        if trace is not None and not getattr(record, "has_operation_duration", False):
+        if trace is not None and trace.timed and not getattr(record, "has_operation_duration", False):
             record.operation_action = trace.action
             record.has_operation_duration = True
             message = f"{message}；耗时：{(monotonic() - trace.started_at) * 1000:.0f} 毫秒"

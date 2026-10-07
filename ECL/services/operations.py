@@ -165,7 +165,7 @@ class OperationManager:
                 raise GameServiceError("启动器正在关闭，无法创建新任务", "OPERATION_MANAGER_CLOSED")
             operation_id = uuid4().hex
             operation = _Operation(operation_id, kind, datetime.now(UTC).isoformat())
-            operation.trace = OperationTrace(self.kind_titles.get(kind, kind), monotonic())
+            operation.trace = OperationTrace(self.kind_titles.get(kind, kind), monotonic(), True)
             self._operations[operation_id] = operation
             self._logger.info(
                 "后台任务已提交；任务类型：%s",

@@ -405,19 +405,65 @@ def test_validation_exception_does_not_dump_request_into_logs(records) -> None:
     assert all(record.exc_info is None for record in logs)
 
 
-@pytest.mark.parametrize("explicit_duration", [False, True])
-def test_stage_logs_have_duration_once_without_identifiers(records, explicit_duration) -> None:
+@pytest.mark.parametrize("timed", [False, True])
+def test_stage_logs_duration_follows_timed_declaration(records, timed) -> None:
     logger, logs = records
-    with operation_scope("保存设置") as trace:
+    with operation_scope("保存设置", timed=timed) as trace:
         assert not hasattr(trace, "operation_id")
-        if explicit_duration:
-            trace.log(logger, "配置已保存")
-        else:
-            logger.info("配置已保存")
-    record = logs[-1]
-    OperationLogFilter().filter(record)
-    message = record.getMessage()
-    assert message.startswith("配置已保存；耗时：")
-    assert message.count("耗时：") == 1
+        trace.log(logger, "配置已保存")
+    message = logs[-1].getMessage()
+    if timed:
+        assert message.startswith("配置已保存；耗时：")
+        assert message.count("耗时：") == 1
+    else:
+        assert message == "配置已保存"
     assert "编号" not in message
-    assert not hasattr(record, "operation_id")
+    assert not hasattr(logs[-1], "operation_id")
+
+
+def test_untimed_operation_omits_duration_from_nested_logs(records) -> None:
+    logger, logs = records
+    with operation_scope("读取设置"):
+        logger.info("配置已读取")
+    assert logs[-1].getMessage() == "配置已读取"
+
+
+def test_timed_operation_appends_duration_to_nested_logs_once(records) -> None:
+    logger, logs = records
+    with operation_scope("读取图片", timed=True):
+        logger.info("图片读取成功")
+    message = logs[-1].getMessage()
+    assert message.startswith("图片读取成功；耗时：")
+    assert message.count("耗时：") == 1
+
+
+def test_start_stage_never_outputs_duration(records) -> None:
+    logger, logs = records
+    with operation_scope("下载安装包", timed=True) as trace:
+        trace.log(logger, "开始下载安装包", include_duration=False)
+    assert logs[-1].getMessage() == "开始下载安装包"
+
+
+def test_timed_command_keeps_duration_but_start_line_omits_it(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        return success()
+
+    asyncio.run(guard_ipc_handler(state, "game_versions", handler)({}))
+    assert len(logs) == 2
+    assert logs[0].getMessage() == "开始查询 Minecraft 版本列表或分类目录"
+    assert logs[1].getMessage().startswith("完成查询 Minecraft 版本列表或分类目录；耗时：")
+
+
+def test_untimed_command_omits_duration_entirely(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        return success()
+
+    asyncio.run(guard_ipc_handler(state, "settings_get", handler)({}))
+    assert len(logs) == 2
+    assert all("耗时：" not in record.getMessage() for record in logs)
