@@ -65,16 +65,57 @@ def test_downloadable_jar_missing_is_recoverable_warning(tmp_path):
     assert result["canLaunch"] and result["status"] == "warning"
 
 
-def test_scan_retains_directory_omitted_by_core(tmp_path):
-    _version(tmp_path, "broken")
+def _scan_service():
     service = object.__new__(ScanCoordinator)
     service.logger = logging.getLogger(__name__)
     service._search_factory = lambda _path: SimpleNamespace(search_minecraft=lambda: {})
     service._version_stats = SimpleNamespace(ensure=lambda *args: None)
     service._instance_profiles = SimpleNamespace(enrich_version=lambda _root, version, **kwargs: version)
-    result = service._scan_game_path(tmp_path)
+    return service
+
+
+def test_scan_retains_directory_omitted_by_core(tmp_path):
+    _version(tmp_path, "broken")
+    result = _scan_service()._scan_game_path(tmp_path)
     assert len(result) == 1
     assert result[0]["versionId"] == "broken" and result[0]["isBroken"]
+
+
+def test_scan_skips_directories_without_instance_marker(tmp_path):
+    _version(tmp_path, "1.20.1")
+    for junk in ("logs", "mods", "crash-reports"):
+        (tmp_path / "versions" / junk).mkdir(parents=True, exist_ok=True)
+    result = _scan_service()._scan_game_path(tmp_path)
+    assert [item["versionId"] for item in result] == ["1.20.1"]
+
+
+def test_scan_skips_empty_version_json(tmp_path):
+    _version(tmp_path, "1.20.1")
+    downloads = tmp_path / "versions" / "downloads"
+    downloads.mkdir(parents=True, exist_ok=True)
+    (downloads / "downloads.json").write_bytes(b"")
+    result = _scan_service()._scan_game_path(tmp_path)
+    assert [item["versionId"] for item in result] == ["1.20.1"]
+
+
+def test_scan_retains_corrupt_version_json(tmp_path):
+    directory = tmp_path / "versions" / "broken"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "broken.json").write_text("broken", encoding="utf-8")
+    result = _scan_service()._scan_game_path(tmp_path)
+    assert len(result) == 1
+    assert result[0]["versionId"] == "broken" and result[0]["isBroken"]
+    assert "invalid_json" in {issue["code"] for issue in result[0]["health"]["diagnostics"]}
+
+
+def test_scan_retains_jar_only_directory(tmp_path):
+    directory = tmp_path / "versions" / "jar-only"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "jar-only.jar").write_bytes(b"client")
+    result = _scan_service()._scan_game_path(tmp_path)
+    assert len(result) == 1
+    assert result[0]["versionId"] == "jar-only" and result[0]["isBroken"]
+    assert "missing_json" in {issue["code"] for issue in result[0]["health"]["diagnostics"]}
 
 
 def test_java_vendor_kind_and_architecture_are_independent():

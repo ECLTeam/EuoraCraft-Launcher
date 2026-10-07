@@ -318,6 +318,27 @@ class ScanCoordinator(_GameState):
             except Exception:
                 self.logger.exception("监视 Minecraft 版本目录失败")
 
+    @staticmethod
+    def _has_instance_marker(version_directory: Path) -> bool:
+        """
+        判断版本目录是否带实例标志，避免把无关目录当作实例。
+
+        只有存在主 Jar，或存在非空的 ``<目录名>.json`` 时才视为实例目录；
+        ``logs``、``mods`` 等运行期目录以及 0 字节的同名 JSON 都会被排除，
+        而 JSON 损坏但非空、或只有主 Jar 的目录仍会被保留以继续诊断。
+
+        :param version_directory: ``versions/`` 下的候选子目录
+        :return: 是否具备实例标志
+        """
+        name = version_directory.name
+        if (version_directory / f"{name}.jar").is_file():
+            return True
+        manifest_path = version_directory / f"{name}.json"
+        try:
+            return manifest_path.is_file() and manifest_path.stat().st_size > 0
+        except OSError:
+            return False
+
     def _scan_game_path(
         self,
         game_path: Path,
@@ -340,6 +361,7 @@ class ScanCoordinator(_GameState):
                 directory.is_dir()
                 and not directory.name.startswith(".")
                 and directory.resolve().parent == versions_path.resolve()
+                and self._has_instance_marker(directory)
             ):
                 versions.setdefault(directory.name, {})
         normalized_versions = [
