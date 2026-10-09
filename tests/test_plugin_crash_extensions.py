@@ -71,7 +71,7 @@ def test_crash_extension_enriches_analysis_result(tmp_path) -> None:
     assert result["pluginNote"] == "analyzed by demo"
     assert any(reason["code"] == "plugin.demo_hint" for reason in result["reasons"])
 
-    # 禁用插件后宿主自动撤销富化回调
+    # 禁用插件后应自动移除其崩溃分析回调
     assert framework.disable("crash-demo").success is True
     analyzer = CrashAnalyzer(data_path, extensions=framework.crash_extensions)
     try:

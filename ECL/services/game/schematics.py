@@ -181,7 +181,7 @@ def _is_air_block(name: str) -> bool:
 
 
 def _normalize(index: int, size: int, axis: int) -> int:
-    # 将待降采样坐标映射回目标轴长内的采样坐标（对应步长对齐）。
+    # 按采样步长计算目标位置，并确保位置不超过目标轴长。
     if size <= 1:
         return 0
     return min(index * axis // size, axis - 1)
@@ -193,7 +193,7 @@ def _read_litematica_vector(value: Any, field_name: str) -> list[int]:
 
     标准 Litematica 把 ``Size`` 与 ``Position`` 编码为含 ``x/y/z`` 的复合标签；
     历史测试数据和少数第三方导出则可能使用整数数组。解析失败统一转换为领域错误，
-    避免底层 ``ValueError`` 直接暴露到 IPC 边界。
+    避免把底层 ``ValueError`` 直接返回给前端。
 
     :param value: NBT 标签中的坐标值
     :param field_name: 用于错误信息的字段名
@@ -246,7 +246,7 @@ class LitematicaRegion:
         if any(axis == 0 for axis in raw_size):
             raise GameServiceError("原理图区域尺寸不能为零", "SCHEMATIC_INVALID")
         self.size = [abs(axis) for axis in raw_size]
-        # 负尺寸表示区域从 Position 向负轴延伸；预览坐标使用该区域的实际最小边界。
+        # 负尺寸表示区域从 Position 向负方向延伸；预览从区域的最小坐标开始。
         self.position = [
             position if size > 0 else position + size + 1 for position, size in zip(raw_position, raw_size, strict=True)
         ]

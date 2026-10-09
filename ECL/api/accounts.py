@@ -6,7 +6,7 @@
 # 文件作用：账户领域 IPC 处理器：登录、账户列表、皮肤与衣橱等操作转发到账户服务。
 #
 # 公开接口：
-#   - class AccountHandlers — 提供账户、微软登录、皮肤与本地衣柜操作的正式 IPC 边界。
+#   - class AccountHandlers — 处理前端发来的账户、微软登录、皮肤和本地衣柜请求。
 #       - accounts_list(body) -> dict[str, Any] — 获取账户列表。
 #       - accounts_current(body) -> dict[str, Any] — 获取当前账户。
 #       - accounts_auth_providers(body) -> dict[str, Any] — 获取插件注册的全部认证提供方定义。
@@ -68,7 +68,7 @@ from .bridge import _FrontendState, _ipc_handler, _normalize_image_url, _validat
 
 class AccountHandlers(_FrontendState):
     """
-    提供账户、微软登录、皮肤与本地衣柜操作的正式 IPC 边界。
+    处理前端发来的账户、微软登录、皮肤和本地衣柜请求。
     """
 
     skin_download_chunk_bytes = 64 * 1024
@@ -79,7 +79,7 @@ class AccountHandlers(_FrontendState):
         """
         获取账户列表。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.accounts.list_accounts()}
 
@@ -87,7 +87,7 @@ class AccountHandlers(_FrontendState):
         """
         获取当前账户。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.accounts.current_account()}
 
@@ -119,7 +119,7 @@ class AccountHandlers(_FrontendState):
         """
         添加离线账户。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         account_data = self.accounts.add_offline(body.get("username"), body.get("uuid"), body.get("skin"))
         return {"success": True, "data": account_data}
@@ -128,7 +128,7 @@ class AccountHandlers(_FrontendState):
         """
         获取可供离线账户选择的默认皮肤列表。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.accounts.default_skins()}
 
@@ -137,7 +137,7 @@ class AccountHandlers(_FrontendState):
         """
         设置离线账户的默认皮肤。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         accounts = self.accounts.set_offline_skin(body.get("account_id"), body.get("skin"))
         return {"success": True, "data": accounts}
@@ -147,7 +147,7 @@ class AccountHandlers(_FrontendState):
         """
         添加外置登录账户。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         server_url = self._normalize_authlib_server_url(body.get("server_url"))
         if server_url is None:
@@ -170,7 +170,7 @@ class AccountHandlers(_FrontendState):
         """
         为多角色外置账户选择本次登录使用的单个角色。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         account = await to_thread.run_sync(
             self.accounts.select_authlib_profile,
@@ -184,7 +184,7 @@ class AccountHandlers(_FrontendState):
         """
         解析外置登录网站实际使用的 API 地址。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         server_url = self._normalize_authlib_server_url(body.get("server_url"))
         if server_url is None:
@@ -197,7 +197,7 @@ class AccountHandlers(_FrontendState):
         """
         开始微软登录。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         login_data = await self.accounts.start_microsoft_login()
         return {"success": True, "data": login_data}
@@ -206,7 +206,7 @@ class AccountHandlers(_FrontendState):
         """
         获取微软登录配置。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.accounts.microsoft_login_config()}
 
@@ -214,7 +214,7 @@ class AccountHandlers(_FrontendState):
         """
         获取外置登录可用性配置。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.game.authlib_login_config()}
 
@@ -222,7 +222,7 @@ class AccountHandlers(_FrontendState):
         """
         获取微软登录状态。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.accounts.poll_microsoft_login()}
 
@@ -230,7 +230,7 @@ class AccountHandlers(_FrontendState):
         """
         取消微软登录。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": {"cancelled": self.accounts.cancel_microsoft_login()}}
 
@@ -239,7 +239,7 @@ class AccountHandlers(_FrontendState):
         """
         完成微软登录。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         login_result = self.accounts.complete_microsoft_login()
         return {"success": True, "data": login_result}
@@ -249,7 +249,7 @@ class AccountHandlers(_FrontendState):
         """
         切换账户。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         self.accounts.switch_account(body.get("account_id"))
         return {"success": True}
@@ -259,7 +259,7 @@ class AccountHandlers(_FrontendState):
         """
         删除账户。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         self.accounts.remove_account(body.get("account_id"))
         return {"success": True}
@@ -299,7 +299,7 @@ class AccountHandlers(_FrontendState):
         """
         刷新账户信息。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         refresh_result = await self.accounts.refresh_account(body.get("account_id"))
         return {"success": True, "data": refresh_result}
@@ -506,7 +506,7 @@ class AccountHandlers(_FrontendState):
         """
         将正版账户皮肤重置为默认。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         request, invalid = _validate_body(AccountTextureRequest, body)
         if invalid is not None:
@@ -519,7 +519,7 @@ class AccountHandlers(_FrontendState):
         """
         为正版账户选择已解锁的披风。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         request, invalid = _validate_body(MicrosoftCapeRequest, body)
         if invalid is not None:
@@ -532,7 +532,7 @@ class AccountHandlers(_FrontendState):
         """
         取消正版账户当前佩戴的披风。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         request, invalid = _validate_body(AccountTextureRequest, body)
         if invalid is not None:
@@ -544,7 +544,7 @@ class AccountHandlers(_FrontendState):
         """
         获取外置登录服务器。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         authlib_server_list = []
         for server in self._get_authlib_servers():

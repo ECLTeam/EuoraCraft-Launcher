@@ -206,7 +206,7 @@ async def test_plugin_list_maps_fields(tmp_path) -> None:
 
 
 def test_install_frontend_handlers_purges_and_fills(service) -> None:
-    # 同一服务只安装于一个应用上下文，重复安装应整体替换而非累积。
+    # 同一服务只连接到一次应用运行；重复连接时应替换旧连接，而不是累加。
     service.install_frontend_handlers({"system_ping": lambda body: {"pong": True}})
     service.install_frontend_handlers({"launcher_info": lambda body: {"version": "x"}})
     assert list(service._frontend_handlers) == ["launcher_info"]

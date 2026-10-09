@@ -6,7 +6,7 @@
 # 文件作用：实例资料协调器：资料读写、图标设置与置顶排序。
 #
 # 公开接口：
-#   - class ProfileCoordinator — 向正式 IPC 边界提供实例资料、图标、置顶顺序和分类操作。
+#   - class ProfileCoordinator — 读取和修改实例资料、图标、置顶顺序和分类。
 #       - get_instance_profile(game_path, version_id) -> dict[str, Any] — 读取单个实例已持久化的 ECL 覆盖字段。
 #       - patch_instance_profile(game_path, version_id, patch) -> dict[str, Any] — 合并保存实例资料并立即失效扫描缓存。
 #       - reset_instance_profile(game_path, version_id, fields) -> dict[str, Any] — 删除实例覆盖字段，使其恢复第三方或自动值。
@@ -27,7 +27,7 @@ from .base import GameServiceError, _GameState
 
 class ProfileCoordinator(_GameState):
     """
-    向正式 IPC 边界提供实例资料、图标、置顶顺序和分类操作。
+    读取和修改实例资料、图标、置顶顺序和分类。
     """
 
     def _profile_target(self, game_path: Any, version_id: Any) -> tuple[Path, str]:

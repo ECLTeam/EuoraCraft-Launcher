@@ -3,14 +3,14 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：应用装配根：构建服务依赖图并管理关闭顺序。
+# 文件作用：创建后端服务，并在应用退出时按顺序关闭它们。
 #
 # 公开接口：
 #   - class ApplicationState — 保存一次应用运行期间会变化的后端状态。
-#   - class ApplicationContext — 显式保存后端依赖图，并统一管理共享资源的生命周期。
+#   - class ApplicationContext — 保存后端服务和共享资源，并负责关闭它们。
 #       - close() -> None — 按依赖逆序关闭后端资源，并清空事件订阅。
 #   - create_application(runtime_info, *, launch_options=None, on_state_ready=None) -> ApplicationContext
-#     — 构造一次应用运行所需的完整后端依赖图。
+#     — 创建应用运行所需的后端服务和共享资源。
 # ============================================================
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ logger = logging.getLogger("EuoraCraft-Launcher.Application")
 
 
 def _apply_ssl_verify(ssl_context: ssl.SSLContext, verify: bool) -> None:
-    # 设置 SSL 上下文的证书校验开关，供共享 HTTP 客户端运行时热切换。
+    # 修改共享 HTTP 客户端的证书校验设置，无需重建客户端。
     if verify:
         ssl_context.verify_mode = ssl.CERT_REQUIRED
         ssl_context.check_hostname = True
@@ -246,9 +246,9 @@ class ApplicationState:
 @dataclass(frozen=True)
 class ApplicationContext:
     """
-    显式保存后端依赖图，并统一管理共享资源的生命周期。
+    保存后端服务和共享资源，并负责关闭它们。
 
-    上下文中的服务按字段顺序构造，关闭时按依赖的逆序释放。调用 ``close`` 多次不会
+    服务按字段顺序创建，关闭时按依赖关系逆序释放。调用 ``close`` 多次不会
     重复关闭网络客户端或后台任务。
     """
 
@@ -323,14 +323,14 @@ def create_application(
     on_state_ready: Callable[[ApplicationState], None] | None = None,
 ) -> ApplicationContext:
     """
-    构造一次应用运行所需的完整后端依赖图。
+    创建应用运行所需的后端服务和共享资源。
 
     初始化中途失败时，本函数会按逆序释放已经创建的资源，再将原始异常抛给启动器。
 
     :param runtime_info: 运行目录、资源目录和打包状态
     :param launch_options: 命令行启动参数；在环境变量覆盖之后叠加，会话内粘滞
     :param on_state_ready: 配置读取后、服务构造前的可选回调，用于提前应用日志级别
-    :return: 负责后端依赖与资源生命周期的应用上下文
+    :return: 保存后端服务和共享资源的 ``ApplicationContext`` 对象
     """
     state = ApplicationState(
         app_path=runtime_info["app_path"],

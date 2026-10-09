@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：准备归档磁盘版本并将已安装包接入主进程插件发现与生命周期。
+# 文件作用：读取已安装的插件包，让主进程能够查找和启用插件。
 #
 # 公开接口：
 #   - class PluginPackages — 归档安装、恢复、冲突检查和重启生效。
@@ -113,7 +113,7 @@ class PluginPackages(_PluginState):
 
     def is_package_plugin(self, name: str) -> bool:
         """
-        判断名称是否属于已发现归档，供 IPC 调度使用。
+        判断插件名称是否属于已找到的安装包，供 IPC 请求调用。
 
         :param name: 插件名称
         :return: 是否存在归档安装条目

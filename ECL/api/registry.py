@@ -269,7 +269,7 @@ def command_handlers(api: FrontendApi) -> dict[str, Callable[..., Any]]:
     """
     返回 PyTauri 需要注册的唯一正式 IPC 命令表。
 
-    :param api: 已连接应用上下文的前端 API 门面
+    :param api: 已取得后端服务的前端 API 对象
     :return: 命令名到处理器的稳定映射
     """
 

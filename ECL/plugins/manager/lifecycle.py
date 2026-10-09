@@ -3,10 +3,10 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：插件生命周期：安装/启用/禁用/重载/卸载的实现。
+# 文件作用：实现插件的安装、启用、禁用、重载和卸载。
 #
 # 公开接口：
-#   - class PluginLifecycle — 负责插件的启用、禁用、卸载、重载与安装等生命周期管理。
+#   - class PluginLifecycle — 安装、启用、禁用、重载和卸载插件。
 #       - enable(name) -> PluginActionResult — 启用插件。
 #       - disable(name, _persist_state=…) -> PluginActionResult — 禁用插件，清理其注册的前端内容与事件处理器。
 #       - unload(name, _persist_state=…) -> PluginActionResult — 卸载插件，清理其注册的路由、插槽内容与事件处理器。
@@ -40,7 +40,7 @@ from .install_transaction import (
 
 class PluginLifecycle(_PluginState):
     """
-    负责插件的启用、禁用、卸载、重载与安装等生命周期管理。
+    安装、启用、禁用、重载和卸载插件。
     """
 
     def _enable_all(self) -> None:

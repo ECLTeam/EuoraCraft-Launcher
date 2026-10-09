@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：宿主层包：隔离 Tauri 宿主环境并承载宿主侧基础设施。
+# 文件作用：提供 Tauri 适配器和桌面端使用的服务。
 #
 # 说明：Tauri 入口 ``Adapter`` 依赖 ``ECL.api``，为避免导入环，本包不预先
 # 导入 ``ECL.host.tauri``，需要时请直接从 ``ECL.host.tauri`` 导入。

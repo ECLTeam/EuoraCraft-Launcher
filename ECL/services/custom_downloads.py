@@ -36,7 +36,7 @@ from ECL.utils.errors import GameServiceError
 
 class CustomDownloadRequest(BaseModel):
     """
-    保存经过边界校验的下载意图，默认禁止覆盖已有文件。
+    保存已检查的下载请求，默认不覆盖已有文件。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -240,7 +240,7 @@ class CustomDownloadService:
         data_path: Path | None = None,
     ) -> None:
         """
-        注入应用任务管理器与可替换的下载器边界。
+        接收应用任务管理器和可替换的下载器。
 
         :param operations: 应用拥有的共享任务注册表
         :param downloader_factory: Core 公开下载器工厂
@@ -470,7 +470,7 @@ class CustomDownloadService:
             downloader.stop()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            # stop 的清理协程由 Core 调度到当前循环，给它一次执行机会再退出。
+            # Core 会把 stop 的清理任务放到当前事件循环；退出前让它运行一次。
             await asyncio.sleep(0)
             if downloader.client is not None and not downloader.client.is_closed:
                 await downloader.client.aclose()

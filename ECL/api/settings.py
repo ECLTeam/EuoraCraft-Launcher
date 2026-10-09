@@ -6,7 +6,7 @@
 # 文件作用：设置领域 IPC 处理器：配置读写与 Java 扫描。
 #
 # 公开接口：
-#   - class SettingsHandlers — 提供启动器设置和 Java 运行时查询的正式 IPC 边界。
+#   - class SettingsHandlers — 处理启动器设置和 Java 运行时查询请求。
 #       - settings_get(body) -> ApiResponse — 按单个分区、多个分区或完整配置读取启动器设置。
 #       - settings_set(body) -> ApiResponse — 校验并全量保存一个配置分区。
 #       - settings_download_patch(body) -> ApiResponse — 原子合并下载配置的指定字段与资源类型键。
@@ -28,7 +28,7 @@ from .bridge import _FrontendState, _ipc_handler, _validate_body
 
 class SettingsHandlers(_FrontendState):
     """
-    提供启动器设置和 Java 运行时查询的正式 IPC 边界。
+    处理启动器设置和 Java 运行时查询请求。
     """
 
     async def settings_get(self, body: dict[str, Any]) -> ApiResponse:
@@ -81,7 +81,7 @@ class SettingsHandlers(_FrontendState):
 
     async def settings_download_patch(self, body: dict[str, Any]) -> ApiResponse:
         """
-        校验下载配置补丁并在线程边界执行原子合并。
+        校验下载设置的变更，并在工作线程中一次性保存。
 
         :param body: 指定下载源或按资源类型更新的目标、保存目录
         :return: 已确认落盘的下载分区

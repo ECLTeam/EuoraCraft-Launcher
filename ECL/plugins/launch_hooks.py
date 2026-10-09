@@ -3,10 +3,10 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：启动钩子扩展点：插件参与 Minecraft 启动的参数准备与进程生命周期。
+# 文件作用：插件启动回调：允许插件修改启动参数，并响应游戏进程启动和退出。
 #
 # 公开接口：
-#   - class LaunchContext — 插件可读写的启动准备上下文。
+#   - class LaunchContext — 保存插件可读取或修改的游戏启动参数。
 #   - class LaunchHookRegistry — 按注册顺序维护插件启动钩子，并在四个阶段安全调用。
 #       - register(owner, name, on_prepare, pre_launch, post_launch, on_exit) -> None — 注册或原位更新一个启动钩子。
 #       - unregister_owner(owner) -> None — 撤销指定插件注册的全部启动钩子。
@@ -16,7 +16,9 @@
 #       - on_exit(context) -> None — 游戏进程退出阶段。
 # ============================================================
 
-"""启动钩子扩展点：插件参与 Minecraft 启动的参数准备与进程生命周期。"""
+"""
+插件启动回调：允许插件修改启动参数，并响应游戏进程启动和退出。
+"""
 
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ from ECL.utils import get_logger
 @dataclass
 class LaunchContext:
     """
-    插件可读写的启动准备上下文。
+    保存插件可读取或修改的游戏启动参数。
 
     ``jvm_args``、``game_args`` 与 ``env`` 会在命令构建前交给插件修改；
     ``working_directory`` 为空时沿用启动器默认的游戏版本目录。
@@ -75,7 +77,7 @@ class LaunchHookRegistry:
 
         :param owner: 插件名
         :param name: 稳定的钩子标识
-        :param on_prepare: 启动参数准备阶段回调，可修改上下文中的参数与环境变量
+        :param on_prepare: 游戏启动前的回调，可修改 JVM 参数、游戏参数和环境变量
         :param pre_launch: 进程创建前回调
         :param post_launch: 进程创建后回调
         :param on_exit: 游戏进程退出回调

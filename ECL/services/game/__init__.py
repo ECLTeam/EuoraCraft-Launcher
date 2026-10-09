@@ -3,10 +3,10 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：游戏领域服务门面：GameService 聚合各协调器。
+# 文件作用：将实例、安装、启动和资源管理等游戏操作集中到 GameService。
 #
 # 公开接口：
-#   - class GameService — 面向 IPC 边界公开的统一游戏服务门面。
+#   - class GameService — 提供实例、安装、启动、扫描和资源管理操作。
 # ============================================================
 
 from .base import GameServiceError, VersionScanError
@@ -41,11 +41,9 @@ class GameService(
     ScanCoordinator,
 ):
     """
-    面向 IPC 边界公开的统一游戏服务门面。
+    提供实例、安装、启动、扫描和资源管理操作。
 
-    通过多重继承聚合各领域协调器，将实例、安装、启动、扫描与资源管理的
-    能力合并为单一的 ``GameService`` 入口，内部共享基类 ``_GameState``
-    提供的运行状态与依赖。
+    各项操作由对应的协调器实现；它们通过 ``_GameState`` 共享运行状态和服务。
     """
 
 

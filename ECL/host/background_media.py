@@ -120,7 +120,7 @@ class _BackgroundMediaRequestHandler(BaseHTTPRequestHandler):
 
 class BackgroundMediaService:
     """
-    为选中的本地背景视频签发短生命周期回环 URL。
+    为选中的本地背景视频生成仅在短时间内有效的本机访问地址。
 
     服务只绑定 ``127.0.0.1``，路径中使用随机令牌，且令牌始终映射到单个已校验的
     视频文件。它不暴露目录浏览、任意路径参数或上传能力；视频通过 Range 读取，避免

@@ -7,7 +7,7 @@
 #
 # 公开接口：
 #   - class OperationContext — 向长任务工作函数提供取消状态和统一进度上报。
-#       - check_cancelled() -> None — 在安全边界检查取消状态，并使用稳定错误码中断任务。
+#       - check_cancelled() -> None — 在不会留下半成品的步骤检查取消请求，并用固定错误码结束任务。
 #       - progress(percent, message, **details) -> None — 发送统一的应用长任务进度事件。
 #   - class OperationManager — 管理可取消的应用下载、实例复制及资源处理任务。
 #       - submit(kind, worker) -> dict[str, str] — 登记并异步执行一个长任务，立即返回稳定的任务标识。
@@ -52,7 +52,7 @@ class OperationContext:
 
     def check_cancelled(self) -> None:
         """
-        在安全边界检查取消状态，并使用稳定错误码中断任务。
+        在不会留下半成品的步骤检查取消请求，并用固定错误码结束任务。
         """
         if self.cancel_event.is_set():
             from ECL.utils.errors import GameServiceError
@@ -79,7 +79,7 @@ class OperationContext:
 
     def finalize(self, action: Callable[[], object]) -> object:
         """
-        在取消互斥边界内完成最终落盘，落盘成功后不再接受取消。
+        开始保存最终结果后不再接受取消，避免已保存的数据被当作失败清理。
 
         :param action: 不含网络请求的短时原子提交操作
         :return: 提交操作结果

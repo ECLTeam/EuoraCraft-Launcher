@@ -123,11 +123,11 @@ class _GameState(ModSourceAware):
         mod_source_provider: ModSourceProvider | None = None,
     ):
         """
-        创建游戏服务共享状态，并注入可替换的 Core 边界实现。
+        创建游戏服务共用的状态，并接收可替换的 Core 实现。
 
         :param accounts: 提供当前启动凭据的账户服务
         :param search_factory: Minecraft 本地版本扫描器工厂
-        :param instances_manager: 游戏进程生命周期管理器
+        :param instances_manager: 负责启动、跟踪和关闭游戏进程的管理器
         :param api_client_factory: Game API 客户端工厂
         :param downloader_factory: 下载任务工厂
         :param command_builder: 启动命令构建函数
@@ -139,7 +139,7 @@ class _GameState(ModSourceAware):
         :param enable_version_watcher: 是否启用本地版本目录监听
         :param version_watch_interval: 目录监听轮询间隔，单位为秒
         :param version_watch_debounce: 版本变化事件的防抖时间，单位为秒
-        :param event_bus: 当前应用上下文拥有的事件总线
+        :param event_bus: 当前应用使用的事件总线
         :param isolation_policy_provider: 读取全局实例隔离策略的延迟提供器
         :param mod_source_provider: 读取当前模组源的延迟提供器；缺省时固定为官方源
         """
@@ -165,7 +165,7 @@ class _GameState(ModSourceAware):
         self._curseforge_api_key = curseforge_api_key
         self._java_cache_file = self._data_path / "java_cache.json" if data_path else None
         self.authlib_injector = authlib_injector or (AuthlibInjector(data_path) if data_path else None)
-        # Java 与 Core 上下文按需创建并复用，避免每次目录查询重新建立网络客户端。
+        # 按需创建并复用 Java 和 Core 对象，避免每次查询都重新连接网络。
         self._java_runtimes: list[Any] = []
         self._contexts: dict[tuple[str, str], _CoreContext] = {}
         # 下载器和 asyncio 任务必须持有强引用，关闭服务时才能可靠停止或取消。
@@ -364,7 +364,7 @@ class _GameState(ModSourceAware):
         在调用线程内同步等待一次下载器运行完成。
 
         :param downloader: 待运行的下载器
-        :param loop: 传入既有事件循环时把下载协程调度回该循环执行（下载器内部
+        :param loop: 传入现有事件循环时，在该循环中执行下载任务（下载器内部
             状态与测试替身可能绑定在主循环上）；否则在当前线程新建事件循环执行。
         """
         if loop is not None and not loop.is_closed():

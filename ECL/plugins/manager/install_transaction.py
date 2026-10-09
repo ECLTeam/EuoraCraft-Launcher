@@ -50,7 +50,7 @@ class PluginInstallTransaction:
         :param plugin_dir: 当前管理器的用户插件发现目录
         :param name: 插件清单中的安全名称
         :param transaction_id: 恢复已有事务时提供的 32 位十六进制标识
-        :raises PluginInstallTransactionError: 名称或标识不符合路径边界时抛出
+        :raises PluginInstallTransactionError: 名称或标识会使路径越过插件目录时抛出
         """
         if plugin_name_pattern.fullmatch(name) is None:
             raise PluginInstallTransactionError("插件名包含非法字符")

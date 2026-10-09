@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：崩溃分析器：日志读取、规则匹配、堆栈归因与插件富化编排。
+# 文件作用：读取崩溃日志，匹配诊断规则，并允许插件补充分析结果。
 #
 # 公开接口：
 #   - class CrashAnalysisPolicy — 分析过程的资源限制与脱敏规则。
@@ -52,8 +52,8 @@ class CrashAnalysisPolicy:
     """
     保存崩溃分析的资源限制、脱敏规则与候选文件约定。
 
-    诊断规则本体见 :class:`CrashRuleCatalog`；本类只承载分析过程中的
-    运营限制（读取上限、会话时效）与安全脱敏策略。
+    具体诊断规则见 :class:`CrashRuleCatalog`；此处只设置文件读取上限、
+    临时报告保留时间和敏感信息隐藏规则。
     """
 
     max_source_bytes = 16 * 1024 * 1024
@@ -82,7 +82,7 @@ class CrashAnalyzer:
     独占，关闭后不保留分析历史。
 
     :param data_path: 启动器数据目录，用于临时报告和默认导出位置
-    :param extensions: 可选的插件崩溃富化注册表
+    :param extensions: 可选的插件崩溃分析回调列表
     """
 
     def __init__(self, data_path: Path | str, extensions: CrashAnalysisExtensionRegistry | None = None):
@@ -408,7 +408,7 @@ class CrashAnalyzer:
 
     def _collect_reasons(self, combined: str) -> list[dict[str, Any]]:
         # 规则命中按优先级与置信度排序并限量输出；堆栈分析常驻执行，规则
-        # 命中时仅作为伴随证据追加，未命中时保持兜底主因语义。
+        # 匹配时只追加为辅助证据；未匹配时保留原先判断的主要原因。
         summary = self._stack_analyzer.analyze(combined)
         ordered = self._order_reasons(self._match_rules(combined))
         if ordered:

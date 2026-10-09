@@ -244,7 +244,7 @@ class JavaArchive:
 
         :param archive_path: 已校验哈希的 ZIP 或 TAR.GZ
         :param destination: 后端新建的空安装目录
-        :param check_cancelled: 在安全写入边界检查取消的回调
+        :param check_cancelled: 在写入前检查取消请求的回调
         :return: 文件与目录的相对路径清单
         :raises JavaError: 归档结构不安全、大小超限或链接无效时抛出
         """

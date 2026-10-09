@@ -115,7 +115,7 @@ class PluginDependencyLock:
         """
         校验直接依赖由锁覆盖，不允许插件配置下载源或环境标记。
 
-        :param raw_dependencies: plugin.json 的 pythonDependencies 边界值
+        :param raw_dependencies: 从 plugin.json 读取的 pythonDependencies 原始值
         :return: 用于闭包与 extras 校验的直接需求
         :raises PluginDependencyError: 直接依赖格式或锁定版本不满足契约
         """

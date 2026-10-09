@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：验证游戏元数据请求与批量文件地址的双源回退边界。
+# 文件作用：验证游戏下载地址请求在两个来源之间的切换。
 # ============================================================
 
 from __future__ import annotations

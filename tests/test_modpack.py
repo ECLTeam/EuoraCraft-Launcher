@@ -158,7 +158,7 @@ def test_parse_modrinth_missing_minecraft_raises(tmp_path) -> None:
 
 
 def test_parse_modrinth_sanitizes_unsafe_paths(tmp_path) -> None:
-    """绝对路径与目录穿越声明应被忽略并记录警告，反斜杠应归一为 POSIX 分隔。"""
+    """绝对路径与目录穿越声明应被忽略并记录警告，反斜杠应转换为 POSIX 路径分隔符。"""
     root = tmp_path / "pack"
     root.mkdir()
     _write_json(
@@ -297,7 +297,7 @@ def test_build_pack_plan_rejects_unknown(tmp_path) -> None:
 
 
 def test_build_pack_plan_rejects_ecl_legacy(tmp_path) -> None:
-    """ECL 旧包由导入编排按旧流程处理，统一计划入口应明确拒绝。"""
+    """ECL 旧格式包应由旧导入流程处理，新的安装计划入口应拒绝。"""
     root = tmp_path / "legacy"
     root.mkdir()
     (root / "ecl-pack.json").write_text("{}", encoding="utf-8")
@@ -313,7 +313,7 @@ def test_build_pack_plan_rejects_missing_directory(tmp_path) -> None:
     assert error.value.error_code == "INVALID_PACK_ARCHIVE"
 
 
-# ---------- 导入编排（ModpackCoordinator） ----------
+# 整合包导入
 
 
 def _pack_downloader_factory(content_by_url: dict[str, bytes], corrupt_urls: set[str] | None = None):
@@ -383,7 +383,7 @@ def _make_base_version(game_path: Path, version: str) -> None:
 
 
 def test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None:
-    """mrpack 导入应下载清单文件、跳过客户端不适用条目并装配继承实例。"""
+    """导入 mrpack 时应下载清单文件、跳过不适用于客户端的条目并创建继承实例。"""
     game_path = tmp_path / ".minecraft"
     _make_base_version(game_path, "1.21.1")
     mod_bytes = b"mod-a-content"
@@ -558,7 +558,7 @@ def test_modpack_online_install_rejects_invalid_source(tmp_path) -> None:
 
 
 def test_modpack_online_install_downloads_and_imports(tmp_path, monkeypatch) -> None:
-    """在线安装应下载包文件后走统一导入编排，装配继承实例。"""
+    """在线安装应先下载整合包文件，再按导入流程创建继承实例。"""
     game_path = tmp_path / ".minecraft"
     _make_base_version(game_path, "1.21.1")
     mod_bytes = b"online-mod"
@@ -619,7 +619,7 @@ def test_curseforge_fingerprint_matches_reference_vector(tmp_path) -> None:
 
 
 def test_curseforge_fingerprint_skips_whitespace_bytes(tmp_path) -> None:
-    """空白字节应被归一化过滤，过滤后与紧凑内容的指纹一致。"""
+    """计算指纹时应跳过空白字节，结果应与无空白内容相同。"""
     compact = tmp_path / "compact.bin"
     compact.write_bytes(b"abcdefgh" * 100)
     spaced = tmp_path / "spaced.bin"
@@ -796,7 +796,7 @@ def test_build_ftb_plan() -> None:
 
 
 def test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None:
-    """FTB 在线安装应拉取清单、自动安装加载器基础版本并逐文件下载装配。"""
+    """在线安装 FTB 整合包时应读取清单、安装加载器基础版本并逐个下载文件。"""
     game_path = tmp_path / ".minecraft"
     (game_path / "versions").mkdir(parents=True)
     created = []

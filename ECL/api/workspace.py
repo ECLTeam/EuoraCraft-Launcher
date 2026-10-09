@@ -3,10 +3,10 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：实例工作区 IPC 处理器：存档/截图/服务器/资源/设置的统一入口。
+# 文件作用：处理实例的存档、截图、服务器、资源和设置请求。
 #
 # 公开接口：
-#   - class WorkspaceHandlers — 暴露实例工作台、内容管理和长任务的 Pydantic IPC 边界。
+#   - class WorkspaceHandlers — 校验并处理实例工作台、内容管理和长任务请求。
 #       - game_instance_folder_open(body) -> ApiResponse
 #       - game_instance_mods_list(body) -> ApiResponse
 #       - game_instance_mod_toggle(body) -> ApiResponse
@@ -125,7 +125,7 @@ from .bridge import _FrontendState, _ipc_handler, _validate_body
 
 class WorkspaceHandlers(_FrontendState):
     """
-    暴露实例工作台、内容管理和长任务的 Pydantic IPC 边界。
+    校验并处理实例工作台、内容管理和长任务请求。
     """
 
     async def _validated_call(

@@ -165,7 +165,7 @@ class PluginDiscovery(_PluginState):
         """
         校验包内入口并在主进程创建使用宿主构造参数的插件实例。
 
-        entry_point 为文件名或“文件名:类名”；模块执行前限制文件路径边界，
+        entry_point 为文件名或“文件名:类名”；执行模块前确认文件仍在插件目录内，
         不再识别无参数 SDK 或使用命令适配器。入口代码仍具有本进程能力。
         """
         parts = entry_point.split(":", 1)
@@ -192,7 +192,7 @@ class PluginDiscovery(_PluginState):
         return plugin_class(self, plugin_dir, metadata, is_system)
 
     def _call_plugin_hook(self, plugin: Plugin, method_name: str, *, fail_status: str | None = None) -> bool:
-        # 安全调用插件生命周期钩子；失败时记录日志并可选择恢复状态。
+        # 调用插件启用或关闭时的回调；失败时记日志，并按需恢复原状态。
         started = perf_counter()
         succeeded = False
         self.logger.debug("开始执行插件钩子：插件：%s；钩子：%s", plugin.name, method_name)

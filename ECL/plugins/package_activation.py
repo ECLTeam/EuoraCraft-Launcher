@@ -241,7 +241,7 @@ class PluginPackageActivationStore:
 
     def set_enabled(self, name: str, enabled: bool) -> PluginPackageActivation:
         """
-        原子更新下次启动的启用意图，不自行执行生命周期钩子。
+        一次性保存下次启动是否启用插件，不立即调用插件回调。
 
         :param name: 已安装插件名
         :param enabled: 下次启动是否启用

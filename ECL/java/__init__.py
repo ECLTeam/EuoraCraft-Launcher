@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：JVM 运行时管理层包：对外暴露清单、来源、安装与生命周期门面。
+# 文件作用：提供 Java 版本列表、下载来源、安装和管理操作。
 # ============================================================
 
 from .installer import JavaLifecycle, RuntimeLease

@@ -312,7 +312,7 @@ def test_startup_update_service_checks_once_and_caches_frontend_result() -> None
             )
 
     service = StartupUpdateService(
-        http_client=None,  # type: ignore[arg-type]  # 测试使用 checker_factory 隔离 HTTP 边界。
+        http_client=None,  # type: ignore[arg-type]  # 测试通过 checker_factory 替换 HTTP 请求。
         event_bus=events,
         current_version="1.0.0",
         version_type="release",

@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：窗口领域 IPC 处理器：窗口列表/创建/焦点/边界管理。
+# 文件作用：处理窗口列表、创建、聚焦和尺寸位置请求。
 #
 # 公开接口：
 #   - class WindowHandlers — Host-owned, local-only WebView window lifecycle boundary.

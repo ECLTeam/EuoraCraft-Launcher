@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：Java 管理正式 IPC 边界，校验请求并在线程边界调用唯一领域服务。
+# 文件作用：校验前端的 Java 管理请求，并在工作线程中调用 Java 服务。
 #
 # 公开接口：
 #   - class JavaHandlers — 提供清单、登记、可用状态、计划、安装和受保护移除接口。

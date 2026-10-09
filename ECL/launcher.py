@@ -3,11 +3,11 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：启动器编排：装配应用上下文、运行主循环并给出退出码。
+# 文件作用：启动桌面应用、运行前端界面，并在退出时关闭后端服务。
 #
 # 公开接口：
 #   - class LauncherExitCode
-#   - class EuoraCraftLauncher — 编排一次桌面应用的完整运行周期。
+#   - class EuoraCraftLauncher — 启动桌面应用，并在退出时关闭后端服务。
 #       - __init__(options=None) — 应用命令行启动参数并初始化日志系统。
 #       - run() -> LauncherExitCode — 初始化后端并运行前端事件循环。
 # ============================================================
@@ -41,10 +41,10 @@ class LauncherExitCode(IntEnum):
 
 class EuoraCraftLauncher:
     """
-    编排一次桌面应用的完整运行周期。
+    启动桌面应用，并在退出时关闭后端服务。
 
-    串联日志系统、后端应用上下文与前端适配器；业务依赖由
-    :func:`create_application` 构造，本类仅负责初始化、运行与关闭的调度。
+    先初始化日志，再通过 :func:`create_application` 创建后端服务，
+    然后运行前端界面；退出时关闭后端服务和日志。
     """
 
     # 类级默认：允许测试经 object.__new__ 构造实例而不触发单实例移交语义。
@@ -69,13 +69,13 @@ class EuoraCraftLauncher:
         self.debug = False  # 是否启用调试模式（调试工具与标签显示）
         self.debug_log_level = "info"  # 控制台日志级别
         self.config: dict[str, Any] = {}  # 已应用环境变量的启动配置
-        self.context: ApplicationContext | None = None  # 已构造的后端应用上下文
+        self.context: ApplicationContext | None = None  # 已创建的后端服务及共享资源
         self._shutdown_complete = False  # 关闭流程是否已完成（用于幂等）
         # 单实例探测必须先于日志系统：移交成功时不创建日志文件，避免与主实例竞争轮转句柄。
         self._handed_over = probe_running_instance(self.data_path, self.options.forwarded_argv)
         if self._handed_over:
             self.logging = None  # 移交进程不初始化日志系统
-            self.logger = logging.getLogger("EuoraCraft_Launcher")  # 无处理器的兜底日志器
+            self.logger = logging.getLogger("EuoraCraft_Launcher")  # 移交到已有进程时使用的无处理器日志器
             print("EuoraCraft Launcher启动器已在运行，已请求激活已运行的窗口。")
             return
         self.logging = configure_logging(self.data_path)  # 日志系统实例
@@ -116,7 +116,7 @@ class EuoraCraftLauncher:
         return LauncherExitCode.SUCCESS
 
     def _initialize(self) -> None:
-        # 执行启动维护任务并构造后端应用上下文。
+        # 执行待处理的维护任务，然后创建后端服务。
         self.logger.info("正在初始化")
         if sys.platform not in {"win32", "linux", "darwin"}:
             raise RuntimeError(f"不支持的系统环境: {sys.platform}")
@@ -185,13 +185,13 @@ class EuoraCraftLauncher:
         self.logging.set_level(resolve_log_level("debug" if self.debug else self.debug_log_level))
 
     def _require_context(self) -> ApplicationContext:
-        # 返回已经初始化的应用上下文。
+        # 返回已创建的后端服务；未初始化则报错。
         if self.context is None:
             raise RuntimeError("后端尚未初始化")
         return self.context
 
     def _shutdown(self) -> None:
-        # 幂等关闭后端上下文，并在最后刷新日志处理器。
+        # 只关闭一次后端服务，最后关闭日志系统。
         if self._shutdown_complete:
             self.logger.debug("忽略重复的启动器关闭请求")
             return
@@ -218,7 +218,7 @@ class EuoraCraftLauncher:
         # 延迟触发一次自动更新的重启：先让 IPC 响应与前端进度刷新完成。
         delay = 1.0
         timer = threading.Timer(delay, self._restart_for_update)
-        timer.daemon = True  # 不阻塞进程退出兜底
+        timer.daemon = True  # 允许进程在定时器触发前退出
         timer.start()
 
     def _restart_for_update(self) -> None:

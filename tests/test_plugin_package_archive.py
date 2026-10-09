@@ -100,7 +100,7 @@ def test_rejects_case_insensitive_duplicate_path(tmp_path: Path) -> None:
 
 def test_rejects_symlink_entry(tmp_path: Path) -> None:
     """
-    ZIP 内符号链接不能绕过常规文件路径边界。
+    ZIP 内的符号链接不能指向插件目录之外。
     """
     archive_path = tmp_path / "sample.eclplugin"
     symlink = zipfile.ZipInfo("linked.py")

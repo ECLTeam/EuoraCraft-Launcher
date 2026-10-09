@@ -35,7 +35,7 @@ class ResourceInstallBinding(BaseModel):
         """
         拒绝不能安全进入后续路径或标识解析的控制字符。
 
-        :param value: 配置边界传入的文本
+        :param value: 从配置文件读出的文本
         :return: 保留大小写和目录语义的原始文本
         :raises ValueError: 文本包含 NUL 时抛出
         """

@@ -278,7 +278,7 @@ class _LibraryDestination(SchemeDictionaryDestination):
         """
         记录脚本不支持状态而不生成指向冻结启动器的伪 Python 包装器。
 
-        安装结果的 warnings 单独向用户显示这一库导入边界。
+        安装结果中的 warnings 单独显示给用户；此处只处理库返回的提示。
         """
         return self.write_to_fs(
             Scheme("data"),
@@ -291,7 +291,7 @@ class _LibraryDestination(SchemeDictionaryDestination):
         """
         约束所有安装路径并拒绝多个 wheels 覆盖同一文件。
 
-        installer 负责文件内容与 RECORD，目标边界由此安装目的地检查。
+        installer 负责写入文件和 RECORD；此处检查目标路径是否在插件目录内。
         """
         relative = _safe_wheel_name(path)
         target_path = Path(self.scheme_dict[scheme]).joinpath(*relative.parts)
