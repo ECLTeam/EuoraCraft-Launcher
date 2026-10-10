@@ -414,7 +414,7 @@ class _FrontendState:
         self.accounts = context.accounts
         self.wardrobe = context.wardrobe
         self.http = context.http
-        self.info_card = context.info_card
+        self.announcements = context.announcements
         self.connector = context.connector
         self.game = context.game
         self.plugins = context.plugins

@@ -59,7 +59,7 @@ class IpcLogPolicy:
             "launcher_update_status": IpcLogSpec("返回当前运行形态是否允许自动更新", "poll"),
             "launcher_update_download": IpcLogSpec("下载当前通道最新版本的安装包并落盘替换计划", "action", timed=True),
             "launcher_update_apply": IpcLogSpec("拉起引导脚本完成替换，并请求当前启动器退出以重启", "action"),
-            "info_card_get": IpcLogSpec("获取信息卡片", "query", timed=True),
+            "launcher_announcements_get": IpcLogSpec("获取启动器公告", "query", timed=True),
             "user_agreement_get": IpcLogSpec("读取当前用户协议接受状态", "query"),
             "user_agreement_save": IpcLogSpec("保存用户已接受协议的本地状态", "action"),
             "user_agreement_clear": IpcLogSpec("清除用户协议接受状态，但保留匿名标识供再次确认", "action"),

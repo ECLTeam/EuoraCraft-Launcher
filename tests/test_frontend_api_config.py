@@ -30,8 +30,8 @@
 #       - iter_bytes(_chunk_size) -> Any
 #   - class FakeHttp
 #       - stream(method, url) -> Any
-#   - class FakeInfoCard
-#       - get_info_card() -> Any
+#   - class FakeAnnouncements
+#       - get_announcements() -> Any
 #   - class FakeGame
 #       - curseforge_available() -> Any
 #       - scan_versions(paths, force, compatibility_options) -> Any
@@ -48,7 +48,7 @@
 #       - run_on_main_thread(handler) -> None
 #   - test_launcher_config_excludes_runtime_metadata(tmp_path) -> None
 #   - test_launcher_info_uses_runtime_metadata(tmp_path) -> None
-#   - test_info_card_delegates_to_registered_service(tmp_path) -> None
+#   - test_announcements_delegate_to_registered_service(tmp_path) -> None
 #   - test_user_agreement_state_is_persisted_by_formal_system_api(tmp_path) -> None
 #   - test_java_scan_delegates_to_game_service(tmp_path) -> None
 #   - test_scan_versions_delegates_to_registered_service(tmp_path) -> None
@@ -277,15 +277,9 @@ class FakeHttp:
         return FakeHttpResponse()
 
 
-class FakeInfoCard:
-    def get_info_card(self):
-        return {
-            "mode": "rotate",
-            "tips": ["测试提示"],
-            "announcements": [],
-            "welcome": None,
-            "interval": 8000,
-        }
+class FakeAnnouncements:
+    def get_announcements(self):
+        return [{"id": "test-notice", "title": "测试公告", "date": "", "content": "公告正文"}]
 
 
 class FakeGame:
@@ -403,7 +397,7 @@ def _build_api(tmp_path) -> FrontendApi:
         accounts=FakeAccounts(),
         connector=SimpleNamespace(start_node_preload=lambda: False),
         wardrobe=FakeWardrobe(),
-        info_card=FakeInfoCard(),
+        announcements=FakeAnnouncements(),
         game=FakeGame(),
         plugins=FakePlugins(),
         processes=SimpleNamespace(),
@@ -542,14 +536,13 @@ def test_launcher_info_uses_runtime_metadata(tmp_path) -> None:
     assert result["data"]["active_window_chrome"] == "system_shadow"
 
 
-def test_info_card_delegates_to_registered_service(tmp_path) -> None:
+def test_announcements_delegate_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 
-    result = asyncio.run(api.info_card_get({}))
+    result = asyncio.run(api.launcher_announcements_get({}))
 
     assert result["success"] is True
-    assert result["data"]["tips"] == ["测试提示"]
-    assert result["data"]["interval"] == 8000
+    assert result["data"] == [{"id": "test-notice", "title": "测试公告", "date": "", "content": "公告正文"}]
 
 
 def test_user_agreement_state_is_persisted_by_formal_system_api(tmp_path) -> None:

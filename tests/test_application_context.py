@@ -155,7 +155,7 @@ def test_application_context_closes_resources_in_reverse_dependency_order() -> N
         http=Closable("http", order),
         accounts=Closable("accounts", order),
         wardrobe=SimpleNamespace(),
-        info_card=SimpleNamespace(),
+        announcements=SimpleNamespace(),
         game=Closable("game", order),
         connector=SimpleNamespace(),
         plugins=Closable("plugins", order),

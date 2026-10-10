@@ -23,13 +23,22 @@
 #   - test_invalid_json_returns_friendly_message() -> None
 # ============================================================
 
+import json
+from datetime import UTC, datetime
 from threading import Event
 
 import httpx
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.services.updates import StartupUpdateService, UpdateChecker, UpdateCheckResult, compare_versions, parse_version
+from ECL.services.updates import (
+    AnnouncementService,
+    StartupUpdateService,
+    UpdateChecker,
+    UpdateCheckResult,
+    compare_versions,
+    parse_version,
+)
 
 
 def _response(status_code: int = 200, *, json: object = None) -> httpx.Response:
@@ -335,3 +344,223 @@ def test_startup_update_service_checks_once_and_caches_frontend_result() -> None
         }
     ]
     assert service.result() == received[0]
+
+
+@pytest.fixture
+def announcement_http_client():
+    def reject_unexpected_network(request):
+        raise AssertionError(f"未配置的公告请求：{request.url}")
+
+    with httpx.Client(transport=httpx.MockTransport(reject_unexpected_network)) as client:
+        yield client
+
+
+now = datetime(2026, 7, 30, 12, tzinfo=UTC)
+
+
+def _notice_payload(*announcements):
+    return {
+        "schema_version": 1,
+        "updated_at": "2026-07-30T20:00:00+08:00",
+        "announcements": list(announcements),
+    }
+
+
+def _announcement(
+    notice_id: str = "maintenance-20260730",
+    *,
+    title: str = "内部测试开发",
+    priority: int = 100,
+    start_at: str = "2026-07-30T00:00:00+08:00",
+    end_at: str | None = "2026-08-02T00:00:00+08:00",
+):
+    return {
+        "id": notice_id,
+        "title": title,
+        "date": "2026-07-30",
+        "content": "**本条为测试公告，仅用于内部测试**",
+        "enabled": True,
+        "priority": priority,
+        "start_at": start_at,
+        "end_at": end_at,
+    }
+
+
+def test_announcements_returns_only_remote_content(tmp_path, announcement_http_client) -> None:
+    payload = _notice_payload(_announcement())
+    manager = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=lambda _url: payload, clock=lambda: now
+    )
+
+    data = manager.get_announcements()
+
+    assert data == [
+        {
+            "id": "maintenance-20260730",
+            "title": "内部测试开发",
+            "date": "2026-07-30",
+            "content": "**本条为测试公告，仅用于内部测试**",
+        }
+    ]
+    assert json.loads(manager.notice_cache_path.read_text(encoding="utf-8")) == payload
+
+
+def test_announcements_filters_dates_disabled_items_duplicates_and_sorts_priority(
+    tmp_path, announcement_http_client
+) -> None:
+    disabled = {**_announcement("disabled"), "enabled": False}
+    payload = _notice_payload(
+        _announcement("normal", title="普通公告", priority=10),
+        _announcement("important", title="重要公告", priority=100),
+        disabled,
+        _announcement("future", start_at="2026-08-03T00:00:00+08:00"),
+        _announcement("expired", end_at="2026-07-30T11:00:00+00:00"),
+        _announcement("important", title="重复公告", priority=200),
+        {"id": "", "title": "无效公告", "content": "缺少有效 ID"},
+    )
+    manager = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=lambda _url: payload, clock=lambda: now
+    )
+
+    data = manager.get_announcements()
+
+    assert [item["id"] for item in data] == ["important", "normal"]
+
+
+def test_announcements_permanent_announcement_remains_available_in_cache(tmp_path, announcement_http_client) -> None:
+    payload = _notice_payload(_announcement(end_at=None))
+    online = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=lambda _url: payload, clock=lambda: now
+    )
+
+    assert [item["id"] for item in online.get_announcements()] == ["maintenance-20260730"]
+    assert json.loads(online.notice_cache_path.read_text(encoding="utf-8"))["announcements"][0]["end_at"] is None
+
+    def offline(_url):
+        raise httpx.ConnectError("offline")
+
+    later = datetime(2030, 1, 1, tzinfo=UTC)
+    cached = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=offline, clock=lambda: later
+    )
+
+    assert [item["id"] for item in cached.get_announcements()] == ["maintenance-20260730"]
+
+
+@pytest.mark.parametrize("end_at", ["null", "9999-99-99T99:99:99+99:99"])
+def test_announcements_filters_invalid_end_time_without_hiding_valid_announcements(
+    tmp_path, announcement_http_client, end_at
+) -> None:
+    payload = _notice_payload(_announcement("invalid", end_at=end_at), _announcement("valid", end_at=None))
+    manager = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=lambda _url: payload, clock=lambda: now
+    )
+
+    assert [item["id"] for item in manager.get_announcements()] == ["valid"]
+
+
+def test_announcements_fetches_announcements_from_euora_api(tmp_path, announcement_http_client) -> None:
+    payload = _notice_payload(_announcement(end_at=None))
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, json=payload)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        manager = AnnouncementService(tmp_path, http_client=client, clock=lambda: now)
+        assert len(manager.get_announcements()) == 1
+
+    assert requested_urls == ["https://api.euora.cn/raw/ECLTeam/EuoraCraft-Launcher.API/main/notice.json"]
+
+
+def test_announcements_preserves_valid_remote_announcement_translations(tmp_path, announcement_http_client) -> None:
+    payload = _notice_payload(
+        {
+            **_announcement(),
+            "locales": {
+                "zh-CN": {"title": "中文公告", "content": "中文正文"},
+                "en-US": {"title": "English notice", "content": "English content"},
+                "ja-JP": {"title": "不完整翻译"},
+                "": {"title": "无效语言", "content": "无效正文"},
+            },
+        }
+    )
+    manager = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=lambda _url: payload, clock=lambda: now
+    )
+
+    announcement = manager.get_announcements()[0]
+
+    assert announcement["title"] == "内部测试开发"
+    assert announcement["content"] == "**本条为测试公告，仅用于内部测试**"
+    assert announcement["locales"] == {
+        "zh-CN": {"title": "中文公告", "content": "中文正文"},
+        "en-US": {"title": "English notice", "content": "English content"},
+    }
+
+
+def test_announcements_uses_last_valid_cache_when_remote_request_fails(tmp_path, announcement_http_client) -> None:
+    payload = _notice_payload(_announcement())
+    online = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=lambda _url: payload, clock=lambda: now
+    )
+    online.get_announcements()
+
+    def offline(_url):
+        raise httpx.ConnectError("offline")
+
+    offline_manager = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=offline, clock=lambda: now
+    )
+
+    assert offline_manager.get_announcements()[0]["id"] == "maintenance-20260730"
+
+
+def test_announcements_returns_empty_announcements_when_remote_and_cache_are_invalid(
+    tmp_path, announcement_http_client
+) -> None:
+    (tmp_path / "notice.json").write_text("{invalid", encoding="utf-8")
+    manager = AnnouncementService(
+        tmp_path,
+        http_client=announcement_http_client,
+        notice_loader=lambda _url: {"schema_version": 99, "announcements": []},
+        clock=lambda: now,
+    )
+
+    data = manager.get_announcements()
+
+    assert data == []
+
+
+def test_announcements_does_not_refetch_within_refresh_window(tmp_path, announcement_http_client) -> None:
+    calls = 0
+
+    def load_notice(_url):
+        nonlocal calls
+        calls += 1
+        return _notice_payload(_announcement())
+
+    manager = AnnouncementService(
+        tmp_path, http_client=announcement_http_client, notice_loader=load_notice, clock=lambda: now
+    )
+
+    manager.get_announcements()
+    manager.get_announcements()
+
+    assert calls == 1
+
+
+def test_announcements_injected_client_does_not_pass_verify_per_request(tmp_path, announcement_http_client) -> None:
+    payload = _notice_payload(_announcement())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # 断言请求未把 verify 作为请求参数携带（否则 httpx 会在构造时报 TypeError）
+        assert "verify" not in request.extensions
+        return httpx.Response(200, json=payload)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        manager = AnnouncementService(tmp_path, http_client=client, clock=lambda: now)
+        data = manager._download_notice("https://example.test/notice.json")
+
+    assert data == payload

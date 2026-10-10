@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：版本更新比较、GitHub Releases 拉取与单次启动更新检测。
+# 文件作用：启动器版本更新检测与公告读取：发布信息查询、公告校验和离线缓存。
 #
 # 公开接口：
 #   - parse_version(version) -> tuple[tuple[int, ...], tuple[int, int] | None] | None — 解析 SemVer 版本为可比较结构，忽略构建元数据。
@@ -12,20 +12,29 @@
 #   - class UpdateChecker — 按当前版本通道检查 GitHub Releases 是否有新版本。
 #       - check() -> UpdateCheckResult
 #       - latest_release() -> dict[str, Any] | None — 返回当前通道匹配到的最高版本 Release 对象，供自动更新提取安装包。
+#   - class LocalizedAnnouncement — 一种语言的公告标题与正文。
+#   - class Announcement — 已校验的公告数据。
+#   - class AnnouncementService — 获取公告并管理内存刷新与离线缓存。
+#       - get_announcements() -> list[Announcement] — 返回有效公告的独立副本。
 #   - class StartupUpdateService — 后端启动后在后台检查一次更新，并保存检查结果。
 # ============================================================
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from threading import Event, RLock, Thread, current_thread
-from typing import Any
+from time import monotonic
+from typing import Any, NotRequired, TypedDict
 
 import httpx
 
 from ECL.foundation import EventBus
-from ECL.utils import get_logger, get_with_retries
+from ECL.utils import atomic_write_text, get_logger, get_with_retries
 
 
 def parse_version(version: str) -> tuple[tuple[int, ...], tuple[int, int] | None] | None:
@@ -367,4 +376,279 @@ class StartupUpdateService:
             self.events.emit("update:check_completed", asdict(result))
 
 
-__all__ = ["StartupUpdateService", "UpdateCheckResult", "UpdateChecker", "compare_versions", "parse_version"]
+class LocalizedAnnouncement(TypedDict):
+    """
+    保存一种语言中完整的公告标题与正文。
+    """
+
+    title: str
+    content: str
+
+
+class Announcement(TypedDict):
+    """
+    保存已校验且可供前端展示的公告及可选翻译。
+    """
+
+    id: str
+    title: str
+    date: str
+    content: str
+    locales: NotRequired[dict[str, LocalizedAnnouncement]]
+
+
+class AnnouncementService:
+    """
+    读取远程公告并管理校验、刷新和离线缓存。
+
+    公告在配置的刷新间隔内复用内存结果；远程拉取失败时回退到磁盘缓存，本地
+    缓存同样损坏时才返回空公告列表，始终不阻断首页渲染。共享客户端由应用负责关闭。
+
+    :param data_path: 启动器数据目录，用于持久化公告缓存
+    :param http_client: 应用管理的共享 HTTP 客户端
+    :param notice_loader: 可注入的公告读取边界，默认使用共享客户端
+    :param clock: 可注入的当前时间来源，默认使用 UTC
+    :param refresh_seconds: 内存缓存刷新间隔
+    :param request_timeout: 公告请求总超时
+    :param request_retries: 网络请求重试上限
+    """
+
+    notice_url: str = "https://api.euora.cn/raw/ECLTeam/EuoraCraft-Launcher.API/main/notice.json"
+    notice_schema_version: int = 1
+    notice_refresh_seconds: float = 300.0
+    notice_timeout_seconds: float = 5.0
+
+    def __init__(
+        self,
+        data_path: Path | str,
+        *,
+        http_client: httpx.Client,
+        notice_loader: Callable[[str], object] | None = None,
+        clock: Callable[[], datetime] | None = None,
+        refresh_seconds: float | None = None,
+        request_timeout: float | None = None,
+        request_retries: int = 2,
+    ) -> None:
+        self.logger = get_logger("AnnouncementService")
+        self.data_path = Path(data_path)
+        self.notice_cache_path = self.data_path / "notice.json"
+        self.http = http_client
+        self._notice_loader = notice_loader or self._download_notice
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._refresh_seconds = max(0.0, self.notice_refresh_seconds if refresh_seconds is None else refresh_seconds)
+        self._request_timeout = max(
+            1.0, float(self.notice_timeout_seconds if request_timeout is None else request_timeout)
+        )
+        self._request_retries = max(0, int(request_retries))
+        self._lock = RLock()
+        self._last_refresh_at: float | None = None
+        self._announcements: list[Announcement] | None = None
+        self.data_path.mkdir(parents=True, exist_ok=True)
+
+    def _download_notice(self, url: str) -> object:
+        """
+        使用应用的共享客户端读取不可信公告 JSON。
+
+        超时、重试和证书策略由请求参数及共享客户端管理；HTTP 或 JSON 错误由
+        公共读取入口捕获并触发离线缓存回退。
+        """
+        # 公告请求使用启动器的网络设置，并限制连接阶段不超过总超时。
+        timeout = httpx.Timeout(self._request_timeout, connect=min(3.0, self._request_timeout))
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "EuoraCraft-Launcher",
+        }
+        response = get_with_retries(
+            self.http.get,
+            url,
+            retries=self._request_retries,
+            headers=headers,
+            follow_redirects=True,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    @staticmethod
+    def _parse_timestamp(value: object) -> datetime | None:
+        """
+        将远程公告时间转换为 UTC，无时区时间按 UTC 解释。
+
+        空值表示不限制该侧时间边界；错误类型和非法 ISO 时间向上抛出，
+        由条目解析跳过对应公告，避免错误数据改变展示时间范围。
+        """
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            raise ValueError("公告时间必须是 ISO 8601 字符串")
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+
+    @staticmethod
+    def _normalize_locales(value: object) -> dict[str, LocalizedAnnouncement]:
+        """
+        校验远程公告的多语言字段并剔除不完整翻译。
+
+        返回给前端之前必须检查远程数据；每种语言都必须有非空标题和正文，
+        以便前端能够在当前语言、中文和根级默认文案之间稳定回退。
+
+        :param value: 远程公告的 locales 字段
+        :return: 按语言代码索引的有效标题和正文
+        """
+        if not isinstance(value, dict):
+            return {}
+
+        locales: dict[str, LocalizedAnnouncement] = {}
+        for locale, translation in value.items():
+            if not isinstance(locale, str) or not locale.strip() or not isinstance(translation, dict):
+                continue
+            title = translation.get("title")
+            content = translation.get("content")
+            if not isinstance(title, str) or not title.strip() or not isinstance(content, str) or not content.strip():
+                continue
+            locales[locale.strip()] = {"title": title.strip(), "content": content.strip()}
+        return locales
+
+    @classmethod
+    def _create_announcement(cls, item: dict[str, object], notice_id: str, title: str, content: str) -> Announcement:
+        """
+        构建面向前端的公告数据，并保留经过校验的可选翻译表。
+
+        :param item: 已通过公告基础字段校验的远程条目
+        :param notice_id: 规范化后的公告标识
+        :param title: 根级回退标题
+        :param content: 根级回退正文
+        :return: 可安全返回给前端的公告数据
+        """
+        date = item.get("date")
+        announcement: Announcement = {
+            "id": notice_id,
+            "title": title.strip(),
+            "date": date.strip() if isinstance(date, str) else "",
+            "content": content.strip(),
+        }
+        locales = cls._normalize_locales(item.get("locales"))
+        if locales:
+            announcement["locales"] = locales
+        return announcement
+
+    @classmethod
+    def _normalize_announcements(cls, data: object, now: datetime) -> list[Announcement]:
+        """
+        校验不可信公告根结构并筛选当前有效的独立公告数据。
+
+        根结构或版本错误触发缓存回退；单条公告错误仅剔除该条目，保留其他
+        有效条目。输出保留翻译并按优先级稳定排序。
+        """
+        if not isinstance(data, dict):
+            raise ValueError("远程公告根节点必须是对象")
+        if data.get("schema_version") != cls.notice_schema_version:
+            raise ValueError(f"不支持的公告数据版本: {data.get('schema_version')!r}")
+
+        raw_announcements = data.get("announcements")
+        if not isinstance(raw_announcements, list):
+            raise ValueError("远程公告 announcements 必须是数组")
+
+        current_time = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        current_time = current_time.astimezone(UTC)
+        normalized: list[tuple[int, int, Announcement]] = []
+        seen_ids: set[str] = set()
+
+        for index, item in enumerate(raw_announcements):
+            if not isinstance(item, dict) or item.get("enabled", True) is not True:
+                continue
+
+            notice_id = item.get("id")
+            title = item.get("title")
+            content = item.get("content")
+            if (
+                not isinstance(notice_id, str)
+                or not notice_id.strip()
+                or not isinstance(title, str)
+                or not title.strip()
+                or not isinstance(content, str)
+                or not content.strip()
+            ):
+                continue
+
+            normalized_id = notice_id.strip()
+            if normalized_id in seen_ids:
+                continue
+
+            try:
+                start_at = cls._parse_timestamp(item.get("start_at"))
+                end_at = cls._parse_timestamp(item.get("end_at"))
+            except ValueError:
+                continue
+
+            if start_at is not None and current_time < start_at:
+                continue
+            if end_at is not None and current_time >= end_at:
+                continue
+
+            priority = item.get("priority", 0)
+            if not isinstance(priority, int) or isinstance(priority, bool):
+                priority = 0
+
+            seen_ids.add(normalized_id)
+            announcement = cls._create_announcement(item, normalized_id, title, content)
+            normalized.append((priority, index, announcement))
+
+        normalized.sort(key=lambda entry: (-entry[0], entry[1]))
+        return [announcement for _, _, announcement in normalized]
+
+    def _write_notice_cache(self, data: object) -> None:
+        atomic_write_text(self.notice_cache_path, json.dumps(data, ensure_ascii=False, indent=2))
+
+    def _read_cached_announcements(self, now: datetime) -> list[Announcement]:
+        data = json.loads(self.notice_cache_path.read_text(encoding="utf-8"))
+        return self._normalize_announcements(data, now)
+
+    def get_announcements(self) -> list[Announcement]:
+        """
+        返回经过有效期过滤的公告列表，并按刷新间隔复用独立缓存。
+
+        读取与刷新在同一锁内串行执行；网络失败时读取磁盘缓存，缓存也不可用时
+        返回空列表。返回值为深拷贝，调用方修改不会污染服务缓存。
+
+        :return: 已校验的公告列表，不包含首页文案或展示配置
+        """
+        with self._lock:
+            refresh_started_at = monotonic()
+            if (
+                self._announcements is not None
+                and self._last_refresh_at is not None
+                and refresh_started_at - self._last_refresh_at < self._refresh_seconds
+            ):
+                return deepcopy(self._announcements)
+
+            now = self._clock()
+            try:
+                remote_data = self._notice_loader(self.notice_url)
+                announcements = self._normalize_announcements(remote_data, now)
+                self._write_notice_cache(remote_data)
+            except (httpx.HTTPError, OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                self.logger.warning("获取远程公告失败，将尝试使用本地缓存: %s", exc)
+                try:
+                    announcements = self._read_cached_announcements(now)
+                except (OSError, json.JSONDecodeError, TypeError, ValueError) as cache_exc:
+                    self.logger.warning("读取公告缓存失败，将返回空公告列表: %s", cache_exc)
+                    announcements = []
+
+            self._announcements = announcements
+            self._last_refresh_at = refresh_started_at
+            return deepcopy(announcements)
+
+
+__all__ = [
+    "Announcement",
+    "AnnouncementService",
+    "LocalizedAnnouncement",
+    "StartupUpdateService",
+    "UpdateCheckResult",
+    "UpdateChecker",
+    "compare_versions",
+    "parse_version",
+]

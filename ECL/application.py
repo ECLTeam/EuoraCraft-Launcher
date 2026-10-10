@@ -37,7 +37,6 @@ from ECL.foundation.runtime import RuntimeInfo
 from ECL.game import InstancesManager
 from ECL.host.background_media import BackgroundMediaService
 from ECL.host.dev_channel import DevChannelService
-from ECL.host.info_card import InfoCardManager
 from ECL.host.single_instance import SingleInstanceService
 from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
@@ -48,7 +47,7 @@ from ECL.services.game import GameService
 from ECL.services.game.launch_settings import scan_instance_java_references
 from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
-from ECL.services.updates import StartupUpdateService
+from ECL.services.updates import AnnouncementService, StartupUpdateService
 from ECL.utils import ConfigStore, Environment
 
 if TYPE_CHECKING:
@@ -259,7 +258,7 @@ class ApplicationContext:
     http: httpx.Client
     accounts: AccountManager
     wardrobe: WardrobeStore
-    info_card: InfoCardManager
+    announcements: AnnouncementService
     game: GameService
     connector: ConnectorService
     plugins: PluginManager
@@ -418,7 +417,7 @@ def create_application(
             "本地衣柜已创建，条目数：%s",
             len(wardrobe.list_items()),
         )
-        info_card = InfoCardManager(
+        announcements = AnnouncementService(
             state.data_path,
             http_client=http,
             request_timeout=request_timeout,
@@ -531,7 +530,7 @@ def create_application(
         http=http,
         accounts=accounts,
         wardrobe=wardrobe,
-        info_card=info_card,
+        announcements=announcements,
         game=game,
         connector=connector,
         plugins=plugins,

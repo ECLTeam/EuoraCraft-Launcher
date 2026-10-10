@@ -14,7 +14,7 @@
 #       - launcher_info(body) -> dict[str, Any] — 获取启动器信息。
 #       - launcher_check_update(body) -> dict[str, Any] — 按当前版本通道检查 GitHub Releases 是否有新版本。
 #       - launcher_preload_connector(body) -> dict[str, Any] — 预热联机节点缓存，避免首次创建或加入房间等待网络。
-#       - info_card_get(body) -> dict[str, Any] — 获取信息卡片。
+#       - launcher_announcements_get(body) -> dict[str, Any] — 获取启动器公告。
 #       - launcher_update_status(body) -> dict[str, Any] — 返回当前运行形态是否允许自动更新。
 #       - launcher_update_download(body) -> dict[str, Any] — 下载当前通道最新版本的安装包并落盘替换计划。
 #       - launcher_update_apply(body) -> dict[str, Any] — 拉起引导脚本完成替换，并请求当前启动器退出以重启。
@@ -228,14 +228,17 @@ class SystemHandlers(_FrontendState):
         self.connector.start_node_preload()
         return success()
 
-    async def info_card_get(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def launcher_announcements_get(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        获取信息卡片。
+        获取启动器公告。
 
-        :param body: 前端传入的 IPC 请求参数
+        :param body: 必须为空的请求对象
+        :return: 公告列表的标准 IPC 响应
         """
-        data = await to_thread.run_sync(self.info_card.get_info_card)
-        return {"success": True, "data": data}
+        if body:
+            return failure("launcher_announcements_get 不接受参数", error_code="INVALID_REQUEST")
+        data = await to_thread.run_sync(self.announcements.get_announcements)
+        return success(data)
 
     def _update_applier(self) -> UpdateApplier:
         # 构造启动器自动更新的执行器，携带当前运行环境与事件总线。

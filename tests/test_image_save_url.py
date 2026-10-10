@@ -13,8 +13,8 @@
 #       - list_plugins() -> Any
 #   - class FakeWardrobe
 #       - list_items() -> Any
-#   - class FakeInfoCard
-#       - get_info_card() -> Any
+#   - class FakeAnnouncements
+#       - get_announcements() -> Any
 #   - test_normalize_image_url_accepts_http_and_https() -> None
 #   - test_normalize_image_url_rejects_invalid_urls() -> None
 #   - test_normalize_image_url_strips_trailing_punctuation() -> None
@@ -152,9 +152,9 @@ class FakeWardrobe:
         return []
 
 
-class FakeInfoCard:
-    def get_info_card(self):
-        return {}
+class FakeAnnouncements:
+    def get_announcements(self):
+        return []
 
 
 def _build_api(tmp_path):
@@ -175,7 +175,7 @@ def _build_api(tmp_path):
         accounts=FakeAccounts(),
         connector=SimpleNamespace(),
         wardrobe=FakeWardrobe(),
-        info_card=FakeInfoCard(),
+        announcements=FakeAnnouncements(),
         game=SimpleNamespace(),
         plugins=FakePlugins(),
         processes=SimpleNamespace(),

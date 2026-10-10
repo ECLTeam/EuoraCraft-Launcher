@@ -17,7 +17,6 @@ from ECL.host.frontend_events import (
     subscribe_all_frontend_events,
     subscribe_frontend_event,
 )
-from ECL.host.info_card import InfoCardManager
 from ECL.host.maintenance import (
     MaintenanceResult,
     ScheduledMaintenance,
@@ -32,7 +31,6 @@ __all__ = [
     "DevChannelError",
     "DevChannelService",
     "FrontendEventPolicy",
-    "InfoCardManager",
     "MaintenanceResult",
     "ScheduledMaintenance",
     "SingleInstanceService",

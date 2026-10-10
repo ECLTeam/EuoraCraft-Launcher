@@ -39,7 +39,38 @@ from ECL.api.models import (
     WardrobeImportRequest,
     request_schemas,
 )
+from ECL.api.registry import IpcCommandRegistry
+from ECL.api.system import SystemHandlers
 from ECL.api.workspace import WorkspaceHandlers
+
+
+@pytest.mark.asyncio
+async def test_announcements_command_returns_only_the_list_and_retires_info_card() -> None:
+    handler = object.__new__(SystemHandlers)
+    announcements = [{"id": "notice", "title": "公告", "date": "", "content": "正文"}]
+    handler.announcements = SimpleNamespace(get_announcements=lambda: announcements)
+
+    result = await handler.launcher_announcements_get({})
+
+    assert result == {"success": True, "data": announcements}
+    assert "launcher_announcements_get" in IpcCommandRegistry.command_names
+    assert "info_card_get" not in IpcCommandRegistry.command_names
+    assert not hasattr(handler, "info_card_get")
+
+
+@pytest.mark.asyncio
+async def test_announcements_command_rejects_unexpected_parameters_before_loading() -> None:
+    handler = object.__new__(SystemHandlers)
+
+    def unexpected_load():
+        raise AssertionError("非法请求不应读取公告")
+
+    handler.announcements = SimpleNamespace(get_announcements=unexpected_load)
+
+    result = await handler.launcher_announcements_get({"tips": ["不接受后端文案"]})
+
+    assert result["success"] is False
+    assert result["errorCode"] == "INVALID_REQUEST"
 
 
 def test_request_models_accept_valid_payloads() -> None:

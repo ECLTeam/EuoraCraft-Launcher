@@ -45,7 +45,7 @@ class IpcCommandRegistry:
         "launcher_update_status",
         "launcher_update_download",
         "launcher_update_apply",
-        "info_card_get",
+        "launcher_announcements_get",
         "user_agreement_get",
         "user_agreement_save",
         "user_agreement_clear",
