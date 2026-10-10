@@ -67,6 +67,9 @@ def test_ipc_registry_has_no_retired_compatibility_commands() -> None:
     from ECL.api.registry import IpcCommandRegistry
 
     retired = {
+        "connector_match_instances",
+        "connector_easytier_status",
+        "connector_easytier_download",
         "config_get",
         "config_set",
         "config_list",

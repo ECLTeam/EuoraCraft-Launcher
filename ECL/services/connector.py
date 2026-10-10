@@ -7,14 +7,11 @@
 #
 # 公开接口：
 #   - class ConnectorService — 联机服务，封装 Florolding + EasyTier 的多人联机能力。
-#       - available() -> bool — 联机服务是否可用（依赖齐全）。
-#       - easytier_available() -> bool — EasyTier 是否可用。
 #       - easytier_version() -> str — EasyTier 版本号。
 #       - fetch_nodes(force) -> list[str] — 获取可用的 EasyTier 中继节点 URI 列表。
 #       - preload_nodes() -> list[str] — 仅预热公共节点，不验证用户地址。
 #       - start_node_preload() -> bool — 服务启动后在后台预先读取一次节点列表。
 #       - get_status() -> dict[str, Any] — 获取当前联机状态。
-#       - get_easytier_status() -> dict[str, Any] — 获取 EasyTier 安装状态。
 #       - get_nat_type() -> dict[str, Any] — 使用 EasyTier 内置 STUN 探测检测 NAT 类型。
 #       - host_port(port) -> dict[str, Any] — 以指定端口创建联机房间。
 #       - host_instance(game_path, version_id) -> dict[str, Any] — 为指定实例创建联机房间。
@@ -177,20 +174,6 @@ class ConnectorService:
 
         # 易用性
         self._loop: asyncio.AbstractEventLoop | None = None
-
-    @property
-    def available(self) -> bool:
-        """
-        联机服务是否可用（依赖齐全）。
-        """
-        return True
-
-    @property
-    def easytier_available(self) -> bool:
-        """
-        EasyTier 是否可用。
-        """
-        return True
 
     @property
     def easytier_version(self) -> str:
@@ -517,20 +500,6 @@ class ConnectorService:
             handlers[protocol] = handle
         return handlers
 
-    def get_easytier_status(self) -> dict[str, Any]:
-        """
-        获取 EasyTier 安装状态。
-
-        :returns: 包含 installed, status, progress, speed, error 的字典
-        """
-        return {
-            "installed": True,
-            "status": "installed",
-            "progress": 100,
-            "speed": 0,
-            "error": None,
-        }
-
     def get_nat_type(self) -> dict[str, str | int | bool | None]:
         """
         使用 EasyTier 内置 STUN 探测检测 NAT 类型。
@@ -700,9 +669,7 @@ class ConnectorService:
         self._begin_transition()
         self._mode = "starting"
 
-        logger.debug(
-            "开始创建联机房间；游戏端口：%s；EasyTier：%s", port, "可用" if self.easytier_available else "不可用"
-        )
+        logger.debug("开始创建联机房间；游戏端口：%s", port)
         try:
             logger.info("准备创建联机房间，开始检查节点配置")
             self._nodes = self.fetch_nodes()

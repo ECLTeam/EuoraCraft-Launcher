@@ -43,7 +43,7 @@ class ScreenshotCoordinator:
     _EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"})
 
     def _screenshot_root(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> Path:
-        return self.resolve_instance(game_path, version_id, version_isolation).data_path / "screenshots"
+        return self.resolve_instance(game_path, version_id, version_isolation).game_data_path / "screenshots"
 
     def list_screenshots(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> list[dict[str, Any]]:
         """
@@ -195,7 +195,9 @@ class ScreenshotCoordinator:
                 old.unlink(missing_ok=True)
         atomic_write_bytes(destination, source.read_bytes())
         return self.patch_instance_profile(
-            target.game_path, target.version_id, {"cover": {"type": "local", "value": destination.name}}
+            target.minecraft_root_path,
+            target.instance_directory_name,
+            {"cover": {"type": "local", "value": destination.name}},
         )
 
     def set_launcher_background_candidate(

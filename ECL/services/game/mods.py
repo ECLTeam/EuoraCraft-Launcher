@@ -288,9 +288,6 @@ class ModCoordinator(_GameState):
     def instance_mods_path(self, game_path: Any, version_id: Any, version_isolation: Any = None) -> Path:
         return self._mods_path_at(self._instance_mod_root(game_path, version_id, version_isolation))
 
-    def _mod_path(self, game_path: Any, filename: Any) -> Path:
-        return self._mod_path_at(self._normalize_game_path(game_path), filename)
-
     @staticmethod
     def _mod_path_at(data_path: Path, filename: Any) -> Path:
         if not isinstance(filename, str) or not filename.strip() or "\0" in filename:

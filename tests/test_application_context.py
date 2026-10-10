@@ -92,8 +92,6 @@ class _FakeGame:
 
 
 class _FakeConnector:
-    available = True
-    easytier_available = False
     easytier_version = ""
 
     def __init__(self, *_args, **_kwargs) -> None:

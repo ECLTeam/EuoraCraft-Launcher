@@ -281,24 +281,6 @@ def _sha512(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _safe_json(data: bytes) -> dict[str, Any]:
-    value = json.loads(data.decode("utf-8-sig"))
-    return value if isinstance(value, dict) else {}
-
-
-def _join_authors(authors: Any) -> str:
-    # 将 fabric/quilt 的 authors 结构（字符串或含 name 的对象）合并为逗号分隔文本。
-    if not isinstance(authors, list):
-        return ""
-    names: list[str] = []
-    for author in authors:
-        if isinstance(author, str) and author:
-            names.append(author)
-        elif isinstance(author, dict) and author.get("name"):
-            names.append(str(author["name"]))
-    return ", ".join(names)
-
-
 class ResourceCoordinator(ModSourceAware):
     """
     统一管理模组、资源包、光影包、数据包和原理图。
@@ -388,10 +370,6 @@ class ResourceCoordinator(ModSourceAware):
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, json.dumps(manifest, ensure_ascii=False, indent=2))
 
-    @staticmethod
-    def _parse_mod(path: Path) -> dict[str, Any]:
-        return LocalModParser.parse(path).legacy_summary()
-
     def _mod_environment(self, game_path: Any, version_id: Any) -> dict[str, str | None]:
         """
         从实际继承链读取游戏和加载器版本，不用 Java 最低要求代替运行版本。
@@ -414,21 +392,6 @@ class ResourceCoordinator(ModSourceAware):
         if not isinstance(recorded, dict) or recorded.get("sha512") != digest or not digest:
             return {}
         return recorded
-
-    @staticmethod
-    def _parse_pack(path: Path) -> dict[str, Any]:
-        result: dict[str, Any] = {"name": path.stem.removesuffix(".disabled")}
-        try:
-            if path.is_dir():
-                data = json.loads((path / "pack.mcmeta").read_text(encoding="utf-8"))
-            else:
-                with zipfile.ZipFile(path) as archive:
-                    data = _safe_json(archive.read("pack.mcmeta"))
-            pack = data.get("pack") or {}
-            result.update({"name": pack.get("description") or result["name"], "packFormat": pack.get("pack_format")})
-        except (OSError, ValueError, KeyError, zipfile.BadZipFile):
-            pass
-        return result
 
     def list_resources(
         self,

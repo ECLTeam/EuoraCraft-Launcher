@@ -50,7 +50,6 @@ from ECL.services.account import AccountError, WardrobeError
 from ECL.services.game import GameServiceError
 from ECL.services.game.launch import candidate_roots, resolve_launch_target
 from ECL.utils import atomic_write_text, get_logger
-from ECL.utils.config import default_config
 from ECL.utils.logging import get_frontend_log_history
 from ECL.utils.network import download_proxy_url
 from ECL.utils.operation_logging import operation_scope
@@ -371,13 +370,6 @@ class _FrontendState:
         }
     )
     max_pending_frontend_events = 50
-    runtime_option_fields = (
-        ("memory", "memory", lambda c: c.get("memory_size", default_config["game"]["memory_size"])),
-        ("width", "width", lambda c: c.get("game_width", default_config["game"]["game_width"])),
-        ("height", "height", lambda c: c.get("game_height", default_config["game"]["game_height"])),
-        ("fullscreen", "fullscreen", lambda c: bool(c.get("fullscreen", default_config["game"]["fullscreen"]))),
-        ("jvm_args", "jvm_args", lambda c: c.get("jvm_args", [])),
-    )
     ipc_errors = (
         AccountError,
         WardrobeError,
@@ -804,33 +796,6 @@ class _FrontendState:
         except ValueError as exc:
             return failure(str(exc), "INVALID_REQUEST")
         return {"success": True, "data": {"instanceId": instance_id}}
-
-    def _game_runtime_options(self, body: dict[str, Any]) -> dict[str, Any]:
-        # 汇总启动游戏所需的运行时参数，优先使用调用方显式指定的值。
-        config = self._get_effective_config()
-        game_config = config.get("game") or {}
-        download_config = config.get("download") or {}
-        minecraft_paths = game_config.get("minecraft_paths") or []
-        first_path = None
-        if minecraft_paths:
-            first_item = minecraft_paths[0]
-            first_path = first_item.get("path") if isinstance(first_item, dict) else first_item
-        java_path = body.get("java_path")
-        if java_path is None and not game_config.get("java_auto", True):
-            java_path = game_config.get("java_path") or None
-        options: dict[str, Any] = {
-            "game_path": body.get("game_path") or game_config.get("last_install_path") or first_path,
-            "source": download_config.get("mirror_source") or "official",
-            "java_path": java_path,
-        }
-        for field, body_key, config_lookup in self.runtime_option_fields:
-            value = body.get(body_key)
-            if value is None:
-                value = config_lookup(game_config)
-            options[field] = value
-        options["game_args"] = body.get("game_args") or []
-        options["version_isolation"] = bool(body.get("version_isolation", False))
-        return options
 
     async def frontend_ready(  # noqa: C901
         self, body: dict[str, Any], webview_window: WebviewWindow

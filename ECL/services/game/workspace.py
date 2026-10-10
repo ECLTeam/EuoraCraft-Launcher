@@ -54,33 +54,6 @@ class ResolvedInstanceTarget:
     game_data_path: Path
 
     @property
-    def game_path(self) -> Path:
-        """
-        兼容旧调用方的 Minecraft 根目录字段。
-
-        :return: 经校验的实际根目录
-        """
-        return self.minecraft_root_path
-
-    @property
-    def version_id(self) -> str:
-        """
-        兼容旧调用方的实例目录名字段，不表示原版版本号。
-
-        :return: 磁盘实例目录名
-        """
-        return self.instance_directory_name
-
-    @property
-    def data_path(self) -> Path:
-        """
-        兼容旧调用方的实际游戏数据目录字段。
-
-        :return: 按现有隔离规则解析的目录
-        """
-        return self.game_data_path
-
-    @property
     def root_key(self) -> str:
         """
         返回实际目录身份，保留大小写敏感目录之间的区别。

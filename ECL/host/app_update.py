@@ -150,12 +150,6 @@ def _asset_score(name: str, platform: str) -> int:
     return score
 
 
-def _binary_suffix(name: str) -> bool:
-    # 判断资产是否为可直接执行的单文件包。
-    lowered = name.lower()
-    return any(lowered.endswith(ext) for ext in UpdateApplier.executable_suffixes) or lowered.endswith(".zip")
-
-
 def _peer_digest_asset(release: dict[str, Any], name: str) -> tuple[str, str] | None:
     # 查找与新包同名的 .sha256/.sha512 校验清单，返回 (算法, 下载地址)。
     base = Path(name).name

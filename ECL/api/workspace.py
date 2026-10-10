@@ -156,8 +156,8 @@ class WorkspaceHandlers(_FrontendState):
 
         def create() -> dict[str, str]:
             target = self.game.resolve_instance(request.game_path, request.version_id)
-            versions = self.game.scan_versions([str(target.game_path)])
-            version = next((item for item in versions if item["versionId"] == target.version_id), None)
+            versions = self.game.scan_versions([str(target.minecraft_root_path)])
+            version = next((item for item in versions if item["versionId"] == target.instance_directory_name), None)
             if version is None:
                 raise GameServiceError("实例不存在", "INSTANCE_NOT_FOUND")
             effective_icon = version.get("icon") or {"type": "builtin", "value": "grass"}
@@ -170,7 +170,7 @@ class WorkspaceHandlers(_FrontendState):
             )
             return service.create(
                 target.instance_path,
-                str(version.get("alias") or target.version_id),
+                str(version.get("alias") or target.instance_directory_name),
                 ShortcutIcon(str(effective_icon.get("type", "builtin")), str(effective_icon.get("value", "grass"))),
                 Path(output) if output else None,
             )

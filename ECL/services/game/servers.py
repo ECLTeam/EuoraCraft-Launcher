@@ -40,7 +40,7 @@ class ServerCoordinator:
     _STATUS_TTL = 30.0
 
     def _servers_path(self, game_path: Any, version_id: Any, version_isolation: Any = False) -> Path:
-        return self.resolve_instance(game_path, version_id, version_isolation).data_path / "servers.dat"
+        return self.resolve_instance(game_path, version_id, version_isolation).game_data_path / "servers.dat"
 
     def _server_meta_path(self, game_path: Any, version_id: Any) -> Path:
         return self.resolve_instance(game_path, version_id).instance_path / ".ecl" / "servers.json"

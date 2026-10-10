@@ -888,7 +888,9 @@ def test_instance_shortcut_ipc_uses_application_runtime_paths(tmp_path, monkeypa
     api = _build_api(tmp_path)
     api.context.state.resource_path = tmp_path / "resources"
     api.context.state.is_frozen = False
-    target = SimpleNamespace(game_path=tmp_path, version_id="1.21.1", instance_path=tmp_path / "versions" / "1.21.1")
+    target = SimpleNamespace(
+        minecraft_root_path=tmp_path, instance_directory_name="1.21.1", instance_path=tmp_path / "versions" / "1.21.1"
+    )
     monkeypatch.setattr(api.game, "resolve_instance", lambda *_args: target, raising=False)
     monkeypatch.setattr(
         api.game,

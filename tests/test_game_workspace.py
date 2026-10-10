@@ -44,8 +44,8 @@ def test_resolve_instance_target_matches_isolation_semantics(tmp_path: Path) -> 
     shared = resolve_instance_target(tmp_path, "1.21.8", False)
     isolated = resolve_instance_target(tmp_path, "1.21.8", True)
 
-    assert shared.data_path == tmp_path / "versions"
-    assert isolated.data_path == tmp_path / "versions" / "1.21.8"
+    assert shared.game_data_path == tmp_path / "versions"
+    assert isolated.game_data_path == tmp_path / "versions" / "1.21.8"
 
 
 def test_instance_identity_distinguishes_roots_and_directory_from_game_version(tmp_path: Path) -> None:
@@ -53,8 +53,8 @@ def test_instance_identity_distinguishes_roots_and_directory_from_game_version(t
     second = resolve_instance_target(tmp_path / "second", "my-pack", True)
     assert first.instance_key != second.instance_key
     assert first.instance_directory_name == "my-pack"
-    assert first.minecraft_root_path == first.game_path
-    assert first.game_data_path == first.instance_path == first.data_path
+    assert first.minecraft_root_path == tmp_path / "first"
+    assert first.game_data_path == first.instance_path
 
 
 def test_scan_identity_does_not_fold_case_sensitive_paths(tmp_path: Path) -> None:

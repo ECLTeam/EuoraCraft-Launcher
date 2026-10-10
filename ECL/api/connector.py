@@ -13,9 +13,6 @@
 #       - connector_join(body) -> ApiResponse — 通过房间码加入他人托管的联机房间。
 #       - connector_leave(body) -> ApiResponse — 从当前联机房间退出。
 #       - connector_kick(body) -> ApiResponse — 从当前房间踢出指定的参与机器。
-#       - connector_match_instances(body) -> ApiResponse — 匹配可用的联机实例，当前返回空占位。
-#       - connector_easytier_status(body) -> ApiResponse — 查询 EasyTier 组网状态。
-#       - connector_easytier_download(body) -> ApiResponse — 请求 EasyTier 组网组件下载，返回其当前状态。
 #       - connector_detect_ports(body) -> ApiResponse — 探测本机 Java 进程开放的候选端口。
 #       - connector_search_mc_port(body) -> ApiResponse — 在候选端口中搜索确认 Minecraft 服务端口。
 #       - connector_nat_type(body) -> ApiResponse — 查询本机网络的 NAT 类型。
@@ -132,7 +129,9 @@ class ConnectorHandlers(_FrontendState):
         在联机服务中托管一个指定的本地游戏实例。
         """
         target = InstanceTarget.model_validate(body)
-        result = await _run_in_daemon(self.connector.host_instance, target.game_path, target.version_id)
+        result = await _run_in_daemon(
+            self.connector.host_instance, target.minecraft_root_path, target.instance_directory_name
+        )
         return success(result)
 
     @_ipc_handler("CONNECTOR_JOIN_FAILED")
@@ -163,27 +162,6 @@ class ConnectorHandlers(_FrontendState):
         machine_id = KickRequest.model_validate(body).machine_id
         result = self.connector.kick(machine_id)
         return success(result)
-
-    @_ipc_handler("CONNECTOR_MATCH_FAILED")
-    async def connector_match_instances(self, body: dict[str, Any]) -> ApiResponse:
-        """
-        匹配可用的联机实例，当前返回空占位。
-        """
-        return success({"mods": [], "instances": []})
-
-    @_ipc_handler("CONNECTOR_EASYTIER_STATUS_FAILED")
-    async def connector_easytier_status(self, body: dict[str, Any]) -> ApiResponse:
-        """
-        查询 EasyTier 组网状态。
-        """
-        return success(self.connector.get_easytier_status())
-
-    @_ipc_handler("CONNECTOR_EASYTIER_DOWNLOAD_FAILED")
-    async def connector_easytier_download(self, body: dict[str, Any]) -> ApiResponse:
-        """
-        请求 EasyTier 组网组件下载，返回其当前状态。
-        """
-        return success(self.connector.get_easytier_status())
 
     @_ipc_handler("CONNECTOR_SCAN_PORTS_FAILED")
     async def connector_detect_ports(self, body: dict[str, Any]) -> ApiResponse:

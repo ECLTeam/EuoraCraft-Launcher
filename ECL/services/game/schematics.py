@@ -377,7 +377,7 @@ class SchematicCoordinator:
 
     def _schematic_root(self, game_path: Any, version_id: Any, resource_id: Any, version_isolation: Any) -> Path:
         target = self.resolve_instance(game_path, version_id, version_isolation)
-        root = target.data_path / ResourceCatalogPolicy.directories["schematic"]
+        root = target.game_data_path / ResourceCatalogPolicy.directories["schematic"]
         return resolve_relative_id(root, resource_id)
 
     def schematic_preview(
@@ -731,7 +731,7 @@ class SchematicCoordinator:
         """
         requested = self._normalize_asset_blocks(blocks)
         target = self.resolve_instance(game_path, version_id, version_isolation)
-        jar_path = self._resolve_asset_jar(target.game_path, target.version_id)
+        jar_path = self._resolve_asset_jar(target.minecraft_root_path, target.instance_directory_name)
         cache_path = self._asset_cache_path(jar_path, requested)
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -768,7 +768,9 @@ class SchematicCoordinator:
         except (BadZipFile, OSError):
             pass
         if locale != "en_us":
-            translations.update(self._indexed_language(target.game_path, target.version_id, locale))
+            translations.update(
+                self._indexed_language(target.minecraft_root_path, target.instance_directory_name, locale)
+            )
         names: dict[str, str] = {}
         for block in blocks:
             namespace, name = block.split(":", 1)
@@ -842,7 +844,7 @@ class SchematicCoordinator:
             material_counts = dict(session.material_counts)
         blocks = sorted(material_counts)
         target = self.resolve_instance(game_path, version_id, version_isolation)
-        jar_path = self._resolve_asset_jar(target.game_path, target.version_id)
+        jar_path = self._resolve_asset_jar(target.minecraft_root_path, target.instance_directory_name)
         names = self._read_block_names(target, jar_path, blocks, locale)
         missing = set(self._normalize_asset_blocks(missing_blocks)) if missing_blocks else set()
         materials = [

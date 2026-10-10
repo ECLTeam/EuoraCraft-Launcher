@@ -471,14 +471,8 @@ def create_application(
             http_client=http,
             node_settings_provider=lambda: ConnectorNodeConfig.model_validate(config.get_config("connector") or {}),
         )
-        logger.debug(
-            "联机服务状态：可用：%s；EasyTier可用：%s；EasyTier版本：%s",
-            ("是" if connector.available else "否"),
-            ("是" if connector.easytier_available else "否"),
-            connector.easytier_version,
-        )
         created.append(connector)
-        logger.debug("联机服务 ConnectorService 已初始化")
+        logger.debug("联机服务初始化完成；EasyTier 版本：%s", connector.easytier_version)
 
         logger.debug("正在初始化子进程实例服务")
         processes = ProcessService(event_bus=events, instances_manager=shared_instances)

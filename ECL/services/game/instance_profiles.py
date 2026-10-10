@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import re
 import struct
-from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -103,19 +102,6 @@ def _normalize_tags(value: Any) -> list[str]:
         seen.add(key)
         tags.append(tag[:40])
     return tags[:20]
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    normalized = value.strip().replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:

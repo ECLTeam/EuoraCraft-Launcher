@@ -62,7 +62,7 @@ def _pack(
 @pytest.mark.parametrize("kind", ["zip", "directory"])
 @pytest.mark.parametrize("is_isolated", [False, True])
 def test_list_returns_actual_pack_icon_and_refreshes(tmp_path: Path, kind: str, is_isolated: bool) -> None:
-    root = resolve_instance_target(tmp_path, "1.21.1", is_isolated).data_path / "resourcepacks"
+    root = resolve_instance_target(tmp_path, "1.21.1", is_isolated).game_data_path / "resourcepacks"
     first_icon = _png()
     _pack(root, kind, first_icon)
     service = ResourceService()

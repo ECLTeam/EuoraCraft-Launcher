@@ -288,11 +288,6 @@ class IpcLogPolicy:
             "connector_join": IpcLogSpec("加入联机房间", "action", timed=True),
             "connector_leave": IpcLogSpec("退出联机房间", "action"),
             "connector_kick": IpcLogSpec("移出房间玩家", "action"),
-            "connector_match_instances": IpcLogSpec("匹配可用的联机实例，当前返回空占位", "query"),
-            "connector_easytier_status": IpcLogSpec("查询 EasyTier 组网状态", "poll"),
-            "connector_easytier_download": IpcLogSpec(
-                "请求 EasyTier 组网组件下载，返回其当前状态", "action", timed=True
-            ),
             "connector_detect_ports": IpcLogSpec("探测本机 Java 进程开放的候选端口", "action", timed=True),
             "connector_search_mc_port": IpcLogSpec("在候选端口中搜索确认 Minecraft 服务端口", "action", timed=True),
             "connector_nat_type": IpcLogSpec("检测网络 NAT 类型", "action", timed=True),
