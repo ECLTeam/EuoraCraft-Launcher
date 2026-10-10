@@ -94,7 +94,6 @@ def test_version_service_normalizes_scanner_output(tmp_path) -> None:
         "vanillaName": "1.20.1",
         "requiredJava": 17,
         "hasFabric": True,
-        "isBroken": False,
         "sourceName": ".minecraft",
     }
     assert expected.items() <= version.items()
@@ -123,7 +122,7 @@ def test_version_service_scans_with_original_search_minecraft(tmp_path) -> None:
     assert versions[0]["versionId"] == "1.20.1"
     assert versions[0]["versionType"] == "Release"
     assert versions[0]["primaryLoader"] == "Vanilla"
-    assert versions[0]["isBroken"] is False
+    assert "isBroken" not in versions[0] and "health" not in versions[0]
 
 
 def test_version_service_skips_missing_versions_directory(tmp_path) -> None:

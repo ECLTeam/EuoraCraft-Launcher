@@ -58,7 +58,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ECL.game import (
     Compound,
     GameDataError,
-    InstanceInspection,
+    InstanceMetadata,
     List,
     LocalModMetadata,
     LocalModParser,
@@ -397,7 +397,7 @@ class ResourceCoordinator(ModSourceAware):
         从实际继承链读取游戏和加载器版本，不用 Java 最低要求代替运行版本。
         """
         target = self.resolve_instance(game_path, version_id)
-        return InstanceInspection.inspect(target.minecraft_root_path, target.instance_directory_name).mod_environment()
+        return InstanceMetadata.read(target.minecraft_root_path, target.instance_directory_name).mod_environment()
 
     def _resource_source(
         self, manifest: dict[str, Any], resource_type: str, filename: str, digest: str | None

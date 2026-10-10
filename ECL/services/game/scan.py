@@ -36,7 +36,7 @@ from typing import Any
 import httpx
 from pydantic import JsonValue
 
-from ECL.game import InstanceInspection
+from ECL.game import InstanceMetadata
 from ECL.utils import ConfigError, atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
@@ -143,8 +143,8 @@ class ScanCoordinator(_GameState):
         )
         version_type = str(info.get("VanillaType") or "").strip() or "release"
         primary_loader = ScanCoordinator._normalize_scanned_loader(info.get("LoaderType"))
-        inspection = InstanceInspection.inspect(game_path, version_name)
-        components = dict(inspection.components)
+        metadata = InstanceMetadata.read(game_path, version_name)
+        components = dict(metadata.components)
         if not components and primary_loader != "Vanilla":
             components[primary_loader] = str(info.get("LoaderVersion") or "")
         if primary_loader == "Vanilla" and components:
@@ -157,7 +157,7 @@ class ScanCoordinator(_GameState):
         required_java_value = str(info.get("RequestJava") or "").strip()
         required_java = int(required_java_value) if required_java_value.isdigit() else None
         if required_java is None:
-            for document in inspection.documents:
+            for document in metadata.documents:
                 java_version = document.get("javaVersion")
                 major = java_version.get("majorVersion") if isinstance(java_version, dict) else None
                 if isinstance(major, int) and not isinstance(major, bool) and major > 0:
@@ -182,8 +182,6 @@ class ScanCoordinator(_GameState):
             "hasFabric": bool(component_keys & {"fabric", "legacyfabric", "babric"}),
             "hasQuilt": "quilt" in component_keys,
             "hasOptiFine": "optifine" in component_keys,
-            "health": inspection.to_health(),
-            "isBroken": not inspection.to_health()["canLaunch"],
             "jsonPath": str(json_path),
             "sourceName": game_path.name or str(game_path),
         }
@@ -226,7 +224,7 @@ class ScanCoordinator(_GameState):
         game_path: Path,
         compatibility_options: dict[str, Any] | None = None,
     ) -> tuple[tuple[str, int, int], ...]:
-        # 主 Jar 的增删和替换也会改变实例健康状态。
+        # 主 Jar 的增删会改变版本目录是否具有实例标记。
         versions_path = game_path / "versions"
         records: list[tuple[str, int, int]] = []
 
@@ -325,7 +323,7 @@ class ScanCoordinator(_GameState):
 
         只有存在主 Jar，或存在非空的 ``<目录名>.json`` 时才视为实例目录；
         ``logs``、``mods`` 等运行期目录以及 0 字节的同名 JSON 都会被排除，
-        而 JSON 损坏但非空、或只有主 Jar 的目录仍会被保留以继续诊断。
+        而 JSON 损坏但非空、或只有主 Jar 的目录仍会保留在实例列表中。
 
         :param version_directory: ``versions/`` 下的候选子目录
         :return: 是否具备实例标志
@@ -725,8 +723,8 @@ class ScanCoordinator(_GameState):
         :return: 已知最低主版本，无法确认时保留未知
         """
         target = self.resolve_instance(game_path, version_id)
-        inspection = InstanceInspection.inspect(target.minecraft_root_path, target.instance_directory_name)
-        for document in inspection.documents:
+        metadata = InstanceMetadata.read(target.minecraft_root_path, target.instance_directory_name)
+        for document in metadata.documents:
             java_version = document.get("javaVersion")
             major = java_version.get("majorVersion") if isinstance(java_version, dict) else None
             if isinstance(major, int) and not isinstance(major, bool) and major > 0:
