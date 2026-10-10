@@ -57,7 +57,7 @@ dev = [
     "ipython>=8.20.0",
     "pip-tools>=7.4.0",
     "nuitka[onefile]>=4.0",
-    "uv==0.12.23"
+    "uv==0.13.0"
 ]
 
 [tool.setuptools.packages.find]
