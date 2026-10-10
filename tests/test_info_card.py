@@ -19,6 +19,7 @@ import json
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
 from ECL.host import InfoCardManager
 
@@ -39,7 +40,7 @@ def _announcement(
     title: str = "内部测试开发",
     priority: int = 100,
     start_at: str = "2026-07-30T00:00:00+08:00",
-    end_at: str = "2026-08-02T00:00:00+08:00",
+    end_at: str | None = "2026-08-02T00:00:00+08:00",
 ):
     return {
         "id": notice_id,
@@ -93,6 +94,45 @@ def test_info_card_filters_dates_disabled_items_duplicates_and_sorts_priority(tm
     data = manager.get_info_card()
 
     assert [item["id"] for item in data["announcements"]] == ["important", "normal"]
+
+
+def test_info_card_permanent_announcement_remains_available_in_cache(tmp_path) -> None:
+    payload = _notice_payload(_announcement(end_at=None))
+    online = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: now)
+
+    assert [item["id"] for item in online.get_info_card()["announcements"]] == ["maintenance-20260730"]
+    assert json.loads(online.notice_cache_path.read_text(encoding="utf-8"))["announcements"][0]["end_at"] is None
+
+    def offline(_url):
+        raise httpx.ConnectError("offline")
+
+    later = datetime(2030, 1, 1, tzinfo=UTC)
+    cached = InfoCardManager(tmp_path, notice_loader=offline, clock=lambda: later)
+
+    assert [item["id"] for item in cached.get_info_card()["announcements"]] == ["maintenance-20260730"]
+
+
+@pytest.mark.parametrize("end_at", ["null", "9999-99-99T99:99:99+99:99"])
+def test_info_card_filters_invalid_end_time_without_hiding_valid_announcements(tmp_path, end_at) -> None:
+    payload = _notice_payload(_announcement("invalid", end_at=end_at), _announcement("valid", end_at=None))
+    manager = InfoCardManager(tmp_path, notice_loader=lambda _url: payload, clock=lambda: now)
+
+    assert [item["id"] for item in manager.get_info_card()["announcements"]] == ["valid"]
+
+
+def test_info_card_fetches_announcements_from_euora_api(tmp_path) -> None:
+    payload = _notice_payload(_announcement(end_at=None))
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, json=payload)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        manager = InfoCardManager(tmp_path, http_client=client, clock=lambda: now)
+        assert len(manager.get_info_card()["announcements"]) == 1
+
+    assert requested_urls == ["https://api.euora.cn/raw/ECLTeam/EuoraCraft-Launcher.API/main/notice.json"]
 
 
 def test_info_card_preserves_valid_remote_announcement_translations(tmp_path) -> None:

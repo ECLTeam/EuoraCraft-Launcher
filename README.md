@@ -16,8 +16,8 @@
 
 <br>
 
-[![官网](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-eclteam.top-f0b429?style=for-the-badge)](https://www.eclteam.top)
-[![文档](https://img.shields.io/badge/%E6%96%87%E6%A1%A3%E7%AB%99-docs.eclteam.top-40c9c0?style=for-the-badge)](https://docs.eclteam.top)
+[![官网](https://img.shields.io/badge/%E5%AE%98%E7%BD%91-euora.cn-f0b429?style=for-the-badge)](https://www.euora.cn)
+[![文档](https://img.shields.io/badge/%E6%96%87%E6%A1%A3%E7%AB%99-docs.euora.cn-40c9c0?style=for-the-badge)](https://docs.euora.cn)
 [![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-GitHub%20Releases-3b82c4?style=for-the-badge)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
 [![反馈](https://img.shields.io/badge/%E5%8F%8D%E9%A6%88-GitHub%20Issues-8b949e?style=for-the-badge)](https://github.com/ECLTeam/EuoraCraft-Launcher/issues)
 
@@ -49,7 +49,7 @@
 2. 安装并启动 EuoraCraft Launcher启动器，按引导添加你的账户。
 3. 安装游戏或整合包，开始游玩吧！
 
-> 首次使用、常见问题与各功能的详细说明，请参阅[文档站](https://docs.eclteam.top)。
+> 首次使用、常见问题与各功能的详细说明，请参阅[文档站](https://docs.euora.cn)。
 
 ---
 
@@ -61,7 +61,7 @@
 
 ## 参与贡献
 
-欢迎通过 [Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) 提交问题、功能建议或安全反馈，也欢迎提交 Pull Request。涉及使用与功能的问题，请优先查阅[文档站](https://docs.eclteam.top)。
+欢迎通过 [Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) 提交问题、功能建议或安全反馈，也欢迎提交 Pull Request。涉及使用与功能的问题，请优先查阅[文档站](https://docs.euora.cn)。
 
 ## 贡献者们
 

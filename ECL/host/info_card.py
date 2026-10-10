@@ -50,7 +50,7 @@ class InfoCardManager:
     :param data_path: 启动器数据目录，用于持久化公告缓存
     """
 
-    notice_url = "https://api.eclteam.top/raw/ECLTeam/EuoraCraft-Launcher.API/main/notice.json"
+    notice_url = "https://api.euora.cn/raw/ECLTeam/EuoraCraft-Launcher.API/main/notice.json"
     notice_schema_version = 1
     notice_refresh_seconds = 300.0
     notice_timeout_seconds = 5.0

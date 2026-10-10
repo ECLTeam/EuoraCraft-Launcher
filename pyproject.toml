@@ -7,7 +7,7 @@ name = "EuoraCraft-Launcher"
 dynamic = ["version"]
 description = "EuoraCraft Launcher"
 authors = [
-    {name = "ECLTeam", email = "ECL@eclteam.top"},
+    {name = "ECLTeam", email = "contact@euora.cn"},
 ]
 dependencies = [
     "aiofiles>=23.0.0",
