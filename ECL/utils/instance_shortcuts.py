@@ -23,7 +23,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from ECL.utils.errors import GameServiceError
 from ECL.utils.files import atomic_write_bytes
@@ -63,6 +63,9 @@ class InstanceShortcutService:
         {"grass", "chest", "command", "coal", "iron", "quartz", "fabric", "forge", "neoforge", "quilt", "optifine"}
     )
     max_icon_bytes: int = 10 * 1024 * 1024
+    icon_canvas_size: tuple[int, int] = (256, 256)
+    ico_sizes: tuple[tuple[int, int], ...] = tuple((size, size) for size in (16, 24, 32, 48, 64, 96, 128, 256))
+    icon_cache_version: str = "v2"
 
     def __init__(self, data_path: Path, resource_path: Path, *, is_frozen: bool, app_path: Path) -> None:
         """
@@ -152,6 +155,9 @@ class InstanceShortcutService:
     def _cache_icon(self, icon: ShortcutIcon) -> Path:
         """
         将当前有效图标转换为稳定 ICO，避免临时目录或前端 URL 失效。
+
+        完整原图等比例放大或缩小，保留透明边缘。新版缓存独立存放，旧快捷方式
+        引用的图标继续保留；只有生成成功后才原子写入缓存文件。
         """
         if icon.icon_type == "data" and icon.value.startswith("data:image/"):
             image_bytes = base64.b64decode(icon.value.split(",", 1)[1], validate=True)
@@ -172,18 +178,24 @@ class InstanceShortcutService:
             image_bytes = source_path.read_bytes()
         if len(image_bytes) > self.max_icon_bytes:
             raise GameServiceError("实例图标过大", "SHORTCUT_ICON_INVALID")
-        cache_file = self._data_path / "shortcut-icons" / f"{hashlib.sha256(image_bytes).hexdigest()}.ico"
+        cache_file = (
+            self._data_path
+            / "shortcut-icons"
+            / self.icon_cache_version
+            / f"{hashlib.sha256(image_bytes).hexdigest()}.ico"
+        )
         if cache_file.is_file():
             return cache_file
         with Image.open(BytesIO(image_bytes)) as source:
             if source.width * source.height > 16_777_216:
                 raise GameServiceError("实例图标尺寸过大", "SHORTCUT_ICON_INVALID")
-            converted = source.convert("RGBA")
-            converted.thumbnail((256, 256), Image.Resampling.LANCZOS)
-            canvas = Image.new("RGBA", (256, 256))
-            canvas.alpha_composite(converted, ((256 - converted.width) // 2, (256 - converted.height) // 2))
+            converted = ImageOps.contain(source.convert("RGBA"), self.icon_canvas_size, method=Image.Resampling.LANCZOS)
+            canvas = Image.new("RGBA", self.icon_canvas_size)
+            canvas.alpha_composite(
+                converted, ((canvas.width - converted.width) // 2, (canvas.height - converted.height) // 2)
+            )
             buffer = BytesIO()
-            canvas.save(buffer, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
+            canvas.save(buffer, format="ICO", sizes=self.ico_sizes)
         atomic_write_bytes(cache_file, buffer.getvalue())
         return cache_file
 
