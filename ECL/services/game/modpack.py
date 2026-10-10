@@ -3,15 +3,15 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：整合包格式识别、解析与导入编排：归一为统一计划并装配为可运行实例。
+# 文件作用：读取整合包，下载所需文件并创建游戏实例。
 #
 # 公开接口：
 #   - class PackFileEntry — 整合包内单个待下载文件条目（路径/直链/哈希/环境适用性）。
-#   - class ModpackPlan — 归一后的整合包安装计划（版本、加载器、文件清单、overrides）。
+#   - class ModpackPlan — 统一格式的整合包安装计划（版本、加载器、文件清单、overrides）。
 #   - class ModpackFormatPolicy — 整合包格式解析策略：特征标记与加载器命名映射的唯一归属点。
-#   - class ModpackCoordinator — 导入编排协调器：识别解析、自动安装基础版本、下载校验与实例装配。
+#   - class ModpackCoordinator — 读取整合包、安装基础版本、下载并校验文件，最后创建实例。
 #       - import_instance_pack(game_path, source_path, new_version_id) -> dict[str, str] — 本地整合包导入长任务。
-#       - install_modpack_online(source, project_id, file_id, game_path, new_version_id) -> dict[str, str] — 下载在线整合包并装配为全新实例（Modrinth/CurseForge/FTB）。
+#       - install_modpack_online(source, project_id, file_id, game_path, new_version_id) -> dict[str, str] — 下载在线整合包并创建新实例（Modrinth/CurseForge/FTB）。
 #       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
 #   - detect_pack_format(root) -> str — 按内容特征识别整合包格式标签。
 #   - build_pack_plan(root) -> ModpackPlan — 解析指定格式并输出统一安装计划。
@@ -44,7 +44,7 @@ from .workspace import ResolvedInstanceTarget, safe_extract_zip
 # 在线整合包安装支持的来源。
 _online_pack_sources = frozenset({"modrinth", "curseforge", "ftb"})
 
-# CurseForge 指纹归一化时跳过的字节（空白字符），与 murmur2 分块读取粒度。
+# 计算 CurseForge 指纹时跳过的空白字节，以及 murmur2 每次读取的字节数。
 _fingerprint_skipped_bytes = frozenset({0x09, 0x0A, 0x0D, 0x20})
 _fingerprint_chunk_bytes = 1024 * 1024
 _murmur_m = 0x5BD1E995
@@ -119,7 +119,7 @@ class PackFileEntry:
     """
     整合包内单个待下载文件条目。
 
-    ``url`` 为直链；CurseForge 条目在导入编排阶段经文件详情接口解析后填充。
+    ``url`` 为文件直链；CurseForge 条目在导入时通过文件详情接口获取该地址。
     ``env_client`` 表示客户端侧适用性（required/optional/unsupported）。
     """
 
@@ -136,7 +136,7 @@ class PackFileEntry:
 @dataclass(frozen=True, slots=True)
 class ModpackPlan:
     """
-    归一后的整合包安装计划。
+    统一格式的整合包安装计划。
 
     ``minecraft_version`` 为空表示无需基础版本（ECL 旧包整体即实例）。
     ``overrides_dir`` 指向解压目录内可作为实例内容复制的根目录，无 overrides 时为 None。
@@ -156,7 +156,7 @@ class ModpackPlan:
 
 def _safe_pack_relative_path(value: Any, warnings: list[str]) -> PurePosixPath | None:
     """
-    校验并归一整合包内声明的相对路径，非法路径返回 None 并记录警告。
+    检查整合包内的相对路径并统一分隔符；路径无效时返回 None 并记录警告。
 
     网络来源的整合包清单视为不可信输入：拒绝绝对路径、反斜杠外的
     目录穿越（..）与空路径，统一以 "/" 分隔。
@@ -271,7 +271,7 @@ def _loader_from_curseforge_id(value: Any, warnings: list[str]) -> tuple[str, st
 
 def _parse_curseforge_plan(root: Path) -> ModpackPlan:
     # 解析 CurseForge manifest.json：文件清单仅含 projectID/fileID，
-    # 直链与哈希由导入编排阶段经 CurseForge 文件详情接口解析填充。
+    # 导入时从 CurseForge 文件详情接口取得下载地址和哈希。
     warnings: list[str] = []
     manifest = _read_json_file(root / "manifest.json")
     manifest_type = str(manifest.get("manifestType") or "").strip()
@@ -488,7 +488,7 @@ def build_pack_plan(root: Path) -> ModpackPlan:
     识别并解析整合包，输出统一的安装计划。
 
     :param root: 已解压的整合包内容根目录
-    :return: 归一化的安装计划
+    :return: 统一格式的安装计划
     :raises GameServiceError: 格式无法识别、暂不支持或描述文件损坏时抛出
     """
     if not root.is_dir():
@@ -505,7 +505,7 @@ def build_pack_plan(root: Path) -> ModpackPlan:
     if detected == "multimc":
         return _parse_multimc_plan(pack_root)
     if detected == "ecl-legacy":
-        # ECL 旧包整体即实例内容，由导入编排按旧流程处理，不走统一计划。
+        # ECL 旧格式包直接包含实例文件，按旧导入流程处理。
         raise GameServiceError("ECL 旧格式整合包由导入编排直接处理", "INVALID_PACK_ARCHIVE")
     raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
 
@@ -535,7 +535,7 @@ def _murmur2_absorb(h: int, data: bytes) -> tuple[int, bytes]:
 
 
 def _murmur2_tail(h: int, tail: bytes) -> int:
-    # MurmurHash2 尾部与最终混淆，语义对齐 SMHasher 参考实现（含 switch 落空）。
+    # MurmurHash2 的尾部和最终混合按 SMHasher 参考实现处理，包括 switch 的连续执行。
     if len(tail) >= 3:
         h ^= tail[2] << 16
     if len(tail) >= 2:
@@ -553,7 +553,7 @@ def curseforge_fingerprint(path: Path) -> int:
     """
     计算 CurseForge 文件指纹（MurmurHash2 32 位，seed=1）。
 
-    归一化规则与 CurseForge 客户端一致：跳过空白字节（0x09/0x0A/0x0D/0x20），
+    与 CurseForge 客户端一样，计算指纹时跳过空白字节（0x09/0x0A/0x0D/0x20），
     其余字节原样参与。分块流式处理，避免大文件整体载入内存。
     """
     filtered_length = 0
@@ -580,14 +580,14 @@ def _extract_minecraft_version(version_id: str) -> str:
 
 def build_ftb_plan(info: dict[str, Any], manifest: dict[str, Any]) -> ModpackPlan:
     """
-    把 FTB 版本清单归一为统一安装计划。
+    将 FTB 版本清单转换为启动器使用的安装计划。
 
     FTB 清单不打包压缩包，而是逐文件声明下载地址与哈希；``targets`` 声明
     游戏与加载器版本，``serveronly`` 文件在客户端导入时跳过。
 
     :param info: 整合包详情响应（提供包名与简介）
     :param manifest: 版本清单响应（targets 与 files）
-    :return: 归一化的安装计划
+    :return: 统一格式的安装计划
     :raises GameServiceError: 清单缺少 Minecraft 版本声明时抛出
     """
     warnings: list[str] = []
@@ -660,16 +660,16 @@ def _ftb_file_entry(raw: dict[str, Any], warnings: list[str]) -> PackFileEntry |
 
 class ModpackCoordinator(_GameState):
     """
-    编排整合包导入：解压识别、基础版本保障、文件下载与实例装配。
+    导入整合包：解压文件、安装基础版本、下载文件并创建实例。
     """
 
     def import_instance_pack(self, game_path: Any, source_path: Any, new_version_id: Any) -> dict[str, str]:
         """
-        安全导入整合包并装配为全新实例。
+        检查并导入整合包，创建新实例。
 
         支持 Modrinth mrpack、CurseForge manifest 包与 ECL 旧格式包：解压识别后
         自动安装缺失的基础版本与加载器，下载清单声明的模组与文件，经哈希校验
-        后装配为继承基础版本的新实例。全程在 staging 目录进行，失败自动清理。
+        最后创建继承基础版本的新实例。整个过程在 staging 目录进行，失败时清理。
 
         :param game_path: Minecraft 游戏根目录
         :param source_path: 整合包压缩包路径
@@ -693,7 +693,7 @@ class ModpackCoordinator(_GameState):
         self, archive_path: Path, target: ResolvedInstanceTarget, context: OperationContext
     ) -> dict[str, Any]:
         """
-        解压整合包压缩包并按识别结果装配实例，本地导入与在线安装共用。
+        解压整合包并创建实例，本地导入和在线安装都使用此方法。
 
         :raises GameServiceError: 格式无法识别或解析失败时抛出
         """
@@ -720,11 +720,11 @@ class ModpackCoordinator(_GameState):
         new_version_id: Any,
     ) -> dict[str, str]:
         """
-        下载在线整合包文件并按统一导入编排装配为全新实例。
+        下载在线整合包及其文件，然后创建新实例。
 
         Modrinth 按 ``file_id``（版本 ID）获取主文件；CurseForge 按
         ``project_id/file_id`` 经文件详情接口解析直链；FTB 直接拉取版本
-        清单逐文件下载。下载与装配在同一长任务内完成，进度与取消语义
+        按清单逐个下载文件。下载和创建实例在同一个任务中完成，进度与取消规则
         与本地导入一致。
 
         :param source: 在线来源（modrinth/curseforge/ftb）
@@ -749,7 +749,7 @@ class ModpackCoordinator(_GameState):
 
         def worker(context: OperationContext) -> dict[str, Any]:
             if normalized_source == "ftb":
-                # FTB 清单逐文件声明下载地址，无需压缩包，直接归一为统一计划装配。
+                # FTB 清单列出每个文件的下载地址，无需压缩包，可直接按安装计划创建实例。
                 plan = self._fetch_ftb_plan(pack_project_id, pack_file_id)
                 context.progress(8, f"已识别整合包：{plan.pack_name}（FTB）")
                 result = self._install_plan_into_instance(plan, target, context)
@@ -775,11 +775,11 @@ class ModpackCoordinator(_GameState):
 
     def _fetch_ftb_plan(self, project_id: str, version_id: str) -> ModpackPlan:
         """
-        拉取 FTB 整合包详情与版本清单并归一为统一安装计划。
+        读取 FTB 整合包详情和版本清单，转换为启动器使用的安装计划。
 
         :param project_id: FTB 整合包 ID
         :param version_id: FTB 版本 ID
-        :return: 归一化的安装计划
+        :return: 统一格式的安装计划
         :raises GameServiceError: FTB 在线源不可用或清单无效时抛出
         """
         headers = {"User-Agent": "EuoraCraft-Launcher/resource-workspace"}
@@ -832,7 +832,7 @@ class ModpackCoordinator(_GameState):
         self, plan: ModpackPlan, target: ResolvedInstanceTarget, context: OperationContext
     ) -> dict[str, Any]:
         """
-        按统一计划装配实例：解析条目、保障基础版本、下载校验并原子落位。
+        按安装计划创建实例：读取文件清单、安装基础版本、下载并校验文件，最后一次性保存。
 
         全程在 staging 目录进行，任何失败都会清理 staging，不影响既有实例。
         """
@@ -1069,7 +1069,7 @@ class ModpackCoordinator(_GameState):
             json.dumps({"id": target.instance_directory_name, "inheritsFrom": base_name}, ensure_ascii=False, indent=2),
         )
 
-    # 导出时排除的隐私目录与文件；与导入语义对齐，避免存档/截图随包外泄。
+    # 导出时排除的隐私目录与文件；与导入时的过滤规则一致，避免把存档和截图打包导出。
     _export_private_entries = frozenset({"saves", "screenshots", "logs", "crash-reports", "servers.dat"})
     _online_lookup_batch_size = 100
 

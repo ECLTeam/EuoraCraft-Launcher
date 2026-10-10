@@ -7,9 +7,9 @@
 #
 # 公开接口：
 #   - class OperationTrace — 关联同一操作的日志与耗时。
-#   - operation_scope — 临时设置操作上下文，退出时恢复原上下文。
-#   - current_operation — 获取当前线程或异步任务的操作上下文。
-#   - trace_scope — 在退出回调等边界恢复已保存的操作上下文。
+#   - operation_scope — 记录当前操作的名称和开始时间，退出时恢复之前的记录。
+#   - current_operation — 获取当前线程或异步任务正在记录的操作。
+#   - trace_scope — 在退出回调中临时使用之前保存的操作记录。
 #   - safe_log_text — 脱敏项目日志文本。
 #   - class OperationLogFilter — 为日志记录补充脱敏消息，并在计时操作中附带耗时。
 #   - class ReadableLogFormatter — 脱敏异常堆栈，保留原日志格式。
@@ -59,7 +59,7 @@ def safe_log_text(text: str) -> str:
 @dataclass(frozen=True, slots=True)
 class OperationTrace:
     """
-    保存中文操作名称和开始时间，向异步任务、线程与退出回调传递计时上下文。
+    保存操作名称和开始时间，供异步任务、线程和退出回调记录同一次操作。
 
     只有声明为计时的操作才输出累计耗时：本地轻量读写本身耗时趋近于零，
     逐行附带耗时只是噪声。开始阶段行恒为 0 毫秒，任何情况下都不输出耗时。
@@ -104,7 +104,7 @@ class OperationTrace:
 
 class OperationLogState:
     """
-    保存当前异步任务或线程的操作上下文。
+    保存当前异步任务或线程正在记录的操作。
     """
 
     current: ContextVar[OperationTrace | None] = ContextVar("ecl_operation_trace", default=None)
@@ -114,7 +114,7 @@ def current_operation() -> OperationTrace | None:
     """
     获取当前操作的关联信息。
 
-    :return: 当前操作上下文，未进入操作时返回 None
+    :return: 当前操作的记录对象，没有正在记录的操作时返回 None
     """
     return OperationLogState.current.get()
 
@@ -122,10 +122,10 @@ def current_operation() -> OperationTrace | None:
 @contextmanager
 def trace_scope(trace: OperationTrace | None) -> Iterator[None]:
     """
-    临时恢复已保存的操作上下文，不延长调用方上下文的有效范围。
+    临时使用已保存的操作记录，退出时恢复之前的记录。
 
     :param trace: 创建任务或进程时保存的关联信息
-    :return: 退出时恢复原线程或异步任务的上下文
+    :return: 退出时恢复之前的操作记录
     """
     token = OperationLogState.current.set(trace)
     try:
@@ -137,11 +137,11 @@ def trace_scope(trace: OperationTrace | None) -> Iterator[None]:
 @contextmanager
 def operation_scope(action: str, *, timed: bool = False) -> Iterator[OperationTrace]:
     """
-    为一次操作建立上下文，结束时恢复调用方上下文。
+    记录一次操作的名称和开始时间，结束时恢复之前的操作记录。
 
     :param action: 面向人的操作名称
     :param timed: 是否为网络或重型操作输出累计耗时
-    :return: 可记录阶段和累计耗时的操作上下文
+    :return: 可记录操作阶段和累计耗时的对象
     """
     trace = OperationTrace(action, monotonic(), timed)
     token = OperationLogState.current.set(trace)

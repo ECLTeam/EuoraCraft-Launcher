@@ -70,7 +70,7 @@ class InstanceLaunchOverrides(BaseModel):
         """
         从旧独立开关补齐模式，且不修改调用方字典。
 
-        :param value: 配置边界传入的原始对象
+        :param value: 从配置文件读出的原始值
         :return: 可供字段校验的迁移副本
         """
         if not isinstance(value, dict):

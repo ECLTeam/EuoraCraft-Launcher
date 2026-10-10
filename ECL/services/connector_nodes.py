@@ -25,7 +25,7 @@ class ConnectorNodeConfig(BaseModel):
     """
     保存原始节点配置，允许空地址和尚未完成的输入。
 
-    配置边界只检查结构和字段类型；地址规则在连接准备阶段处理。
+    读取设置时只检查字段结构和类型；连接前再检查节点地址。
     """
 
     model_config = ConfigDict(extra="forbid", strict=True)

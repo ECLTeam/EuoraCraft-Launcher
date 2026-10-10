@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 class _PluginState:
     """
-    保存插件发现、生命周期与扩展点注册所共享的状态。
+    保存插件查找、启用和扩展注册所需的共用数据。
 
     该内部基类以 Mixin 形式经组合被 ``PluginManager`` 继承复用，不作为第二套公开插件 API 暴露。
     """
@@ -54,14 +54,14 @@ class _PluginState:
         """
         创建相互隔离的插件状态与命令执行器。
 
-        :param event_bus: 当前应用上下文拥有的事件总线
+        :param event_bus: 当前应用使用的事件总线
         :param processes: 面向插件的通用子进程注册服务；None 表示当前环境未提供该能力
         :param instance_compatibility: 与游戏服务共享的实例兼容提供者注册表
         :param connector_extensions: 与联机服务共享的扩展协议注册表
         :param launch_hooks: 与游戏服务共享的启动钩子注册表
         :param http_client: 应用共享 HTTP 客户端，供插件的受控网络请求使用
         :param auth_providers: 与账户服务共享的自定义认证提供方注册表
-        :param crash_extensions: 与游戏服务共享的崩溃分析富化注册表
+        :param crash_extensions: 与游戏服务共用的插件崩溃分析回调列表
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()

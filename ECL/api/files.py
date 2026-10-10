@@ -6,7 +6,7 @@
 # 文件作用：文件领域 IPC 处理器：本地/远程文件读取与远程图片缓存。
 #
 # 公开接口：
-#   - class FileHandlers — 提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。
+#   - class FileHandlers — 处理本地文件读取、图片缓存和文件选择请求。
 #       - file_resolve(body) -> dict[str, Any] — 规整本地路径，供前端转换为可访问的资源 URL。
 #       - fs_exists(body) -> dict[str, Any] — 查询本地路径类型，不修改文件系统。
 #       - fs_read_dir(body) -> dict[str, Any] — 读取指定目录的一层条目及基础元数据。
@@ -74,7 +74,7 @@ from .contracts import success
 
 class FileHandlers(_FrontendState):
     """
-    提供本地文件与图片读取、远程图片缓存及本地选择的正式 IPC 边界。
+    处理本地文件读取、图片缓存和文件选择请求。
     """
 
     remote_image_cache_ttl_seconds = 7 * 24 * 60 * 60
@@ -302,7 +302,7 @@ class FileHandlers(_FrontendState):
         """
         下载背景图片并缓存到本地数据目录。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         url = _normalize_image_url(body.get("url"))
         if url is None:
@@ -351,7 +351,7 @@ class FileHandlers(_FrontendState):
         """
         保存背景图片。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         data_url = body.get("data_url") or body.get("dataUrl") or ""
         url = body.get("url") or ""
@@ -449,7 +449,7 @@ class FileHandlers(_FrontendState):
         """
         读取图片（带 LRU 缓存）。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         raw_path = body.get("path", "")
         if not raw_path:
@@ -483,7 +483,7 @@ class FileHandlers(_FrontendState):
         """
         获取图片列表。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         raw_path = body.get("path", "")
         if not raw_path:
@@ -556,7 +556,7 @@ class FileHandlers(_FrontendState):
         """
         按用途选择游戏目录或下载文件夹，取消时保留前端原值。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         request, invalid = await to_thread.run_sync(_validate_body, DirectorySelectionRequest, body)
         if invalid is not None:
@@ -584,7 +584,7 @@ class FileHandlers(_FrontendState):
         """
         选择 Java。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         path = await self._pick_path(False, "选择 Java 可执行文件")
         self.logger.info("Java 选择结果: %s", path)
@@ -654,7 +654,7 @@ class FileHandlers(_FrontendState):
         """
         选择文件。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         request, invalid = _validate_body(FileSelectionRequest, body)
         if invalid is not None:
@@ -756,7 +756,7 @@ class FileHandlers(_FrontendState):
         """
         打开目录。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         path = body.get("path")
         if not isinstance(path, str) or not path.strip():
@@ -770,7 +770,7 @@ class FileHandlers(_FrontendState):
         """
         打开链接。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         url = body.get("url")
         if not isinstance(url, str) or not url.strip():

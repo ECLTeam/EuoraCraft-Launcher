@@ -12,7 +12,7 @@
 #   - class UpdateChecker — 按当前版本通道检查 GitHub Releases 是否有新版本。
 #       - check() -> UpdateCheckResult
 #       - latest_release() -> dict[str, Any] | None — 返回当前通道匹配到的最高版本 Release 对象，供自动更新提取安装包。
-#   - class StartupUpdateService — 在后端进程生命周期内异步执行一次更新检测并缓存结果。
+#   - class StartupUpdateService — 后端启动后在后台检查一次更新，并保存检查结果。
 # ============================================================
 
 from __future__ import annotations
@@ -264,16 +264,16 @@ class UpdateChecker:
 
 class StartupUpdateService:
     """
-    在后端进程生命周期内异步执行一次更新检测并缓存结果。
+    后端启动后在后台检查一次更新，并保存检查结果。
 
-    服务由应用装配根启动，而非由 WebView 刷新触发。检测完成后通过事件总线发送
+    后端启动时开始检查更新，WebView 刷新不会重新触发检查。检测完成后通过事件总线发送
     ``update:check_completed``；前端较晚就绪时可从 ``result`` 读取同一份缓存结果。
 
     :param http_client: 共享的启动器通道 HTTP 客户端
     :param event_bus: 应用事件总线，用于通知检测完成
     :param current_version: 当前启动器版本号
     :param version_type: 当前版本类型
-    :param checker_factory: 可选的检测器工厂，仅用于替换网络边界或测试
+    :param checker_factory: 可选的更新检测器工厂，可在测试中替换网络请求
     """
 
     def __init__(
@@ -335,7 +335,7 @@ class StartupUpdateService:
         标记服务已关闭，阻止尚未完成的任务继续向已销毁的前端发送事件。
 
         线程使用守护模式，并只进行极短的收尾等待，避免网络请求阻塞启动器关闭；共享
-        HTTP 客户端随后由应用上下文统一释放。
+        应用关闭时会关闭共享的 HTTP 客户端。
         """
 
         self._stopped.set()
@@ -347,7 +347,7 @@ class StartupUpdateService:
         """
         执行检测并在进程仍存活时发布结果。
 
-        检测器自身会把网络失败转换为 ``error`` 结果；这里额外兜底，避免替换检测器时
+        检测器通常会把网络失败转换为 ``error`` 结果；此处再次捕获异常，避免替换检测器时
         的意外异常让前端永远等不到完成状态。
         """
 

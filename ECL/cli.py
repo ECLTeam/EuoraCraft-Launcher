@@ -9,12 +9,14 @@
 #   - class LaunchOptions — 一次运行的命令行启动参数。
 #   - build_arg_parser() -> argparse.ArgumentParser — 构建启动参数解析器。
 #   - parse_launch_options(argv) -> LaunchOptions — 解析并校验命令行启动参数。
+#   - run_launcher(argv=None) -> int — 解析参数并运行一次启动器。
 #   - apply_launch_overrides(config, options) -> dict — 将启动参数叠加为会话级配置覆盖。
 # ============================================================
 
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -35,7 +37,7 @@ class LaunchOptions:
     所有参数仅在本次运行内生效，不写入 setting.json；数据目录在运行时信息
     解析阶段单独消费，其余参数经 :func:`apply_launch_overrides` 叠加到配置。
     ``launch_target``/``server_target``/``world_target`` 为一次性动作参数，
-    在前端就绪后由调度层消费，不参与配置覆盖。
+    前端就绪后才处理这些选项，不用它们覆盖配置文件。
     """
 
     forwarded_argv: tuple[str, ...] = field(default=(), compare=False, repr=False)
@@ -66,7 +68,7 @@ class LaunchOptions:
         """
         生成本次显式游戏启动覆盖，不包含进程配置或缺省字段。
 
-        :return: 供统一启动边界校验的选项
+        :return: 等待启动流程校验的命令行选项
         """
         values: dict[str, object] = {}
         for name in (
@@ -313,6 +315,22 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
     )
 
 
+def run_launcher(argv: list[str] | None = None) -> int:
+    """
+    解析命令行参数并运行启动器。
+
+    帮助、版本和参数错误在导入桌面后端前由解析器处理；其余参数只在本次运行中生效。
+
+    :param argv: 不含程序名的参数列表；None 表示读取 ``sys.argv[1:]``
+    :return: 启动器的退出码
+    :raises SystemExit: 请求帮助、版本或参数不合法时抛出
+    """
+    options = parse_launch_options(sys.argv[1:] if argv is None else argv)
+    from ECL.launcher import EuoraCraftLauncher
+
+    return int(EuoraCraftLauncher(options).run())
+
+
 def apply_launch_overrides(config: dict[str, Any], options: LaunchOptions | None) -> dict[str, Any]:
     """
     将启动参数折算为配置覆盖并叠加到配置副本上。
@@ -345,4 +363,4 @@ def apply_launch_overrides(config: dict[str, Any], options: LaunchOptions | None
     return result
 
 
-__all__ = ["LaunchOptions", "apply_launch_overrides", "build_arg_parser", "parse_launch_options"]
+__all__ = ["LaunchOptions", "apply_launch_overrides", "build_arg_parser", "parse_launch_options", "run_launcher"]

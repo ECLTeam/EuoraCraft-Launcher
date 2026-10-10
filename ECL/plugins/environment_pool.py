@@ -193,7 +193,7 @@ class PluginEnvironmentPool:
 
         :param key: 完整依赖键
         :return: 校验通过的库目录；缺失或损坏时返回 None
-        :raises PluginDependencyError: 依赖键或目录边界无效
+        :raises PluginDependencyError: 依赖键无效或目录不在插件安装范围内
         """
         root_path = self._root_path(key)
         try:

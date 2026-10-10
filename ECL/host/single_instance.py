@@ -51,7 +51,7 @@ class SingleInstanceService:
         """
         创建服务实例；实际监听经 :meth:`start` 启动。
 
-        :param events: 应用上下文的事件总线
+        :param events: 当前应用使用的事件总线
         :param data_path: 启动器数据目录，发现文件写入其中
         :param launcher_version: 当前启动器版本号，随发现文件暴露
         """

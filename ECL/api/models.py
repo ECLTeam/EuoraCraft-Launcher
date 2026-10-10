@@ -539,7 +539,7 @@ class LaunchRequest(RequestModel):
     lock_memory: bool = False
     # 游戏进程优先级: idle / below_normal / normal / above_normal / high。
     process_priority: Literal["idle", "below_normal", "normal", "above_normal", "high"] = "normal"
-    # ``None`` 表示调用方没有指定，由游戏全局设置提供兜底值。
+    # ``None`` 表示未指定，改用游戏全局设置中的值。
     width: int | None = Field(default=None, ge=320, le=16384)
     height: int | None = Field(default=None, ge=240, le=16384)
     fullscreen: bool | None = None

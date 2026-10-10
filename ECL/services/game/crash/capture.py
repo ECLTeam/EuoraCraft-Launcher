@@ -3,13 +3,13 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：崩溃捕获：崩溃标记监测、信号判定与后台分析调度。
+# 文件作用：记录游戏崩溃迹象，并在退出后按需启动崩溃分析。
 #
 # 公开接口：
 #   - class CrashRunSnapshot — 一次游戏运行结束时的崩溃判定输入快照。
-#   - class CrashCapture — 监测崩溃标记并调度自动崩溃分析。
+#   - class CrashCapture — 监测游戏崩溃迹象，并在需要时启动自动分析。
 #       - handle_line(run_token, line) -> None — 扫描进程输出行并记录崩溃标记。
-#       - finalize(snapshot) -> None — 结算一次运行：判定信号并按需调度分析。
+#       - finalize(snapshot) -> None — 游戏退出后检查崩溃迹象，必要时启动分析。
 #       - close() -> None — 停止接受新的分析任务并丢弃未决结果。
 # ============================================================
 
@@ -68,9 +68,9 @@ class CrashRunSnapshot:
 
 class CrashCapture:
     """
-    监测崩溃标记并调度自动崩溃分析。
+    监测游戏崩溃迹象，并在需要时启动自动分析。
 
-    崩溃标记由进程输出行驱动，与运行表解耦；分析在专用执行器中运行，
+    根据游戏进程的输出行记录崩溃迹象，不依赖进程运行表；分析在专用线程中运行，
     完成后通过 ``launcher:error`` 事件推送 ``kind=game_crash`` 的结果。
     服务关闭后不再接受新任务，进行中的分析结果被静默丢弃。
     """
@@ -110,7 +110,7 @@ class CrashCapture:
 
     def finalize(self, snapshot: CrashRunSnapshot) -> None:
         """
-        结算一次运行：清除标记状态并按信号判定是否调度分析。
+        游戏退出后清除崩溃标记，并决定是否启动分析。
 
         :param snapshot: 运行结束快照
         """

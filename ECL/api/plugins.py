@@ -3,10 +3,10 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：插件领域 IPC 处理器：插件列表、生命周期与设置/路由/槽位查询。
+# 文件作用：处理前端对插件列表、启用状态、设置、路由和插槽的请求。
 #
 # 公开接口：
-#   - class PluginHandlers — 提供插件生命周期、路由、插槽与命令调用的正式 IPC 边界。
+#   - class PluginHandlers — 处理插件的启用、禁用、路由、插槽和命令调用请求。
 #       - plugin_list(body) -> dict[str, Any] — 获取插件列表。
 #       - plugin_info(body) -> dict[str, Any] — 获取插件信息。
 #       - plugin_enable(body) -> dict[str, Any] — 启用插件。
@@ -42,12 +42,12 @@ from .bridge import _FrontendState
 
 class PluginHandlers(_FrontendState):
     """
-    提供插件生命周期、路由、插槽与命令调用的正式 IPC 边界。
+    处理插件的启用、禁用、路由、插槽和命令调用请求。
     """
 
     async def _run_plugin_lifecycle(self, name: str, action: Callable[[str], PluginActionResult]) -> PluginActionResult:
         """
-        归档生命周期包含磁盘校验，避免在前端 IPC 事件循环中阻塞。
+        安装包操作需要读取和校验磁盘文件，因此放到工作线程中执行。
         """
         if self.plugins.is_package_plugin(name):
             return await asyncio.to_thread(action, name)
@@ -57,7 +57,7 @@ class PluginHandlers(_FrontendState):
         """
         获取插件列表。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.plugins.list_plugins()}
 
@@ -65,7 +65,7 @@ class PluginHandlers(_FrontendState):
         """
         获取插件信息。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
         metadata = self.plugins.get_plugin_metadata(plugin_name)
@@ -77,7 +77,7 @@ class PluginHandlers(_FrontendState):
         """
         启用插件。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
         result = await self._run_plugin_lifecycle(plugin_name, self.plugins.enable)
@@ -89,7 +89,7 @@ class PluginHandlers(_FrontendState):
         """
         禁用插件。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
         result = await self._run_plugin_lifecycle(plugin_name, self.plugins.disable)
@@ -101,7 +101,7 @@ class PluginHandlers(_FrontendState):
         """
         卸载并删除用户插件。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
         result = await self._run_plugin_lifecycle(plugin_name, self.plugins.uninstall)
@@ -113,7 +113,7 @@ class PluginHandlers(_FrontendState):
         """
         重新加载插件。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
         result = await self._run_plugin_lifecycle(plugin_name, self.plugins.reload)
@@ -125,7 +125,7 @@ class PluginHandlers(_FrontendState):
         """
         安装插件。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_path = body.get("plugin_path")
         if not isinstance(plugin_path, str) or not plugin_path.strip():
@@ -163,7 +163,7 @@ class PluginHandlers(_FrontendState):
         """
         获取插件路由。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.plugins.get_routes()}
 
@@ -171,7 +171,7 @@ class PluginHandlers(_FrontendState):
         """
         获取插件插槽。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.plugins.get_slots()}
 
@@ -179,7 +179,7 @@ class PluginHandlers(_FrontendState):
         """
         获取插件 Vue 插槽。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.plugins.get_vue_slots()}
 
@@ -187,7 +187,7 @@ class PluginHandlers(_FrontendState):
         """
         获取插件 Vue 组件。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.plugins.get_vue_components()}
 
@@ -195,7 +195,7 @@ class PluginHandlers(_FrontendState):
         """
         调用插件命令。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         command = body.get("command")
         try:
@@ -208,7 +208,7 @@ class PluginHandlers(_FrontendState):
         """
         获取插件设置。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
         return {"success": True, "data": self.plugins.get_settings(plugin_name)}
@@ -217,7 +217,7 @@ class PluginHandlers(_FrontendState):
         """
         更新插件设置。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
         key = body.get("key")
@@ -230,7 +230,7 @@ class PluginHandlers(_FrontendState):
         """
         通知插件侧栏的折叠状态。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         collapsed = body.get("collapsed")
         if not isinstance(collapsed, bool):

@@ -6,7 +6,7 @@
 # 文件作用：前端桥接辅助：远程图片抓取、运行时选项校验等跨领域公共逻辑。
 #
 # 公开接口：
-#   - guard_ipc_handler(state, operation, handler, timeout=…) -> Any — 为正式 IPC 命令补齐统一的异常边界与严重错误呈现元数据。
+#   - guard_ipc_handler(state, operation, handler, timeout=…) -> Any — 捕获 IPC 命令错误，并返回错误码及严重错误显示信息。
 # ============================================================
 
 from __future__ import annotations
@@ -239,7 +239,7 @@ def _make_timeout_response(state: Any, operation: str) -> ApiResponse:
 async def _guarded_call(
     state: Any, operation: str, fallback_code: str, awaitable: Any, timeout: float | None = None
 ) -> Any:
-    # 统一的 IPC 异常边界：捕获已知错误与未知异常并转换为响应。
+    # 捕获 IPC 命令中的已知错误和意外异常，统一转换为响应。
     try:
         if timeout is not None:
             return await asyncio.wait_for(awaitable, timeout)
@@ -275,14 +275,14 @@ def _should_report_failure(state: Any, operation: str, code: str) -> bool:
 
 def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float | None = None) -> Any:
     """
-    为正式 IPC 命令记录操作生命周期并补齐统一异常边界。
+    记录 IPC 命令的开始、结果和失败，并把异常转换为响应。
 
     日志通道不记录自身调用，查询使用 DEBUG，轮询仅记录限频失败和恢复。
-    操作按声明记录普通生命周期日志，界面状态同步可使用 DEBUG。
+    普通操作记录开始和结果；界面状态同步操作可使用 DEBUG 级别。
     开始阶段行不输出耗时；只有声明为计时的网络或重型操作保留累计耗时。
     后台任务返回时只记录提交，不宣称执行完成；不输出请求体和配置值。
 
-    :param state: 拥有日志与应用事件总线的前端 API 门面
+    :param state: 保存日志器和事件总线的前端 API 对象
     :param operation: 注册到 PyTauri 的稳定命令名
     :param handler: 原始异步命令处理器
     :param timeout: 可选的请求超时秒数；取消等待不代表后台线程已停止
@@ -336,7 +336,7 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float |
 
 
 def _ipc_handler(fallback_code: str = "INTERNAL_ERROR", timeout: float | None = None):
-    # 装饰器，为 IPC 命令处理器补齐统一异常边界与错误呈现元数据。
+    # 将 IPC 命令抛出的异常转换为带错误码的响应。
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(self, *args, **kwargs):
@@ -357,7 +357,7 @@ def _validate_body(model: Any, body: dict[str, Any]) -> tuple[Any, ApiResponse |
 
 class _FrontendState:
     """
-    前端 IPC 处理器的共享状态门面，聚合日志、应用事件与各服务句柄。
+    保存前端 IPC 命令共用的日志器、事件总线和后端服务。
     """
 
     queued_frontend_events = frozenset(
@@ -412,7 +412,7 @@ class _FrontendState:
 
     def __init__(self, context: ApplicationContext):
         """
-        收集应用上下文中的日志、事件与各服务句柄。
+        从 ``ApplicationContext`` 取得事件总线和后端服务。
         """
         self.logger = get_logger("FrontendApi")
         self.events = context.events
@@ -454,7 +454,7 @@ class _FrontendState:
 
     @staticmethod
     def _invalid_request(exc: ValidationError) -> ApiResponse:
-        # 将 Pydantic 边界校验错误转换为稳定 IPC 响应。
+        # 将 Pydantic 请求校验错误转换为带错误码的 IPC 响应。
         message = exc.errors(include_url=False)[0].get("msg", "请求参数无效")
         return failure(str(message), "INVALID_REQUEST")
 
@@ -639,7 +639,7 @@ class _FrontendState:
 
     def _get_effective_config(self) -> dict[str, Any]:
         # 合并持久化配置与运行时覆盖，构造前端可见的有效配置；
-        # 命令行启动参数在此兜底叠加，使界面展示的即会话实际生效值。
+        # 此处补上命令行启动参数，确保界面显示本次运行实际使用的设置。
         config = dict(self.config.get_config())
         launcher_config = dict(config.get("launcher") or {})
         runtime_config = (self.launcher.config or {}).get("launcher") or {}
@@ -838,7 +838,7 @@ class _FrontendState:
         """
         处理前端就绪。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         :param webview_window: 前端 WebView 窗口实例
         """
         label_getter = getattr(webview_window, "label", None)
@@ -975,7 +975,7 @@ class _FrontendState:
 
     def _on_launcher_closing(self, _payload: object) -> None:
         """
-        关闭后停止调度并取消持有的启动任务，防止服务销毁后继续消费。
+        关闭时取消尚未完成的启动任务，避免任务继续访问已关闭的服务。
         """
         self._launch_closing = True
         loop = self._cli_event_loop

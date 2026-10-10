@@ -6,7 +6,7 @@
 # 文件作用：游戏领域 IPC 处理器：版本目录、扫描安装、启动、崩溃分析等入口。
 #
 # 公开接口：
-#   - class GameHandlers — 提供游戏目录、安装任务和运行实例的正式 IPC 边界。
+#   - class GameHandlers — 处理游戏目录、版本安装和运行实例相关的前端请求。
 #       - game_versions(body) -> ApiResponse — 查询 Minecraft 版本列表或分类目录。
 #       - game_loader_versions(body) -> ApiResponse — 查询指定 Minecraft 版本可用的模组加载器版本。
 #       - game_fabric_api_versions(body) -> ApiResponse — 查询指定 Minecraft 版本可用的 Fabric API 版本。
@@ -32,7 +32,7 @@
 #       - game_launch_cancel(body) -> ApiResponse — 取消当前仍处于准备或文件补全阶段的启动任务。
 #       - game_instance_stop(body) -> ApiResponse — 通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
 #       - game_crash_list(body) -> ApiResponse — 列出指定实例文件夹内可分析的候选日志文件。
-#       - game_crash_analyze(body) -> ApiResponse — 在指定版本上下文中分析用户选择的 Minecraft 日志或 ZIP。
+#       - game_crash_analyze(body) -> ApiResponse — 分析用户为指定游戏版本选择的 Minecraft 日志或 ZIP。
 #       - game_crash_output(body) -> ApiResponse — 按需读取当前会话报告中的脱敏游戏输出。
 #       - game_crash_export(body) -> ApiResponse — 将当前会话报告导出为经过脱敏的 ZIP。
 #       - game_version_settings_effective(body) -> ApiResponse — 解析当前实例的有效启动设置。
@@ -76,7 +76,7 @@ from .bridge import _FrontendState, _ipc_handler, _validate_body
 
 class GameHandlers(_FrontendState):
     """
-    提供游戏目录、安装任务和运行实例的正式 IPC 边界。
+    处理游戏目录、版本安装和运行实例相关的前端请求。
     """
 
     async def _read_launch_settings(self, game_path: str | Path, version_id: str) -> dict[str, Any]:
@@ -101,7 +101,7 @@ class GameHandlers(_FrontendState):
         仅在旧小写路径键唯一对应一个实际根目录时恢复或清理实例设置。
 
         旧键有歧义时保留原配置，不让一个实例读入或删除另一个实例的覆盖。
-        目录解析由线程边界调用，避免在异步 IPC 内阻塞磁盘。
+        在工作线程中读取目录，避免磁盘操作阻塞异步 IPC 请求。
 
         :param game_path: 请求指定的游戏根目录
         :param version_id: 磁盘实例目录名
@@ -597,9 +597,9 @@ class GameHandlers(_FrontendState):
     @_ipc_handler("CRASH_ANALYSIS_FAILED")
     async def game_crash_analyze(self, body: dict[str, Any]) -> ApiResponse:
         """
-        在指定版本上下文中分析用户选择的 Minecraft 日志或 ZIP。
+        分析用户为指定游戏版本选择的 Minecraft 日志或 ZIP。
 
-        :param body: 符合 ``CrashAnalyzeRequest`` 的文件和版本上下文
+        :param body: 包含所选文件和游戏版本的 ``CrashAnalyzeRequest`` 参数
         :return: 会话报告编号、原因、证据和可用输出信息
         """
         request, invalid = _validate_body(CrashAnalyzeRequest, body)

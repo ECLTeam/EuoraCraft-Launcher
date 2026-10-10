@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：安装协调器：版本安装/卸载流程编排。
+# 文件作用：安装或卸载游戏版本，并报告进度和错误。
 #
 # 公开接口：
 #   - class InstallCoordinator
@@ -139,7 +139,7 @@ class InstallCoordinator(_GameState):
         """
         开始安装版本，返回任务 ID 和最终保存的版本名称。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         :param game_path: Minecraft 游戏根目录
         :param source: 下载源名称，如 ``official`` 或 ``bmclapi``
         :param java_path: Java 可执行文件路径
@@ -280,7 +280,7 @@ class InstallCoordinator(_GameState):
 
     @staticmethod
     def _ensure_install_not_cancelled(cancel_event: Event | None) -> None:
-        # 无任务取消机制的工作线程在阶段边界检查取消请求。
+        # 工作线程不能随时中止，因此在每个安装阶段开始前检查取消请求。
         if cancel_event is not None and cancel_event.is_set():
             raise GameServiceError("安装已取消", "INSTALL_CANCELLED")
 
@@ -304,9 +304,9 @@ class InstallCoordinator(_GameState):
         同步执行一次完整的版本安装：构建下载清单、并发下载、备用源补全。
 
         必须在没有运行中事件循环的线程中调用。下载协程默认经 ``_run_downloader_blocking``
-        调度：传入 ``loop`` 时在既有事件循环上执行（行为与异步任务路径一致），
+        传入 ``loop`` 时，在已有事件循环中运行（与异步任务的执行方式相同），
         未传入时在工作线程内用独立事件循环执行。外部取消通过 ``cancel_event``
-        在阶段边界与下载过程中生效。
+        在各安装阶段开始前和下载过程中生效。
 
         :param task_id: 安装任务标识，用于登记活跃下载器
         :param version_id: Minecraft 版本 ID

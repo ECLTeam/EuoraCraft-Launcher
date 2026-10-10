@@ -109,7 +109,7 @@ class InstanceShortcutService:
         """
         原子创建实例 .lnk；已有文件保持原样，不自动覆盖。
 
-        :param instance_path: 经过实例边界验证的绝对目录
+        :param instance_path: 已确认位于游戏目录内的实例绝对路径
         :param name: 实例显示名称
         :param icon: 与实例列表相同的有效图标
         :param output_path: 指定位置，缺省时使用系统桌面已知目录

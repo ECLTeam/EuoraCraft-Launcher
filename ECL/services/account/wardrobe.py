@@ -10,7 +10,7 @@
 #   - class WardrobeStore — 管理本地皮肤与披风收藏，并保证元数据和纹理文件始终位于衣柜目录中。
 #       - list_items() -> list[WardrobeItem] — 返回按最近更新时间排序的衣柜条目副本。
 #       - import_file(source, kind, name=…, model=…) -> tuple[WardrobeItem, bool] — 校验并复制用户选择的 PNG 文件；重复内容直接返回已有收藏。
-#       - import_bytes(data, kind, name, model=…) -> tuple[WardrobeItem, bool] — 校验并持久化来自可信下载边界的 PNG 字节，沿用本地导入的哈希去重规则。
+#       - import_bytes(data, kind, name, model=…) -> tuple[WardrobeItem, bool] — 检查并保存已下载的 PNG 图片，按文件哈希避免重复导入。
 #       - update_item(item_id, name, model, favorite=…) -> WardrobeItem — 更新衣柜条目的展示信息，不修改原始纹理字节。
 #       - delete_item(item_id) -> None — 删除衣柜元数据和对应内部纹理，不影响已经上传到外部账户的皮肤。
 #       - read_texture(item_id) -> tuple[WardrobeItem, bytes] — 读取内部纹理原始字节，供前端预览或账户服务上传。
@@ -212,7 +212,7 @@ class WardrobeStore:
         model: SkinModel | None = None,
     ) -> tuple[WardrobeItem, bool]:
         """
-        校验并持久化来自可信下载边界的 PNG 字节，沿用本地导入的哈希去重规则。
+        检查并保存已下载的 PNG 图片，按文件哈希避免重复导入。
 
         :param data: 已完成网络大小限制或本地文件限制检查的 PNG 原始字节
         :param kind: 素材类型，皮肤或披风

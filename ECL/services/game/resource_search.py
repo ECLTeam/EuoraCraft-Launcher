@@ -62,7 +62,7 @@ class SearchWiki(_SearchModel):
 
 class SearchItem(_SearchModel):
     """
-    将平台边界结果转换为字段明确的搜索卡片。
+    将搜索平台返回的数据转换为前端使用的搜索卡片。
     """
 
     id: str = Field(min_length=1)

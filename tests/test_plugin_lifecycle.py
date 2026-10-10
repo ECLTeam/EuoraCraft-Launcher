@@ -10,7 +10,7 @@
 #   - test_reload_after_reinstall_keeps_plugin_enabled(tmp_path) -> None — 重装后的插件再 reload 应保持启用，覆盖工具箱热重载的完整调用序列。
 # ============================================================
 
-"""插件生命周期操作（安装、重载、卸载）回归测试。"""
+"""插件安装、重载和卸载操作的回归测试。"""
 
 import json
 from pathlib import Path

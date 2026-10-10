@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：定义无签名 .eclplugin 归档格式，并在解包前验证文件边界与哈希。
+# 文件作用：定义无签名 .eclplugin 包格式，并在解压前检查文件路径和哈希。
 #
 # 公开接口：
 #   - class PluginPackageError — 插件归档校验或制作失败。
@@ -210,7 +210,7 @@ def inspect_plugin_package(archive_path: Path) -> PluginPackageInfo:
 
     :param archive_path: 本地 `.eclplugin` 文件
     :return: 当前归档的基本信息与清单摘要
-    :raises PluginPackageError: 格式、边界或内容校验失败时抛出
+    :raises PluginPackageError: 包格式、文件路径或内容校验失败时抛出
     """
     try:
         info, _names = _inspect(Path(archive_path))

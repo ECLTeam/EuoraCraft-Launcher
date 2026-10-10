@@ -112,7 +112,7 @@ class FrontendLogHandler(logging.Handler):
     """
     把结构化日志同步转发到事件总线，并保留最近日志供前端补全历史。
 
-    :param events: 承载 ``launcher:log`` 事件的事件总线
+    :param events: 发送 ``launcher:log`` 事件的事件总线
     :param buffer: 存放最近日志的环形缓冲
     """
 
@@ -261,7 +261,7 @@ def configure_logging(data_path: Path, colored: bool = True) -> LoggingRuntime:
 
     :param data_path: 启动器数据目录
     :param colored: 控制台是否使用 ANSI 颜色
-    :return: 负责日志处理器生命周期的运行对象
+    :return: 用于关闭本次运行创建的日志处理器的对象
     """
     return LoggingRuntime(data_path, colored)
 

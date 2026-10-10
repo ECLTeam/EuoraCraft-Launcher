@@ -57,7 +57,7 @@ class _JavaInstallation:
 
     def to_protocol(self) -> dict[str, JsonValue]:
         """
-        在 IPC 边界保留旧别名，并独立输出供应商和运行时种类。
+        返回数据时保留旧字段名，并分别给出供应商和运行时种类。
         """
         return {
             "path": self.executable_path,

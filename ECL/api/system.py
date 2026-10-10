@@ -6,7 +6,7 @@
 # 文件作用：系统领域 IPC 处理器：运行信息、更新检测、日志与错误上报。
 #
 # 公开接口：
-#   - class SystemHandlers — 提供启动器信息、严重错误、用户协议、日志导出与调试维护的正式 IPC 边界。
+#   - class SystemHandlers — 处理启动器信息、严重错误、用户协议、日志导出和调试维护请求。
 #       - launcher_errors_pending(body) -> dict[str, Any] — 返回尚未被前端确认呈现的严重错误。
 #       - launcher_errors_ack(body) -> dict[str, Any] — 确认前端已经接收一批严重错误并释放其内存副本。
 #       - system_ping(body) -> dict[str, Any] — 检查连接。
@@ -53,7 +53,7 @@ from .bridge import _FrontendState, _ipc_handler
 
 class SystemHandlers(_FrontendState):
     """
-    提供启动器信息、严重错误、用户协议、日志导出与调试维护的正式 IPC 边界。
+    处理启动器信息、严重错误、用户协议、日志导出和调试维护请求。
     """
 
     async def launcher_errors_pending(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -94,7 +94,7 @@ class SystemHandlers(_FrontendState):
         """
         检查连接。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": {"status": "ok", "message": "正常"}}
 
@@ -149,7 +149,7 @@ class SystemHandlers(_FrontendState):
         """
         获取内存信息。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         mem = psutil.virtual_memory()
         to_mb = 1 / (1024 * 1024)
@@ -169,7 +169,7 @@ class SystemHandlers(_FrontendState):
 
         窗口模式是创建窗口时固定的快照，设置页保存新偏好后不会提前改变它。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         :return: 版本、调试状态及主窗口模式信息
         """
         return {
@@ -214,10 +214,10 @@ class SystemHandlers(_FrontendState):
     @_ipc_handler("CONNECTOR_PRELOAD_FAILED")
     async def launcher_preload_connector(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        请求后端调度一次节点预热，兼容仍使用该命令的调用方。
+        请求后端在后台预先读取节点列表，供旧版调用方继续使用。
 
-        主窗口首次就绪会自动调度；重复 IPC 或前端重载不再创建新的网络任务，
-        此命令只返回调度结果，不等待网络。
+        主窗口首次就绪时会自动读取；重复请求或前端重载不会再次发起网络任务，
+        此命令只确认是否已开始读取，不等待网络返回。
         """
         if body:
             return {
@@ -232,7 +232,7 @@ class SystemHandlers(_FrontendState):
         """
         获取信息卡片。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         data = await to_thread.run_sync(self.info_card.get_info_card)
         return {"success": True, "data": data}
@@ -406,7 +406,7 @@ class SystemHandlers(_FrontendState):
         """
         还原启动器设置，并保留已登录账户。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return self._schedule_debug_maintenance("reset_launcher_data")
 
@@ -415,7 +415,7 @@ class SystemHandlers(_FrontendState):
         """
         清理插件数据。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         """
         return self._schedule_debug_maintenance("clear_plugins")
 

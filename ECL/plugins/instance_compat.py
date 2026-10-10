@@ -6,7 +6,7 @@
 # 文件作用：实例兼容性扩展点：插件提供外部启动器的实例元数据识别。
 #
 # 公开接口：
-#   - class InstanceCompatibilityContext — 描述插件读取单个 Minecraft 实例元数据时可用的只读上下文。
+#   - class InstanceCompatibilityContext — 保存插件读取单个 Minecraft 实例信息所需的只读数据。
 #   - class ExternalInstanceMetadata — 保存一个兼容来源针对单个实例提供的只读元数据。
 #   - class InstanceCompatibilityRegistry — 保存插件注册的实例兼容读取器，并隔离单个提供者的读取失败。
 #       - register(owner, source, title, reader, watch_paths) -> None — 注册或更新一个由插件拥有的实例元数据来源。
@@ -40,7 +40,7 @@ class InstanceCompatibilityPolicy:
 @dataclass(frozen=True, slots=True)
 class InstanceCompatibilityContext:
     """
-    描述插件读取单个 Minecraft 实例元数据时可用的只读上下文。
+    保存插件读取单个 Minecraft 实例信息所需的只读数据。
 
     ``options`` 由宿主按插件来源名分组传入，例如
     ``{"qomicex": {"instances_path": "..."}}``。
@@ -168,7 +168,7 @@ class InstanceCompatibilityRegistry:
         """
         调用全部提供者并汇总元数据，单个插件异常会转换为来源警告。
 
-        :param context: 当前实例的只读扫描上下文
+        :param context: 当前实例的只读扫描信息
         :return: 各插件来源返回的元数据
         """
         with self._lock:

@@ -7,7 +7,7 @@
 #
 # 公开接口：
 #   - class JavaError — 表示可返回 IPC 的 Java 管理失败。
-#   - class JavaModel — 定义 Java IPC 的字段命名与校验边界。
+#   - class JavaModel — 定义 Java 请求的字段名和数据校验规则。
 #   - class RuntimeRecord — 保存一个运行时的身份、拥有权与有效状态。
 #   - class RuntimeView — 为界面提供引用和占用快照。
 #   - class JavaInventory — 描述当前平台的完整运行时清单。
@@ -52,7 +52,7 @@ class JavaError(GameServiceError):
 
 class JavaModel(BaseModel):
     """
-    用不可变模型校验 Java JSON 边界，并为 IPC 输出驼峰字段。
+    校验 Java 请求中的 JSON 数据，并以驼峰式字段名返回结果。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True, alias_generator=to_camel)
@@ -169,7 +169,7 @@ class JavaInventory(JavaModel):
 
 class JavaReferenceConfig(BaseModel):
     """
-    在配置边界只读取 Java 引用相关字段，未知路径结构不能被静默忽略。
+    读取配置时只接受 Java 路径相关字段，发现未知的路径结构则报错。
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -183,7 +183,7 @@ class JavaReferenceConfig(BaseModel):
         """
         把当前配置支持的路径条目转换为明确的根目录集合。
 
-        :param value: 需要归一化的架构声明
+        :param value: 需要转换为标准名称的处理器架构
         """
         if not isinstance(value, (list, tuple)):
             raise ValueError("invalid minecraft paths")
@@ -216,9 +216,9 @@ class JavaPolicy:
     @classmethod
     def architecture(cls, value: str) -> str:
         """
-        归一化声明的运行架构，未知值保留原值。
+        将处理器架构转换为标准名称；不认识的值保持原样。
 
-        :param value: 需要归一化的架构声明
+        :param value: 需要转换为标准名称的处理器架构
         """
         return cls.architecture_by_alias.get(value.lower(), value.lower())
 

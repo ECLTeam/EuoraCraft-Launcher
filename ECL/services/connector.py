@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：Scaffolding 联机服务：EasyTier 编排、节点列表与房间状态机。
+# 文件作用：管理 EasyTier 连接、可用节点和联机房间状态。
 #
 # 公开接口：
 #   - class ConnectorService — 联机服务，封装 Florolding + EasyTier 的多人联机能力。
@@ -12,7 +12,7 @@
 #       - easytier_version() -> str — EasyTier 版本号。
 #       - fetch_nodes(force) -> list[str] — 获取可用的 EasyTier 中继节点 URI 列表。
 #       - preload_nodes() -> list[str] — 仅预热公共节点，不验证用户地址。
-#       - start_node_preload() -> bool — 在服务生命周期内调度一次后台节点预热。
+#       - start_node_preload() -> bool — 服务启动后在后台预先读取一次节点列表。
 #       - get_status() -> dict[str, Any] — 获取当前联机状态。
 #       - get_easytier_status() -> dict[str, Any] — 获取 EasyTier 安装状态。
 #       - get_nat_type() -> dict[str, Any] — 使用 EasyTier 内置 STUN 探测检测 NAT 类型。
@@ -100,7 +100,7 @@ class ConnectorService:
     """
     联机服务，封装 Florolding + EasyTier 的多人联机能力。
 
-    管理房间生命周期、玩家列表和网络连接状态。
+    管理房间的创建和关闭、玩家列表及网络连接状态。
     """
 
     node_list_url = "https://api.qomicex.top/api/nodes"
@@ -252,7 +252,7 @@ class ConnectorService:
 
     def start_node_preload(self) -> bool:
         """
-        在后端服务生命周期内调度一次节点预热，不等待网络结果。
+        服务启动后在后台读取一次节点列表，立即返回，不等待网络。
 
         主窗口就绪或兼容 IPC 可以重复调用；线程和去重状态由后端拥有，前端重载
         不会重新创建任务。仅自定义节点模式仍由 preload_nodes 保证不访问公共节点。
@@ -271,7 +271,7 @@ class ConnectorService:
 
     def _run_node_preload(self) -> None:
         """
-        使用继承的操作上下文执行节点预热，关闭后忽略结果及网络失败。
+        节点预热沿用当前操作的日志信息；服务关闭后忽略预热结果和网络错误。
         """
         if self._node_preload_stopped.is_set():
             return
@@ -425,7 +425,7 @@ class ConnectorService:
         if self._mode == "guest" and self._client is not None:
             loop = getattr(self._client, "loop", None)
             writer = getattr(self._client, "writer", None)
-            # 连接断开后客户端事件循环可能已关闭，向已关闭的循环调度协程会遗弃协程并触发警告
+            # 连接断开后客户端事件循环可能已关闭；此时提交协程会触发警告
             if loop is not None and writer is not None and not loop.is_closed() and loop.is_running():
                 try:
                     status, body = asyncio.run_coroutine_threadsafe(
@@ -468,7 +468,7 @@ class ConnectorService:
         return self.extensions.enrich_status(self._session_context(), status)
 
     def _session_context(self) -> ConnectorSessionContext:
-        # 构造不暴露底层 socket 的插件联机会话上下文。
+        # 向插件提供联机会话信息，但不暴露底层 socket。
         client = self._client
         machine_id = getattr(client, "machine_id", None)
         request = self._send_extension_request if client is not None else None
@@ -482,7 +482,7 @@ class ConnectorService:
         )
 
     def _send_extension_request(self, protocol: str, body: bytes = b"") -> tuple[int, bytes]:
-        # 在线程安全边界内向当前房主发送扩展协议请求。
+        # 通过线程安全的方法向当前房主发送扩展协议请求。
         client = self._client
         if client is None:
             raise RuntimeError("当前不是房客会话")
@@ -838,9 +838,9 @@ class ConnectorService:
 
     def _scoped_log_callback(self) -> Callable[[str, str], None]:
         """
-        为本次联机保存日志关联，避免第三方回调线程丢失创建操作上下文。
+        保存本次联机的日志信息，让第三方回调线程也能记录同一次操作。
 
-        :return: 保留原回调语义并临时恢复操作上下文的日志回调
+        :return: 执行原回调并记录本次联机日志的回调函数
         """
         trace = current_operation()
 
@@ -931,7 +931,7 @@ class ConnectorService:
         """
         关闭联机服务，停止运行中的房间与 EasyTier 节点。
 
-        应用关闭时由上下文按依赖逆序调用。节点预热停止提交后续网络请求，已进入的
+        应用关闭时，在其他依赖此服务的对象关闭后调用。节点预热停止提交后续网络请求，已进入的
         有限超时请求仅短暂等待收尾，结果不再写入缓存；加入房间守护线程由退出回收。
         """
         self._node_preload_stopped.set()
@@ -950,7 +950,7 @@ class ConnectorService:
         if client is None:
             return
         loop = getattr(client, "loop", None)
-        # 循环已关闭或未运行时无需调度停止协程，直接清理引用即可
+        # 事件循环未运行时无法执行停止任务，直接清理引用
         if loop is None or loop.is_closed() or not loop.is_running():
             self._client = None
             return

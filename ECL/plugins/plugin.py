@@ -16,23 +16,23 @@
 #       - on_script(file_path) -> Callable — 装饰器，声明 JS 文件，on_frontend_ready 时自动注入到前端。
 #       - on_vue_slot(slot_id, component_name, file_path) -> Callable — 装饰器，声明 Vue SFC 组件，on_frontend_ready 时自动注册到指定插槽。
 #       - on_vue_route(path, title, component_name, file_path, icon=…) -> Callable — 装饰器，声明 Vue SFC 路由页面，on_enable 时自动注册。
-#       - on_load() -> None — 生命周期钩子：加载资源，此时不应注册路由或命令。
-#       - on_enable() -> None — 生命周期钩子：注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。
-#       - on_frontend_ready() -> None — 生命周期钩子：前端就绪后注入 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。
-#       - on_disable() -> None — 生命周期钩子：清理运行时状态。
-#       - on_unload() -> None — 生命周期钩子：释放资源。
+#       - on_load() -> None — 插件加载时读取资源，此时不应注册路由或命令。
+#       - on_enable() -> None — 插件启用时注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。
+#       - on_frontend_ready() -> None — 前端就绪后添加插件的 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。
+#       - on_disable() -> None — 插件禁用时清理运行中的状态。
+#       - on_unload() -> None — 插件卸载时释放资源。
 #       - register_route(path, title, icon=…) -> None — 注册前端侧边栏路由。
 #       - register_command(name, handler, description=…) -> None — 注册插件命令，前端通过 plugin_call_command 调用。
 #       - register_setting(key, default, description=…, type_=…) -> None — 注册设置项，前端设置页根据此定义渲染控件。
 #       - get_setting(key) -> Any — 读取插件设置当前值；尚未保存时返回声明的默认值。
 #       - register_instance_compatibility(source, title, reader, watch_paths=…) -> None — 注册一个只读实例元数据兼容来源。
 #       - register_connector_extension(name, protocols, on_guest_joined, enrich_status, before_leave, on_reset) -> None — 注册 Scaffolding 扩展协议及其联机会话钩子。
-#       - register_launch_hook(name, on_prepare, pre_launch, post_launch, on_exit) -> None — 注册启动钩子，参与 Minecraft 启动参数准备与进程生命周期。
+#       - register_launch_hook(name, on_prepare, pre_launch, post_launch, on_exit) -> None — 注册启动钩子，可修改 Minecraft 启动参数，并在游戏进程启动或退出时执行回调。
 #       - http_request(method, url, params, headers, json, data, timeout) -> PluginHttpResponse — 发起受控的 HTTP 请求。
 #       - http_get(url, **kwargs) -> PluginHttpResponse — 受控的 GET 请求，参数与 ``http_request`` 一致。
 #       - http_post(url, **kwargs) -> PluginHttpResponse — 受控的 POST 请求，参数与 ``http_request`` 一致。
 #       - register_auth_provider(provider_id, title, fields, authenticate, resolve_credentials, description=…) -> None — 注册自定义账户认证提供方。
-#       - register_crash_analyzer(name, enrich) -> None — 注册崩溃分析富化回调。
+#       - register_crash_analyzer(name, enrich) -> None — 注册插件崩溃分析回调。
 #       - inject_css(css, key=…) -> None — 向宿主前端注入仅作用于当前插件内容的 CSS 样式。
 #       - inject_html(slot_id, html, key=…, context_key=…) -> None — 向宿主前端注入 HTML 片段。
 #       - inject_script(script) -> None — 向宿主前端注入 JavaScript 脚本。
@@ -128,7 +128,7 @@ def _register_decorated(cls) -> None:
 class Plugin:
     """
     插件基类，所有插件必须继承此类。
-    生命周期：on_load → on_enable → on_frontend_ready → on_disable → on_unload
+    调用顺序：on_load → on_enable → on_frontend_ready → on_disable → on_unload
 
     支持装饰器语法：
         @Plugin.on_event("config:updated")
@@ -224,7 +224,7 @@ class Plugin:
             self.register_command(cmd_name, handler, description)
         for key, default, description, type_ in self._setting_definitions:
             self.register_setting(key, default, description, type_)
-        # 路由和前端注入在对应生命周期阶段应用，此处仅暂存
+        # 路由和前端代码会在插件启用或前端就绪时添加，此处只保存设置
         self._routes_to_register = list(self._route_definitions)
         self._injections_to_apply = list(self._frontend_injections)
 
@@ -360,19 +360,19 @@ class Plugin:
 
     def on_load(self) -> None:
         """
-        生命周期钩子：加载资源，此时不应注册路由或命令。
+        插件加载时读取资源，此时不应注册路由或命令。
         """
 
     def on_enable(self) -> None:
         """
-        生命周期钩子：注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。
+        插件启用时注册路由、命令与设置项。子类覆盖时须调用 super().on_enable()。
         """
         for path, title, icon in self._routes_to_register:
             self.register_route(path, title, icon)
 
     def on_frontend_ready(self) -> None:
         """
-        生命周期钩子：前端就绪后注入 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。
+        前端就绪后添加插件的 CSS/HTML/JS。子类覆盖时须调用 super().on_frontend_ready()。
         """
         for inj_type, args in self._injections_to_apply:
             if inj_type == "css":
@@ -388,12 +388,12 @@ class Plugin:
 
     def on_disable(self) -> None:
         """
-        生命周期钩子：清理运行时状态。
+        插件禁用时清理运行中的状态。
         """
 
     def on_unload(self) -> None:
         """
-        生命周期钩子：释放资源。
+        插件卸载时释放资源。
         """
 
     def register_route(self, path: str, title: str, icon: str = "") -> None:
@@ -517,7 +517,7 @@ class Plugin:
         on_exit: Callable[[LaunchContext], Any] | None = None,
     ) -> None:
         """
-        注册启动钩子，参与 Minecraft 启动参数准备与进程生命周期。
+        注册启动钩子，可修改 Minecraft 启动参数，并在游戏进程启动或退出时执行回调。
 
         ``on_prepare`` 可追加/修改 ``jvm_args``、``game_args`` 与 ``env``；
         ``pre_launch`` / ``post_launch`` 在进程创建前后调用；``on_exit``
@@ -673,14 +673,14 @@ class Plugin:
         enrich: Callable[..., Any],
     ) -> None:
         """
-        注册崩溃分析富化回调。
+        注册插件崩溃分析回调。
 
         ``enrich(context, result)`` 返回的字典浅合并进崩溃分析结果；键
         ``reasons`` 追加到已有原因列表。回调异常会被隔离。插件禁用或卸载时
         宿主自动撤销该回调。
 
         :param name: 稳定的回调标识
-        :param enrich: 接收崩溃上下文与分析结果快照的回调
+        :param enrich: 接收崩溃报告信息和当前分析结果的回调
         """
         self._check_permission(PermissionScope.CRASH, PermissionAction.WRITE, name)
         registry = self.framework.crash_extensions
@@ -703,7 +703,7 @@ class Plugin:
         :param slot_id: 插槽 ID，对应前端 plugin-slot 组件
         :param html: HTML 字符串
         :param key: 更新已有条目时使用的稳定标识；不传则追加
-        :param context_key: 仅注入匹配的重复插槽上下文；不传时注入全部上下文
+        :param context_key: 只向匹配的重复插槽添加内容；省略时添加到全部插槽
         """
         self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework.events.emit("plugin:html_injected", self.name, slot_id, html, key, context_key)
@@ -798,7 +798,7 @@ class Plugin:
         :param template: Vue 模板 HTML
         :param script: 组件选项 JS 代码（data/methods/computed 等，不含 export default）
         :param style: 组件 scoped CSS
-        :param context_key: 可选的重复插槽上下文 key
+        :param context_key: 可选的重复插槽标识
         """
         self.framework.events.emit(
             "plugin:vue_slot_registered", self.name, slot_id, component_name, template, script, style, context_key

@@ -184,13 +184,13 @@ class AccountManager:
     聚合离线、Microsoft 与 Authlib 账户，并维护当前账户选择。
 
     Microsoft 设备码登录的任务状态也由本类统一拥有，确保同一时间只有一个登录流程。
-    Authlib 协议和头像渲染保留独立实现文件，因为它们具有独立的协议与图像处理边界。
+    Authlib 登录和头像渲染分别处理认证协议与图片，因而保留独立实现文件。
 
     :param data_path: 启动器数据目录
     :param microsoft_manager: 测试或定制环境提供的 Microsoft 认证管理器
     :param microsoft_client_id: Microsoft OAuth 客户端 ID
     :param authlib_manager: 测试或定制环境提供的 Authlib 管理器
-    :param event_bus: 当前应用上下文拥有的事件总线
+    :param event_bus: 当前应用使用的事件总线
     """
 
     microsoft_login_poll_interval_seconds = 2
@@ -220,7 +220,7 @@ class AccountManager:
         :param microsoft_manager: 可选的 Microsoft 认证管理器
         :param microsoft_client_id: Microsoft OAuth 客户端 ID
         :param authlib_manager: 可选的 Authlib 账户管理器
-        :param event_bus: 当前应用上下文拥有的事件总线
+        :param event_bus: 当前应用使用的事件总线
         :param disable_ssl_verify: 是否关闭 Microsoft 登录服务器的 SSL 证书校验
         :param resource_path: 只读资源目录，用于定位 ``resources/Skins`` 默认皮肤
         :param state_dir: 账户聚合状态目录；生产环境统一使用 ``~/.ECL/accounts``，

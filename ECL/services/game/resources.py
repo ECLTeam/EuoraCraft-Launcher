@@ -251,7 +251,7 @@ def _normalize_curseforge_hit(hit: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_ftb_hit(hit: dict[str, Any]) -> dict[str, Any]:
-    # 将 FTB 搜索命中转换为 Modrinth 风格字段；FTB 无 slug，用数字 id 兜底。
+    # 将 FTB 搜索结果转成前端需要的字段；FTB 没有 slug 时使用数字 id。
     authors = hit.get("authors") or []
     arts = hit.get("art") if isinstance(hit.get("art"), list) else []
     icon_url = next(
@@ -316,7 +316,7 @@ class ResourceCoordinator(ModSourceAware):
         有界读取资源包根目录的 PNG 图标并转换为列表可展示的 Data URL。
 
         ZIP 不解压到磁盘，文件夹图标解析后必须仍位于包内。图标缺失、损坏或
-        超限时返回 None，让前端回退；完整图片解码失败由前端图片错误处理兜底。
+        图片过大时返回 None；解码失败时由前端显示默认图片。
         调用方须在线程中执行此磁盘读取，不缓存图标以支持刷新后的文件替换。
         """
         try:
@@ -665,7 +665,7 @@ class ResourceCoordinator(ModSourceAware):
         world_id: str | None = None,
     ) -> ResourceDeleteResult:
         """
-        校验整批资源边界后逐项删除，返回部分失败而不掩盖已完成项。
+        确认所有资源都在实例目录内，再逐项删除并报告每项结果。
 
         :param game_path: 游戏根目录
         :param version_id: 实例标识
@@ -1107,7 +1107,7 @@ class ResourceCoordinator(ModSourceAware):
 
         :param source: 数据来源（modrinth/curseforge/ftb）
         :param project_id: 平台项目标识
-        :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），用于兜底项目页 URL
+        :param resource_type: 资源类型（mod/resourcepack/shaderpack/datapack），用于生成备用项目页 URL
         :return: 项目详情字典
         :raises GameServiceError: 来源未知或远端响应结构无效时抛出
         """
@@ -1690,7 +1690,7 @@ class ResourceCoordinator(ModSourceAware):
         按版本 ID 下载在线资源文件到用户指定的保存路径，不写入任何实例目录。
 
         :param source: 数据来源（modrinth）
-        :param project_id: Modrinth 项目 ID（仅用于错误上下文）
+        :param project_id: Modrinth 项目 ID（仅用于错误信息）
         :param version_id_str: Modrinth 版本 ID
         :param save_path: 用户选择的完整目标文件路径
         :param task_id: 任务队列 ID，非空时上报字节进度与实时速度事件

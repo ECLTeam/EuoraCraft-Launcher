@@ -10,7 +10,7 @@
 #       - launch_instance(body, game_path, source, java_path, memory, width, height, fullscreen, jvm_args, game_args, version_isolation, lock_memory, process_priority) -> dict[str, str] — 检查游戏文件并启动实例。
 #       - cancel_launch() -> bool — 取消正在执行的启动或文件补全任务。
 #       - list_crash_candidates(game_path, version_id) -> list[dict[str, Any]] — 列出指定实例文件夹内可分析的候选日志文件。
-#       - analyze_crash_file(file_path, game_path, version_id) -> dict[str, Any] — 在指定版本上下文中分析用户选择的日志或 ZIP 文件。
+#       - analyze_crash_file(file_path, game_path, version_id) -> dict[str, Any] — 分析用户为指定游戏版本选择的日志或 ZIP 文件。
 #       - get_crash_output(report_id) -> dict[str, str] — 返回当前会话崩溃报告中的脱敏游戏输出。
 #       - export_crash_report(report_id, output_path=…) -> dict[str, str] — 导出当前会话内的一份崩溃报告。
 #       - get_version_stats(game_path, version_id) -> dict[str, int] — 返回指定版本目录中的运行统计。
@@ -764,7 +764,7 @@ class LaunchCoordinator(_GameState):
         """
         检查游戏文件并启动实例。
 
-        :param body: 经过边界校验的 IPC 请求数据
+        :param body: 前端传入的 IPC 请求参数
         :param game_path: Minecraft 游戏根目录
         :param source: 下载源名称，如 ``official`` 或 ``bmclapi``
         :param java_path: Java 可执行文件路径
@@ -1260,7 +1260,7 @@ class LaunchCoordinator(_GameState):
         )
 
     def _handle_instance_log(self, run_token: str, line: str, instance_id: str) -> None:
-        # 缓冲单个游戏进程的近期输出，并记录不依赖退出码的生命周期信号。
+        # 保存单个游戏进程的近期输出，并记录日志中的崩溃迹象。
         normalized = str(line or "").rstrip("\r\n")
         with self._lock:
             trace_run = self._running_games.get(run_token)
@@ -1314,7 +1314,7 @@ class LaunchCoordinator(_GameState):
         self._crash_capture.finalize(self._crash_snapshot(run_token, run, action))
 
     def _crash_snapshot(self, run_token: str, run: _RunningGame, action: str) -> CrashRunSnapshot:
-        # 汇集崩溃判定所需的运行数据快照；信号判定与调度由崩溃捕获模块负责。
+        # 收集游戏退出码、进程输出和崩溃标记，交给崩溃捕获模块判断。
         return CrashRunSnapshot(
             run_token=run_token,
             action=action,
@@ -1341,7 +1341,7 @@ class LaunchCoordinator(_GameState):
 
     def analyze_crash_file(self, file_path: Any, game_path: Any, version_id: Any) -> dict[str, Any]:
         """
-        在指定版本上下文中分析用户选择的日志或 ZIP 文件。
+        分析用户为指定游戏版本选择的日志或 ZIP 文件。
 
         :param file_path: 用户明确选择的本地文件
         :param game_path: Minecraft 游戏根目录

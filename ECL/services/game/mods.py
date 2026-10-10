@@ -63,7 +63,7 @@ class ModCoordinator(_GameState):
         self, data_path: Path, environment: dict[str, str | None] | None = None, manifest: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         """
-        从已解析的实际游戏数据目录列出模组，避免再次归一化隔离目录。
+        直接从已确定的游戏数据目录列出模组，避免再次改变隔离目录路径。
         """
         mods_dir = data_path / "mods"
         if not mods_dir.is_dir():
@@ -174,11 +174,11 @@ class ModCoordinator(_GameState):
         """
         从 mod jar 中提取图标并编码为数据 URL。
 
-        先尝试元数据声明的图标路径，缺失时按常见命名兜底探测。
+        先读取元数据指定的图标，找不到时尝试常见文件名。
 
         :param path: 模组 Jar 文件路径
         :param icon: 元数据解析出的图标路径或其映射
-        :param fallback_ids: 用于构造兜底路径的 mod id/名称候选
+        :param fallback_ids: 用于尝试常见图标路径的 mod ID 或名称
         :return: 图标的数据 URL，未找到或超限时为空字符串
         """
         candidates: list[str] = []

@@ -160,7 +160,7 @@ def _read_icns_entries(icns_path: Path) -> list[tuple[bytes, bytes]]:
 
     :param icns_path: icns 文件路径
     :return: 按文件顺序排列的「条目类型 + 负载」列表
-    :raises AssertionError: 容器魔数、总长度或条目边界不合法时抛出
+    :raises AssertionError: 文件头、总长度或图标条目位置无效时抛出
     """
     data = icns_path.read_bytes()
     magic, total_length = struct.unpack_from(">4sI", data, 0)

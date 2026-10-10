@@ -8,14 +8,14 @@
 # 公开接口：
 #   - class ConnectorProtocolResponse — 一个 Scaffolding 扩展协议响应。
 #       - json(value, status) -> ConnectorProtocolResponse — 把 JSON 值编码为 UTF-8 协议响应。
-#   - class ConnectorProtocolRequest — 房主收到扩展协议请求时提供给插件的只读上下文。
+#   - class ConnectorProtocolRequest — 保存房主收到的扩展协议请求，供插件只读访问。
 #       - json(default=…) -> Any — 将请求体解析为 JSON；空请求体返回 ``default``。
 #       - remove_player(machine_id) -> None — 从房主玩家列表中移除指定机器，供优雅退出协议使用。
-#   - class ConnectorSessionContext — 插件在当前联机会话中可使用的受控客户端能力。
+#   - class ConnectorSessionContext — 向插件提供当前房间信息，以及有限的请求发送和头像读取方法。
 #       - request(protocol, body=…) -> tuple[int, bytes] — 向当前房主发送原始扩展协议请求。
 #       - request_json(protocol, payload=…) -> Any — 发送 JSON 扩展请求并解析成功响应。
 #       - local_player_icon() -> str | None — 返回本机玩家完整皮肤的 base64（PNG），供联机头像交换使用。
-#   - class ConnectorExtensionRegistry — 保存插件联机扩展，并隔离单个扩展的协议与生命周期错误。
+#   - class ConnectorExtensionRegistry — 保存插件的联机扩展；单个扩展出错时，其他扩展仍可运行。
 #       - register(owner, name, protocols, on_guest_joined, enrich_status, before_leave, on_reset) -> None — 注册或原位更新一个插件拥有的联机扩展。
 #       - unregister_owner(owner) -> None — 移除指定插件拥有的全部联机扩展。
 #       - protocol_names() -> list[str] — 返回当前需要参与 Scaffolding 协商的扩展协议名。
@@ -71,7 +71,7 @@ class ConnectorProtocolResponse:
 @dataclass(frozen=True, slots=True)
 class ConnectorProtocolRequest:
     """
-    房主收到扩展协议请求时提供给插件的只读上下文。
+    保存房主收到的扩展协议请求，供插件只读访问。
     """
 
     protocol: str
@@ -99,7 +99,7 @@ class ConnectorProtocolRequest:
 @dataclass(frozen=True, slots=True)
 class ConnectorSessionContext:
     """
-    插件在当前联机会话中可使用的受控客户端能力。
+    向插件提供当前房间信息，以及有限的请求发送和头像读取方法。
     """
 
     mode: str
@@ -167,7 +167,7 @@ class _RegisteredExtension:
 
 class ConnectorExtensionRegistry:
     """
-    保存插件联机扩展，并隔离单个扩展的协议与生命周期错误。
+    保存插件的联机扩展；单个扩展出错时，其他扩展仍可运行。
     """
 
     def __init__(self) -> None:

@@ -6,7 +6,7 @@
 # 文件作用：下载并校验 Java 到专用临时目录，原子安装登记，并持久核对运行时占用。
 #
 # 公开接口：
-#   - class JavaInstaller — 在应用任务执行边界完成安装，不改调用方启动配置。
+#   - class JavaInstaller — 在后台任务中安装 Java，不修改调用方传入的启动设置。
 #   - class JavaLifecycle — 核对、取得及释放持久使用证据。
 #   - class RuntimeLease — 关联启动阶段和实际游戏进程的运行时占用。
 # ============================================================
@@ -66,7 +66,7 @@ class JavaInstaller:
         执行一个已验证计划，持久化失败时回滚本次目录。
 
         :param plan: 后端保存的不可变安装计划
-        :param context: 统一任务的取消、进度和最终提交边界
+        :param context: 用于取消任务、报告进度和保存最终结果的任务对象
         :return: 已提交的运行时
         :raises JavaError: 下载、校验、探测或提交失败时抛出
         """

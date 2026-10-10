@@ -11,7 +11,7 @@
 #       - port() -> int | None — 返回实际监听端口，服务未启动时为 None。
 #       - frontend_url() -> str | None — 返回内嵌前端入口地址；未托管或服务未启动时为 None。
 #       - install_frontend_handlers(handlers) -> None — 装入启动器前端命令表，使工具箱内嵌前端可通过 frontend.invoke 驱动后端。
-#       - start() -> None — 启动后台线程承载 WebSocket 服务，就绪后写入连接发现文件。
+#       - start() -> None — 在后台线程启动 WebSocket 服务，并在就绪后写入连接信息文件。
 #       - close() -> None — 停止服务线程、退订全部事件并删除连接发现文件，重复调用无副作用。
 #       - dispatch_log(record) -> None — 把一条日志转换为协议条目，写入历史缓存并推送给已订阅客户端。
 # ============================================================
@@ -147,7 +147,7 @@ class DevChannelService:
         """
         收集依赖并生成一次性访问令牌，服务尚未启动。
 
-        :param plugins: 插件管理器，提供列表与生命周期操作
+        :param plugins: 插件管理器，提供插件列表、启用和关闭操作
         :param events: 应用事件总线，用于转发白名单事件
         :param data_path: 启动器数据目录，发现文件写入其中
         :param launcher_version: 当前启动器版本号
@@ -168,7 +168,7 @@ class DevChannelService:
         self._port: int | None = None  # 实际监听端口
         self._loop: asyncio.AbstractEventLoop | None = None  # 服务线程的事件循环
         self._stop_future: asyncio.Future[None] | None = None  # 通知服务线程退出的信号
-        self._thread: threading.Thread | None = None  # 承载服务事件循环的后台线程
+        self._thread: threading.Thread | None = None  # 运行 WebSocket 服务事件循环的后台线程
         self._log_handler: _ChannelLogHandler | None = None  # 挂在根日志器上的推送处理器
         self._log_history: deque[dict[str, Any]] = deque(maxlen=self.log_history_limit)  # 最近日志缓存
         self._sessions: set[_Session] = set()  # 已通过鉴权的连接会话
@@ -226,7 +226,7 @@ class DevChannelService:
 
     def start(self) -> None:
         """
-        启动后台线程承载 WebSocket 服务，就绪后写入连接发现文件。
+        在后台线程启动 WebSocket 服务，并在就绪后写入连接信息文件。
 
         :raises RuntimeError: 服务线程在超时时间内未能完成端口绑定
         """
@@ -289,7 +289,7 @@ class DevChannelService:
                 self._notify(session, "log.line", entry)
 
     def _run_loop(self, started: threading.Event, failures: list[BaseException]) -> None:
-        # 在独立事件循环中承载 WebSocket 服务，直到收到关闭信号。
+        # 在独立事件循环中运行 WebSocket 服务，直到收到关闭信号。
         async def main() -> None:
             try:
                 server = await serve(
@@ -557,7 +557,7 @@ class DevChannelService:
         await websocket.send(json.dumps(payload, ensure_ascii=False))
 
     def _notify(self, session: _Session, event: str, data: Any) -> None:
-        # 从任意线程向客户端推送通知，实际发送调度回服务线程的事件循环。
+        # 其他线程发来的通知由 WebSocket 服务线程发送给客户端。
         loop = self._loop
         if loop is None or self._closed:
             return
@@ -640,7 +640,7 @@ class DevChannelService:
 
     def _method_preview_session_create(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         """
-        为一个工作台 iframe 创建短生命周期、来源绑定的预览会话。
+        为工作台 iframe 创建临时预览会话，只允许指定来源使用。
 
         开发工具已通过 Dev Channel token 鉴权，但 iframe 仍必须携带独立 nonce 并只向
         请求方声明的本地工作台来源发送受限消息。会话随 websocket 断开、显式关闭或

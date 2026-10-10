@@ -16,6 +16,9 @@
 #   - test_parse_rejects_unknown_log_level() -> None
 #   - test_version_flag_prints_version_and_exits(capsys) -> None
 #   - test_help_flag_prints_usage_and_exits(capsys) -> None
+#   - test_main_forwards_launcher_entry() -> None
+#   - test_run_launcher_passes_options_and_exit_code(monkeypatch) -> None
+#   - test_run_launcher_exits_before_desktop_import(argv, exit_code, monkeypatch, tmp_path) -> None
 #   - test_parse_quick_launch_targets() -> None
 #   - test_parse_world_target_allows_spaces() -> None
 #   - test_parse_server_requires_launch() -> None
@@ -28,9 +31,14 @@
 #   - test_apply_overrides_creates_missing_sections() -> None
 # ============================================================
 
+import builtins
+import sys
+from types import ModuleType
+
 import pytest
 
-from ECL.cli import LaunchOptions, apply_launch_overrides, parse_launch_options
+import main
+from ECL.cli import LaunchOptions, apply_launch_overrides, parse_launch_options, run_launcher
 from ECL.foundation.version import __version__
 
 
@@ -132,6 +140,60 @@ def test_help_flag_prints_usage_and_exits(capsys) -> None:
         "--world",
     ):
         assert argument in output
+
+
+def test_main_forwards_launcher_entry() -> None:
+    """
+    进程入口应直接转交给命令行模块的启动函数。
+    """
+    assert main.run_launcher is run_launcher
+
+
+def test_run_launcher_passes_options_and_exit_code(monkeypatch) -> None:
+    """
+    命令行模块应把解析结果交给启动器，并返回其退出码。
+    """
+    received: list[LaunchOptions] = []
+
+    class FakeLauncher:
+        def __init__(self, options: LaunchOptions) -> None:
+            received.append(options)
+
+        def run(self) -> int:
+            return 3
+
+    launcher_module = ModuleType("ECL.launcher")
+    launcher_module.EuoraCraftLauncher = FakeLauncher
+    monkeypatch.setitem(sys.modules, "ECL.launcher", launcher_module)
+
+    assert run_launcher(["--debug"]) == 3
+    monkeypatch.setattr(sys, "argv", ["main.py", "--log-level=warning"])
+    assert run_launcher() == 3
+    assert received == [
+        LaunchOptions(forwarded_argv=("--debug",), debug=True),
+        LaunchOptions(forwarded_argv=("--log-level=warning",), log_level="warning"),
+    ]
+
+
+@pytest.mark.parametrize(("argv", "exit_code"), [(["--help"], 0), (["--version"], 0), (["--unknown"], 2)])
+def test_run_launcher_exits_before_desktop_import(argv, exit_code, monkeypatch, tmp_path) -> None:
+    """
+    帮助、版本和错误参数应在导入桌面后端前结束。
+    """
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "ECL.launcher":
+            raise AssertionError("不应导入桌面后端")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    data_path = tmp_path / "unused-data"
+    with pytest.raises(SystemExit) as exc_info:
+        run_launcher(["--data-dir", str(data_path), *argv])
+
+    assert exc_info.value.code == exit_code
+    assert not data_path.exists()
 
 
 def test_parse_quick_launch_targets() -> None:
