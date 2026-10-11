@@ -38,7 +38,7 @@ def test_worker_waits_for_permission_before_plugin_code(tmp_path: Path) -> None:
         assert supervisor.pid != os.getpid()
         assert supervisor.state == "awaiting_authorization"
         assert not marker.exists()
-        supervisor.authorize_load(snapshot)
+        supervisor._authorize_snapshot(snapshot)
         assert marker.read_text(encoding="utf-8") == "entered"
         reply = supervisor.request("runtime.info")
         assert reply["ok"] is True
@@ -63,7 +63,7 @@ def test_changed_snapshot_is_not_executed(tmp_path: Path) -> None:
     snapshot, marker = _snapshot(tmp_path)
     (snapshot.root_path / "main.py").write_text("raise RuntimeError('changed')", encoding="utf-8")
     with WorkerSupervisor() as supervisor, pytest.raises(ProtocolError):
-        supervisor.authorize_load(snapshot)
+        supervisor._authorize_snapshot(snapshot)
     assert not marker.exists()
 
 
@@ -72,7 +72,7 @@ def test_plugin_exception_is_reported_without_private_exception_text(tmp_path: P
     (snapshot.root_path / "main.py").write_text("raise ValueError('private-token-must-not-leak')", encoding="utf-8")
     with WorkerSupervisor() as supervisor:
         with pytest.raises(WindowsRuntimeError) as error:
-            supervisor.authorize_load(CodeSnapshot.capture(snapshot.root_path))
+            supervisor._authorize_snapshot(CodeSnapshot.capture(snapshot.root_path))
         assert error.value.error_code == "PLUGIN_WORKER_EXECUTION_FAILED"
         assert "private-token" not in str(error.value)
     assert not marker.exists()
@@ -88,7 +88,7 @@ def test_frozen_worker_gate_with_real_artifact(tmp_path: Path) -> None:
     with WorkerSupervisor(executable) as supervisor:
         assert not marker.exists()
         assert supervisor.image_path == executable.executable_path
-        supervisor.authorize_load(snapshot)
+        supervisor._authorize_snapshot(snapshot)
         assert marker.read_text(encoding="utf-8") == "entered"
         assert supervisor.request("runtime.info")["ok"] is True
 
@@ -113,7 +113,7 @@ def test_frozen_runtime_resolves_its_original_executable(tmp_path: Path) -> None
         encoding="utf-8",
     )
     with WorkerSupervisor(executable) as supervisor:
-        supervisor.authorize_load(CodeSnapshot.capture(code_path))
+        supervisor._authorize_snapshot(CodeSnapshot.capture(code_path))
     result = json.loads(report_path.read_text(encoding="utf-8"))
     assert Path(result["executable"]).resolve() == executable.executable_path
     assert result["project"] == "None"

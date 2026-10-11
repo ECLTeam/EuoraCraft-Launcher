@@ -7,5 +7,6 @@
 # ============================================================
 
 from ecl_plugin_api.contracts import JsonValue, ProtocolError
+from ecl_plugin_api.plugin import HostApiError, HostClient, Plugin
 
-__all__ = ["JsonValue", "ProtocolError"]
+__all__ = ["HostApiError", "HostClient", "JsonValue", "Plugin", "ProtocolError"]

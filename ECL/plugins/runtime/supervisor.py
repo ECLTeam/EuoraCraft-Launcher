@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import os
 import platform
+from collections.abc import Callable
 from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
 from uuid import uuid4
 
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
+from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ecl_plugin_api._imports import DependencySnapshot
+from ecl_plugin_api._rpc import RpcPeer, RpcRequest
 from ecl_plugin_api._transport import PipeChannel, PipeServer
 from ecl_plugin_api._windows import WindowsRuntimeError
 from ecl_plugin_api.contracts import JsonValue, ProtocolError, WireMessage
@@ -37,11 +40,17 @@ class WorkerSupervisor:
     同步方法须在后台边界调用，不得直接阻塞桌面事件循环。
     """
 
-    def __init__(self, executable: ExecutableLaunchSpec | None = None) -> None:
+    def __init__(
+        self,
+        executable: ExecutableLaunchSpec | None = None,
+        *,
+        host_handler: Callable[[RpcRequest], dict[str, JsonValue]] | None = None,
+    ) -> None:
         """
         建立尚未创建进程的监管对象。
 
         :param executable: 测试指定的真实发行入口；None解析当前宿主
+        :param host_handler: 绑定本连接主体的白名单 Host API 分派；默认全部拒绝
         """
         self.executable: ExecutableLaunchSpec = executable or ExecutableLaunchSpec.current()
         self.run_id: str = uuid4().hex
@@ -54,7 +63,9 @@ class WorkerSupervisor:
         self._job: WindowsJob | None = None
         self._channel: PipeChannel | None = None
         self._lock = RLock()
-        self._request_sequence = 0
+        self._host_handler = host_handler
+        self._peer: RpcPeer | None = None
+        self._has_started = False
 
     def start(self, timeout: float = 30.0) -> dict[str, JsonValue]:
         """
@@ -67,9 +78,10 @@ class WorkerSupervisor:
         if platform.system() != "Windows" or platform.machine().casefold() not in {"amd64", "x86_64"}:
             raise WindowsRuntimeError("当前平台尚未验收插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
         with self._lock:
-            if self.state != "stopped":
+            if self.state != "stopped" or self._has_started:
                 raise WindowsRuntimeError("Worker 运行会话已使用", "PLUGIN_SESSION_EXPIRED")
             self.state = "starting"
+            self._has_started = True
             server: PipeServer | None = None
             try:
                 self._job = WindowsJob()
@@ -119,9 +131,40 @@ class WorkerSupervisor:
 
     def authorize_load(
         self,
+        session: PluginGrantSession,
+        entry_file: str = "main.py",
+        dependency: PluginDependencyDirectory | None = None,
+        *,
+        entry_class: str = "Plugin",
+    ) -> None:
+        """
+        只为本运行已经审阅且必要权限满足的内容发出加载许可。
+
+        :param session: 宿主持有的授权会话，不能由 Worker 自报
+        :param entry_file: 快照内的 Python 入口
+        :param dependency: 现有共享依赖池中已就绪的目录
+        :param entry_class: v2 Plugin 的实际类名
+        :raises PluginGrantError: 未审阅、缺少必要许可或运行身份不匹配时抛出
+        """
+        if session.run_id != self.run_id:
+            raise PluginGrantError("授权不属于当前插件运行", "PLUGIN_SESSION_EXPIRED")
+        session.binding.verify()
+        view = session.view()
+        if view.error_code:
+            raise PluginGrantError("插件授权记录不可用", view.error_code)
+        if view.revision == 0:
+            raise PluginGrantError("插件内容尚未完成用户审阅", "PLUGIN_GRANT_REVIEW_REQUIRED")
+        if not view.required_satisfied:
+            raise PluginGrantError("插件缺少必要授权", "PLUGIN_REQUIRED_PERMISSION_DENIED")
+        self._authorize_snapshot(session.binding.snapshot, entry_file, dependency, entry_class=entry_class)
+
+    def _authorize_snapshot(
+        self,
         snapshot: CodeSnapshot,
         entry_file: str = "main.py",
         dependency: PluginDependencyDirectory | None = None,
+        *,
+        entry_class: str = "Plugin",
     ) -> None:
         """
         复核宿主批准的完整快照并发出唯一一次入口加载许可。
@@ -149,8 +192,9 @@ class WorkerSupervisor:
                         "load_authorized",
                         {
                             "root_path": str(snapshot.root_path),
-                            "content_digest": snapshot.digest(),
+                            "code_digest": snapshot.digest(),
                             "entry_file": entry_file,
+                            "entry_class": entry_class,
                             "dependency": dependency_payload,
                         },
                     )
@@ -165,6 +209,8 @@ class WorkerSupervisor:
                 if reply.kind != "loaded" or reply.params.get("pid") != self.pid:
                     raise ProtocolError("Worker 没有确认许可加载结果")
                 self.state = "loaded"
+                self._peer = RpcPeer(self._channel, "host", self._dispatch_host)
+                self._peer.start()
             except BaseException:
                 self.state = "failed"
                 self.close()
@@ -193,7 +239,7 @@ class WorkerSupervisor:
         self, method: str, params: dict[str, JsonValue] | None = None, timeout: float = 5.0
     ) -> dict[str, JsonValue]:
         """
-        串行调用已经接线的引导方法，不提供任意宿主服务转发。
+        调用已接线的方法，等待期间接收线程继续处理反向请求。
 
         :param method: 已定义的 Worker 方法
         :param params: 方法的 JSON 参数
@@ -202,15 +248,18 @@ class WorkerSupervisor:
         :raises ProtocolError: 状态或回复标识不符时抛出
         """
         with self._lock:
-            if self.state != "loaded" or self._channel is None:
+            if self.state != "loaded" or self._peer is None:
                 raise ProtocolError("Worker 尚未完成许可加载")
-            self._request_sequence += 1
-            request_id = str(self._request_sequence)
-            self._channel.send(WireMessage("request", params or {}, request_id, method, int(timeout * 1000)), timeout)
-            response = self._channel.receive(timeout)
-            if response.kind != "response" or response.request_id != request_id:
-                raise ProtocolError("Worker 回复不属于当前请求")
-            return response.params
+            peer = self._peer
+        return peer.call(method, params if params is not None else {}, timeout)
+
+    def _dispatch_host(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只调用宿主明确绑定的白名单，不把 Worker 方法名反射到完整服务对象。
+        """
+        if self._host_handler is None:
+            raise ProtocolError("此 Host API 尚未接线", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self._host_handler(request)
 
     def active_count(self) -> int:
         """
@@ -229,14 +278,18 @@ class WorkerSupervisor:
         with self._lock:
             if self._channel is not None:
                 try:
-                    self._channel.send(WireMessage("shutdown", {}), 1)
-                    self._channel.receive(1)
+                    if self._peer is not None:
+                        self._peer.shutdown(1)
+                    else:
+                        self._channel.send(WireMessage("shutdown", {}), 1)
+                        self._channel.receive(1)
                 except (OSError, ProtocolError, WindowsRuntimeError):
                     # 关闭阶段允许对端已退出，实际停止仍由下方 Job 查询确认。
                     self.state = "stopping"
                 finally:
                     self._channel.close()
                     self._channel = None
+                    self._peer = None
             if self._job is not None:
                 deadline = monotonic() + 1
                 while self._job.active_count() and monotonic() < deadline:

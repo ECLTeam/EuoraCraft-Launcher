@@ -13,15 +13,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
+import importlib.machinery
 import os
 import sys
 from pathlib import Path
 from types import ModuleType
 
 from ecl_plugin_api._imports import DependencySnapshot, LockedImports
+from ecl_plugin_api._rpc import RpcPeer, RpcRequest
+from ecl_plugin_api._runtime import PluginRuntime
 from ecl_plugin_api._transport import PipeChannel, connect_pipe
 from ecl_plugin_api._windows import WindowsApi, WindowsRuntimeError
 from ecl_plugin_api.contracts import JsonValue, ProtocolError, ProtocolPolicy, WireMessage
+from ecl_plugin_api.plugin import HostClient
 from ecl_plugin_api.snapshot import CodeSnapshot
 
 
@@ -30,14 +35,23 @@ def _load(message: WireMessage, run_id: str) -> tuple[ModuleType, LockedImports]
     只有宿主许可到达并通过完整快照复核，才执行插件入口。
     """
     params = message.params
-    if message.kind != "load_authorized" or set(params) != {"root_path", "content_digest", "entry_file", "dependency"}:
+    if message.kind != "load_authorized" or set(params) != {
+        "root_path",
+        "code_digest",
+        "entry_file",
+        "entry_class",
+        "dependency",
+    }:
         raise ProtocolError("Worker 尚未得到合法加载许可")
-    root, digest, entry = params["root_path"], params["content_digest"], params["entry_file"]
+    root, digest, entry = params["root_path"], params["code_digest"], params["entry_file"]
     if (
         not isinstance(root, str)
         or not Path(root).is_absolute()
         or not isinstance(digest, str)
         or not isinstance(entry, str)
+        or not isinstance(params["entry_class"], str)
+        or len(params["entry_class"]) > 128
+        or not params["entry_class"].isidentifier()
     ):
         raise ProtocolError("Worker 加载许可字段无效")
     snapshot = CodeSnapshot.capture(Path(root))
@@ -53,10 +67,30 @@ def _load(message: WireMessage, run_id: str) -> tuple[ModuleType, LockedImports]
     site_path, packages = _dependency_imports(params["dependency"], roots)
     imports = LockedImports(roots, site_path, packages)
     imports.install()
-    module = ModuleType(f"_ecl_worker_{run_id}")
-    module.__file__ = str(entry_path)
-    sys.modules[module.__name__] = module
     try:
+        namespace_name = f"_ecl_worker_{run_id}"
+        namespace = ModuleType(namespace_name)
+        namespace.__path__ = [str(snapshot.root_path)]
+        namespace.__spec__ = importlib.machinery.ModuleSpec(
+            namespace_name,
+            importlib.machinery.NamespaceLoader(
+                namespace_name, namespace.__path__, importlib.machinery.PathFinder.find_spec
+            ),
+            is_package=True,
+        )
+        namespace.__spec__.submodule_search_locations = namespace.__path__
+        sys.modules[namespace_name] = namespace
+        parts = entry_path.relative_to(snapshot.root_path).with_suffix("").parts
+        if not all(part.isidentifier() for part in parts):
+            raise ProtocolError("插件入口不是合法包内模块")
+        package_name = ".".join((namespace_name, *parts[:-1]))
+        if parts[:-1]:
+            importlib.import_module(package_name)
+        module = ModuleType(".".join((namespace_name, *parts)))
+        module.__file__ = str(entry_path)
+        module.__package__ = package_name
+        module.__spec__ = importlib.machinery.ModuleSpec(module.__name__, None, origin=str(entry_path))
+        sys.modules[module.__name__] = module
         exec(compile(source, str(entry_path), "exec", dont_inherit=True), module.__dict__)
     except BaseException:
         imports.close()
@@ -129,41 +163,31 @@ def _serve(channel: PipeChannel, run_id: str) -> None:
         return
     module, imports = _load(message, run_id)
     try:
-        _serve_loaded(channel, module)
+        entry_class = message.params["entry_class"]
+        assert isinstance(entry_class, str)
+        _serve_loaded(channel, module, entry_class)
     finally:
         imports.close()
 
 
-def _serve_loaded(channel: PipeChannel, module: ModuleType) -> None:
+def _serve_loaded(channel: PipeChannel, module: ModuleType, entry_class: str) -> None:
+    """
+    在接收线程之外处理生命周期，反向调用使用同一认证通道。
+    """
+    runtime: PluginRuntime | None = None
+
+    def dispatch(request: RpcRequest) -> dict[str, JsonValue]:
+        assert runtime is not None
+        return runtime.handle(request)
+
+    peer = RpcPeer(channel, "worker", dispatch)
+    runtime = PluginRuntime(module, entry_class, HostClient(peer))
     channel.send(WireMessage("loaded", {"pid": os.getpid(), "module": module.__name__}))
-    while True:
-        try:
-            message = channel.receive(30)
-        except TimeoutError:
-            continue
-        if message.kind == "shutdown":
-            channel.send(WireMessage("stopped", {}))
-            return
-        if message.kind != "request":
-            raise ProtocolError("Worker 收到不允许的消息类型")
-        if message.method == "runtime.info" and not message.params:
-            data: dict[str, JsonValue] = {"api_version": 2, "pid": os.getpid(), "run_state": "loaded"}
-            channel.send(WireMessage("response", {"ok": True, "data": data}, message.request_id))
-        else:
-            channel.send(
-                WireMessage(
-                    "response",
-                    {
-                        "ok": False,
-                        "error": {
-                            "code": "PLUGIN_API_METHOD_NOT_FOUND",
-                            "message": "此业务接口尚未接线",
-                            "retryable": False,
-                        },
-                    },
-                    message.request_id,
-                )
-            )
+    peer.start()
+    try:
+        peer.wait_closed()
+    finally:
+        peer.close()
 
 
 def run_worker(argv: list[str]) -> int:

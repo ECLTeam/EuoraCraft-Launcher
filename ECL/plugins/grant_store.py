@@ -138,6 +138,24 @@ class PluginGrantSession:
         """
         return self._store._view(self)
 
+    @property
+    def run_id(self) -> str:
+        """
+        返回宿主生成的运行标识，不能由 Worker 或管理请求体改写。
+
+        :return: 本授权会话的只读运行身份
+        """
+        return self._state.run_id
+
+    @property
+    def binding(self) -> PluginContentBinding:
+        """
+        返回不可变的已捕获内容，用于许可加载前再次复核。
+
+        :return: 本运行绑定的代码、权限和依赖身份
+        """
+        return self._state.binding
+
     def authorize(self, capability: str, resource_refs: tuple[str, ...] = ()) -> GrantLease:
         """
         为本次业务操作取得宿主准入快照，不预先允许后续提交。

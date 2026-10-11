@@ -74,7 +74,7 @@ def test_workers_use_different_locked_versions_and_metadata(tmp_path: Path, use_
             supervisor = WorkerSupervisor(executable)
             supervisors.append(supervisor)
             supervisor.start()
-            supervisor.authorize_load(CodeSnapshot.capture(code_path), dependency=directory)
+            supervisor._authorize_snapshot(CodeSnapshot.capture(code_path), dependency=directory)
             results.append(json.loads(report_path.read_text(encoding="utf-8")))
             assert Path(results[-1]["module_file"]).is_relative_to(directory.site_path)
         assert [item["version"] for item in results] == ["1.0.0", "2.0.0"]
@@ -112,7 +112,7 @@ def test_native_wheel_loads_from_shared_pool_in_frozen_worker(tmp_path: Path) ->
         Path(artifact).resolve(), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka")
     )
     with WorkerSupervisor(executable) as supervisor:
-        supervisor.authorize_load(CodeSnapshot.capture(code_path), dependency=directory)
+        supervisor._authorize_snapshot(CodeSnapshot.capture(code_path), dependency=directory)
     result = json.loads(report_path.read_text(encoding="utf-8"))
     assert len(result["hash"]) == 16 and result["metadata"] == "3.6.0"
     assert Path(result["file"]).is_relative_to(directory.site_path)
