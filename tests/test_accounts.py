@@ -272,6 +272,12 @@ def test_offline_accounts_persist_and_emit_changes(tmp_path) -> None:
     assert account["alias"] == "Steve"
     assert manager.current_account()["id"] == account["id"]
     assert events[-1]["current"]["id"] == account["id"]
+    assert events[-1]["textureInvalidatedAccountIds"] == []
+
+    manager.set_favorite(account["id"], True)
+    manager.set_pinned(account["id"], True)
+    manager.switch_account(account["id"])
+    assert all(event["textureInvalidatedAccountIds"] == [] for event in events)
 
     restored = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
     assert restored.current_account()["alias"] == "Steve"
@@ -739,12 +745,15 @@ async def _manager_with_microsoft_account(tmp_path) -> tuple[AccountManager, Fak
 
 async def test_upload_skin_refreshes_account(tmp_path) -> None:
     manager, microsoft_manager = await _manager_with_microsoft_account(tmp_path)
+    events = []
+    manager.events.subscribe("accounts:changed", events.append)
 
     account = await manager.upload_skin("microsoft-account", "slim", b"\x89PNG")
 
     assert microsoft_manager.skin_variant == "slim"
     assert account["type"] == "microsoft"
     assert account["id"] == "microsoft-account"
+    assert events[-1]["textureInvalidatedAccountIds"] == ["microsoft-account"]
 
 
 async def test_upload_skin_normalizes_variant(tmp_path) -> None:

@@ -309,6 +309,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "wardrobe_apply_skin",
         "accounts_texture_urls",
         "select_image",
+        "image_fetch_data_url",
         "skin_avatar_export",
         "select_file",
         "select_save_file",

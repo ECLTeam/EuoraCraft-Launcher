@@ -114,6 +114,7 @@
 #   - class MicrosoftCapeRequest
 #   - class ImageSelectionRequest
 #   - class SkinAvatarExportRequest — 校验头像导出的图片、尺寸与源文件路径。
+#   - class ImageFetchRequest — 校验远程图片读取与显式刷新请求。
 #   - class FileSelectionRequest
 #   - class DirectorySelectionRequest — 校验目录选择用途和初始位置。
 #   - class FileSaveRequest
@@ -847,6 +848,15 @@ class MicrosoftCapeRequest(AccountTextureRequest):
     cape_id: str = Field(min_length=1)
 
 
+class ImageFetchRequest(RequestModel):
+    """
+    校验远程图片读取请求，显式刷新只接受布尔值。
+    """
+
+    url: str = Field(min_length=1, max_length=8192)
+    refresh: bool = Field(default=False, strict=True)
+
+
 class ImageSelectionRequest(RequestModel):
     purpose: ImagePurpose = ImagePurpose.BACKGROUND
 
@@ -1057,6 +1067,7 @@ class RequestModelRegistry:
         "microsoft_set_cape": MicrosoftCapeRequest,
         "microsoft_reset_cape": AccountTextureRequest,
         "select_image": ImageSelectionRequest,
+        "image_fetch_data_url": ImageFetchRequest,
         "skin_avatar_export": SkinAvatarExportRequest,
         "select_file": FileSelectionRequest,
         "select_save_file": FileSaveRequest,
@@ -1110,6 +1121,7 @@ __all__ = [
     "GameUninstallRequest",
     "GameVersionRequest",
     "GameVersionSettingsUpdate",
+    "ImageFetchRequest",
     "ImagePurpose",
     "ImageSelectionRequest",
     "InstallRequest",

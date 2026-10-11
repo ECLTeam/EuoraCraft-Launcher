@@ -30,14 +30,18 @@
 
 import asyncio
 import os
-import struct
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from io import BytesIO
+from threading import Event
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
+from PIL import Image
 
 
 class _MockEmitter:
@@ -184,7 +188,9 @@ def _build_api(tmp_path):
 
 
 def _make_png_bytes() -> bytes:
-    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I4sII", 13, b"IHDR", 100, 100) + b"fixture"
+    output = BytesIO()
+    Image.new("RGBA", (64, 64), "red").save(output, format="PNG")
+    return output.getvalue()
 
 
 class _AsyncMockClient:
@@ -364,3 +370,184 @@ def test_image_fetch_data_url_uses_stale_disk_cache_when_texture_server_fails(tm
     assert result["data"]["cached"] is True
     assert result["data"]["stale"] is True
     assert result["data"]["dataUrl"].startswith("data:image/png;base64,")
+
+
+def test_explicit_image_refresh_replaces_same_url_and_keeps_old_file_on_failure(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    url = "https://example.com/skin.png"
+    original = _make_png_bytes()
+    api._write_remote_image_cache(url, ".png", original)
+    replacement = BytesIO()
+    Image.new("RGBA", (64, 64), "blue").save(replacement, format="PNG")
+    downloads = []
+
+    async def download(requested_url):
+        downloads.append(requested_url)
+        return replacement.getvalue(), _MockResponse(200, b"", headers={"content-type": "image/png"}, url=url)
+
+    monkeypatch.setattr(files_module, "_download_remote_image", download)
+    first = asyncio.run(api.image_fetch_data_url({"url": url}))
+    assert first["data"]["cached"] is True
+    refreshed = asyncio.run(api.image_fetch_data_url({"url": url, "refresh": True}))
+    assert refreshed["data"]["cached"] is False
+    assert api._read_remote_image_cache(url)[0] == replacement.getvalue()
+    assert downloads == [url]
+
+    async def fail_download(_url):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(files_module, "_download_remote_image", fail_download)
+    stale = asyncio.run(api.image_fetch_data_url({"url": url, "refresh": True}))
+    assert stale["data"]["stale"] is True
+    assert api._read_remote_image_cache(url)[0] == replacement.getvalue()
+
+
+@pytest.mark.parametrize("refresh", ["true", 1, None, [], {}])
+def test_image_refresh_rejects_non_boolean_values(tmp_path, refresh) -> None:
+    result = asyncio.run(
+        _build_api(tmp_path).image_fetch_data_url({"url": "https://example.com/skin.png", "refresh": refresh})
+    )
+    assert result["errorCode"] == "INVALID_REQUEST"
+
+
+def test_corrupted_refresh_cannot_replace_valid_cached_image(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    url = "https://example.com/skin.png"
+    original = _make_png_bytes()
+    api._write_remote_image_cache(url, ".png", original)
+
+    async def download(_url):
+        return b"<html>bad gateway</html>", _MockResponse(200, b"", headers={"content-type": "image/png"}, url=url)
+
+    monkeypatch.setattr(files_module, "_download_remote_image", download)
+    result = asyncio.run(api.image_fetch_data_url({"url": url, "refresh": True}))
+    assert result["data"]["stale"] is True
+    assert api._read_remote_image_cache(url)[0] == original
+
+
+def test_concurrent_image_requests_merge_and_refresh_finishes_after_old_download(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    url = "https://example.com/skin.png"
+    downloads = []
+
+    async def exercise():
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def download(_url):
+            index = len(downloads)
+            downloads.append(index)
+            if index == 0:
+                started.set()
+                await release.wait()
+            output = BytesIO()
+            Image.new("RGBA", (64, 64), "red" if index == 0 else "blue").save(output, format="PNG")
+            return output.getvalue(), _MockResponse(200, b"", headers={"content-type": "image/png"}, url=url)
+
+        monkeypatch.setattr(files_module, "_download_remote_image", download)
+        first = asyncio.create_task(api.image_fetch_data_url({"url": url}))
+        await started.wait()
+        same = asyncio.create_task(api.image_fetch_data_url({"url": url}))
+        await asyncio.sleep(0)
+        refresh = asyncio.create_task(api.image_fetch_data_url({"url": url, "refresh": True}))
+        await asyncio.sleep(0)
+        same_refresh = asyncio.create_task(api.image_fetch_data_url({"url": url, "refresh": True}))
+        release.set()
+        results = await asyncio.gather(first, same, refresh, same_refresh)
+        assert all(result["success"] for result in results)
+        assert results[0]["data"]["dataUrl"] == results[1]["data"]["dataUrl"]
+        assert results[2]["data"]["dataUrl"] == results[3]["data"]["dataUrl"]
+        assert results[0]["data"]["dataUrl"] != results[2]["data"]["dataUrl"]
+        assert api._remote_image_tasks == {}
+
+    asyncio.run(exercise())
+    assert downloads == [0, 1]
+    with Image.open(BytesIO(api._read_remote_image_cache(url)[0])) as cached_image:
+        assert cached_image.getpixel((0, 0)) == (0, 0, 255, 255)
+
+
+def test_cancelled_waiter_does_not_cancel_shared_download(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    url = "https://example.com/skin.png"
+
+    async def exercise():
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def download(_url):
+            started.set()
+            await release.wait()
+            return _make_png_bytes(), _MockResponse(200, b"", headers={"content-type": "image/png"}, url=url)
+
+        monkeypatch.setattr(files_module, "_download_remote_image", download)
+        first = asyncio.create_task(api.image_fetch_data_url({"url": url}))
+        await started.wait()
+        other = asyncio.create_task(api.image_fetch_data_url({"url": url}))
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        release.set()
+        assert (await other)["success"] is True
+        assert api._remote_image_tasks == {}
+
+    asyncio.run(exercise())
+
+
+def test_launcher_shutdown_cancels_shared_download_and_stops_new_requests(tmp_path, monkeypatch) -> None:
+    api = _build_api(tmp_path)
+    url = "https://example.com/skin.png"
+
+    async def exercise():
+        started = asyncio.Event()
+
+        async def download(_url):
+            started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(files_module, "_download_remote_image", download)
+        request = asyncio.create_task(api.image_fetch_data_url({"url": url}))
+        await started.wait()
+        api.events.emit("launcher:closing", None)
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        assert api._remote_image_tasks == {}
+        assert (await api.image_fetch_data_url({"url": url}))["errorCode"] == "LAUNCHER_CLOSING"
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("should_refresh", [False, True])
+def test_native_and_dev_channel_loops_share_image_requests(tmp_path, monkeypatch, should_refresh) -> None:
+    api = _build_api(tmp_path)
+    url = "https://example.com/skin.png"
+    started = Event()
+    joined = Event()
+    release = Event()
+    downloads = []
+
+    async def download(_url):
+        index = len(downloads)
+        downloads.append(index)
+        if index == 0:
+            started.set()
+            assert await asyncio.to_thread(release.wait, 3)
+        return _make_png_bytes(), _MockResponse(200, b"", headers={"content-type": "image/png"}, url=url)
+
+    async def second_loop():
+        request = asyncio.create_task(api.image_fetch_data_url({"url": url, "refresh": should_refresh}))
+        await asyncio.sleep(0)
+        joined.set()
+        return await request
+
+    monkeypatch.setattr(files_module, "_download_remote_image", download)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(asyncio.run, api.image_fetch_data_url({"url": url}))
+        assert started.wait(3)
+        second = executor.submit(asyncio.run, second_loop())
+        assert joined.wait(3)
+        release.set()
+        assert first.result(timeout=3)["success"] is True
+        assert second.result(timeout=3)["success"] is True
+    assert downloads == ([0, 1] if should_refresh else [0])
+    assert api._remote_image_tasks == {}
+    assert api._remote_image_active == set()

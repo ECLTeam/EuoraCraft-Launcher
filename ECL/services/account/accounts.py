@@ -776,7 +776,7 @@ class AccountManager:
             else:
                 account["skin"] = skin_id
             self._save_state()
-        self._emit_changed()
+        self._emit_changed((account_id,))
         with self._lock:
             return self._all_accounts()
 
@@ -910,13 +910,17 @@ class AccountManager:
             self._account_prefs.pop(account_id, None)
             self._save_state()
         self.logger.info("账户已移除，当前账户选择已保存")
-        self._emit_changed()
+        self._emit_changed((account_id,))
 
     async def refresh_account(self, account_id: Any) -> dict[str, Any]:
         """
-        刷新账户信息。
+        刷新指定账户资料，成功后通知该账户的材质缓存失效。
+
+        刷新失败保留旧资料，不发送成功失效通知；插件账户沿用提供方已保存的资料。
 
         :param account_id: 账户的稳定标识
+        :return: 刷新后的公开账户资料
+        :raises AccountError: 账户标识无效或账户不存在时抛出
         """
         if not isinstance(account_id, str) or not account_id:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
@@ -928,7 +932,7 @@ class AccountManager:
                 account = deepcopy(self._offline_accounts[account_id])
             elif account_id in self._plugin_accounts:
                 self.logger.info("账户资料刷新完成，使用插件提供的资料")
-                return self._plugin_account(account_id, deepcopy(self._plugin_accounts[account_id]))
+                account = self._plugin_account(account_id, deepcopy(self._plugin_accounts[account_id]))
             elif account_id in self.microsoft_manager.get_microsoft_accounts():
                 is_microsoft = True
             elif account_id in self.authlib_manager.list_accounts():
@@ -945,7 +949,7 @@ class AccountManager:
             info = self.authlib_manager.refresh_account(account_id)
             with self._lock:
                 account = self._authlib_account(account_id, info)
-        self._emit_changed()
+        self._emit_changed((account_id,))
         self.logger.info("账户资料刷新完成")
         return account
 
@@ -1225,8 +1229,15 @@ class AccountManager:
         self.events.emit("accounts:microsoft_login_status", {"status": "cancelled"})
         return True
 
-    def _emit_changed(self) -> None:
-        self.events.emit("accounts:changed", self.list_accounts())
+    def _emit_changed(self, texture_invalidated_account_ids: tuple[str, ...] = ()) -> None:
+        """
+        通知账户快照变化，并明确需要刷新材质的账户。
+
+        切换、收藏和置顶不改变材质；失效标记仅存在于事件载荷，不持久化到账户文件。
+        """
+        snapshot = self.list_accounts()
+        snapshot["textureInvalidatedAccountIds"] = list(texture_invalidated_account_ids)
+        self.events.emit("accounts:changed", snapshot)
 
     async def close(self) -> None:
         """

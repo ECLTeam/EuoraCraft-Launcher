@@ -31,16 +31,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import webbrowser
+from concurrent.futures import Future
+from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
+from threading import RLock
 from time import time
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
 import httpx
 from anyio import to_thread
+from PIL import Image
 from pytauri_plugins.dialog import DialogExt
 
 from ECL.api.models import (
@@ -49,10 +55,12 @@ from ECL.api.models import (
     FileSaveRequest,
     FileSelectionPurpose,
     FileSelectionRequest,
+    ImageFetchRequest,
     ImagePurpose,
     ImageSelectionRequest,
     SkinAvatarExportRequest,
 )
+from ECL.application import ApplicationContext
 from ECL.services.account.skin_avatar import SkinAvatarExporter
 from ECL.services.game.resources import ResourceCatalogPolicy
 from ECL.utils.files import atomic_write_bytes
@@ -72,15 +80,59 @@ from .bridge import (
 from .contracts import success
 
 
+@dataclass(frozen=True, slots=True)
+class _RemoteImageResult:
+    image_bytes: bytes
+    extension: str
+    is_cached: bool
+    is_stale: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _RemoteImageRequest:
+    should_refresh: bool
+    task: asyncio.Task[_RemoteImageResult]
+    result: Future[_RemoteImageResult]
+
+
 class FileHandlers(_FrontendState):
     """
     处理本地文件读取、图片缓存和文件选择请求。
     """
 
-    remote_image_cache_ttl_seconds = 7 * 24 * 60 * 60
-    remote_image_cache_max_files = 128
-    remote_image_cache_max_bytes = 96 * 1024 * 1024
-    max_file_read_bytes = 20 * 1024 * 1024
+    remote_image_cache_ttl_seconds: int = 7 * 24 * 60 * 60
+    remote_image_cache_max_files: int = 128
+    remote_image_cache_max_bytes: int = 96 * 1024 * 1024
+    max_file_read_bytes: int = 20 * 1024 * 1024
+    _remote_image_tasks: dict[str, _RemoteImageRequest]
+    _remote_image_lock: RLock
+    _remote_image_active: set[asyncio.Task[_RemoteImageResult]]
+    _remote_images_closing: bool
+
+    def __init__(self, context: ApplicationContext) -> None:
+        """
+        初始化图片在途请求；原生 IPC 与开发通道共享跨事件循环的结果，关闭时取消下载。
+
+        :param context: 当前启动器共享的应用上下文
+        """
+        super().__init__(context)
+        self._remote_image_tasks = {}
+        self._remote_image_lock = RLock()
+        self._remote_image_active = set()
+        self._remote_images_closing = False
+        self.events.subscribe("launcher:closing", self._close_remote_images)
+
+    def _close_remote_images(self, _payload: object) -> None:
+        """
+        停止接收图片请求，并在所属事件循环中取消仍在执行的下载。
+        """
+        with self._remote_image_lock:
+            self._remote_images_closing = True
+            tasks = tuple(self._remote_image_active)
+        for task in tasks:
+            if not task.done() and not task.get_loop().is_closed():
+                task.get_loop().call_soon_threadsafe(task.cancel)
+
     image_selection_options: dict[ImagePurpose, tuple[str, list[str]]] = {
         ImagePurpose.SKIN: ("选择 Minecraft 皮肤", ["png"]),
         ImagePurpose.CAPE: ("选择 Minecraft 披风", ["png"]),
@@ -119,7 +171,11 @@ class FileHandlers(_FrontendState):
         return hashlib.sha256(url.encode("utf-8")).hexdigest()
 
     def _read_remote_image_cache(self, url: str) -> tuple[bytes, str, bool] | None:
-        # 按远程 URL 读取持久化图片缓存，并返回其新鲜度。
+        """
+        按远程 URL 的摘要读取有大小限制的磁盘图片，并返回缓存新鲜度。
+
+        跳过符号链接与无效文件，磁盘不可读取时按未命中处理。
+        """
         cache_dir = self._remote_image_cache_dir(self.data_path)
         digest = self._remote_image_digest(url)
         for extension in ImagePolicy.mime_by_extension:
@@ -139,12 +195,19 @@ class FileHandlers(_FrontendState):
         return None
 
     def _write_remote_image_cache(self, url: str, extension: str, image_bytes: bytes) -> None:
-        # 原子写入远程图片缓存，并按最近使用时间限制缓存规模。
+        """
+        原子替换指定 URL 的图片，随后清理旧格式和超出容量的缓存文件。
+
+        调用方按 URL 串行执行下载与写入，写入失败时旧目标保持不变。
+        """
         cache_dir = self._remote_image_cache_dir(self.data_path)
         digest = self._remote_image_digest(url)
         safe_extension = extension if extension in ImagePolicy.mime_by_extension else ".jpg"
         target = cache_dir / f"{digest}{safe_extension}"
         atomic_write_bytes(target, image_bytes)
+        for obsolete_extension in ImagePolicy.mime_by_extension:
+            if obsolete_extension != safe_extension:
+                (cache_dir / f"{digest}{obsolete_extension}").unlink(missing_ok=True)
 
         entries: list[tuple[Path, int, float]] = []
         for candidate in cache_dir.iterdir():
@@ -168,7 +231,67 @@ class FileHandlers(_FrontendState):
             try:
                 candidate.unlink()
             except OSError:
-                self.logger.debug("清理远程图片缓存失败: %s", candidate, exc_info=True)
+                self.logger.debug("清理远程图片缓存失败", exc_info=True)
+
+    @staticmethod
+    def _validate_remote_image(image_bytes: bytes) -> None:
+        """
+        在写入缓存前校验图片，防止错误页或损坏内容替换旧缓存。
+        """
+        try:
+            with Image.open(BytesIO(image_bytes)) as image:
+                image.verify()
+        except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
+            raise ValueError("远程图片已损坏或无法安全解码") from exc
+
+    async def _fetch_remote_image(
+        self, url: str, should_refresh: bool, previous: Future[_RemoteImageResult] | None
+    ) -> _RemoteImageResult:
+        """
+        合并同 URL 下载，并让显式刷新在旧下载写入结束后执行。
+
+        等待方取消不终止共享下载；新结果只有校验成功才原子替换磁盘文件。
+        """
+        if previous is not None:
+            try:
+                await asyncio.shield(asyncio.wrap_future(previous))
+            except (httpx.HTTPError, OSError, ValueError):
+                # 首次普通下载失败仍允许后续显式刷新重试。
+                self.logger.debug("前次图片读取失败，继续执行刷新")
+        cached = await to_thread.run_sync(self._read_remote_image_cache, url)
+        if cached is not None and cached[2] and not should_refresh:
+            return _RemoteImageResult(cached[0], cached[1], True)
+        try:
+            image_bytes, response = await _download_remote_image(url)
+            extension = _guess_image_extension(response, url)
+            await to_thread.run_sync(self._validate_remote_image, image_bytes)
+        except (httpx.HTTPError, OSError, ValueError):
+            if cached is None:
+                raise
+            self.logger.warning("远程图片刷新失败，继续使用磁盘缓存")
+            return _RemoteImageResult(cached[0], cached[1], True, True)
+        try:
+            await to_thread.run_sync(self._write_remote_image_cache, url, extension, image_bytes)
+        except OSError:
+            self.logger.warning("远程图片缓存写入失败，本次仍使用已下载内容", exc_info=True)
+        return _RemoteImageResult(image_bytes, extension, False)
+
+    def _finish_remote_image(self, url: str, request: _RemoteImageRequest) -> None:
+        """
+        释放已结束的共享请求，并观察无人等待的失败结果。
+        """
+        with self._remote_image_lock:
+            self._remote_image_active.discard(request.task)
+            if self._remote_image_tasks.get(url) is request:
+                self._remote_image_tasks.pop(url)
+        if request.task.cancelled():
+            request.result.cancel()
+        else:
+            exception = request.task.exception()
+            if exception is not None:
+                request.result.set_exception(exception)
+            else:
+                request.result.set_result(request.task.result())
 
     @_ipc_handler("FILE_RESOLVE_FAILED")
     async def file_resolve(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -260,41 +383,40 @@ class FileHandlers(_FrontendState):
         """
         下载远程图片并转换为受大小限制的 Data URL。
 
-        :param body: 包含 HTTP(S) 图片 ``url`` 的请求数据
+        有效磁盘缓存优先复用；refresh 为真时重新下载，失败时保留旧缓存。
+
+        :param body: 包含 HTTP(S) 图片 ``url`` 和可选布尔 ``refresh`` 的请求数据
         :return: Data URL、Base64 数据和原始 URL
         """
-        url = _normalize_image_url(body.get("url"))
+        request, invalid = _validate_body(ImageFetchRequest, body)
+        if invalid is not None:
+            return invalid
+        url = _normalize_image_url(request.url)
         if url is None:
             return {"success": False, "message": "无效的图片 URL", "errorCode": "INVALID_IMAGE_URL"}
-        cached = await to_thread.run_sync(self._read_remote_image_cache, url)
-        if cached is not None and cached[2]:
-            image_bytes, extension, _fresh = cached
-            data_url, encoded = await to_thread.run_sync(_encode_image_bytes, image_bytes, extension)
-            return {
-                "success": True,
-                "data": {"dataUrl": data_url, "base64": encoded, "url": url, "cached": True},
-            }
-        try:
-            image_bytes, response = await _download_remote_image(url)
-            extension = _guess_image_extension(response, url)
-        except (httpx.HTTPError, OSError, ValueError):
-            if cached is None:
-                raise
-            image_bytes, extension, _fresh = cached
-            self.logger.warning("远程图片刷新失败，继续使用磁盘缓存: %s", url)
-            data_url, encoded = await to_thread.run_sync(_encode_image_bytes, image_bytes, extension)
-            return {
-                "success": True,
-                "data": {"dataUrl": data_url, "base64": encoded, "url": url, "cached": True, "stale": True},
-            }
-        try:
-            await to_thread.run_sync(self._write_remote_image_cache, url, extension, image_bytes)
-        except OSError:
-            self.logger.warning("远程图片缓存写入失败，本次仍使用已下载内容: %s", url, exc_info=True)
-        data_url, encoded = await to_thread.run_sync(_encode_image_bytes, image_bytes, extension)
+        with self._remote_image_lock:
+            if self._remote_images_closing:
+                return {"success": False, "message": "启动器正在关闭", "errorCode": "LAUNCHER_CLOSING"}
+            pending = self._remote_image_tasks.get(url)
+            if pending is None or (request.refresh and not pending.should_refresh):
+                task = asyncio.create_task(
+                    self._fetch_remote_image(url, request.refresh, pending.result if pending else None)
+                )
+                pending = _RemoteImageRequest(request.refresh, task, Future())
+                self._remote_image_tasks[url] = pending
+                self._remote_image_active.add(task)
+                task.add_done_callback(lambda _completed, shared=pending: self._finish_remote_image(url, shared))
+        result = await asyncio.shield(asyncio.wrap_future(pending.result))
+        data_url, encoded = await to_thread.run_sync(_encode_image_bytes, result.image_bytes, result.extension)
         return {
             "success": True,
-            "data": {"dataUrl": data_url, "base64": encoded, "url": url, "cached": False},
+            "data": {
+                "dataUrl": data_url,
+                "base64": encoded,
+                "url": url,
+                "cached": result.is_cached,
+                "stale": result.is_stale,
+            },
         }
 
     @_ipc_handler("IMAGE_SAVE_URL_ERROR")
