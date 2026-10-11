@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import os
 import shutil
 import sys
@@ -30,7 +29,7 @@ import httpx
 import psutil
 
 from ECL.game import JavaRuntime, JavaScanner
-from ECL.utils import atomic_write_text
+from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.network import download_proxy_url
 
 from .models import CleanupRecord, JavaError, JavaInstallPlan, JavaPolicy, JavaRegistry, RuntimeRecord, RuntimeUsage
@@ -48,7 +47,7 @@ class JavaInstaller:
     """
 
     registry: JavaRegistry
-    _move_retry_delays: ClassVar[tuple[float, ...]] = (0.1, 0.2, 0.4, 0.8, 1.0)
+    _move_retry_delays: ClassVar[tuple[float, ...]] = (0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
 
     def __init__(self, registry: JavaRegistry, ensure_unused: Callable[[RuntimeRecord], None]) -> None:
         """
@@ -59,7 +58,7 @@ class JavaInstaller:
         """
         self.registry = registry
         self._ensure_unused = ensure_unused
-        self._logger = logging.getLogger(__name__)
+        self._logger = get_logger("JavaInstaller")
 
     def install(self, plan: JavaInstallPlan, context: OperationContext) -> RuntimeRecord:
         """
@@ -201,8 +200,10 @@ class JavaInstaller:
         仅对 Windows 的短暂目录占用重试，移动始终限于当前 Java 管理根目录。
 
         每次尝试重新检查路径和目标占用；不覆盖出现的未知目录，不复制后删除。
-        重试累计等待至多 2.5 秒，持续权限失败转换为不含个人路径的领域错误。
+        Java 探测后的占用可能持续数秒；重试累计等待至多 9.5 秒，持续权限失败
+        转换为不含个人路径的领域错误。
         """
+        started_at = monotonic()
         for attempt in range(len(self._move_retry_delays) + 1):
             if (
                 source_path.is_symlink()
@@ -216,6 +217,12 @@ class JavaInstaller:
                 raise JavaError("Java 目标目录已有内容，安装未覆盖", "JAVA_INSTALL_TARGET_EXISTS")
             try:
                 source_path.rename(target_path)
+                if attempt:
+                    self._logger.info(
+                        "Java 安装目录移动成功；重试次数：%d；耗时：%d 毫秒",
+                        attempt,
+                        round((monotonic() - started_at) * 1000),
+                    )
                 return
             except OSError as error:
                 can_retry = sys.platform == "win32" and getattr(error, "winerror", None) in {5, 32, 33}
@@ -224,7 +231,11 @@ class JavaInstaller:
                         "Java 安装目录移动失败：目录被占用或没有移动权限，请解除占用并检查目录权限后重试",
                         "JAVA_INSTALL_MOVE_FAILED",
                     ) from error
-                self._logger.debug("Java 安装目录移动暂时受阻，正在等待后重试")
+                self._logger.debug(
+                    "Java 安装目录移动暂时受阻，正在等待后重试；系统错误码：%d；重试次数：%d",
+                    error.winerror,
+                    attempt + 1,
+                )
                 sleep(self._move_retry_delays[attempt])
 
     def _rollback_commit(

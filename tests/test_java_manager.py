@@ -139,7 +139,34 @@ def test_install_commit_retries_transient_windows_directory_lock(
     assert installed.executable_path.is_file()
 
 
-@pytest.mark.parametrize("platform, winerror, expected_attempts", [("win32", 5, 6), ("win32", 32, 6), ("linux", 5, 1)])
+def test_install_commit_waits_for_post_probe_windows_lock(
+    manager: JavaManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, unpacked, record = _commit_inputs(manager)
+    monkeypatch.setattr("ECL.java.installer.sys", SimpleNamespace(platform="win32"), raising=False)
+    elapsed = 0.0
+    rename = Path.rename
+
+    def wait(delay: float) -> None:
+        nonlocal elapsed
+        elapsed += delay
+
+    def probe_lock(source: Path, target: Path) -> Path:
+        if source == unpacked and elapsed < 5:
+            raise _move_error(5)
+        return rename(source, target)
+
+    monkeypatch.setattr("ECL.java.installer.sleep", wait)
+    monkeypatch.setattr(Path, "rename", probe_lock)
+    installed = manager._installer._commit(plan, unpacked, record)
+    assert 5 <= elapsed <= 10
+    assert installed.executable_path.is_file()
+    assert manager.registry.read().runtimes[0].runtime_id == record.runtime_id
+
+
+@pytest.mark.parametrize(
+    "platform, winerror, expected_attempts", [("win32", 5, 13), ("win32", 32, 13), ("win32", 33, 13), ("linux", 5, 1)]
+)
 def test_install_commit_move_failure_is_bounded_and_keeps_staging(
     manager: JavaManager,
     monkeypatch: pytest.MonkeyPatch,
@@ -163,7 +190,7 @@ def test_install_commit_move_failure_is_bounded_and_keeps_staging(
         manager._installer._commit(plan, unpacked, record)
     assert failure.value.error_code == "JAVA_INSTALL_MOVE_FAILED"
     assert attempts == expected_attempts
-    assert len(waits) == expected_attempts - 1 and sum(waits) <= 3
+    assert len(waits) == expected_attempts - 1 and sum(waits) <= 10
     assert unpacked.is_dir() and not plan.install_path.exists()
     assert not manager.registry.read().runtimes
 
