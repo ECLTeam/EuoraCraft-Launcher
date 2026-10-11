@@ -46,18 +46,23 @@ lock_wait_seconds = 120
 
 
 @contextmanager
-def _exclusive_lock(lock_path: Path) -> Iterator[None]:
+def _exclusive_lock(lock_path: Path, *, wait_seconds: float = lock_wait_seconds) -> Iterator[None]:
     """
     对同一安装键使用有界跨进程文件锁，防止多个启动器覆盖目录。
 
     Windows 和 POSIX 分别使用平台文件锁；进程退出时由系统释放。
+
+    :param lock_path: 受控目录内的锁文件
+    :param wait_seconds: 等待上限；授权短事务可使用更短预算
     """
+    if not 0 < wait_seconds <= lock_wait_seconds:
+        raise PluginDependencyError("插件文件锁等待范围无效")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     if lock_path.is_symlink():
         raise PluginDependencyError("插件安装锁不能是符号链接")
     with lock_path.open("a+b") as lock_file:
         lock_file.seek(0)
-        deadline = monotonic() + lock_wait_seconds
+        deadline = monotonic() + wait_seconds
         if os.name == "nt":
             import msvcrt
 
