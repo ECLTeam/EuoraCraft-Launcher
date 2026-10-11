@@ -142,11 +142,19 @@ def test_help_flag_prints_usage_and_exits(capsys) -> None:
         assert argument in output
 
 
-def test_main_forwards_launcher_entry() -> None:
+def test_main_forwards_launcher_entry(monkeypatch) -> None:
     """
-    进程入口应直接转交给命令行模块的启动函数。
+    普通启动参数应在分流后交给命令行模块，并保留退出码。
     """
-    assert main.run_launcher is run_launcher
+    received: list[list[str]] = []
+
+    def desktop_entry(arguments: list[str]) -> int:
+        received.append(arguments)
+        return 7
+
+    monkeypatch.setattr("ECL.cli.run_launcher", desktop_entry)
+    assert main.run_launcher(["--version"]) == 7
+    assert received == [["--version"]]
 
 
 def test_run_launcher_passes_options_and_exit_code(monkeypatch) -> None:

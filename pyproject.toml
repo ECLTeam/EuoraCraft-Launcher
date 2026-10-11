@@ -62,7 +62,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ECL*"]
+include = ["ECL*", "ecl_plugin_api*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "ECL.foundation.version.__version__"}
@@ -177,7 +177,7 @@ max-complexity = 12
 convention = "google"
 
 [tool.ruff.lint.isort]
-known-first-party = ["ECL"]
+known-first-party = ["ECL", "ecl_plugin_api"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.format]

@@ -83,6 +83,7 @@ try {
         --windows-icon-from-ico=resources/img/logo.ico `
         @upxArgs `
         --include-package=ECL `
+        --include-package=ecl_plugin_api `
         --include-package=pytauri `
         --include-package=pytauri_plugins `
         --include-package=pytauri_utils `
