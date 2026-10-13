@@ -27,6 +27,8 @@ from typing import Any
 from anyio import to_thread
 
 from ECL.api.contracts import ApiResponse, success
+from ECL.services.game.base import GameServiceError
+from ECL.services.game.resource_metadata import ResourceMetadataCache, ResourceMetadataError
 from ECL.services.game.resource_search import SearchCriteria, SearchResult
 
 from .bridge import _FrontendState, _ipc_handler, _open_folder, _validate_body
@@ -160,12 +162,28 @@ class ModHandlers(_FrontendState):
         :param body: 在线模组标识和来源
         :return: 模组项目详情
         """
-        info = await to_thread.run_sync(
-            self.game.fetch_project_info,
-            body.get("source", "modrinth"),
-            body.get("mod_id"),
-            body.get("resource_type", "mod"),
+        source = str(body.get("source") or "modrinth")
+        project_id = str(body.get("mod_id") or "")
+        resource_type = str(body.get("resource_type") or "mod")
+        configuration = self._get_effective_config()
+        key = (
+            source,
+            project_id,
+            resource_type,
+            str((configuration.get("download") or {}).get("mod_source") or "official"),
+            str((configuration.get("ui") or {}).get("locale") or "zh-CN"),
         )
+        cache = getattr(self.game, "_resource_metadata", None)
+        if isinstance(cache, ResourceMetadataCache):
+            try:
+                metadata = await to_thread.run_sync(
+                    cache.get, key, lambda: self.game.fetch_project_info(source, project_id, resource_type)
+                )
+            except ResourceMetadataError as exc:
+                raise GameServiceError(str(exc), exc.error_code) from exc
+            info = metadata.model_dump(mode="json", by_alias=True, exclude_none=True)
+        else:
+            info = await to_thread.run_sync(self.game.fetch_project_info, source, project_id, resource_type)
         return success(info)
 
     @_ipc_handler("MOD_VERSIONS_FAILED")
