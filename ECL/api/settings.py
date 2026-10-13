@@ -53,13 +53,17 @@ class SettingsHandlers(_FrontendState):
         校验并全量保存一个配置分区。
 
         :param body: 符合 ``SettingsUpdate`` 的请求数据
-        :return: 空的成功响应或稳定校验错误
+        成功响应包含宿主的环境变量及命令行覆盖，前端可直接应用，避免写后回读。
+
+        :return: 有效分区快照或稳定校验错误
         """
         request, invalid = _validate_body(SettingsUpdate, body)
         if invalid is not None:
             return invalid
         await to_thread.run_sync(self.config.save_config, request.section, request.data)
-        return success()
+        return success(
+            {"section": request.section, "data": self._get_effective_config().get(request.section), "effective": True}
+        )
 
     @_ipc_handler("JAVA_SCAN_FAILED")
     async def game_java_scan(self, body: dict[str, Any]) -> ApiResponse:
@@ -90,7 +94,7 @@ class SettingsHandlers(_FrontendState):
         if invalid is not None:
             return invalid
         saved = await to_thread.run_sync(self.config.patch_download, request)
-        return success(saved)
+        return success(self._get_effective_config().get("download", saved))
 
 
 __all__ = ["SettingsHandlers"]

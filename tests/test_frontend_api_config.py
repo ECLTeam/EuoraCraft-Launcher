@@ -536,6 +536,16 @@ def test_launcher_info_uses_runtime_metadata(tmp_path) -> None:
     assert result["data"]["active_window_chrome"] == "system_shadow"
 
 
+def test_settings_write_returns_effective_snapshot_without_losing_runtime_override(tmp_path: Path) -> None:
+    api = _build_api(tmp_path)
+    result = asyncio.run(api.settings_set({"section": "launcher", "data": {"debug": False}}))
+    assert result["success"] is True
+    assert result["data"]["section"] == "launcher"
+    assert result["data"]["effective"] is True
+    assert result["data"]["data"]["debug"] is True
+    assert api.config.get_config("launcher")["debug"] is False
+
+
 def test_announcements_delegate_to_registered_service(tmp_path) -> None:
     api = _build_api(tmp_path)
 

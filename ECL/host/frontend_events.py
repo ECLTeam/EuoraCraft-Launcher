@@ -13,7 +13,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
+
+from pydantic import JsonValue
 
 from ECL.foundation.event_bus import EventBus, Unsubscribe
 
@@ -42,6 +45,7 @@ class FrontendEventPolicy:
         "update:check_completed": [("update:check_completed", lambda payload: payload)],
         "game:launch_progress": [("game:launch_progress", lambda payload: payload)],
         "game:versions_changed": [("game:versions_changed", lambda payload: payload)],
+        "game:instance_categories_changed": [("game:instance_categories_changed", lambda payload: payload)],
         "game:instances_changed": [("game:instances_changed", lambda payload: payload)],
         "game:operation_progress": [("game:operation_progress", lambda payload: payload)],
         "java:runtimes_changed": [("java:runtimes_changed", lambda payload: payload)],
@@ -124,10 +128,25 @@ class FrontendEventPolicy:
     }
 
 
-def _build_forwarder(emit: Emit, frontend_event: str, builder: Callable[..., Any]) -> Callable[..., None]:
+def _build_forwarder(
+    emit: Emit,
+    frontend_event: str,
+    builder: Callable[..., Any],
+    config_snapshot: Callable[[], dict[str, JsonValue]] | None = None,
+) -> Callable[..., None]:
+    """
+    构造边界事件转发器，配置事件可使用宿主已校验的有效快照。
+
+    其他事件沿用原载荷规则；读取有效配置不会把持久化值误当成本次运行配置。
+    """
+
     # 把一次后端事件分发转换为前端事件回调，载荷无法构造时（产物为 None）跳过推送。
     def forward(*args: Any) -> None:
         payload = builder(*args)
+        if frontend_event == "config:updated" and config_snapshot is not None and isinstance(payload, dict):
+            section = payload.get("section")
+            if isinstance(section, str):
+                payload = {"section": section, "data": deepcopy(config_snapshot().get(section)), "effective": True}
         if payload is not None:
             emit(frontend_event, payload)
 
@@ -135,7 +154,12 @@ def _build_forwarder(emit: Emit, frontend_event: str, builder: Callable[..., Any
 
 
 def subscribe_frontend_event(
-    bus: EventBus, frontend_event: str, emit: Emit, *, owner: str = "FrontendBridge"
+    bus: EventBus,
+    frontend_event: str,
+    emit: Emit,
+    *,
+    owner: str = "FrontendBridge",
+    config_snapshot: Callable[[], dict[str, JsonValue]] | None = None,
 ) -> list[Unsubscribe]:
     """
     订阅指定前端事件对应的全部后端事件，把转换后的载荷回调给 emit。
@@ -144,27 +168,37 @@ def subscribe_frontend_event(
     :param frontend_event: 前端事件名，须在 FrontendEventPolicy.bridges 中注册
     :param emit: 收到事件时以 (前端事件名, 载荷) 调用的回调
     :param owner: 事件订阅归属标识，便于成批移除
+    :param config_snapshot: 可选的宿主有效配置提供者，配置事件携带可直接应用的权威分区
     :return: 每个后端订阅对应的退订函数
     """
     unsubscribers = []
     for backend_event, builder in FrontendEventPolicy.bridges.get(frontend_event, ()):
-        forwarder = _build_forwarder(emit, frontend_event, builder)
+        forwarder = _build_forwarder(emit, frontend_event, builder, config_snapshot)
         unsubscribers.append(bus.subscribe(backend_event, forwarder, owner=owner))
     return unsubscribers
 
 
-def subscribe_all_frontend_events(bus: EventBus, emit: Emit, *, owner: str = "FrontendBridge") -> list[Unsubscribe]:
+def subscribe_all_frontend_events(
+    bus: EventBus,
+    emit: Emit,
+    *,
+    owner: str = "FrontendBridge",
+    config_snapshot: Callable[[], dict[str, JsonValue]] | None = None,
+) -> list[Unsubscribe]:
     """
     订阅事件桥注册的全部前端事件，供主窗口适配器在启动时一次性接通。
 
     :param bus: 应用事件总线
     :param emit: 收到事件时以 (前端事件名, 载荷) 调用的回调
     :param owner: 事件订阅归属标识
+    :param config_snapshot: 可选的宿主有效配置提供者；未提供时保留原事件协议
     :return: 全部后端订阅对应的退订函数
     """
     unsubscribers = []
     for frontend_event in FrontendEventPolicy.bridges:
-        unsubscribers.extend(subscribe_frontend_event(bus, frontend_event, emit, owner=owner))
+        unsubscribers.extend(
+            subscribe_frontend_event(bus, frontend_event, emit, owner=owner, config_snapshot=config_snapshot)
+        )
     return unsubscribers
 
 

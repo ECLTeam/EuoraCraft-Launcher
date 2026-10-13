@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from anyio.from_thread import start_blocking_portal
+from pydantic import JsonValue, TypeAdapter
 from pytauri import AppHandle, Commands, Manager, RunEvent, RunEventType
 from pytauri_plugins.dialog import init as dialog_init
 from pytauri_wheel.lib import builder_factory, context_factory
@@ -152,7 +153,11 @@ class Adapter:
         logger = getattr(self, "logger", get_logger("Adapter"))
         logger.debug("正在注册后端到前端的事件转发")
 
-        subscribe_all_frontend_events(bus, api.emit_to_frontend)
+        subscribe_all_frontend_events(
+            bus,
+            api.emit_to_frontend,
+            config_snapshot=lambda: TypeAdapter(dict[str, JsonValue]).validate_python(api._get_effective_config()),
+        )
 
         # 严重错误需要保留待确认的内存副本，供前端轮询补录；窗口侧副作用只在这些订阅里处理。
         bus.subscribe("launcher:error", api.emit_error_to_frontend)
