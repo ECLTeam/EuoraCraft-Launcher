@@ -147,3 +147,28 @@ def test_running_instance_rejects_process_overrides_without_falling_back_to_new_
         assert service.discovery_path.is_file()
     finally:
         service.close()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--headless", "--task=runtime-check"],
+        ["--task=runtime-check"],
+        ["--result-file=result.json"],
+        ["--headl", "--ta=runtime-check"],
+    ],
+)
+def test_desktop_rejects_headless_requests_without_events(tmp_path, argv) -> None:
+    events = EventBus()
+    received = []
+    events.subscribe("launcher:focus_request", received.append)
+    service = SingleInstanceService(events, tmp_path, "test")
+    service.start()
+    try:
+        before = service.discovery_path.read_bytes()
+        with pytest.raises(ValueError, match="拒绝"):
+            probe_running_instance(tmp_path, argv)
+        assert not received and not service.take_launch_requests()
+        assert service.discovery_path.read_bytes() == before
+    finally:
+        service.close()

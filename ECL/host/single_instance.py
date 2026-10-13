@@ -190,6 +190,7 @@ class SingleInstanceService:
                 not isinstance(argv, list)
                 or len(argv) > 128
                 or any(not isinstance(arg, str) or len(arg) > 4096 for arg in argv)
+                or self._has_headless_options(argv)
             ):
                 return False
             if action == "launch" or any(
@@ -223,6 +224,17 @@ class SingleInstanceService:
             return True
         self.logger.warning("未知的单实例请求动作: %s", action or "<空>")
         return False
+
+    @staticmethod
+    def _has_headless_options(argv: list[str]) -> bool:
+        """
+        拒绝无头选项及其 argparse 长选项缩写，防止任务请求唤醒桌面窗口。
+        """
+        return any(
+            arg.startswith("--")
+            and any(option.startswith(arg.split("=", 1)[0]) for option in ("--headless", "--task", "--result-file"))
+            for arg in argv
+        )
 
 
 def probe_running_instance(data_path: Path, argv: Sequence[str], *, timeout: float = 3.0) -> bool:

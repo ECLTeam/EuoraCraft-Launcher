@@ -332,6 +332,21 @@ jobs:
         run: |
           python -m PyInstaller --noconfirm --clean "EuoraCraft-Launcher.spec"
 
+      - name: Smoke test packaged headless runtime
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.exe"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher.app/Contents/MacOS/EuoraCraft Launcher"
+          else
+            export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
+          fi
+          python -m pytest tests/test_packaged_headless_runtime.py -q
+
       - name: Smoke test packaged plugin directories
         # 使用最终启动器验证动态安装，而非额外发布插件解释器。
         shell: bash
@@ -586,6 +601,15 @@ jobs:
             echo "Arch 产物异常退出，status=$status" >&2
             exit 1
           fi
+
+      - name: Smoke test Arch headless runtime
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          set -euo pipefail
+          export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
+          .venv-arch/bin/python -m pytest tests/test_packaged_headless_runtime.py -q
 
       - name: Smoke test Arch plugin directories
         shell: bash

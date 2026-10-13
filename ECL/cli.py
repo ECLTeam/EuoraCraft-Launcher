@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from ECL.foundation.version import __version__, __version_type__
+from ECL.runtime.contracts import HeadlessTask, RunMode
 
 _log_level_choices = ("debug", "info", "warning", "error")
 _url_schemes = ("http://", "https://")
@@ -41,6 +42,9 @@ class LaunchOptions:
     """
 
     forwarded_argv: tuple[str, ...] = field(default=(), compare=False, repr=False)
+    run_mode: RunMode = RunMode.desktop
+    task: HeadlessTask | None = None
+    result_file: Path | None = None
     data_dir: Path | None = None  # --data-dir 指定的数据目录，None 表示沿用默认解析
     debug: bool = False  # --debug 是否开启调试模式
     log_level: str | None = None  # --log-level 指定的控制台日志级别
@@ -116,8 +120,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data-dir",
         metavar="路径",
-        help="指定本次运行的数据目录，目录不存在时自动创建",
+        help="指定本次运行的数据目录；桌面模式按需创建，无头探测只解析路径",
     )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--gui", dest="run_mode", action="store_const", const=RunMode.desktop, help="正常桌面启动（默认）"
+    )
+    mode.add_argument(
+        "--headless",
+        dest="run_mode",
+        action="store_const",
+        const=RunMode.headless,
+        help="无 UI 执行指定任务后退出，暂不支持游戏启动或完整后端常驻",
+    )
+    parser.set_defaults(run_mode=RunMode.desktop)
+    parser.add_argument("--task", choices=tuple(HeadlessTask), help="无头任务，目前支持 runtime-check")
+    parser.add_argument("--result-file", metavar="文件", help="无头结果 JSON 输出到尚未存在的文件，适用于无控制台产物")
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -269,6 +287,49 @@ def _validate_game_options(
         parser.error("启动参数不能包含空字符")
 
 
+def _validate_run_mode(parser: argparse.ArgumentParser, args: argparse.Namespace, argv: Sequence[str]) -> None:
+    """
+    在加载运行入口前拒绝模式冲突和不可执行的任务参数。
+
+    根据原始选项检查桌面参数，防止显式 false、空值或选项缩写绕过模式约束。
+    """
+    if args.run_mode == RunMode.desktop:
+        if args.task is not None or args.result_file is not None:
+            parser.error("--task/--result-file 需要与 --headless 同时使用")
+        return
+    if args.task is None:
+        parser.error("--headless 必须通过 --task 指定任务")
+    allowed = {"--headless", "--task", "--result-file", "--data-dir", "--debug", "--log-level"}
+    # argparse 支持长选项缩写；通过已解析的 action 识别它对应的完整选项。
+    for argument in argv:
+        if argument.startswith("--"):
+            flag = argument.split("=", 1)[0]
+            matches = [option for option in parser._option_string_actions if option.startswith(flag)]
+            canonical = flag if flag in parser._option_string_actions else matches[0] if len(matches) == 1 else flag
+            if canonical not in allowed:
+                parser.error(f"{canonical} 不支持无头模式")
+
+
+def _resolve_result_file(parser: argparse.ArgumentParser, raw: str | None) -> Path | None:
+    """
+    校验调用者指定的输出文件，保留既有文件和目录。
+    """
+    if raw is None:
+        return None
+    if not raw.strip() or "\0" in raw:
+        parser.error("--result-file 必须为有效的文件路径")
+    try:
+        result_file = Path(raw).expanduser().absolute()
+        if result_file.exists() or result_file.is_symlink():
+            parser.error("--result-file 不能覆盖已有文件或目录")
+        for parent_path in result_file.parents:
+            if parent_path.exists() and not parent_path.is_dir():
+                parser.error("--result-file 的父路径必须为目录")
+    except (OSError, ValueError):
+        parser.error("--result-file 必须为有效的文件路径")
+    return result_file
+
+
 def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
     """
     解析并校验命令行启动参数。
@@ -282,6 +343,7 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
     """
     parser = build_arg_parser()
     args = parser.parse_args(list(argv))
+    _validate_run_mode(parser, args, argv)
     if (args.server or args.world) and not args.launch:
         parser.error("--server/--world 需要与 --launch 同时使用")
     if args.server and args.world:
@@ -290,6 +352,9 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
     _validate_game_options(parser, args, launch_target)
     return LaunchOptions(
         forwarded_argv=tuple(argv),
+        run_mode=args.run_mode,
+        task=HeadlessTask(args.task) if args.task is not None else None,
+        result_file=_resolve_result_file(parser, args.result_file),
         data_dir=_resolve_data_dir(parser, args.data_dir),
         debug=bool(args.debug),
         log_level=args.log_level,
@@ -326,6 +391,16 @@ def run_launcher(argv: list[str] | None = None) -> int:
     :raises SystemExit: 请求帮助、版本或参数不合法时抛出
     """
     options = parse_launch_options(sys.argv[1:] if argv is None else argv)
+    if options.run_mode == RunMode.headless:
+        from ECL.runtime.contracts import HeadlessOptions
+        from ECL.runtime.headless import run_headless
+
+        assert options.task is not None
+        return int(
+            run_headless(
+                HeadlessOptions(options.task, options.data_dir, options.result_file, options.debug, options.log_level)
+            )
+        )
     from ECL.launcher import EuoraCraftLauncher
 
     return int(EuoraCraftLauncher(options).run())
