@@ -183,6 +183,7 @@ class OperationManager:
         with self._lock:
             operation.status = "running"
             operation.message = "正在执行"
+            operation.revision += 1
         self._emit(operation)
         self._logger.info("后台任务开始执行；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind))
 
@@ -209,6 +210,7 @@ class OperationManager:
                 context.check_cancelled()
                 result = action()
                 operation.can_cancel = False
+                operation.revision += 1
                 return result
 
         context = OperationContext(
@@ -224,6 +226,7 @@ class OperationManager:
                 operation.message = "操作已取消" if operation.cancel_event.is_set() else str(exc)
                 operation.error = str(exc)
                 operation.error_code = getattr(exc, "error_code", "GAME_OPERATION_FAILED")
+                operation.revision += 1
             if operation.status == "cancelled":
                 self._logger.info(
                     "后台任务已取消并停止执行；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind)
@@ -240,6 +243,7 @@ class OperationManager:
                 operation.percent = 100.0
                 operation.message = "操作完成"
                 operation.result = result
+                operation.revision += 1
             if operation.trace is not None:
                 operation.trace.log(self._logger, "后台任务执行完成")
         self._persist(operation)
@@ -265,7 +269,6 @@ class OperationManager:
 
     def _emit(self, operation: _Operation) -> None:
         with self._lock:
-            operation.revision += 1
             snapshot = self._payload(operation)
         self._events.emit("game:operation_progress", snapshot)
 
@@ -325,6 +328,7 @@ class OperationManager:
                 return False
             operation.cancel_event.set()
             operation.message = "正在取消"
+            operation.revision += 1
         self._emit(operation)
         self._logger.info(
             "已请求取消后台任务，等待安全检查点；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind)
@@ -339,8 +343,13 @@ class OperationManager:
             self._closing = True
             operations = tuple(self._operations.values())
             for operation in operations:
-                if operation.can_cancel and operation.status in {"pending", "running"}:
+                if (
+                    operation.can_cancel
+                    and operation.status in {"pending", "running"}
+                    and not operation.cancel_event.is_set()
+                ):
                     operation.cancel_event.set()
+                    operation.revision += 1
         self._executor.shutdown(wait=False, cancel_futures=True)
         for operation in operations:
             if operation.future is not None and operation.future.cancelled():
@@ -350,6 +359,7 @@ class OperationManager:
                     operation.status = "cancelled"
                     operation.message = "操作已取消"
                     operation.error_code = "OPERATION_CANCELLED"
+                    operation.revision += 1
                 with trace_scope(operation.trace):
                     self._logger.info("排队中的后台任务已取消，未开始执行")
                     self._persist(operation)
