@@ -33,7 +33,7 @@ import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
@@ -164,6 +164,14 @@ def safe_extract_zip(
     return extracted
 
 
+@runtime_checkable
+class _VersionSnapshotUpdater(Protocol):
+    def _acknowledge_version_write(self, game_path: Path) -> None:
+        """
+        确认本程序已发布变化对应的文件监视基线。
+        """
+
+
 class WorkspaceCoordinator:
     """
     提供实例工作台通用目录、复制、导入导出、校验和删除操作。
@@ -237,7 +245,7 @@ class WorkspaceCoordinator:
             subprocess.run(["xdg-open", str(path)], check=False)
         return {"path": str(path)}
 
-    def delete_instance(self, game_path: Any, version_id: Any) -> None:
+    def delete_instance(self, game_path: str | Path, version_id: str) -> None:
         """
         阻止运行中实例后，仅回收版本目录，不触碰共享资源和第三方配置。
         """
@@ -251,6 +259,11 @@ class WorkspaceCoordinator:
             ):
                 raise GameServiceError("游戏正在运行，无法删除实例", "INSTANCE_IS_RUNNING")
         delete_path(target.instance_path)
+        if isinstance(self, _VersionSnapshotUpdater):
+            self._acknowledge_version_write(target.minecraft_root_path)
+            with self._lock:
+                self._version_scan_cache.pop(self._version_path_key(target.minecraft_root_path), None)
+        self.events.emit("game:versions_changed", {"gamePath": str(target.minecraft_root_path)})
         self.events.emit(
             "game:instances_changed", {"reason": "instance_deleted", "versionId": target.instance_directory_name}
         )

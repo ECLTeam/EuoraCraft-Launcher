@@ -290,9 +290,12 @@ class ScanCoordinator(_GameState):
         for key, game_path in watched_paths:
             with self._lock:
                 compatibility_options = self._version_watch_compatibility_options.get(key)
+                expected_snapshot = self._version_watch_snapshots.get(key)
             snapshot = self._version_directory_snapshot(game_path, compatibility_options)
             with self._lock:
                 if key not in self._version_watch_paths:
+                    continue
+                if self._version_watch_snapshots.get(key) != expected_snapshot:
                     continue
                 previous_snapshot = self._version_watch_snapshots.get(key)
                 if previous_snapshot != snapshot:
@@ -308,6 +311,23 @@ class ScanCoordinator(_GameState):
         for game_path in changed_paths:
             self.events.emit("game:versions_changed", {"gamePath": game_path})
         return changed_paths
+
+    def _acknowledge_version_write(self, game_path: Path) -> None:
+        """
+        将本程序已经广播的文件写入纳入监视基线，避免下一轮重复广播。
+
+        读取当前目录签名后只替换该目录的基线；后续或其他目录的真实变更
+        仍由监视器检测并发布，不暂停监视线程或清空其他目录的等待状态。
+        """
+        key = self._version_path_key(game_path)
+        with self._lock:
+            options = self._version_watch_compatibility_options.get(key)
+            expected_snapshot = self._version_watch_snapshots.get(key)
+        snapshot = self._version_directory_snapshot(game_path, options)
+        with self._lock:
+            if key in self._version_watch_paths and self._version_watch_snapshots.get(key) == expected_snapshot:
+                self._version_watch_snapshots[key] = snapshot
+                self._version_watch_pending.pop(key, None)
 
     def _version_watch_loop(self) -> None:
         while not self._version_watch_stop.wait(self._version_watch_interval):

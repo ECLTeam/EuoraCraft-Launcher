@@ -6,6 +6,7 @@
 # 文件作用：实例资料协调器：资料读写、图标设置与置顶排序。
 #
 # 公开接口：
+#   - class InstanceCategorySnapshot — 分类身份与展示字段的类型化快照。
 #   - class ProfileCoordinator — 读取和修改实例资料、图标、置顶顺序和分类。
 #       - get_instance_profile(game_path, version_id) -> dict[str, Any] — 读取单个实例已持久化的 ECL 覆盖字段。
 #       - patch_instance_profile(game_path, version_id, patch) -> dict[str, Any] — 合并保存实例资料并立即失效扫描缓存。
@@ -22,7 +23,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pydantic import TypeAdapter
+from typing_extensions import TypedDict
+
 from .base import GameServiceError, _GameState
+
+
+class InstanceCategorySnapshot(TypedDict):
+    """
+    分类公开快照，只包含前端展示与稳定身份所需字段。
+    """
+
+    id: str
+    name: str
+    color: str
+    order: int
+    builtin: bool
 
 
 class ProfileCoordinator(_GameState):
@@ -38,6 +54,12 @@ class ProfileCoordinator(_GameState):
         return path, name
 
     def _notify_profile_changed(self, game_path: Path) -> None:
+        """
+        立即发布已完成的资料写入，并确认监视基线以免同一写入再次触发扫描。
+
+        确认基线后的外部文件变更仍会被监视器识别，不以固定时间窗口忽略变化。
+        """
+        self._acknowledge_version_write(game_path)
         key = self._version_path_key(game_path)
         with self._lock:
             self._version_scan_cache.pop(key, None)
@@ -139,11 +161,17 @@ class ProfileCoordinator(_GameState):
         for path in changed_paths:
             self._notify_profile_changed(path)
 
-    def get_instance_categories(self) -> list[dict[str, Any]]:
+    def get_instance_categories(self) -> list[InstanceCategorySnapshot]:
         """
         返回内置与用户自定义的实例分类。
         """
-        return self._instance_profiles.get_categories()
+        return TypeAdapter(list[InstanceCategorySnapshot]).validate_python(self._instance_profiles.get_categories())
+
+    def _notify_categories_changed(self) -> None:
+        """
+        发送完整分类快照，多个消费者无需分别回读同一份分类数据。
+        """
+        self.events.emit("game:instance_categories_changed", {"categories": self.get_instance_categories()})
 
     def upsert_instance_category(
         self,
@@ -162,7 +190,9 @@ class ProfileCoordinator(_GameState):
         :return: 保存后的分类
         """
         try:
-            return self._instance_profiles.upsert_category(category_id, name, color, order)
+            result = self._instance_profiles.upsert_category(category_id, name, color, order)
+            self._notify_categories_changed()
+            return result
         except (OSError, ValueError) as exc:
             raise GameServiceError(str(exc), "INSTANCE_CATEGORY_WRITE_FAILED") from exc
 
@@ -174,8 +204,9 @@ class ProfileCoordinator(_GameState):
         """
         try:
             self._instance_profiles.delete_category(category_id)
+            self._notify_categories_changed()
         except (OSError, ValueError) as exc:
             raise GameServiceError(str(exc), "INSTANCE_CATEGORY_WRITE_FAILED") from exc
 
 
-__all__ = ["ProfileCoordinator"]
+__all__ = ["InstanceCategorySnapshot", "ProfileCoordinator"]
