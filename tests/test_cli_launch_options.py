@@ -33,6 +33,7 @@
 
 import builtins
 import sys
+from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -40,6 +41,7 @@ import pytest
 import main
 from ECL.cli import LaunchOptions, apply_launch_overrides, parse_launch_options, run_launcher
 from ECL.foundation.version import __version__
+from ECL.runtime.contracts import HeadlessTask, RunMode
 
 
 def test_parse_defaults_returns_all_unset_options() -> None:
@@ -326,3 +328,82 @@ def test_temporary_game_overrides_keep_explicit_false_and_dont_copy_defaults() -
 def test_invalid_extended_game_options_are_rejected(argv) -> None:
     with pytest.raises(SystemExit):
         parse_launch_options(argv)
+
+
+def test_explicit_gui_and_headless_options(tmp_path) -> None:
+    assert parse_launch_options(["--gui"]).run_mode == RunMode.desktop
+    result_file = tmp_path / "nested" / "result.json"
+    options = parse_launch_options(["--headless", "--task=runtime-check", "--result-file", str(result_file)])
+    assert options.run_mode == RunMode.headless and options.task == HeadlessTask.runtime_check
+    assert options.result_file == result_file
+    assert not result_file.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--headless"],
+        ["--headless", "--task=unknown"],
+        ["--gui", "--headless"],
+        ["--task=runtime-check"],
+        ["--result-file=result.json"],
+    ],
+)
+def test_invalid_mode_exits_before_runtime_import(argv, monkeypatch) -> None:
+    original_import = builtins.__import__
+
+    def guard(name, *args, **kwargs):
+        if name in {"ECL.launcher", "ECL.runtime.headless"}:
+            pytest.fail("参数错误不应加载运行入口")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guard)
+    with pytest.raises(SystemExit) as error:
+        run_launcher(argv)
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "desktop_option",
+    [
+        "--frontend-dist=missing",
+        "--open-page=games",
+        "--dev-channel",
+        "--disable-plugins",
+        "--launch=Foo",
+        "--server=server",
+        "--world=world",
+        "--game-dir=missing",
+        "--java-path=missing",
+        "--memory=4096",
+        "--width=1000",
+        "--height=600",
+        "--fullscreen",
+        "--windowed",
+        "--isolation=inherit",
+        "--process-priority=normal",
+        "--lock-memory",
+        "--no-lock-memory",
+        "--jvm-arg=-Xmx1G",
+        "--game-arg=--demo",
+        "--launcher-visibility=none",
+        "--front=missing",
+        "--no-lock-mem",
+    ],
+)
+def test_headless_rejects_every_desktop_option(desktop_option) -> None:
+    with pytest.raises(SystemExit) as error:
+        parse_launch_options(["--headless", "--task=runtime-check", desktop_option])
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("target", ["existing", "directory", "blocked/child", "", "bad\0file"])
+def test_result_path_rejects_existing_or_invalid_targets(tmp_path, monkeypatch, target) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "existing").write_text("keep", encoding="utf-8")
+    (tmp_path / "directory").mkdir()
+    (tmp_path / "blocked").write_text("keep", encoding="utf-8")
+    with pytest.raises(SystemExit) as error:
+        parse_launch_options(["--headless", "--task=runtime-check", "--result-file", target])
+    assert error.value.code == 2
+    assert Path("existing").read_text(encoding="utf-8") == "keep"

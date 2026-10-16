@@ -47,6 +47,7 @@ from .instance_compat import InstanceCompatibilityReader
 from .instance_profiles import InstanceProfileStore
 from .mcmod import McmodTranslator
 from .mod_sources import ModSourceAware, ModSourceRequestPolicy
+from .resource_metadata import ResourceMetadataCache
 from .resource_search import ResourceSearchService
 from .version_stats import VersionStatsStore
 
@@ -162,6 +163,7 @@ class _GameState(ModSourceAware):
         )
         self._mcmod = McmodTranslator(Path(resource_path) / "resources" / "mcmod_data.json" if resource_path else None)
         self._resource_search: ResourceSearchService = ResourceSearchService()
+        self._resource_metadata: ResourceMetadataCache = ResourceMetadataCache()
         self._curseforge_api_key = curseforge_api_key
         self._java_cache_file = self._data_path / "java_cache.json" if data_path else None
         self.authlib_injector = authlib_injector or (AuthlibInjector(data_path) if data_path else None)
@@ -406,6 +408,7 @@ class _GameState(ModSourceAware):
             self._closing = True
         self._crash_capture.close()
         self._resource_search.close()
+        self._resource_metadata.close()
         with self._lock:
             running_tokens = [token for token, run in self._running_games.items() if not run.pending]
         for token in running_tokens:

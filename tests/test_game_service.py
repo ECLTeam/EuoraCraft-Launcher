@@ -1771,3 +1771,27 @@ def test_silent_user_commands_log_start_and_exit(tmp_path, monkeypatch, phase) -
         assert "secret-command" not in str(messages)
     finally:
         service.close()
+
+
+def test_profile_write_is_not_republished_by_watcher_but_external_write_is(tmp_path: Path) -> None:
+    game_path = tmp_path / "minecraft"
+    instance_path = game_path / "versions" / "demo"
+    instance_path.mkdir(parents=True)
+    (instance_path / "demo.json").write_text('{"id":"demo"}', encoding="utf-8")
+    bus = EventBus()
+    changes: list[object] = []
+    bus.subscribe("game:versions_changed", changes.append)
+    service = _build_service(
+        event_bus=bus, enable_version_watcher=False, version_watch_debounce=0, data_path=tmp_path / "data"
+    )
+    try:
+        service.scan_versions([str(game_path)])
+        service.patch_instance_profile(str(game_path), "demo", {"alias": "新名称"})
+        assert len(changes) == 1
+        assert service._poll_version_changes(now=100) == []
+        profile_path = instance_path / ".ecl" / "instance.json"
+        profile_path.write_text('{"alias":"来自外部程序的另一名称"}', encoding="utf-8")
+        assert service._poll_version_changes(now=101) == [str(game_path.resolve())]
+        assert len(changes) == 2
+    finally:
+        service.close()

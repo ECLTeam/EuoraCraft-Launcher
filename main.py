@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：在导入宿主前分流内部 Worker；普通启动请求交给命令行模块。
+# 文件作用：在导入宿主前分流内部 Worker，将桌面或无头任务交给命令行模块。
 #
 # 公开接口：
 #   - run_launcher(argv=None) -> int

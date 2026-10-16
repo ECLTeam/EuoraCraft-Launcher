@@ -8,9 +8,9 @@
 # 公开接口：
 #   - class ConfigStore — 从 JSON 文件读取并保存启动器设置，由当前应用创建和关闭。
 #       - default_minecraft_path() -> Path — 获取默认 Minecraft 目录。
-#       - get_config(section=…) -> Any — 获取配置数据
+#       - get_config(section=…) -> JsonValue — 返回配置的防御性副本。
 #       - list_sections() -> list[str] — 获取全部配置分区名称
-#       - get_many(sections) -> dict[str, Any] — 批量获取配置分区
+#       - get_many(sections) -> dict[str, JsonValue] — 批量获取配置分区。
 #       - save_config(section, data) -> None — 保存配置分区
 #       - patch_download(patch) -> dict[str, JsonValue] — 在同一个锁中合并下载配置并原子落盘。
 #       - remove_legacy_instance_settings(key) -> None — 实例设置落盘后清理对应旧全局条目。
@@ -19,13 +19,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import ClassVar, overload
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from ECL.foundation import EventBus
 from ECL.utils.download_settings import DownloadSettingsPatch
@@ -33,7 +34,7 @@ from ECL.utils.errors import ConfigError, ConfigValidationError
 from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import get_logger
 
-default_config: dict[str, Any] = {
+default_config: dict[str, JsonValue] = {
     "launcher": {
         "debug": False,
         "debug_log_level": "info",
@@ -133,15 +134,15 @@ class ConfigStore:
 
     # 允许持久化的配置分区白名单。未知分区（例如决定前端来源的 tauri）禁止经
     # IPC 写入，防止前端或注入脚本篡改启动器级敏感配置。
-    allowed_sections = frozenset(default_config) | {"user_agreement", "background"}
+    allowed_sections: ClassVar[frozenset[str]] = frozenset(default_config) | {"user_agreement", "background"}
 
     def __init__(self, data_path: Path, event_bus: EventBus | None = None) -> None:
-        self.logger = get_logger("config")  # 配置读写日志器。
-        self.data_path = Path(data_path)  # 应用数据目录。
-        self.config_path = self.data_path / "setting.json"  # 配置文件路径。
+        self.logger: logging.Logger = get_logger("config")  # 配置读写日志器。
+        self.data_path: Path = Path(data_path)  # 应用数据目录。
+        self.config_path: Path = self.data_path / "setting.json"  # 配置文件路径。
         self._lock = RLock()
-        self.config_data: dict[str, Any] | None = None  # 内存中的配置快照。
-        self.events = event_bus or EventBus()  # 配置变更事件总线。
+        self.config_data: dict[str, JsonValue] | None = None  # 内存中的配置快照。
+        self.events: EventBus = event_bus or EventBus()  # 配置变更事件总线。
 
     @property
     def default_minecraft_path(self) -> Path:
@@ -151,13 +152,19 @@ class ConfigStore:
         """
         return (self.data_path.parent / ".minecraft").resolve()
 
-    def _create_default_config(self) -> dict[str, Any]:
+    def _create_default_config(self) -> dict[str, JsonValue]:
+        """
+        创建独立默认快照并补齐默认游戏目录，不共享可变默认值。
+        """
         # 深拷贝默认值，避免调用方共享可变配置。
         config_data = deepcopy(default_config)
         self._ensure_default_minecraft_path(config_data)
         return config_data
 
-    def _ensure_default_minecraft_path(self, config_data: dict[str, Any]) -> bool:
+    def _ensure_default_minecraft_path(self, config_data: dict[str, JsonValue]) -> bool:
+        """
+        在缺少游戏目录时创建默认目录，并回填由当前应用维护的配置快照。
+        """
         # 缺少游戏目录时创建默认目录并回填相关字段。
         game_config = config_data.get("game")
         if not isinstance(game_config, dict):
@@ -182,7 +189,10 @@ class ConfigStore:
         self.logger.info("配置文件不存在，正在创建: %s", self.config_path)
         self._write_config(self._create_default_config())
 
-    def _write_config(self, config_data: dict[str, Any]) -> None:
+    def _write_config(self, config_data: dict[str, JsonValue]) -> None:
+        """
+        原子替换配置文件，只有落盘成功后才更新共享内存快照。
+        """
         # 以原子替换方式写入配置，避免写入中断造成文件损坏。
         try:
             serialized_config = json.dumps(config_data, ensure_ascii=False, indent=4)
@@ -191,21 +201,27 @@ class ConfigStore:
             raise ConfigError(f"写入配置文件失败: {self.config_path}") from exc
         self.config_data = deepcopy(config_data)
 
-    def _load_config(self) -> dict[str, Any]:
+    def _load_config(self) -> dict[str, JsonValue]:
+        """
+        校验持久化 JSON 并恢复不可读文件，诊断不包含原始配置值。
+        """
         # 从磁盘加载配置，必要时补全默认路径或恢复损坏文件。
         try:
             self._initialize_file()
-            loaded = json.loads(self.config_path.read_text(encoding="utf-8"))
-            if not isinstance(loaded, dict):
-                raise ValueError("配置文件根节点必须是对象")
+            loaded = TypeAdapter(dict[str, JsonValue]).validate_json(self.config_path.read_text(encoding="utf-8"))
             needs_write = self._ensure_default_minecraft_path(loaded)
             if needs_write:
                 self._write_config(loaded)
             return loaded
+        except ValidationError:
+            return self._restore_default_config(ValueError("配置文件必须为有效的 JSON 对象"))
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             return self._restore_default_config(exc)
 
-    def _restore_default_config(self, cause: Exception) -> dict[str, Any]:
+    def _restore_default_config(self, cause: Exception) -> dict[str, JsonValue]:
+        """
+        保留损坏文件备份并恢复默认配置，不记录损坏文件的内容。
+        """
         # 备份损坏配置后恢复默认值。
         backup_path = self.config_path.with_suffix(".json.bak")
         self.logger.warning("配置文件无效，将恢复默认配置: %s", cause)
@@ -216,7 +232,13 @@ class ConfigStore:
         self.logger.info("已恢复默认配置，原配置备份路径: %s", backup_path)
         return restored
 
-    def get_config(self, section: str | None = None) -> Any:
+    @overload
+    def get_config(self, section: None = None) -> dict[str, JsonValue]: ...
+
+    @overload
+    def get_config(self, section: str) -> JsonValue: ...
+
+    def get_config(self, section: str | None = None) -> JsonValue:
         """
         获取配置数据
         :param section: 配置分区，为 None 时返回全部配置
@@ -236,7 +258,7 @@ class ConfigStore:
         """
         return list(self.get_config())
 
-    def get_many(self, sections: list[str]) -> dict[str, Any]:
+    def get_many(self, sections: list[str]) -> dict[str, JsonValue]:
         """
         批量获取配置分区
         :param sections: 配置分区名称列表
@@ -264,9 +286,12 @@ class ConfigStore:
                 del config_data["version_settings"]
             self._write_config(config_data)
 
-    def save_config(self, section: str, data: Any) -> None:
+    def save_config(self, section: str, data: JsonValue) -> None:
         """
-        保存配置分区
+        原子保存配置分区，仅在持久化值实际变化时发布事件。
+
+        相同值不重写文件或触发同步链路。失败时保留旧内存及文件，
+        比较以持久化配置为准，不把运行时覆盖误当成已保存值。
         :param section: 配置分区名称
         :param data: 配置数据
         """
@@ -281,6 +306,8 @@ class ConfigStore:
             data = ConnectorNodeConfig.model_validate(data).model_dump()
         with self._lock:
             config_data = self.get_config()
+            if config_data.get(normalized_section) == data:
+                return
             config_data[normalized_section] = deepcopy(data)
             self._write_config(config_data)
         # 广播配置变更事件，通知订阅组件。
@@ -301,13 +328,19 @@ class ConfigStore:
         with self._lock:
             config_data = self.get_config()
             next_download = TypeAdapter(dict[str, JsonValue]).validate_python(config_data.get("download") or {})
-            updates = patch.model_dump(by_alias=True, exclude_unset=True, mode="json")
+            updates = TypeAdapter(dict[str, JsonValue]).validate_python(
+                patch.model_dump(by_alias=True, exclude_unset=True, mode="json")
+            )
             for field_name, value in updates.items():
                 if field_name in {"resourceInstallCache", "resourceSaveDirectories"}:
+                    if not isinstance(value, dict):
+                        raise ConfigValidationError("资源目标配置必须为对象")
                     existing = next_download.get(field_name)
                     next_download[field_name] = {**(existing if isinstance(existing, dict) else {}), **value}
                 else:
                     next_download[field_name] = value
+            if config_data.get("download") == next_download:
+                return deepcopy(next_download)
             config_data["download"] = next_download
             self._write_config(config_data)
         self.events.emit("config:updated", "download", deepcopy(next_download))

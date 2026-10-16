@@ -21,6 +21,8 @@
 from types import SimpleNamespace
 from typing import Any
 
+from pydantic import JsonValue
+
 from ECL.foundation import EventBus
 from ECL.host.frontend_events import (
     FrontendEventPolicy,
@@ -50,6 +52,22 @@ def test_bridge_reshapes_config_updated() -> None:
     bus, received, _ = _collect_events()
     bus.emit("config:updated", "launcher", {"debug": True})
     assert received == [("config:updated", {"section": "launcher", "data": {"debug": True}})]
+
+
+def test_bridge_config_snapshot_preserves_runtime_overrides_and_copies_result() -> None:
+    bus = EventBus()
+    received: list[tuple[str, object]] = []
+    effective: dict[str, JsonValue] = {"launcher": {"debug": True}}
+    unsubscribe = subscribe_all_frontend_events(
+        bus, lambda event, payload: received.append((event, payload)), config_snapshot=lambda: effective
+    )
+    bus.emit("config:updated", "launcher", {"debug": False})
+    effective["launcher"] = {"debug": False}
+    assert received == [("config:updated", {"section": "launcher", "data": {"debug": True}, "effective": True})]
+    for stop in unsubscribe:
+        stop()
+    bus.emit("config:updated", "launcher", {})
+    assert len(received) == 1
 
 
 def test_bridge_maps_plugin_status_events_to_single_event() -> None:

@@ -477,3 +477,38 @@ def test_atomic_new_target_on_windows_and_posix(tmp_path, download_server, monke
         assert (tmp_path / "file").read_bytes() == payload
     finally:
         manager.close()
+
+
+def test_terminal_revision_is_visible_before_persistence_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    finish_worker = threading.Event()
+    persisting = threading.Event()
+    finish_persisting = threading.Event()
+    manager = OperationManager(tmp_path, EventBus())
+
+    def worker(context) -> None:
+        started.set()
+        assert finish_worker.wait(3)
+        context.check_cancelled()
+
+    def persist(_operation: object) -> None:
+        persisting.set()
+        assert finish_persisting.wait(3)
+
+    monkeypatch.setattr(manager, "_persist", persist)
+    try:
+        operation_id = manager.submit("world_copy", worker)["operationId"]
+        assert started.wait(3)
+        manager.cancel(operation_id)
+        cancelling = manager.get(operation_id)
+        finish_worker.set()
+        assert persisting.wait(3)
+        terminal = manager.get(operation_id)
+        assert terminal["status"] == "cancelled"
+        assert terminal["revision"] > cancelling["revision"]
+    finally:
+        finish_worker.set()
+        finish_persisting.set()
+        manager.close()

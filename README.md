@@ -51,6 +51,8 @@
 
 > 首次使用、常见问题与各功能的详细说明，请参阅[文档站](https://docs.euora.cn)。
 
+开发与自动化场景可通过 `--gui` / `--headless` 切换运行模式。例如 `python main.py --headless --task runtime-check` 会检查运行环境并输出 JSON；无控制台产物可使用 `--result-file` 保存结果。参数、输出协议与后续插件子进程的扩展边界见[无头运行说明](docs/headless-runtime.md)。
+
 ---
 
 ## 合作项目
