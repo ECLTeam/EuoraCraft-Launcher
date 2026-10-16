@@ -25,6 +25,7 @@ from typing import Any
 
 from ECL.foundation.version import __version__, __version_type__
 from ECL.runtime.contracts import HeadlessTask, RunMode
+from ecl_bootstrap import ProcessRole, select_process_route
 
 _log_level_choices = ("debug", "info", "warning", "error")
 _url_schemes = ("http://", "https://")
@@ -131,7 +132,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         dest="run_mode",
         action="store_const",
         const=RunMode.headless,
-        help="无 UI 执行指定任务后退出，暂不支持游戏启动或完整后端常驻",
+        help="无 UI 执行任务；宿主创建的插件子进程使用 --headless --role plugin",
     )
     parser.set_defaults(run_mode=RunMode.desktop)
     parser.add_argument("--task", choices=tuple(HeadlessTask), help="无头任务，目前支持 runtime-check")
@@ -341,7 +342,10 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
     :return: 本次运行使用的启动参数
     :raises SystemExit: ``--help``/``--version`` 或参数校验失败时由 argparse 抛出
     """
+    route = select_process_route(argv)
     parser = build_arg_parser()
+    if route.role is ProcessRole.plugin:
+        parser.error("插件角色必须通过 main.py 的统一进程入口启动")
     args = parser.parse_args(list(argv))
     _validate_run_mode(parser, args, argv)
     if (args.server or args.world) and not args.launch:

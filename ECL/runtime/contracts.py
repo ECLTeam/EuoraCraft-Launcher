@@ -72,7 +72,10 @@ class HeadlessRuntimeError(Exception):
 @dataclass(frozen=True, slots=True)
 class HeadlessOptions:
     """
-    保存一次无头执行参数，不读取或修改用户设置。
+    保存有限无头任务的参数，不读取或修改用户设置。
+
+    插件角色具有独立的认证连接与持续生命周期，由轻量进程入口按需导入，
+    不使用本模型或探测任务的 stdout 结果协议。
     """
 
     task: HeadlessTask

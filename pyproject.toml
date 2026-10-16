@@ -60,6 +60,9 @@ dev = [
     "uv==0.13.0"
 ]
 
+[tool.setuptools]
+py-modules = ["ecl_bootstrap"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ECL*", "ecl_plugin_api*"]

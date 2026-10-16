@@ -79,7 +79,9 @@ class ExecutableLaunchSpec:
             prefix += ("-S", str(self.project_path / "main.py"))
         return (
             *prefix,
-            "--internal-plugin-worker",
+            "--headless",
+            "--role",
+            "plugin",
             "--pipe-address",
             address,
             "--host-pid",

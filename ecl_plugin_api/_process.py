@@ -3,15 +3,14 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：在受信引导模式等待宿主加载许可，跳过桌面和业务初始化。
+# 文件作用：无头插件角色的受信执行器，认证后等待宿主许可并管理插件生命周期。
 #
 # 公开接口：
-#   - run_worker() — 执行只由宿主创建和认证的 Worker 引导。
+#   - run_plugin_process — 执行由宿主监管和认证的无头插件会话。
 # ============================================================
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import importlib
 import importlib.machinery
@@ -20,6 +19,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+from ecl_bootstrap import PluginProcessOptions
 from ecl_plugin_api._imports import DependencySnapshot, LockedImports
 from ecl_plugin_api._rpc import RpcPeer, RpcRequest
 from ecl_plugin_api._runtime import PluginRuntime
@@ -190,24 +190,13 @@ def _serve_loaded(channel: PipeChannel, module: ModuleType, entry_class: str) ->
         peer.close()
 
 
-def run_worker(argv: list[str]) -> int:
+def run_plugin_process(options: PluginProcessOptions) -> int:
     """
-    运行内部 Worker，任何失败均退出，不进入普通启动器。
+    运行受控无头插件会话，任何失败均退出，不进入桌面或探测任务。
 
-    :param argv: 仅公开管道、宿主 PID 和会话参数
+    :param options: 统一轻量入口校验的管道、宿主 PID 和会话参数，不表示授权
     :return: 正常退出为零；平台、协议或连接失败为二
     """
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--pipe-address", required=True)
-    parser.add_argument("--host-pid", required=True, type=int)
-    parser.add_argument("--run-id", required=True)
-    options = parser.parse_args(argv)
-    if (
-        not options.pipe_address.startswith("\\\\.\\pipe\\ecl-worker-")
-        or not (len(options.run_id) == 32 and all(char in "0123456789abcdef" for char in options.run_id))
-        or not 0 < options.host_pid <= 0xFFFFFFFF
-    ):
-        return 2
     sys.dont_write_bytecode = True
     channel: PipeChannel | None = None
     try:

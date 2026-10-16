@@ -109,7 +109,10 @@ def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
     root_path = Path(__file__).resolve().parents[1]
     source = (
         "import main, sys, json\n"
-        "code=main.run_launcher(['--internal-plugin-worker','--pipe-address',r'\\\\.\\pipe\\ecl-worker-test','--host-pid','0','--run-id','0'*32])\n"
+        "try:\n"
+        " main.run_launcher(['--headless','--role=plugin','--pipe-address',r'\\\\.\\pipe\\ecl-worker-test','--host-pid','0','--run-id','0'*32])\n"
+        "except SystemExit as error:\n"
+        " code=error.code\n"
         "print(json.dumps({'code':code,'host_loaded':any(n=='ECL' or n.startswith('ECL.') for n in sys.modules)}))\n"
     )
     result = subprocess.run(

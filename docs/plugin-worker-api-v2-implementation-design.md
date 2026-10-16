@@ -366,7 +366,7 @@ Windows 使用 Job 管理 Worker、冻结引导后代和插件工具进程。启
 
 ### 12.3 引导环境和插件代码执行闸门
 
-内部命令为拟议的 `--internal-plugin-worker`，只启动受信 Worker 引导。命令行可以有公开端点名，不携带凭据，不携带可自行决定的插件身份或代码路径。
+插件子进程通过正式无头角色 `--headless --role plugin` 启动，复用同一 ECL 发行物。命令行可以有公开端点名，不携带凭据，不携带可自行决定的插件身份或代码路径。原内部命令 `--internal-plugin-worker` 已移除并拒绝；最新入口整合见 `plugin-headless-process-integration-design.md`。
 
 1. 重排 `main.py`：标准库分流先于任何 `ECL` 导入。
 2. 启动根进程的工作目录设为受信目录；不得用插件代码目录作为启动 cwd。清理 `PYTHONPATH`、用户站点注入等开发入口，不调用插件目录的 `site.addsitedir()`，不执行 Wheel 的 `.pth`。开发环境需验证隔离启动参数及禁用site初始化的方式，并由受信入口显式加入SDK所在项目路径；不能以环境清理推断系统sitecustomize已经禁用。冻结环境按构建器实际初始化路径核查。
@@ -851,7 +851,7 @@ frame的CSP使用deny-by-default：禁用connect、object、base和form，图片
 |---|---|---|---|---|
 | P00：契约与身份模型 | `ecl_plugin_api/contracts.py`；`ECL/plugins/runtime/contracts.py`；宿主typed DTO与方法目录 | `test_plugin_v2_contracts.py`：每个方法schema、额外字段、限长/深度、bytes/NaN、owner伪造；现有API模型回归 | 第13节每个方法都可查到明确schema/策略；不改变现有运行路径；内部模型无长期Any。无法确定字段则先修订契约 | 撤回新模型和测试，不迁移数据 |
 | P01：Windows原生监管，依赖P00 | `runtime/windows.py`、native创建/句柄封装，不接用户插件发现 | F03/F04/F06/F07；`test_plugin_windows_supervision.py`：挂起、assign失败、嵌套Job、句柄泄漏、breakaway；POSIX拒绝分支 | 从挂起到确认Job之前无受控载荷执行；失败不恢复；主退出回收。已有Job限制不允许绕开。不能证实则停止P02及运行迁移 | 关闭本切片创建的Job和handles，测试目录留档；撤回适配器，无用户插件数据变化 |
-| P02：发行物分流，依赖P01 | `main.py`、`runtime/executable.py`、轻量`ecl_plugin_api/_worker.py`、Nuitka/spec/pyproject收集入口 | F01/F02/F05；真实Nuitka x64；PyInstaller onefile专项；现有`test_cli_launch_options.py`、`test_single_instance.py`、`test_runtime_paths.py` | 明确记录B/W、原EXE、资源目录、运行版本；闸门前无插件导入；normal CLI/更新重启不变。无法解析EXE、重复主窗口或Job绕过则停止 | 撤回入口和构建收集；清理仅本次测试产物。保留失败日志，不修改发布标签 |
+| P02：发行物分流，依赖P01 | `main.py`、`runtime/executable.py`、轻量`ecl_plugin_api/_process.py`、Nuitka/spec/pyproject收集入口 | F01/F02/F05；真实Nuitka x64；PyInstaller onefile专项；现有`test_cli_launch_options.py`、`test_single_instance.py`、`test_runtime_paths.py` | 明确记录B/W、原EXE、资源目录、运行版本；闸门前无插件导入；normal CLI/更新重启不变。无法解析EXE、重复主窗口或Job绕过则停止 | 撤回入口和构建收集；清理仅本次测试产物。保留失败日志，不修改发布标签 |
 | P03：依赖实际隔离，依赖P02 | `ecl_plugin_api`导入上下文；`host_dependencies.py`分离worker策略；不全局替换宿主模块 | F08；更新`test_plugin_environment_pool.py`、`test_plugin_host_dependencies.py`及冻结测试：同包不同版本、原生库、importlib.resources/metadata、.pth不执行 | 各W使用自己的版本，宿主不污染；ABI不符拒绝；只有磁盘共享不伪报模块隔离。冻结finder/native依赖阻断则停止后续运行迁移 | 撤回worker加载策略，保留完整锁/cache/目录；无自动删除，无新venv |
 | P04：前端原生边界早期验证，依赖P00 | 前端受信测试壳/fixture；现有`host/tauri.py`、Capability与native授权检查的最小验证接线；不启用用户自定义UI | U01—U09；真实WebView2；`test_plugin_ui_authorization.py`记录business handler计数 | 正向可达，所有绕过负向无副作用；证明凭据不进子frame，导航及网络门可控。不得用纯浏览器/无__TAURI__替代。缺可信来源控制则提交方案修订；不继续自定义UI实现 | 撤回测试壳及本切片配置；恢复可信主窗口功能，第三方自定义能力始终关闭 |
 | P05：授权存储与内容绑定，依赖P00 | `permissions.py`、`grant_store.py`、preparation/activation摘要；管理接口caller分类 | V01/V09/V10/V11；`test_plugin_grant_store.py`：原子失败、损坏、会话到期、卸载重装、代码变更 | 声明不等于allow，授权只绑定本安装/摘要；管理接口拒绝非main/Dev Channel/未知主体。摘要不可绑定或失败时放行是阻塞 | 保留新授权文件/旧安装记录备份；功能关闭后默认拒绝，不回填旧声明为allow |
