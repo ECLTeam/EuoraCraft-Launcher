@@ -74,7 +74,7 @@ ECL.exe --headless --role plugin --pipe-address <宿主端点> --host-pid <PID> 
 
 插件生命周期与双向调用通过 IPC 交付，不使用 stdout 的探测结果协议。参数、连接或授权失败不会回退桌面。断连及关闭由宿主监管和会话资源清理处理；已经提交到宿主的业务任务须另按任务所有权和取消规则管理。
 
-该角色已提供插件进程运行基础；正式 PluginManager 的第三方发现链路迁移仍未完成，当前安装的第三方插件不能据此宣称已全部隔离。用户授权管理界面及完整 Host API 也不由本次入口整合自动获得。自定义前端原生隔离保持暂缓。
+正式 PluginManager 已接入目录与归档第三方插件：安装和发现只登记，完成内容审阅及必要授权后才创建 Worker；禁用、崩溃及必要权限撤销均由宿主持有的监管服务确认进程停止。Windows x64 以外平台明确拒绝第三方执行。可信主窗口提供权限审阅与撤销，当前 Host API 仅开放自身命令、设置、自查询及自身设置事件；完整业务 API 仍需后续切片。实现与验收见 [管理器接入方案](plugin-worker-manager-integration-plan.md)。自定义前端原生隔离保持暂缓。
 
 ## 扩展边界
 
@@ -90,4 +90,4 @@ ECL.exe --headless --role plugin --pipe-address <宿主端点> --host-pid <PID> 
 
 根目录仅保留 `main.py` 作为统一进程入口。启动引导位于 `ECL/bootstrap.py`，轻量插件 API 位于 `ECL/plugin_api/`，插件导入使用 `from ECL.plugin_api import Plugin`。旧 `ecl_bootstrap` 和 `ecl_plugin_api` 导入路径已移除，插件源码需要同步调整；启动器不会自动改写已安装插件或用户数据。
 
-直接导入 `ECL.plugin_api` 不初始化宿主插件管理器、桌面或业务服务。宿主内既有的 `ECL.plugins.Plugin` 接口沿用其自身契约，不能据此次目录迁移宣称第三方插件发现链路已经完成进程隔离。版本信息由 `ECL.foundation.version` 提供。
+直接导入 `ECL.plugin_api` 不初始化宿主插件管理器、桌面或业务服务。宿主内既有的 `ECL.plugins.Plugin` 接口仅用于可信发行系统插件；第三方必须声明 API v2 并使用独立 Worker，不提供旧基类适配。版本信息由 `ECL.foundation.version` 提供。

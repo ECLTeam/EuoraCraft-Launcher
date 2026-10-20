@@ -1,6 +1,6 @@
 # `.eclplugin` 归档格式 v1
 
-`.eclplugin` 是无签名的 ZIP 归档，不是加密文件。插件在启动器主进程中运行；Python 依赖只安装到数据目录中的独立库目录，不创建额外解释器、venv 或 Worker。安装只校验和准备文件，默认重启后加载。目录隔离不提供同名包不同版本的并行导入，也不是权限或资源沙箱。不要把归档哈希误认为作者身份认证。
+`.eclplugin` 是无签名 ZIP 归档，不是加密文件。第三方插件使用 API v2，在独立 Worker 中运行；系统插件仍由宿主维护。安装只准备文件，不自动审阅、授予权限或执行入口。依赖安装到独立库目录，不另建解释器或 venv；Worker 复用当前发行物。归档摘要用于完整性校验，不证明作者身份。Worker 不提供恶意 Python 的操作系统文件或网络沙箱。
 
 后端用 `plugin_package_inspect` 预检，再通过 `plugin_install` 传入 `plugin_path`、`confirm_unverified_source: true` 和 `allow_network` 安装。Dev Channel 对应 `plugin.inspect` 和 `plugin.install`，路径字段为 `path`。预检返回 `dependencies_ready`；安装结果包含 `status` 和 `message`，列表提供 `pending_restart` 与 `installed_version`（Dev Channel 为 `pendingRestart`、`installedVersion`）。不再接受运行时离线包参数。未允许联网时仅使用包内 wheels、共享 wheel 缓存和已就绪依赖目录。
 
@@ -55,9 +55,11 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 
 同一完整锁字节、宿主 ABI 和平台共用 `plugin_deps/<key>/site-packages`；不同锁共享 `plugin_cache/wheels/<sha256>`，不向系统或宿主 site-packages 安装。就绪目录逐文件复核，禁止增量覆盖损坏目录；代码版本位于 `plugin_packages/<name>/pkg-<摘要>`，活动指针为 `active.json`。
 
-插件依赖必须与宿主生产依赖以及本进程已登记包版本兼容，不得替换标准库、ECL 或 SDK。不同包提供同名导入也视为冲突。启动前整体检查归档组合，冲突双方均保持禁用。可以保存冲突插件，但不会执行其入口，界面显示原因。
+不同 Worker 可以使用同名包的不同版本；每个 Worker 校验自己的完整锁、代码和依赖目录。不得覆盖标准库、ECL 或 API，单一环境内不同包提供同名导入仍拒绝。原生扩展须匹配当前解释器 ABI。
 
-安装/更新状态为待重启，不热切换已导入的依赖。禁用、卸载和代码重载不清空 `sys.modules`，不能卸载原生扩展或强制终止插件线程。卸载撤销活动指针，但保留代码、依赖目录和历史记录；本版不自动清理旧 runtime/venv。旧 Worker 指针迁移仅在原始代码和离线依赖完整时提交新记录，失败保留旧数据并显示错误，不启动旧 Worker；可显式允许联网重装来补齐缺失 wheel。
+归档安装和更新仍显示待重启；重启后也必须通过内容审阅和必要授权才能启用。目录安装完成后同样待审阅。授权绑定宿主安装身份、代码、权限、完整锁和 ABI；更新内容不会自动继承许可，卸载重装使用新安装身份。损坏数据保留原文件并明确失败，不转换旧权限为 allow，也不回退到第三方主进程运行。
+
+禁用、重载和撤销通过 Worker 监管处理，确认旧进程树停止后才建立新运行。已完成的设置写入不会因权限撤销自动回滚。设置和授权原文件保留，详细状态见插件管理页。
 
 ## 制作与检查
 
@@ -69,40 +71,51 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 
 输出文件不能位于插件源目录内。制作命令不解析、下载或锁定依赖；作者须自行准备需要随包携带的锁文件与 wheels。
 
-## 主进程 SDK
+## 第三方 API v2
 
-目录插件与归档插件统一继承启动器公开导出的 `ECL.plugins.Plugin`。命令用装饰器或在 `on_load` 中 `register_command` 登记，参数和结果应可 JSON 编码。只有登记命令可以被调用，禁用时拒绝调用；普通公开方法不自动暴露。
-
-```python
-from ECL.plugins import Plugin as BasePlugin
-
-
-class Plugin(BasePlugin):
-    @BasePlugin.on_command("greet")
-    def greet(self, name: str) -> dict[str, str]:
-        return {"message": f"你好，{name}"}
-```
-
-上述示例需要在 `plugin.json` 声明对应命令权限：
+目录与归档共用清单和 SDK；`plugin.json` 必须显式声明 `api_version: 2`。示例：
 
 ```json
 {
+  "name": "example",
+  "api_version": 2,
+  "version": "1.0.0",
+  "entry_point": "main:Plugin",
   "permissions": [
-    { "scope": "commands", "action": "execute", "resource": "greet" }
+    { "capability": "commands.register", "required": true },
+    { "capability": "commands.execute", "required": true }
   ]
 }
 ```
 
-不自定义构造函数时直接继承基类构造。确需自定义构造时，接收宿主传入的 `framework`、`plugin_dir`、`metadata`、`is_system` 并调用 `super().__init__`；初始化业务优先放在 `on_load` 中。没有旧命令 SDK 的无参数构造适配。
+```python
+from ECL.plugin_api import Plugin as BasePlugin
 
-归档插件与目录插件使用相同的完整宿主 API、权限声明、生命周期、事件、设置和前端资源，不需要跨进程代理。代码、依赖及钩子都与启动器共享进程状态。详见[安装目录隔离方案](plugin-install-directory-isolation-plan.md)与[SDK 统一方案](plugin-sdk-unification-plan.md)。
+
+class Plugin(BasePlugin):
+    def on_load(self):
+        self.define_command(
+            "greet", self.greet,
+            input_fields=({"name": "name", "type": "string"},),
+            output_fields=({"name": "message", "type": "string"},),
+        )
+
+    def greet(self, name):
+        return {"message": f"Hello, {name}"}
+```
+
+插件获得 HostClient，不能取得宿主 framework、账户服务或配置对象。回调留在 Worker 内，跨进程只传 JSON。当前已开放自身命令、设置、自查询和自身设置变化订阅；尚未接线的业务方法明确失败，依赖未实现必要能力的插件不可启用。第三方自定义前端保持关闭。
+
+设置写入必须提供 `expected_revision`；变更 RPC 使用本运行 `mutation_key` 去重，同键不同内容拒绝。等待超时不能当作动作已经停止或回滚，也不能无条件换新键重放副作用。
+
+命令字段 schema 当前只接受 `string`、`number`、`integer`、`bool`，支持 `required`、`max_length`、`minimum`、`maximum`、`enum`，不执行插件验证器、不支持任意 JSON Schema 引用或嵌套对象。每组最多 32 个字段，单运行最多 64 个命令、32 个订阅；请求和结果额外限制为 64 KiB。设置支持 `bool`、`string`、`number`、`select`，所有写入经定义校验并原子提交。
+
+需要超时后核对写入的调用方应显式保留原 `mutation_key`，通过 `host.call("mutations.get", {"mutation_key": key})` 查询同一运行的 `pending`、`succeeded` 或 `failed`，结果包含 `result` 和 `error_code`。回执最多保留 1024 个，容量满时拒绝新变更；不淘汰有效回执后重放。授权 epoch 改变后不交付旧回执结果；run 结束后回执不再可用。SDK 自动生成的键不会构成自动重试承诺。
+
+撤销首先阻止新提交；已接受的设置写入可能继续落盘。宿主在途写入、Worker 和事件资源均结束后才报告清理完成，超时只报告 pending 或失败。事件队列满及可靠事件交付失败会关闭该 Broker 并回收运行；已经提交的设置仍报告真实 revision，不伪造回滚。
+
+完整示例见 [worker_echo](../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](headless-runtime.md)，总体契约与后续能力见 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
 
 ## 产物验证
 
-Windows CPython 3.13 / PyInstaller 单文件产物已验证离线 wheel 安装、重启加载、包资源读取及 `xxhash 3.6.0` 原生导入。这不是所有原生包的通用兼容保证。构建工作流对实际 Nuitka/PyInstaller 产物运行同一用例，测试 wheel 仅用于验收，不会发布为插件运行环境：
-
-```powershell
-$env:ECL_PLUGIN_SMOKE_EXECUTABLE = '<实际启动器可执行文件>'
-$env:ECL_PLUGIN_SMOKE_WHEELS = '<仅包含当前宿主 xxhash 3.6.0 wheel 的目录>'
-.venv\Scripts\python.exe -m pytest tests/test_packaged_plugin_directories.py -q
-```
+真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py` 和 `test_plugin_worker_lifecycle.py`；正式管理器流程位于 `test_plugin_worker_manager.py` 与 `test_plugin_manager_packages.py`。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
