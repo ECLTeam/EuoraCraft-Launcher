@@ -104,7 +104,7 @@ class Plugin(BasePlugin):
         return {"message": f"Hello, {name}"}
 ```
 
-插件获得 HostClient，不能取得宿主 framework、账户服务或配置对象。回调留在 Worker 内，跨进程只传 JSON。当前已开放自身命令、设置、自查询和自身设置变化订阅；尚未接线的业务方法明确失败，依赖未实现必要能力的插件不可启用。第三方自定义前端保持关闭。
+插件获得 HostClient，不能取得宿主 framework、账户服务或配置对象。回调留在 Worker 内，跨进程只传 JSON。当前已开放自身命令、设置、自查询、自身设置变化订阅和获准实例读取；尚未接线的业务方法明确失败，依赖未实现必要能力的插件不可启用。第三方自定义前端保持关闭。
 
 设置写入必须提供 `expected_revision`；变更 RPC 使用本运行 `mutation_key` 去重，同键不同内容拒绝。等待超时不能当作动作已经停止或回滚，也不能无条件换新键重放副作用。
 
@@ -115,6 +115,14 @@ class Plugin(BasePlugin):
 撤销首先阻止新提交；已接受的设置写入可能继续落盘。宿主在途写入、Worker 和事件资源均结束后才报告清理完成，超时只报告 pending 或失败。事件队列满及可靠事件交付失败会关闭该 Broker 并回收运行；已经提交的设置仍报告真实 revision，不伪造回滚。
 
 完整示例见 [worker_echo](../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](headless-runtime.md)，总体契约与后续能力见 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
+
+### 获准实例读取
+
+清单请求 `{"capability":"instances.read","required":true}`，不能自报本机资源 ID。用户在可信主窗口选择目录全部实例（包含以后新增）或指定实例，未选择不满足必要能力。`host.call("resources.list", {"capability":"instances.read"})` 只返回当前 run 的获准目录/实例引用；目录引用用于 `instances.scan`，实例引用用于 `instances.get`，单实例许可不能扫描父目录。完整运行示例见 [instance_reader](../examples/plugins/instance_reader/README.md)。
+
+资源和扫描列表均返回 `{items,next_cursor}`，可提交 `cursor`、`limit`（1—100，默认 50）。扫描另接受 `force`，仅刷新本次只读快照。单个摘要返回 `instance_ref`、`version_id`、`alias`、`loader`、`game_version`、`profile:{description,favorite,tags}`、`profile_etag`、`running_count`；不返回真实路径或完整实例配置。etag 不是递增 revision，也不授权写入。
+
+引用不能跨运行保存重用，授权变更、资源退休和内容变化后需重新发现。`permissions.list` 中该能力的资源引用同样是运行引用。查询在读取前及交付前校验许可；符号链接、重解析点、损坏资料和过期游标明确失败。实例读取不修改游戏资料、统计或进程。其他业务接口及 OS 文件/网络沙箱不由该能力提供。
 
 ## 产物验证
 

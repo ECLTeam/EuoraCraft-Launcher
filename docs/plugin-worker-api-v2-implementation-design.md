@@ -489,7 +489,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `TaskReceipt` | `{operation_ref:string,state:"queued"\|"running"}`；内部 Core taskId/OperationManager ID不作为授权依据 |
 | `TaskView` | `{operation_ref,kind,state,percent:0..100,stage,message,can_cancel,cancellation_requested,effect:"none"\|"staged"\|"committing"\|"committed"\|"partial"\|"unknown",result:已登记结果DTO\|null,error_code:string\|null}`；不能返回其他资源路径或完整日志 |
 | `ReleaseResult` | `{released:bool}`；重复释放返回false或已释放，不扩展控制范围 |
-| `InstanceView` | `{instance_ref,version_id,alias,loader,game_version,profile:{description,favorite,tags},profile_revision:int,running_count:int}`；文件路径通过获准 FileRef提供，不广播所有个人目录 |
+| `InstanceView` | `{instance_ref,version_id,alias,loader,game_version,profile:{description,favorite,tags},profile_etag:string,running_count:int}`；本轮只读实例接口不返回文件路径，etag 为公开资料摘要，不承诺单调递增或写入并发令牌 |
 | `LaunchOptions` | `{memory_mb?:512..65536,width?:320..16384,height?:240..4320,fullscreen?:bool,runtime_ref?:string}`；不接收原始命令、wrapper、pre/post脚本、环境变量或令牌 |
 | `GameRunView` | `{game_run_ref,instance_ref,pid:int,running:bool,exit_code:int\|null}`；所属插件启动结果与共享运行列表分开过滤 |
 | `JavaView` | `{runtime_ref,vendor,major_version,full_version,runtime_kind:"JRE"\|"JDK",architecture,origin:"system"\|"manual"\|"managed",is_enabled,validation_status}`；不返回安装文件清单、全路径或其他实例引用 |
@@ -572,7 +572,8 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
-| `instances.scan` | `{root_ref,force?:bool}` | `Page<InstanceView>` | `instances.read`，用户批准的游戏根 | `PLUGIN_INSTANCE_SCAN_FAILED` | Q30；S |
+| `resources.list` | `{capability:"instances.read",cursor?:string,limit?:int}` | `Page<ResourceView>`，仅本运行获准目录/实例的引用 | `instances.read`，至少一个有效用户选择 | `PLUGIN_RESOURCE_UNAVAILABLE`,`PLUGIN_CURSOR_INVALID` | Q5；S |
+| `instances.scan` | `{root_ref,force?:bool,cursor?:string,limit?:int}` | `Page<InstanceView>` | `instances.read`，用户批准的游戏根；单实例授权不能扫描父目录 | `PLUGIN_INSTANCE_SCAN_FAILED`,`PLUGIN_CURSOR_INVALID` | Q30；S |
 | `instances.get` | `{instance_ref}` | `InstanceView` | `instances.read`，该实例 | `PLUGIN_INSTANCE_INVALID` | Q5；S |
 | `instances.profile_patch` | `{instance_ref,patch:{alias?:string,description?:string,favorite?:bool,tags?:string[]},expected_revision:int}` | `{profile,revision:int}` | `instances.write`，实例及上述字段 | `PLUGIN_REVISION_CONFLICT`,`PLUGIN_INSTANCE_UPDATE_FAILED` | W5；S |
 | `game.catalog` | `{type?:"release"\|"snapshot"}` | `Page<{version_id,type,release_time}>` | `game.catalog.read`，宿主固定元数据源 | `PLUGIN_GAME_CATALOG_FAILED` | Q30；S |
@@ -1027,8 +1028,18 @@ HostClient 为提交产生本运行去重键，明确错误抛出 HostApiError�
 
 `PluginWorkerService` 维护唯一运行状态、授权会话及监管对象，监控实际 Worker 句柄、断连、超时和到期。必要授权撤销停止运行，可选授权撤销清理对应注册；授权先阻止下一次提交，已接受的宿主写入仍按实际结果完成。进程停止与宿主在途提交分别收敛，未结束时报告 cleanup pending，不能提前报告清理完成。
 
-`PluginHostBroker` 仅开放本安装的命令、设置、自查询和自身设置变化订阅，校验严格 DTO、授权 epoch、回调归属和输入输出；有界回执按 mutation_key 去重，不自动重放副作用。其他 Host API 明确失败。完整契约子集、回执查询及限制见 [包格式和 API 说明](eclplugin-package-format.md#第三方-api-v2)。
+本阶段 `PluginHostBroker` 开放本安装的命令、设置、自查询和自身设置变化订阅，校验严格 DTO、授权 epoch、回调归属和输入输出；有界回执按 mutation_key 去重，不自动重放副作用。后续实例只读能力见第 22 节。完整契约子集、回执查询及限制见 [包格式和 API 说明](eclplugin-package-format.md#第三方-api-v2)。
 
 授权管理 IPC 从原生注入的已登记主 WebView 识别调用主体，拒绝 Worker、其他窗口、Dev Channel、未知入口及请求体伪造。第三方脚本、Vue、HTML、CSS 注入仍关闭。前端提供六语权限审阅、永久/会话选择、撤销、实际清理状态与失败重试；保存审阅与启用分开操作。
 
 源码、真实冻结与桌面验证记录集中在 [本轮验收记录](plugin-worker-manager-integration-plan.md#10-实施与验收记录)，不复用第 18—20 节的历史数字作为当前证据。OS 文件/网络沙箱、账户/实例等业务 API、声明式页面和自定义前端均不由本切片完成。
+
+## 22. P07 实例只读能力（2026-10-20）
+
+按用户批准的 [实例只读实施方案](plugin-instance-read-api-implementation-plan.md) 开放 `resources.list`、`instances.scan`、`instances.get`。清单仅请求 `instances.read`，可信主界面明确选择整个目录（含以后新增实例）或单个实例；不默认批准任何资源。宿主持久身份与每次运行引用分离，物理目录替换、配置移除、授权变更、内容或 run 变化使旧引用及游标失效。同名重建不继承旧单实例授权。
+
+查询从已验证实际文件句柄有界读取本地实例元数据与资料，调用 Core `InstanceMetadata.from_documents` 纯解析；不复用会写入的桌面扫描链路，不初始化统计或外部提供方，不停止游戏。摘要显式投影，使用 `profile_etag` 表达本地公开资料快照；不返回路径、账户、完整配置或持久资源 ID。`permissions.list` 的实例资源亦转换为运行引用。
+
+可信 `plugin_permission_resources` 提供按目录展开的有界候选；保存同时检查内容摘要、授权 revision 与资源目录 revision。所有读取和最终交付均复核许可及物理身份，扫描 30 秒、单项/资源列表 5 秒，分页最多 16 个快照、120 秒、每页 1—100 项且结果受 64 KiB 限制。完成的单页查询立即释放分页容量。
+
+源码、真实冻结与 WebView2 验证见 [本轮验收记录](plugin-instance-read-api-implementation-plan.md#9-实施与验收记录)。这只完成 P07 的实例读取切片；其他查询、任务提交/取消、实例写入和自定义前端保持后续推进。
