@@ -1,0 +1,440 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：维护第三方安装的授权、Worker 生命周期和本运行注册，不执行宿主插件入口。
+#
+# 公开接口：
+#   - class PluginWorkerService — 管理器唯一持有的第三方运行服务。
+# ============================================================
+
+from __future__ import annotations
+
+import json
+import platform
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from threading import Event, RLock, Thread
+from typing import Literal
+
+from ECL.plugin_api._rpc import RpcRequest
+from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.environment_pool import PluginDependencyDirectory
+from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller, PluginContentBinding
+from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession, PluginGrantStore
+from ECL.plugins.installation_store import PluginInstallationStore, WorkerManifest
+from ECL.plugins.package_preparation import PluginPackagePreparer, current_plugin_target
+from ECL.plugins.runtime.broker import PluginHostBroker
+from ECL.plugins.runtime.executable import ExecutableLaunchSpec
+from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.utils import get_logger
+
+
+@dataclass(slots=True)
+class _WorkerEntry:
+    manifest: WorkerManifest
+    root_path: Path
+    installation_id: str
+    dependency: PluginDependencyDirectory | None
+    source: Literal["directory", "package"]
+    supervisor: WorkerSupervisor
+    session: PluginGrantSession
+    broker: PluginHostBroker | None = None
+    state: str = "review_required"
+    cleanup_state: str = "not_needed"
+    error_code: str | None = None
+    lock: RLock = field(default_factory=RLock)
+
+
+class PluginWorkerService:
+    """
+    单个管理器拥有全部第三方运行，按安装串行化生命周期并确认实际进程停止。
+
+    此服务的同步操作由管理 API 和启动后台边界执行；不创建桌面或业务服务副本。
+    """
+
+    def __init__(self, data_path: Path, executable: ExecutableLaunchSpec | None = None) -> None:
+        """
+        绑定唯一安装及授权存储，不发现或执行用户代码。
+
+        :param data_path: 应用数据根目录
+        :param executable: 可选真实发行物验收入口
+        """
+        self.data_path: Path = data_path
+        self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
+        self.grants: PluginGrantStore = PluginGrantStore(
+            data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
+        )
+        self._entries: dict[str, _WorkerEntry] = {}
+        self._lock = RLock()
+        self._locks_by_name: dict[str, RLock] = {}
+        self._executable = executable
+        self._closed = Event()
+        self._monitor_thread: Thread | None = None
+
+    def register(
+        self,
+        metadata: object,
+        root_path: Path,
+        source: Literal["directory", "package"],
+        dependency: PluginDependencyDirectory | None = None,
+        *,
+        allow_network: bool = False,
+    ) -> None:
+        """
+        只登记已校验清单和内容身份；内容变更先停止旧运行，再要求重新审阅。
+
+        :param metadata: JSON 清单边界输入
+        :param root_path: 已安装代码根目录
+        :param source: 宿主确定的目录或归档来源
+        :param dependency: 已完成校验的锁定依赖
+        :param allow_network: 安装阶段明确允许时补齐锁内 Wheel；发现阶段默认离线
+        :raises ValueError: 清单、内容或安装身份无效时抛出
+        """
+        if self._closed.is_set():
+            raise ProtocolError("插件宿主已经关闭", "PLUGIN_HOST_CLOSED")
+        manifest = WorkerManifest.model_validate(metadata)
+        lock_file = root_path / "locks" / f"{current_plugin_target()}.txt"
+        binding = PluginContentBinding.capture(
+            root_path, manifest.permissions, current_plugin_target(), lock_file if lock_file.is_file() else None
+        )
+        with self._lock:
+            installation_lock = self._locks_by_name.setdefault(manifest.name, RLock())
+        with installation_lock:
+            installation_id = self.installations.ensure(manifest.name, source)
+            with self._lock:
+                previous = self._entries.get(manifest.name)
+                if (
+                    previous
+                    and previous.installation_id == installation_id
+                    and previous.session.binding.content_digest == binding.content_digest
+                ):
+                    return
+            if previous:
+                self.stop(manifest.name)
+            if source == "directory":
+                dependency = PluginPackagePreparer(self.data_path).prepare_dependencies(
+                    root_path, tuple(manifest.python_dependencies), allow_network=allow_network
+                )
+            supervisor = WorkerSupervisor(
+                self._executable, host_handler=lambda request: self._handle(manifest.name, request)
+            )
+            session = self.grants.open_session(installation_id, binding, supervisor.run_id)
+            entry = _WorkerEntry(
+                manifest, root_path, installation_id, dependency, source, supervisor, session, lock=installation_lock
+            )
+            with self._lock:
+                self._entries[manifest.name] = entry
+
+    def _entry(self, name: str) -> _WorkerEntry:
+        with self._lock:
+            entry = self._entries.get(name)
+        if entry is None:
+            raise ProtocolError("插件安装未登记", "PLUGIN_RESOURCE_NOT_FOUND")
+        return entry
+
+    def name_for_installation(self, installation_id: str) -> str:
+        """
+        由可信入口把安装标识解析为管理器名称，不接受插件自报归属。
+
+        :param installation_id: 宿主持久化的安装标识
+        :return: 当前安装名称
+        :raises ProtocolError: 标识没有活动安装时抛出
+        """
+        with self._lock:
+            for name, entry in self._entries.items():
+                if entry.installation_id == installation_id:
+                    return name
+        raise ProtocolError("插件安装不存在", "PLUGIN_RESOURCE_NOT_FOUND")
+
+    def _handle(self, name: str, request: RpcRequest) -> dict[str, JsonValue]:
+        broker = self._entry(name).broker
+        if broker is None:
+            raise ProtocolError("插件运行尚未接收业务请求", "PLUGIN_SESSION_EXPIRED")
+        return broker.handle(request)
+
+    def enable(self, name: str, *, frontend_ready: bool = False) -> None:
+        """
+        审阅及必要授权满足后才创建进程，生命周期实际成功后报告 enabled。
+
+        :param name: 当前安装名称
+        :param frontend_ready: 可信主界面是否已经就绪
+        :raises ProtocolError: 平台、授权或生命周期未完成时抛出
+        """
+        entry = self._entry(name)
+        with entry.lock:
+            if self._closed.is_set():
+                raise ProtocolError("插件宿主已经关闭", "PLUGIN_HOST_CLOSED")
+            if entry.state == "enabled":
+                return
+            if platform.system() != "Windows" or platform.machine().casefold() not in {"amd64", "x86_64"}:
+                raise ProtocolError("当前平台尚未支持第三方插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
+            if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED":
+                entry.supervisor = WorkerSupervisor(
+                    self._executable, host_handler=lambda request: self._handle(name, request)
+                )
+                entry.session = self.grants.open_session(
+                    entry.installation_id, entry.session.binding, entry.supervisor.run_id
+                )
+            entry.session.binding.verify()
+            view = entry.session.view()
+            if view.error_code:
+                raise PluginGrantError("插件授权记录不可用", view.error_code)
+            if view.revision == 0:
+                raise PluginGrantError("插件需要用户审阅", "PLUGIN_GRANT_REVIEW_REQUIRED")
+            if not view.required_satisfied:
+                raise PluginGrantError("插件缺少必要授权", "PLUGIN_REQUIRED_PERMISSION_DENIED")
+            entry.state = "starting"
+            try:
+                entry.supervisor.start()
+                entry.broker = PluginHostBroker(
+                    entry.session, self.data_path, entry.supervisor.request, run_state=lambda: entry.state
+                )
+                entry.supervisor.authorize_load(
+                    entry.session, entry.manifest.entry_file, entry.dependency, entry_class=entry.manifest.entry_class
+                )
+                self._phase(entry, "load", "loaded")
+                self._phase(entry, "enable", "loaded")
+                entry.state = "enabled"
+                entry.error_code = None
+                self._start_monitor()
+                if frontend_ready:
+                    self._phase(entry, "frontend_ready", "enabled")
+            except BaseException:
+                entry.state = "failed"
+                self.stop(name)
+                entry.state = "failed"
+                raise
+
+    @staticmethod
+    def _phase(entry: _WorkerEntry, phase: str, previous: str) -> None:
+        reply = entry.supervisor.request("lifecycle.invoke", {"phase": phase, "run_state": previous})
+        if reply.get("ok") is not True:
+            raise ProtocolError("插件生命周期执行失败", "PLUGIN_WORKER_EXECUTION_FAILED")
+
+    def stop(self, name: str) -> None:
+        """
+        先撤销本运行准入和注册，再有界回收 Worker；失败保留实际清理状态。
+
+        :param name: 要停止的安装
+        :raises WindowsRuntimeError: 进程树尚未确认回收时抛出
+        """
+        entry = self._entry(name)
+        with entry.lock:
+            was_enabled = entry.state == "enabled"
+            entry.state = "stopping"
+            entry.cleanup_state = "pending"
+            entry.session.close()
+            if entry.broker:
+                entry.broker.close()
+            try:
+                if was_enabled:
+                    try:
+                        self._phase(entry, "disable", "enabled")
+                        self._phase(entry, "unload", "disabled")
+                    except (ProtocolError, OSError):
+                        get_logger("PluginWorkerService").warning("插件退出钩子未完成，继续按实际进程树回收")
+                entry.supervisor.close()
+                if entry.broker:
+                    entry.broker.close()
+                    if not entry.broker.wait_idle(1):
+                        raise WindowsRuntimeError("插件宿主调用仍在完成中", "PLUGIN_HOST_CLEANUP_PENDING")
+            except (ProtocolError, OSError, WindowsRuntimeError) as exc:
+                entry.cleanup_state = "pending"
+                entry.error_code = getattr(exc, "error_code", "PLUGIN_JOB_STOP_PENDING")
+                raise
+            entry.broker = None
+            entry.state = "disabled"
+            entry.cleanup_state = "completed"
+            if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:
+                entry.error_code = None
+
+    def permissions(self, name: str) -> dict[str, JsonValue]:
+        """
+        为可信管理入口读取本安装审阅信息，停止后建立新的待启用会话。
+
+        :param name: 安装名称
+        :return: 内容身份、revision 和能力的实际决定
+        """
+        entry = self._entry(name)
+        self.register(
+            json.loads((entry.root_path / "plugin.json").read_bytes()), entry.root_path, entry.source, entry.dependency
+        )
+        entry = self._entry(name)
+        with entry.lock:
+            if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED" and entry.cleanup_state != "pending":
+                entry.supervisor = WorkerSupervisor(
+                    self._executable, host_handler=lambda request: self._handle(name, request)
+                )
+                entry.session = self.grants.open_session(
+                    entry.installation_id, entry.session.binding, entry.supervisor.run_id
+                )
+            view = entry.session.view()
+            return {
+                "installation_id": view.installation_id,
+                "content_digest": view.content_digest,
+                "revision": view.revision,
+                "grant_epoch": view.grant_epoch,
+                "required_satisfied": view.required_satisfied,
+                "error_code": view.error_code,
+                "items": [
+                    dict(
+                        asdict(item),
+                        resource_refs=list(item.resource_refs),
+                        implemented=item.capability in self.grants.implemented_capabilities,
+                    )
+                    for item in view.items
+                ],
+            }
+
+    def update_permissions(
+        self,
+        name: str,
+        content_digest: str,
+        expected_revision: int,
+        decisions: tuple[PermissionDecision, ...],
+        caller: PermissionManagementCaller,
+    ) -> dict[str, JsonValue]:
+        """
+        由可信主界面持久化决定，改变运行授权后清理原运行，避免旧注册继续使用。
+
+        :param name: 当前安装
+        :param content_digest: 用户审阅的内容摘要
+        :param expected_revision: 并发更新版本
+        :param decisions: 用户实际选择
+        :param caller: 真实调用入口的分类
+        :return: 落盘结果和独立清理状态
+        :raises PluginGrantError: 主体、内容、版本或持久化失败时抛出
+        """
+        entry = self._entry(name)
+        # 不持有生命周期锁保存授权，运行中的长回调不能延迟拒绝屏障。
+        view = self.grants.update(
+            entry.session, decisions, expected_revision=expected_revision, content_digest=content_digest, caller=caller
+        )
+        if entry.broker:
+            entry.broker.refresh_permissions()
+        if not view.required_satisfied and entry.state == "enabled":
+            try:
+                self.stop(name)
+            except WindowsRuntimeError:
+                get_logger("PluginWorkerService").warning("插件授权已保存，进程树仍等待清理确认")
+        return {
+            "revision": view.revision,
+            "grant_epoch": view.grant_epoch,
+            "persisted": True,
+            "required_satisfied": view.required_satisfied,
+            "cleanup_state": entry.cleanup_state,
+        }
+
+    def runtime_info(self, name: str) -> dict[str, JsonValue]:
+        """
+        返回当前运行和清理状态，不把管道等待结果当成进程已停止。
+
+        :param name: 当前安装
+        :return: 安装身份、运行身份及实际状态
+        """
+        entry = self._entry(name)
+        return {
+            "installation_id": entry.installation_id,
+            "run_id": entry.session.run_id,
+            "run_state": entry.state,
+            "pid": entry.supervisor.pid,
+            "cleanup_state": entry.cleanup_state,
+            "last_error": {"code": entry.error_code, "message": "插件运行未完成"} if entry.error_code else None,
+        }
+
+    def broker(self, name: str) -> PluginHostBroker:
+        """
+        只返回已启用安装的本运行门面，供可信管理器调用命令或设置。
+
+        :param name: 安装名称
+        :return: 已启用的最小宿主接口
+        :raises ProtocolError: 安装未运行时抛出
+        """
+        entry = self._entry(name)
+        if entry.state != "enabled" or entry.broker is None:
+            raise ProtocolError("插件未启用", "PLUGIN_TARGET_DISABLED")
+        return entry.broker
+
+    def notify_frontend_ready(self) -> None:
+        """
+        仅向已启用的 Worker 发送就绪钩子，不允许其注入主窗口脚本。
+        """
+        for entry in tuple(self._entries.values()):
+            if entry.state == "enabled":
+                self._phase(entry, "frontend_ready", "enabled")
+
+    def remove(self, name: str, remove_files: Callable[[], None]) -> None:
+        """
+        确认停止后使安装资格失效，再执行受控文件卸载；失败保持默认拒绝。
+
+        :param name: 当前安装
+        :param remove_files: 由管理器提供的受控卸载操作
+        """
+        entry = self._entry(name)
+        with entry.lock:
+            self.stop(name)
+            self.installations.retire(name)
+            remove_files()
+            with self._lock:
+                self._entries.pop(name, None)
+
+    def _start_monitor(self) -> None:
+        with self._lock:
+            if self._monitor_thread is None:
+                self._monitor_thread = Thread(target=self._monitor, name="plugin_worker_monitor", daemon=True)
+                self._monitor_thread.start()
+
+    def _monitor(self) -> None:
+        """
+        在运行中检测实际进程退出、通信故障和必要授权失效，不依赖页面轮询清理。
+        """
+        while not self._closed.wait(0.25):
+            with self._lock:
+                entries = tuple(self._entries.items())
+            for name, entry in entries:
+                with entry.lock:
+                    with self._lock:
+                        if self._entries.get(name) is not entry:
+                            continue
+                    if entry.state not in {"enabled", "stopping"}:
+                        continue
+                    try:
+                        if entry.state == "stopping":
+                            if entry.broker is None or entry.broker.wait_idle():
+                                self.stop(name)
+                            continue
+                        view = entry.session.view()
+                        if (
+                            entry.supervisor.is_alive()
+                            and not (entry.broker and entry.broker.is_closed)
+                            and view.required_satisfied
+                            and not view.error_code
+                        ):
+                            continue
+                        failure_code = entry.broker.error_code if entry.broker else None
+                        self.stop(name)
+                        entry.state = "failed"
+                        entry.error_code = view.error_code or failure_code or "PLUGIN_WORKER_EXITED"
+                    except (OSError, ValueError, WindowsRuntimeError):
+                        entry.cleanup_state = "pending"
+                        get_logger("PluginWorkerService").warning("插件运行清理尚未完成，需要重试停止")
+
+    def close(self) -> None:
+        """
+        停止全部已登记 Worker，失败时保留对象和句柄供重试。
+        """
+        self._closed.set()
+        if self._monitor_thread is not None:
+            self._monitor_thread.join(1)
+        failures = []
+        for name in reversed(tuple(self._entries)):
+            try:
+                self.stop(name)
+            except (OSError, ValueError, WindowsRuntimeError) as exc:
+                failures.append(exc)
+        if failures:
+            raise WindowsRuntimeError("部分插件进程树尚未确认停止", "PLUGIN_JOB_STOP_PENDING") from failures[0]

@@ -1,68 +1,21 @@
-# ============================================================
-# EuoraCraft Launcher
-# ECLTeam © 2026 GPL-3.0 License
-# https://github.com/ECLTeam/EuoraCraft-Launcher
-#
-# 文件作用：针对 plugin_test_plugins_load 模块的自动化测试。
-#
-# 公开接口：
-#   - test_all_test_plugins_load_without_unexpected_permission_errors(tmp_path) -> None — 测试插件加载结果符合预期：7 个正常启用，test_permissions 因故意测试越权命令而权限拒绝。
-# ============================================================
+from __future__ import annotations
 
-"""验证 ECL_data/plugins 下的测试插件本身能够正常加载。"""
-
-import shutil
 from pathlib import Path
-
-import pytest
 
 from ECL.plugins import PluginManager
 
-# 需要验证的测试插件名称列表
-test_plugin_names = [
-    "test_basic",
-    "test_events",
-    "test_crash",
-    "test_dependencies",
-    "test_permissions",
-    "test_frontend",
-    "test_timeout",
-    "test_settings",
-]
 
-
-def _copy_plugins(source_dir: Path, target_dir: Path) -> None:
-    """将源目录下的测试插件复制到临时目标目录。"""
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for name in test_plugin_names:
-        src = source_dir / name
-        if src.is_dir():
-            shutil.copytree(src, target_dir / name, dirs_exist_ok=True)
-
-
-def test_all_test_plugins_load_without_unexpected_permission_errors(tmp_path) -> None:
-    """测试插件加载结果符合预期：7 个正常启用，test_permissions 因故意测试越权命令而权限拒绝。"""
-    data_path = tmp_path / "data"
-    resource_path = tmp_path / "resources"
-    source_plugins = Path(__file__).parent.parent / "ECL_data" / "plugins"
-    if not any((source_plugins / name).is_dir() for name in test_plugin_names):
-        pytest.skip("ECL_data/plugins 为 gitignore 运行时数据，本机不存在测试插件夹具")
-    _copy_plugins(source_plugins, data_path / "plugins")
-
+def test_tracked_worker_example_is_discoverable_but_never_auto_executes(tmp_path: Path) -> None:
     framework = PluginManager()
-    framework.initialize(data_path, resource_path)
-
-    # test_permissions 插件内部故意声明了越权命令，用于测试权限拒绝场景
-    expected_enabled = [name for name in test_plugin_names if name != "test_permissions"]
-    for name in expected_enabled:
-        assert framework._status.get(name) == "enabled", f"插件 {name} 未启用"
-        assert framework.get_plugin(name) is not None, f"插件 {name} 未实例化"
-
-    assert framework._status.get("test_permissions") == "permission_denied"
-    info = {p["name"]: p for p in framework.list_plugins()}
-    assert info["test_permissions"]["status"] == "permission_denied"
-    assert info["test_permissions"]["error"] is not None
-    assert "commands:execute:try_denied_cmd" in info["test_permissions"]["error"]
-
-    for name in expected_enabled:
-        assert info[name]["status"] == "enabled", f"list_plugins 中 {name} 状态异常"
+    framework.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        source = Path(__file__).resolve().parents[1] / "examples/plugins/worker_echo"
+        result = framework.install(str(source))
+        assert result.success
+        entry = framework.list_plugins()[0]
+        assert entry["name"] == "worker_echo"
+        assert entry["review_required"] is True
+        assert framework.get_plugin("worker_echo") is None
+        assert framework.worker_service.runtime_info("worker_echo")["pid"] is None
+    finally:
+        framework.close()

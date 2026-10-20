@@ -740,6 +740,10 @@ class DevChannelService:
         return [
             {
                 "name": entry.get("name", ""),
+                "installationId": entry.get("installation_id"),
+                "reviewRequired": entry.get("review_required", False),
+                "requiredSatisfied": entry.get("required_satisfied", False),
+                "cleanupState": entry.get("cleanup_state", "not_needed"),
                 "title": entry.get("title", ""),
                 "version": entry.get("version", ""),
                 "description": entry.get("description", ""),
@@ -788,7 +792,7 @@ class DevChannelService:
         return {"name": name}
 
     async def _method_plugin_install(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
-        # 目录安装保持兼容；归档准备和激活在线程中完成。
+        # 安装仅准备文件；目录和归档都在线程中完成，不执行插件入口。
         source_path = self._require_param_str(params, "path")
         if source_path.lower().endswith(".eclplugin"):
             result = await asyncio.to_thread(
@@ -798,7 +802,9 @@ class DevChannelService:
                 allow_network=params.get("allow_network") is True,
             )
         else:
-            result = await asyncio.to_thread(self._plugins.install, source_path)
+            result = await asyncio.to_thread(
+                self._plugins.install, source_path, allow_network=params.get("allow_network") is True
+            )
         if not result.success:
             if result.status == "not_found":
                 raise DevChannelError("PLUGIN_NOT_FOUND", result.message or "插件不存在")
@@ -832,7 +838,7 @@ class DevChannelService:
     def _method_plugin_get_settings(self, session: _Session, params: dict[str, Any]) -> dict[str, Any]:
         # 返回插件设置的结构与当前值。
         name = self._require_param_str(params, "name")
-        if self._plugins.get_plugin(name) is None:
+        if self._plugins.get_plugin_metadata(name) is None:
             raise DevChannelError("PLUGIN_NOT_FOUND", f"插件不存在: {name}")
         settings = self._plugins.get_settings(name)
         return {"schema": settings.get("schema") or [], "values": settings.get("values") or {}}

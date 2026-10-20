@@ -47,12 +47,18 @@ class PluginDiscovery(_PluginState):
             if not metadata_path.is_file():
                 continue
             try:
+                if metadata_path.stat().st_size > 2 * 1024 * 1024:
+                    raise ValueError("插件清单超过上限")
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                self.logger.warning("插件元数据解析失败: %s", metadata_path)
+            except (ValueError, UnicodeError, OSError):
+                self.logger.warning("插件清单无法读取或超过上限")
+                continue
+            if not isinstance(metadata, dict):
+                self.logger.warning("插件清单必须是对象")
                 continue
             name = metadata.get("name")
-            if not name:
+            if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name) is None:
+                self.logger.warning("插件清单名称无效")
                 continue
             candidates.append(
                 {
@@ -75,6 +81,8 @@ class PluginDiscovery(_PluginState):
                 self.logger.warning("插件 %s 重复，跳过", name)
                 continue
             seen.add(name)
+            if not candidate["is_system"] and self._status.get(name) == "unsupported":
+                continue
             metadata = candidate["metadata"]
             deps_meta = metadata.get("dependencies", {})
             deps: list[Any] = []
@@ -101,8 +109,12 @@ class PluginDiscovery(_PluginState):
             candidate = candidate_map.get(name)
             if candidate is None:
                 continue
-            self._permission_manager.register_plugin_permissions(name, candidate["metadata"].get("permissions", []))
-            self._status[name] = "disabled"
+            if candidate["is_system"]:
+                self._permission_manager.register_plugin_permissions(name, candidate["metadata"].get("permissions", []))
+            else:
+                self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
+            if self._status.get(name) != "unsupported":
+                self._status[name] = "disabled"
         for name in load_order:
             if name in self._disabled_plugins:
                 self.logger.info("插件 %s 已被禁用，跳过加载", name)
@@ -121,6 +133,18 @@ class PluginDiscovery(_PluginState):
             return
         name = metadata.get("name")
         if not name:
+            return
+        if not is_system:
+            try:
+                assert self.worker_service is not None
+                active = self._package_entries.get(name, {}).get("active")
+                dependency = active.dependency_directory if active else None
+                self.worker_service.register(metadata, plugin_dir, "package" if active else "directory", dependency)
+                view = self.worker_service.permissions(name)
+                self._status[name] = "review_required" if view["revision"] == 0 else "unloaded"
+            except (OSError, ValueError) as exc:
+                self._status[name] = "unsupported"
+                self._plugin_errors[name] = getattr(exc, "error_code", "PLUGIN_API_VERSION_UNSUPPORTED")
             return
         if name in self._plugins:
             self.logger.warning("插件 %s 重复，跳过", name)
@@ -168,6 +192,8 @@ class PluginDiscovery(_PluginState):
         entry_point 为文件名或“文件名:类名”；执行模块前确认文件仍在插件目录内，
         不再识别无参数 SDK 或使用命令适配器。入口代码仍具有本进程能力。
         """
+        if not is_system:
+            raise ValueError("第三方插件必须通过 Worker 加载")
         parts = entry_point.split(":", 1)
         module_name = parts[0]
         class_name = parts[1] if len(parts) > 1 else "Plugin"

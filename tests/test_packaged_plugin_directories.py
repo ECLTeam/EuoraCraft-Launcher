@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import platform
+import socket
 import subprocess
 from pathlib import Path
 
+import httpx
 import psutil
 import pytest
 from plugin_wheel_helpers import make_package, make_wheel
@@ -41,57 +44,53 @@ async def _connect(data_path: Path, process: subprocess.Popen, log_path: Path):
             await asyncio.sleep(0.1)
 
 
-async def _verify_browser_install(frontend_url: str, package_path: Path, capture_path: Path) -> None:
-    """
-    可选桌面验收只替代原生文件选择，预检、确认和安装仍调用真实冻结后端。
-    """
-    from playwright.async_api import async_playwright
-
-    capture_path.mkdir(parents=True, exist_ok=True)
-    async with async_playwright() as runtime:
-        browser = await runtime.chromium.launch(channel=os.environ.get("ECL_PLUGIN_SMOKE_BROWSER_CHANNEL", "chrome"))
-        try:
-            page = await browser.new_page(viewport={"width": 1280, "height": 900})
-            await page.add_init_script("window.__eclSmokePackagePath = " + json.dumps(str(package_path)))
-            await page.add_init_script(
-                """(() => {
-                const send = WebSocket.prototype.send;
-                WebSocket.prototype.send = function(raw) {
-                    const request = JSON.parse(raw);
-                    if (request.method === 'frontend.invoke' && request.params.command === 'select_file') {
-                        setTimeout(() => this.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({
-                            id: request.id, ok: true, data: {command: 'select_file', result: {success: true, data: {path: window.__eclSmokePackagePath}}}
-                        })})), 0);
-                        return;
-                    }
-                    return send.call(this, raw);
-                };
-            })();"""
-            )
-            await page.goto(frontend_url + "#/more/plugins")
-            await page.locator(".plugins-toolbar button").filter(has_text="安装插件").click()
-            await page.get_by_text("安装文件", exact=True).click()
-            dialog = page.get_by_role("dialog").filter(has_text="确认插件安装")
-            await dialog.wait_for(state="visible")
-            assert "运行时" not in await dialog.inner_text()
-            await page.screenshot(path=str(capture_path / "desktop-install.png"))
-            await page.set_viewport_size({"width": 390, "height": 844})
-            await page.wait_for_timeout(300)
-            await page.screenshot(path=str(capture_path / "mobile-install.png"))
-            bounds = await dialog.locator(".modal-container").bounding_box()
-            assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 390
-            await page.set_viewport_size({"width": 1280, "height": 900})
-            await dialog.get_by_role("switch").click()
-            await dialog.get_by_role("checkbox").check()
-            await dialog.get_by_role("button", name="安装插件", exact=True).click()
-            await dialog.wait_for(state="hidden")
-            await page.locator(".plugin-status").filter(has_text="待重启").wait_for()
-            await page.screenshot(path=str(capture_path / "desktop-pending.png"))
-        finally:
-            await browser.close()
+async def _native_channel(port: int):
+    async with asyncio.timeout(90), httpx.AsyncClient(trust_env=False) as client:
+        while True:
+            try:
+                pages = (await client.get(f"http://127.0.0.1:{port}/json/list")).json()
+                page = next(
+                    (item for item in pages if item.get("type") == "page" and "tauri.localhost" in item.get("url", "")),
+                    None,
+                )
+                if page:
+                    return await connect(page["webSocketDebuggerUrl"])
+            except (httpx.HTTPError, OSError):
+                pass
+            await asyncio.sleep(0.1)
 
 
-@pytest.mark.skipif(not os.environ.get("ECL_PLUGIN_SMOKE_EXECUTABLE"), reason="需要显式提供真实单文件启动器产物")
+async def _native_invoke(channel, sequence: int, command: str, params: dict):
+    expression = (
+        "(async()=>{const end=Date.now()+30000;while(typeof window.__TAURI__?.pytauri?.pyInvoke!=='function'){if(Date.now()>end)throw new Error('native bridge not ready');await new Promise(r=>setTimeout(r,25));}return window.__TAURI__.pytauri.pyInvoke("
+        + json.dumps(command)
+        + ","
+        + json.dumps(params)
+        + ");})()"
+    )
+    await channel.send(
+        json.dumps(
+            {
+                "id": sequence,
+                "method": "Runtime.evaluate",
+                "params": {"expression": expression, "awaitPromise": True, "returnByValue": True},
+            }
+        )
+    )
+    async with asyncio.timeout(60):
+        while True:
+            reply = json.loads(await channel.recv())
+            if reply.get("id") == sequence:
+                assert "exceptionDetails" not in reply.get("result", {}), reply
+                return reply["result"]["result"]["value"]
+
+
+@pytest.mark.skipif(
+    not os.environ.get("ECL_PLUGIN_SMOKE_EXECUTABLE")
+    or platform.system() != "Windows"
+    or platform.machine().casefold() not in {"amd64", "x86_64"},
+    reason="需要真实 Windows x64 发行物；其他平台第三方运行明确不支持",
+)
 async def test_packaged_launcher_installs_offline_wheels_and_loads_native_extension(tmp_path: Path) -> None:
     executable_path = Path(os.environ["ECL_PLUGIN_SMOKE_EXECUTABLE"]).resolve()
     wheelhouse_path = Path(os.environ["ECL_PLUGIN_SMOKE_WHEELS"]).resolve()
@@ -105,54 +104,58 @@ async def test_packaged_launcher_installs_offline_wheels_and_loads_native_extens
             "ecl_smoke_resource/value.txt": b"offline-resource",
         },
     )
-    code = """from ECL.plugins import Plugin as BasePlugin
+    code = """from ECL.plugin_api import Plugin as BasePlugin
 import os
-import sys
 import importlib.resources
 import xxhash
 
 class Plugin(BasePlugin):
-    @BasePlugin.on_command('probe')
+    def on_load(self):
+        self.define_command('probe', self.probe, output_fields=(
+            {'name':'pid','type':'integer'}, {'name':'resource','type':'string'},
+            {'name':'native','type':'string'}, {'name':'native_path','type':'string'},
+        ))
+
     def probe(self):
-        return {
-            'pid': os.getpid(),
-            'sdk_module': BasePlugin.__module__,
-            'has_host_context': self.framework is not None and self.name == 'demo',
-            'frozen': bool(getattr(sys, 'frozen', False) or '__compiled__' in globals()),
-            'resource': importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
-            'native': xxhash.xxh64(b'ecl').hexdigest(),
-            'native_path': xxhash.__file__,
-        }
+        return {'pid':os.getpid(),
+            'resource':importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
+            'native':xxhash.xxh64(b'ecl').hexdigest(), 'native_path':xxhash.__file__}
 """
     package_path = make_package(
         tmp_path,
         code=code,
         wheel_paths=(pure_wheel, *native_wheels),
         dependencies=("ecl-smoke-resource==1.0.0", "xxhash==3.6.0"),
-        permissions=({"scope": "commands", "action": "execute", "resource": "probe"},),
+        permissions=(
+            {"capability": "commands.register", "required": True},
+            {"capability": "commands.execute", "required": True},
+        ),
     )
     data_path = tmp_path / "data"
     for phase in ("install", "restart"):
         log_path = tmp_path / f"{phase}.log"
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            debug_port = listener.getsockname()[1]
+        environment = dict(
+            os.environ,
+            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=f"--remote-debugging-port={debug_port}",
+            WEBVIEW2_USER_DATA_FOLDER=str(data_path / "webview-profile"),
+        )
         with log_path.open("wb") as log_file:
             process = subprocess.Popen(
                 [str(executable_path), "--data-dir", str(data_path), "--dev-channel"],
+                env=environment,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             websocket = None
+            native = None
             try:
                 websocket = await _connect(data_path, process, log_path)
                 info = await _request(websocket, 1, "launcher.info")
                 if phase == "install":
-                    if os.environ.get("ECL_PLUGIN_SMOKE_BROWSER"):
-                        await _request(websocket, 10, "frontend.invoke", {"command": "user_agreement_save"})
-                        await _verify_browser_install(
-                            info["frontendUrl"],
-                            package_path,
-                            Path(os.environ.get("ECL_PLUGIN_SMOKE_CAPTURES", str(tmp_path / "captures"))),
-                        )
                     result = await _request(
                         websocket,
                         2,
@@ -163,21 +166,51 @@ class Plugin(BasePlugin):
                     entries = await _request(websocket, 3, "plugin.list")
                     assert entries[0]["pendingRestart"] and entries[0]["status"] == "pending_restart", entries
                 else:
-                    result = await _request(
+                    native = await _native_channel(debug_port)
+                    entries = await _request(websocket, 20, "plugin.list")
+                    identity = entries[0]["installationId"]
+                    assert entries[0]["reviewRequired"]
+                    denied = await _request(
                         websocket,
-                        4,
+                        21,
                         "frontend.invoke",
-                        {"command": "plugin_call_command", "payload": {"command": "demo:probe"}},
+                        {"command": "plugin_permissions_get", "payload": {"installation_id": identity}},
                     )
-                    assert result["result"]["success"], result
-                    probe = result["result"]["data"]
-                    assert probe["pid"] == info["pid"]
-                    assert probe["sdk_module"] == "ECL.plugins.plugin" and probe["has_host_context"]
+                    assert denied["result"]["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
+                    await _native_invoke(native, 100, "frontend_ready", {})
+                    view = await _native_invoke(native, 1, "plugin_permissions_get", {"installation_id": identity})
+                    assert view["success"], view
+                    view = view["data"]
+                    result = await _native_invoke(
+                        native,
+                        2,
+                        "plugin_permissions_update",
+                        {
+                            "installation_id": identity,
+                            "content_digest": view["content_digest"],
+                            "expected_revision": view["revision"],
+                            "decisions": [
+                                {"capability": item["capability"], "decision": "allow"} for item in view["items"]
+                            ],
+                        },
+                    )
+                    assert result["success"] and result["data"]["persisted"], result
+                    result = await _native_invoke(native, 3, "plugin_enable", {"plugin_name": "demo"})
+                    assert result["success"], result
+                    result = await _native_invoke(native, 4, "plugin_call_command", {"command": "demo:probe"})
+                    assert result["success"], result
+                    probe = result["data"]
+                    assert probe["pid"] != info["pid"]
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
+                    result = await _native_invoke(native, 5, "plugin_disable", {"plugin_name": "demo"})
+                    assert result["success"], result
+                    assert not psutil.pid_exists(probe["pid"])
                     assert not (data_path / "plugin_envs").exists()
                     assert not (data_path / "plugin_runtimes").exists()
             finally:
+                if native is not None:
+                    await native.close()
                 if websocket is not None:
                     await websocket.close()
                 # 仅停止本用例创建的启动器；不借退出 API 扩展生产命令表。

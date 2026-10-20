@@ -30,11 +30,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import asdict
+from time import monotonic
 from typing import Any
+from uuid import uuid4
 
+from ECL.api.bridge import WebviewWindow
 from ECL.api.contracts import failure
+from ECL.api.plugin_models import PluginPermissionQuery, PluginPermissionUpdate
+from ECL.plugin_api._rpc import RpcRequest
+from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
+from ECL.plugins.grant_models import PermissionManagementCaller
+from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.package_archive import PluginPackageError
 
 from .bridge import _FrontendState
@@ -45,13 +53,91 @@ class PluginHandlers(_FrontendState):
     处理插件的启用、禁用、路由、插槽和命令调用请求。
     """
 
+    def _permission_caller(self, webview_window: WebviewWindow | None) -> PermissionManagementCaller:
+        """
+        只接受原生注入且已登记的主窗口，未知入口和客户端字段都不能获得管理资格。
+        """
+        if (
+            webview_window is None
+            or webview_window.label() != "main"
+            or self._window_metadata.get("main", {}).get("windowType") != "main"
+        ):
+            raise PluginGrantError("此入口不能管理插件授权", "PLUGIN_MANAGEMENT_CALLER_DENIED")
+        return PermissionManagementCaller.main_webview
+
+    async def plugin_permissions_get(
+        self, body: dict[str, Any], webview_window: WebviewWindow = None
+    ) -> dict[str, Any]:
+        """
+        向可信主窗口返回安装权限，查询不会自动允许或执行插件。
+
+        :param body: 已安装插件身份
+        :param webview_window: 原生调用窗口，不来自请求体
+        :return: 当前授权视图
+        """
+        try:
+            self._permission_caller(webview_window)
+            query = PluginPermissionQuery.model_validate(body)
+            service = self.plugins.worker_service
+            name = service.name_for_installation(query.installation_id)
+            return {"success": True, "data": await asyncio.to_thread(service.permissions, name)}
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
+
+    async def plugin_permissions_update(
+        self, body: dict[str, Any], webview_window: WebviewWindow = None
+    ) -> dict[str, Any]:
+        """
+        保存主窗口审阅决定并返回独立的运行清理状态，不把落盘成功当成进程停止。
+
+        :param body: 安装身份、内容、revision 与实际决定
+        :param webview_window: 原生调用窗口
+        :return: 持久化结果和清理状态
+        """
+        try:
+            caller = self._permission_caller(webview_window)
+            request = PluginPermissionUpdate.model_validate(body)
+            service = self.plugins.worker_service
+            name = service.name_for_installation(request.installation_id)
+            result = await asyncio.to_thread(
+                service.update_permissions,
+                name,
+                request.content_digest,
+                request.expected_revision,
+                tuple(request.decisions),
+                caller,
+            )
+            self.plugins.events.emit("plugin:status_changed", {"plugin": name})
+            return {"success": True, "data": result}
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
+
+    async def plugin_runtime_info(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
+        """
+        查询本安装实际 Worker 状态，只提供给可信主界面。
+
+        :param body: 当前安装身份
+        :param webview_window: 原生调用窗口
+        :return: 当前运行及清理状态
+        """
+        try:
+            self._permission_caller(webview_window)
+            query = PluginPermissionQuery.model_validate(body)
+            service = self.plugins.worker_service
+            return {
+                "success": True,
+                "data": await asyncio.to_thread(
+                    service.runtime_info, service.name_for_installation(query.installation_id)
+                ),
+            }
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
+
     async def _run_plugin_lifecycle(self, name: str, action: Callable[[str], PluginActionResult]) -> PluginActionResult:
         """
         安装包操作需要读取和校验磁盘文件，因此放到工作线程中执行。
         """
-        if self.plugins.is_package_plugin(name):
-            return await asyncio.to_thread(action, name)
-        return action(name)
+        return await asyncio.to_thread(action, name)
 
     async def plugin_list(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -59,7 +145,7 @@ class PluginHandlers(_FrontendState):
 
         :param body: 前端传入的 IPC 请求参数
         """
-        return {"success": True, "data": self.plugins.list_plugins()}
+        return {"success": True, "data": await asyncio.to_thread(self.plugins.list_plugins)}
 
     async def plugin_info(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -138,7 +224,9 @@ class PluginHandlers(_FrontendState):
                 allow_network=body.get("allow_network") is True,
             )
         else:
-            result = self.plugins.install(plugin_path)
+            result = await asyncio.to_thread(
+                self.plugins.install, plugin_path, allow_network=body.get("allow_network") is True
+            )
         if not result.success:
             return failure(result.message or "安装插件失败", "PLUGIN_INSTALL_FAILED")
         return {"success": True, "data": {"status": result.status, "message": result.message}}
@@ -211,7 +299,7 @@ class PluginHandlers(_FrontendState):
         :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
-        return {"success": True, "data": self.plugins.get_settings(plugin_name)}
+        return {"success": True, "data": await asyncio.to_thread(self.plugins.get_settings, plugin_name)}
 
     async def plugin_update_setting(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -220,11 +308,26 @@ class PluginHandlers(_FrontendState):
         :param body: 前端传入的 IPC 请求参数
         """
         plugin_name = body.get("plugin_name")
-        key = body.get("key")
-        result = self.plugins.update_setting(plugin_name, key, body.get("value"))
-        if not result.success:
-            return failure(result.message or "更新设置失败", "SETTING_UPDATE_FAILED")
-        return {"success": True}
+        service = self.plugins.worker_service
+        if service is not None and self.plugins.get_plugin(plugin_name) is None:
+            try:
+                result = await asyncio.to_thread(
+                    service.broker(plugin_name).handle,
+                    RpcRequest(
+                        "settings.set",
+                        {
+                            "values": {body.get("key"): body.get("value")},
+                            "expected_revision": body.get("expected_revision"),
+                        },
+                        monotonic() + 5,
+                        uuid4().hex,
+                    ),
+                )
+                return {"success": True, "data": result}
+            except (PluginGrantError, ProtocolError) as exc:
+                return failure(str(exc), exc.error_code)
+        result = self.plugins.update_setting(plugin_name, body.get("key"), body.get("value"))
+        return {"success": True} if result.success else failure(result.message, "PLUGIN_SETTING_UPDATE_FAILED")
 
     async def plugin_notify_sidebar_state(self, body: dict[str, Any]) -> dict[str, Any]:
         """

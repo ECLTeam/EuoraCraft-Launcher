@@ -53,6 +53,7 @@ class FrontendEventPolicy:
         "process:instance_log": [("process:instance_log", lambda payload: payload)],
         "process:instances_changed": [("process:instances_changed", lambda payload: payload)],
         "plugin:status_changed": [
+            ("plugin:status_changed", lambda payload: payload),
             ("plugin:enabled", lambda plugin: {"name": plugin.name, "action": "enabled", "result": True}),
             ("plugin:disabled", lambda plugin: {"name": plugin.name, "action": "disabled", "result": True}),
             ("plugin:unloaded", lambda name: {"name": name, "action": "unloaded", "result": True}),

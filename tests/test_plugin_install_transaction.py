@@ -12,9 +12,10 @@ from ECL.plugins.manager.install_transaction import PluginInstallTransaction
 def _plugin(plugin_path: Path, version: str, *, fail_enable: bool = False) -> None:
     plugin_path.mkdir(parents=True, exist_ok=True)
     (plugin_path / "plugin.json").write_text(
-        json.dumps({"name": "demo", "version": version, "entry_point": "main:DemoPlugin"}), encoding="utf-8"
+        json.dumps({"name": "demo", "api_version": 2, "version": version, "entry_point": "main:DemoPlugin"}),
+        encoding="utf-8",
     )
-    source = "from ECL.plugins import Plugin\nclass DemoPlugin(Plugin):\n"
+    source = "from ECL.plugin_api import Plugin\nclass DemoPlugin(Plugin):\n"
     source += (
         "    def on_enable(self):\n        raise RuntimeError('new enable failed')\n" if fail_enable else "    pass\n"
     )
@@ -27,40 +28,14 @@ def _framework(data_path: Path, resource_path: Path) -> PluginManager:
     return framework
 
 
-def test_failed_update_restores_old_code_and_enabled_plugin(tmp_path: Path) -> None:
-    """
-    新版 on_enable 失败时，旧版代码、实例和启用状态都恢复。
-    """
+def test_install_does_not_execute_new_enable_hook(tmp_path: Path) -> None:
     data_path = tmp_path / "data"
-    old_path = data_path / "plugins" / "demo"
-    _plugin(old_path, "1.0.0")
     framework = _framework(data_path, tmp_path / "resources")
     source_path = tmp_path / "new"
     _plugin(source_path, "2.0.0", fail_enable=True)
-
-    result = framework.install(str(source_path))
-
-    assert not result.success
-    assert "new enable failed" in result.message
-    assert framework.get_plugin("demo").version == "1.0.0"
-    assert framework._status["demo"] == "enabled"
-    assert "new enable failed" not in (old_path / "main.py").read_text(encoding="utf-8")
-    assert not list((data_path / "plugin_install_transactions").glob("*.json"))
-
-
-def test_failed_first_install_leaves_no_visible_plugin(tmp_path: Path) -> None:
-    """
-    首次安装 on_enable 失败时，不留下可发现目录或候选项。
-    """
-    data_path = tmp_path / "data"
-    framework = _framework(data_path, tmp_path / "resources")
-    source_path = tmp_path / "new"
-    _plugin(source_path, "1.0.0", fail_enable=True)
-
-    assert not framework.install(str(source_path)).success
+    assert framework.install(str(source_path)).success
     assert framework.get_plugin("demo") is None
-    assert "demo" not in framework._candidate_map
-    assert not (data_path / "plugins" / "demo").exists()
+    assert framework.list_plugins()[0]["review_required"]
 
 
 def test_failed_update_preserves_disabled_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,11 +79,11 @@ def test_install_preserves_disabled_state_and_updates_candidate(tmp_path: Path) 
 
     assert framework.install(str(source_path)).success
     assert framework.get_plugin("demo") is None
-    assert framework._status["demo"] == "disabled"
+    assert framework._status["demo"] == "review_required"
     assert framework._candidate_map["demo"]["metadata"]["version"] == "2.0.0"
     assert {item["name"]: item for item in framework.list_plugins()}["demo"]["version"] == "2.0.0"
-    assert framework.enable("demo").success
-    assert framework.get_plugin("demo").version == "2.0.0"
+    assert not framework.enable("demo").success
+    assert framework.get_plugin("demo") is None
 
 
 def test_new_install_can_be_uninstalled_without_restart(tmp_path: Path) -> None:
@@ -142,7 +117,7 @@ def test_pending_transaction_restores_old_directory_before_discovery(tmp_path: P
 
     framework = _framework(data_path, tmp_path / "resources")
 
-    assert framework.get_plugin("demo").version == "1.0.0"
+    assert framework.list_plugins()[0]["version"] == "1.0.0"
     assert not transaction.journal_path.exists()
     assert not transaction.backup_path.exists()
     assert not transaction.stage_path.exists()
@@ -192,7 +167,7 @@ def test_committed_transaction_keeps_new_directory_after_restart(tmp_path: Path,
 
     framework = _framework(data_path, tmp_path / "resources")
 
-    assert framework.get_plugin("demo").version == "2.0.0"
+    assert framework.list_plugins()[0]["version"] == "2.0.0"
     assert not transaction.journal_path.exists()
     assert not transaction.backup_path.exists()
 
@@ -258,7 +233,7 @@ def test_invalid_source_manifest_does_not_change_existing_plugin(tmp_path: Path)
     (source_path / "plugin.json").write_text("[]", encoding="utf-8")
 
     assert framework.install(str(source_path)).status == "invalid"
-    assert framework.get_plugin("demo").version == "1.0.0"
+    assert framework.list_plugins()[0]["version"] == "1.0.0"
     assert framework.install(None).status == "invalid"
 
 
@@ -268,3 +243,28 @@ def test_uninstall_rejects_plugin_name_outside_user_plugin_directory(tmp_path: P
     """
     framework = _framework(tmp_path / "data", tmp_path / "resources")
     assert framework.uninstall("../demo").status == "invalid"
+
+
+def test_manifest_changed_during_staging_never_replaces_installed_code(tmp_path: Path, monkeypatch) -> None:
+    data_path = tmp_path / "data"
+    _plugin(data_path / "plugins/demo", "1.0.0")
+    manager = _framework(data_path, tmp_path / "resources")
+    source_path = tmp_path / "source"
+    _plugin(source_path, "2.0.0")
+    original_stage = PluginInstallTransaction.stage
+
+    def changed_stage(transaction, source):
+        original_stage(transaction, source)
+        metadata_path = transaction.stage_path / "plugin.json"
+        metadata = json.loads(metadata_path.read_bytes())
+        metadata["version"] = "3.0.0"
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    monkeypatch.setattr(PluginInstallTransaction, "stage", changed_stage)
+    try:
+        assert not manager.install(str(source_path)).success
+        metadata = json.loads((data_path / "plugins/demo/plugin.json").read_bytes())
+        assert metadata["version"] == "1.0.0"
+        assert manager.list_plugins()[0]["version"] == "1.0.0"
+    finally:
+        manager.close()

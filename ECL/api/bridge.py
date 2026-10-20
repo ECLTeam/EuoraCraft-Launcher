@@ -459,6 +459,25 @@ class _FrontendState:
             if len(self._pending_frontend_events) > self.max_pending_frontend_events:
                 self._pending_frontend_events.pop(0)
 
+    def _trusted_plugin_event(self, event: str, payload: Any) -> bool:
+        """
+        只有发行来源确定的系统插件可以向主界面提供可执行前端内容。
+        """
+        if event not in {
+            "plugin:html_injected",
+            "plugin:css_injected",
+            "plugin:script_injected",
+            "plugin:typescript_injected",
+            "plugin:vue_slot_registered",
+            "plugin:vue_route_registered",
+        }:
+            return True
+        plugin_name = payload.get("plugin") if isinstance(payload, dict) else None
+        return (
+            isinstance(plugin_name, str)
+            and self.plugins._candidate_map.get(plugin_name, {}).get("is_system", False) is True
+        )
+
     def emit_to_frontend(self, event: str, payload: Any, *, target_label: str | None = None) -> None:
         """
         向前端发送事件。
@@ -466,6 +485,8 @@ class _FrontendState:
         :param event: 事件名称，如 ``config:updated``
         :param payload: 事件或请求携带的数据
         """
+        if not self._trusted_plugin_event(event, payload):
+            return
         if target_label is None and self._window_metadata:
             labels = [
                 label

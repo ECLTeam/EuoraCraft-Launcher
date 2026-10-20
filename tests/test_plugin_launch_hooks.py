@@ -21,7 +21,7 @@ def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> 
     普通插件可注册启动钩子并修改 JVM 参数与环境变量，禁用时宿主自动清理。
     """
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins" / "launch-demo"
+    plugin_dir = tmp_path / "resources/resources/system_plugins/launch-demo"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(
@@ -70,13 +70,13 @@ def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> 
     framework.launch_hooks.on_exit(context)
     assert context.env["ECL_EXIT"] == "yes"
 
-    assert framework.disable("launch-demo").success is True
+    framework.launch_hooks.unregister_owner("launch-demo")
     before = context.env.copy()
     framework.launch_hooks.prepare(context)
     framework.launch_hooks.pre_launch(context)
     assert context.env == before
 
-    assert framework.enable("launch-demo").success is True
+    framework.get_plugin("launch-demo").on_enable()
     context.jvm_args.clear()
     context.env.clear()
     framework.launch_hooks.prepare(context)
@@ -109,13 +109,13 @@ def test_plugin_without_launch_permission_cannot_register_hook(tmp_path) -> None
 
     framework = PluginManager()
     framework.initialize(data_path, tmp_path / "resources")
-    assert framework._status.get("launch-no-perm") == "permission_denied"
+    assert framework._status.get("launch-no-perm") == "unsupported"
 
 
 def test_launch_hook_exception_is_isolated(tmp_path) -> None:
     """单个钩子抛异常不阻断其余钩子。"""
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins" / "launch-boom"
+    plugin_dir = tmp_path / "resources/resources/system_plugins/launch-boom"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(

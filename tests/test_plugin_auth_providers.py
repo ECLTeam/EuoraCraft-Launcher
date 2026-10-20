@@ -25,7 +25,11 @@ from ECL.utils import AccountError
 
 
 def _register_provider_plugin(data_path, *, permission: bool = True) -> None:
-    plugin_dir = data_path / "plugins" / "auth-demo"
+    plugin_dir = (
+        data_path.parent / "resources/resources/system_plugins/auth-demo"
+        if permission
+        else data_path / "plugins/auth-demo"
+    )
     plugin_dir.mkdir(parents=True)
     permissions = [{"scope": "accounts", "action": "write", "resource": "demo"}] if permission else []
     (plugin_dir / "plugin.json").write_text(
@@ -126,7 +130,7 @@ def test_plugin_account_persists_across_restart(tmp_path) -> None:
 def test_plugin_account_fails_when_provider_disabled(tmp_path) -> None:
     manager, framework = _build(tmp_path)
     manager.add_plugin_account("demo", {"token": "abc"})
-    assert framework.disable("auth-demo").success is True
+    framework.auth_providers.unregister_owner("auth-demo")
 
     with pytest.raises(AccountError) as error:
         asyncio.run(manager.get_launch_credentials())
@@ -141,5 +145,5 @@ def test_plugin_without_accounts_permission_cannot_register_provider(tmp_path) -
     framework = PluginManager(auth_providers=manager.plugin_auth_providers)
     framework.initialize(data_path, tmp_path / "resources")
 
-    assert framework._status.get("auth-demo") == "permission_denied"
+    assert framework._status.get("auth-demo") == "unsupported"
     assert manager.list_auth_providers() == []

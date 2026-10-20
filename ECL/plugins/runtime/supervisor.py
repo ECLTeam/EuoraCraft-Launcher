@@ -269,6 +269,17 @@ class WorkerSupervisor:
         """
         return self._job.active_count() if self._job is not None else 0
 
+    def is_alive(self) -> bool:
+        """
+        查询保留的真实 Worker 句柄，不能仅根据 onefile 引导进程或 PID 判断。
+
+        :return: 已认证 Worker 仍在执行时为 True
+        """
+        with self._lock:
+            if self._worker_handle is None or self._job is None:
+                return False
+            return self._job.api.kernel.WaitForSingleObject(self._worker_handle, 0) == 258
+
     def close(self) -> None:
         """
         有界请求正常退出，再按 Job 回收全部成员并关闭身份句柄。

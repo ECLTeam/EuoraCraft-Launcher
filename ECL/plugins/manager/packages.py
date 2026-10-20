@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 from typing import Any
 
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.environment_pool import PluginDependencyDirectory, _exclusive_lock
 from ECL.plugins.host_dependencies import HostDependencyPolicy
+from ECL.plugins.installation_store import WorkerManifest
 from ECL.plugins.package_activation import PluginPackageActivation, PluginPackageActivationStore, plugin_name_pattern
 from ECL.plugins.package_archive import PluginPackageError
 from ECL.plugins.package_preparation import PluginPackagePreflight, PluginPackagePreparer
@@ -46,7 +48,13 @@ class PluginPackages(_PluginState):
         archive_path = Path(source_path)
         if archive_path.suffix.lower() != ".eclplugin" or not archive_path.is_file():
             raise PluginDependencyError("请选择有效的 .eclplugin 文件")
-        return PluginPackagePreparer(self._data_path).inspect(archive_path)
+        preflight = PluginPackagePreparer(self._data_path).inspect(archive_path)
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                WorkerManifest.model_validate_json(archive.read("plugin.json"))
+        except ValueError as exc:
+            raise PluginDependencyError("插件必须声明 API v2 和有效权限") from exc
+        return preflight
 
     def _dependency_policy(self) -> HostDependencyPolicy:
         if self._host_dependency_policy is None:
@@ -71,7 +79,10 @@ class PluginPackages(_PluginState):
             preflight = self.inspect_package(source_path)
             name = preflight.package.name
             self.logger.info("插件归档检查完成；插件：%s", name)
-            with _exclusive_lock(self._data_path / "plugin_packages" / f"{name}.install.lock"), self._package_lock:
+            with (
+                _exclusive_lock(self._data_path / "plugin_packages" / f"{name}.install.lock"),
+                self._plugin_action_lock(name),
+            ):
                 candidate = self._candidate_map.get(name)
                 if candidate is not None and name not in self._package_entries:
                     return PluginActionResult(name, PluginAction.INSTALL, "forbidden", "不能覆盖同名目录或系统插件")
@@ -80,10 +91,9 @@ class PluginPackages(_PluginState):
                 store = self._package_store or PluginPackageActivationStore(self._data_path)
                 previous_error = None
                 try:
-                    previous = store.restore(name)
+                    store.restore(name)
                 except PluginDependencyError as exc:
                     # 显式重装可补齐旧迁移缺失的 wheel，失败前不改旧指针。
-                    previous = None
                     previous_error = f"旧安装无法恢复，新版本保持禁用，请重启后启用: {exc}"
                 prepared = PluginPackagePreparer(self._data_path).prepare(
                     Path(source_path),
@@ -91,14 +101,28 @@ class PluginPackages(_PluginState):
                     allow_network=allow_network,
                     expected_package=preflight.package,
                 )
-                reason = self._dependency_policy().conflict(prepared.dependency_directory) or previous_error
+                reason = previous_error
                 self.logger.info("插件安装文件与依赖准备完成，开始切换激活指针；插件：%s", name)
-                active = store.activate(prepared, enabled=not reason and (previous.enabled if previous else True))
+                assert self.worker_service is not None
+                self.worker_service.register(
+                    json.loads((prepared.code_path / "plugin.json").read_text(encoding="utf-8")),
+                    prepared.code_path,
+                    "package",
+                    prepared.dependency_directory,
+                )
+                active = store.activate(prepared, enabled=False)
                 self._package_store = store
                 self._set_package_entry(active, status="pending_restart", error=reason)
-                if reason:
-                    self._disabled_plugins.add(name)
-                    self._save_plugin_state()
+                self._status[name] = "pending_restart"
+                self._candidate_map[name] = {
+                    "name": name,
+                    "plugin_dir": active.code_path,
+                    "metadata_path": active.code_path / "plugin.json",
+                    "metadata": self._package_entries[name]["metadata"],
+                    "is_system": False,
+                }
+                self._disabled_plugins.add(name)
+                self._save_plugin_state()
                 self.events.emit("plugin:installed", name)
                 message = "插件已安装，重启后生效" if not reason else f"插件已安装但保持禁用: {reason}"
                 if prepared.dependency_directory and prepared.dependency_directory.warnings:
@@ -192,8 +216,7 @@ class PluginPackages(_PluginState):
                     directories[name] = active.dependency_directory
             except (OSError, PluginDependencyError) as exc:
                 self._package_error(name, str(exc))
-        if check_dependencies and directories:
-            self._check_startup_directories(directories)
+
         return names
 
     def _check_startup_directories(self, directories: dict[str, PluginDependencyDirectory | None]) -> None:
@@ -290,9 +313,13 @@ class PluginPackages(_PluginState):
     def _uninstall_package(self, name: str) -> PluginActionResult:
         with self._package_lock:
             try:
-                if name in self._plugins:
-                    self.unload(name, _persist_state=False)
-                (self._package_store or PluginPackageActivationStore(self._data_path)).uninstall(name)
+                stopped = self.disable(name, _persist_state=False)
+                if not stopped.success:
+                    return PluginActionResult(name, PluginAction.UNINSTALL, stopped.status, stopped.message)
+                assert self.worker_service is not None
+                self.worker_service.remove(
+                    name, lambda: (self._package_store or PluginPackageActivationStore(self._data_path)).uninstall(name)
+                )
             except (OSError, PluginDependencyError) as exc:
                 return PluginActionResult(name, PluginAction.UNINSTALL, "failed", str(exc))
             self._package_entries.pop(name, None)

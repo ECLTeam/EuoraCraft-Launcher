@@ -22,7 +22,9 @@ def _framework() -> PluginManager:
     EventBus._initialized = False
     PluginManager._instance = None
     PluginManager._initialized = False
-    return PluginManager()
+    framework = PluginManager()
+    framework._candidate_map["demo"] = {"is_system": True}
+    return framework
 
 
 def test_html_slot_appends_without_key_and_updates_matching_key() -> None:
@@ -55,6 +57,7 @@ def test_vue_slot_keeps_distinct_components_from_the_same_plugin() -> None:
 def test_disable_removes_plugin_frontend_content() -> None:
     framework = _framework()
     plugin = Plugin(framework, Path(), {"name": "demo"})
+    framework._candidate_map.clear()
     framework._plugins["demo"] = plugin
     framework._status["demo"] = "enabled"
     framework._routes = [

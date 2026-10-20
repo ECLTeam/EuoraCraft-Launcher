@@ -19,6 +19,8 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
+from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginEnvironmentError, _exclusive_lock
 from ECL.utils import atomic_write_text, get_logger
 
@@ -78,10 +80,12 @@ class PluginInstallTransaction:
         """
         self.stage_path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            source_snapshot = CodeSnapshot.capture(source_path)
             shutil.copytree(source_path, self.stage_path)
-        except OSError as exc:
-            if self.stage_path.exists():
-                shutil.rmtree(self.stage_path)
+            source_snapshot.verify(source_snapshot.digest())
+            CodeSnapshot.capture(self.stage_path).verify(source_snapshot.digest())
+        except (OSError, ProtocolError) as exc:
+            self.discard_stage()
             raise PluginInstallTransactionError("插件暂存复制失败") from exc
 
     def begin(self) -> None:
@@ -101,9 +105,21 @@ class PluginInstallTransaction:
         except OSError as exc:
             raise PluginInstallTransactionError("插件目录切换失败") from exc
 
+    def discard_stage(self) -> None:
+        """
+        只清理尚未切换的本次暂存，不能触及当前活动插件目录。
+
+        :raises PluginInstallTransactionError: 暂存路径失去所属边界时抛出
+        """
+        expected_parent = self.data_path.resolve() / "plugin_install_staging"
+        if self.stage_path.is_symlink() or self.stage_path.resolve().parent != expected_parent:
+            raise PluginInstallTransactionError("插件暂存路径超出安装目录")
+        if self.stage_path.exists():
+            shutil.rmtree(self.stage_path)
+
     def commit(self) -> bool:
         """
-        标记新目录已通过加载与启用验证，再清理旧目录备份。
+        标记新目录和安装身份已准备完成，再清理旧目录备份；不执行插件。
 
         :return: 旧目录已清理为 True；清理待重试为 False
         :raises PluginInstallTransactionError: 提交标记无法持久化时抛出

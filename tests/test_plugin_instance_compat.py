@@ -20,7 +20,7 @@ def test_plugin_can_register_instance_compatibility_provider(tmp_path) -> None:
     普通插件可注册实例元数据读取器与监听路径，禁用时宿主会自动清理扩展点。
     """
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins" / "compat-demo"
+    plugin_dir = tmp_path / "resources/resources/system_plugins/compat-demo"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(
@@ -67,7 +67,7 @@ def test_plugin_can_register_instance_compatibility_provider(tmp_path) -> None:
     assert registry.describe_sources() == [{"source": "demo", "title": "Demo Launcher", "plugin": "compat-demo"}]
     assert registry.resolve_watch_paths({"demo": {"index": index_path}}) == [("demo", index_path.resolve())]
 
-    assert framework.disable("compat-demo").success is True
+    framework.instance_compatibility.unregister_owner("compat-demo")
     assert registry.describe_sources() == []
-    assert framework.enable("compat-demo").success is True
+    framework.get_plugin("compat-demo").on_enable()
     assert registry.describe_sources()[0]["source"] == "demo"

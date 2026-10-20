@@ -308,6 +308,7 @@ def test_plugin_command_timeout_keeps_worker_context_and_reports_real_result(rec
             logger=logger,
             _command_executor=executor,
             _status={"demo": "enabled"},
+            _candidate_map={},
             _plugins={"demo": SimpleNamespace(_commands={"run": handler})},
         )
         try:

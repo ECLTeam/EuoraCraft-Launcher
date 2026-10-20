@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from ECL.plugins import PluginManager
+from ECL.plugins import Plugin, PluginManager
 from ECL.plugins.network import PluginHttpError
 
 
@@ -72,6 +72,10 @@ def _build_framework(tmp_path, permission: str | None, client) -> PluginManager:
     )
     framework = PluginManager(http_client=client)
     framework.initialize(data_path, tmp_path / "resources")
+    # 直接验证宿主 SDK 的网络权限单元，不通过正式第三方加载路径执行旧入口。
+    metadata = json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))
+    framework._permission_manager.register_plugin_permissions("net-demo", permissions)
+    framework._plugins["net-demo"] = Plugin(framework, plugin_dir, metadata)
     return framework
 
 

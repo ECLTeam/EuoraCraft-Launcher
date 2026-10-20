@@ -156,7 +156,7 @@ def test_framework_loads_permissions_from_metadata(tmp_path) -> None:
     data_path = tmp_path / "data"
     resource_path = tmp_path / "resources"
     _write_plugin(
-        data_path / "plugins" / "demo",
+        resource_path / "resources/system_plugins/demo",
         {
             "name": "demo",
             "version": "1.0.0",
@@ -173,8 +173,10 @@ def test_framework_loads_permissions_from_metadata(tmp_path) -> None:
     framework.initialize(data_path, resource_path)
 
     assert framework._status.get("demo") == "enabled"
-    info = {p["name"]: p for p in framework.list_plugins()}["demo"]
-    assert info["permissions"] == [{"scope": "events", "action": "emit", "resource": "demo:hello"}]
+    assert framework.list_plugins() == []
+    assert [permission.to_dict() for permission in framework._permission_manager.get_plugin_permissions("demo")] == [
+        {"scope": "events", "action": "emit", "resource": "demo:hello"}
+    ]
 
 
 def test_missing_permission_marks_plugin_permission_denied(tmp_path) -> None:
@@ -197,16 +199,16 @@ def test_missing_permission_marks_plugin_permission_denied(tmp_path) -> None:
     framework = PluginManager()
     framework.initialize(data_path, resource_path)
 
-    assert framework._status.get("bad") == "permission_denied"
+    assert framework._status.get("bad") == "unsupported"
     info = {p["name"]: p for p in framework.list_plugins()}.get("bad")
     assert info is not None
-    assert info["status"] == "permission_denied"
+    assert info["status"] == "unsupported"
     assert info["error"] is not None
-    assert "events" in info["error"]
+    assert info["error"] == "PLUGIN_API_VERSION_UNSUPPORTED"
 
     result = framework.enable("bad")
     assert not result.success
-    assert result.status == "permission_denied"
+    assert result.status == "unsupported"
     assert result.message == info["error"]
 
 
@@ -226,13 +228,13 @@ def test_instance_error_is_returned_to_plugin_management(tmp_path) -> None:
     framework.initialize(data_path, resource_path)
 
     info = {plugin["name"]: plugin for plugin in framework.list_plugins()}["broken"]
-    assert info["status"] == "error"
-    assert info["error"] == "插件配置内容无效"
+    assert info["status"] == "unsupported"
+    assert info["error"] == "PLUGIN_API_VERSION_UNSUPPORTED"
 
     result = framework.enable("broken")
     assert not result.success
-    assert result.status == "error"
-    assert result.message == "插件配置内容无效"
+    assert result.status == "unsupported"
+    assert result.message == "PLUGIN_API_VERSION_UNSUPPORTED"
 
 
 def test_sidebar_state_is_emitted_after_frontend_is_ready() -> None:

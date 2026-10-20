@@ -118,8 +118,10 @@ class PluginRegistry(_PluginState):
         plugin = self._plugins.get(name)
         if plugin is not None:
             return dict(plugin.metadata)
-        metadata = self._package_metadata(name)
-        return metadata
+        candidate = self._candidate_map.get(name)
+        if candidate is not None:
+            return dict(candidate["metadata"])
+        return self._package_metadata(name)
 
     def subscribe_event(self, plugin: Plugin, event: str, handler: Any) -> None:
         """
@@ -156,95 +158,70 @@ class PluginRegistry(_PluginState):
 
     def list_plugins(self) -> list[dict[str, Any]]:
         """
-        获取插件列表。
+        从发现元数据和唯一运行服务构造第三方列表，不实例化插件获取展示字段。
 
+        :return: 安装、审阅、运行和清理状态
         """
         result = []
-        for name, plugin in self._plugins.items():
-            if getattr(plugin, "is_system", False) is True:
-                continue
-            result.append(
-                _plugin_entry(
-                    name,
-                    plugin,
-                    self._status.get(name, "unloaded"),
-                    self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name),
-                    permissions=[p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
-                )
-            )
-        # 补充因依赖错误未被加载的插件条目，便于前端展示
-        loaded_names = set(self._plugins.keys()) | set(self._package_entries)
-        for name in sorted(self._dependency_resolution.skipped - loaded_names - self._disabled_plugins):
-            if self._candidate_map.get(name, {}).get("is_system", False):
-                continue
-            result.append(
-                _plugin_entry(
-                    name,
-                    None,
-                    "unloaded",
-                    self._dependency_resolution.errors.get(name),
-                )
-            )
-        # 补充安全模式（--disable-plugins）下未加载的候选插件条目，使其可见并可按需启用
-        if not self._startup_auto_enable:
-            self._append_unloaded_candidate_entries(result, loaded_names)
-        # 补充被禁用且未实例化的插件条目，仍从 plugin.json 读取元数据供前端展示
-        for name in sorted((self._disabled_plugins & self._candidate_map.keys()) - loaded_names):
-            candidate = self._candidate_map[name]
-            if candidate.get("is_system", False):
-                continue
-            result.append(
-                _plugin_entry(
-                    name,
-                    candidate.get("metadata", {}),
-                    "disabled",
-                    None,
-                    permissions=[p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
-                    is_system=candidate.get("is_system", False),
-                )
-            )
-        # 补充实例化失败的插件条目
-        for name in sorted(set(self._plugin_errors.keys()) - loaded_names):
+        names = set(self._candidate_map) | set(self._package_entries)
+        for name in sorted(names):
             candidate = self._candidate_map.get(name, {})
             if candidate.get("is_system", False):
                 continue
-            result.append(
-                _plugin_entry(
-                    name,
-                    candidate.get("metadata", {}),
-                    self._status.get(name, "error"),
-                    self._plugin_errors.get(name),
-                    permissions=[p.to_dict() for p in self._permission_manager.get_plugin_permissions(name)],
-                    is_system=candidate.get("is_system", False),
-                )
+            package = self._package_entries.get(name, {})
+            metadata = candidate.get("metadata") or package.get("metadata", {})
+            entry = _plugin_entry(
+                name,
+                metadata,
+                self._status.get(name, package.get("status", "unloaded")),
+                self._plugin_errors.get(name) or package.get("error") or self._dependency_resolution.errors.get(name),
             )
-        self._append_package_entries(result)
+            entry["pending_restart"] = bool(package.get("pending_restart"))
+            entry["installed_version"] = metadata.get("version", "")
+            if self.worker_service is not None and entry["status"] != "unsupported":
+                try:
+                    self._apply_worker_details(name, entry)
+                except ValueError:
+                    entry["review_required"] = True
+            result.append(entry)
         return result
 
-    def _append_package_entries(self, result: list[dict[str, Any]]) -> None:
-        with self._package_lock:
-            package_entries = tuple((name, dict(entry)) for name, entry in sorted(self._package_entries.items()))
-        for name, package_entry in package_entries:
-            if name in self._plugins:
-                continue
-            result.append(
-                _plugin_entry(
-                    name,
-                    package_entry["metadata"],
-                    package_entry["status"],
-                    package_entry["error"]
-                    or self._plugin_errors.get(name)
-                    or self._dependency_resolution.errors.get(name),
-                    services=package_entry.get("services", []),
-                )
-            )
-        for entry in result:
-            package_entry = self._package_entries.get(entry["name"])
-            if package_entry is not None:
-                entry["pending_restart"] = bool(package_entry.get("pending_restart"))
-                entry["installed_version"] = package_entry["metadata"].get("version", "")
-                if package_entry.get("error") and not entry.get("error"):
-                    entry["error"] = package_entry["error"]
+    def _apply_worker_details(self, name: str, entry: dict[str, Any]) -> None:
+        """
+        以运行服务的实际授权和清理状态补充展示条目，消除已恢复的准入错误。
+
+        归档等待重启时保留安装状态；运行故障优先使用监管服务记录的稳定错误码。
+        """
+        assert self.worker_service is not None
+        permissions = self.worker_service.permissions(name)
+        runtime = self.worker_service.runtime_info(name)
+        entry.update(
+            installation_id=permissions["installation_id"],
+            content_digest=permissions["content_digest"],
+            review_required=permissions["revision"] == 0,
+            required_satisfied=permissions["required_satisfied"],
+            cleanup_state=runtime["cleanup_state"],
+        )
+        if not entry["pending_restart"]:
+            if runtime["run_state"] in {"enabled", "failed", "stopping", "disabled"}:
+                entry["status"] = runtime["run_state"]
+            elif permissions["revision"] == 0 and name not in self._disabled_plugins:
+                entry["status"] = "review_required"
+            elif permissions["revision"] > 0:
+                entry["status"] = "disabled" if permissions["required_satisfied"] else "permission_denied"
+        if entry["error"] == "PLUGIN_GRANT_REVIEW_REQUIRED" and permissions["revision"] > 0:
+            entry["error"] = None
+        if entry["error"] == "PLUGIN_REQUIRED_PERMISSION_DENIED" and permissions["required_satisfied"]:
+            entry["error"] = None
+        if runtime["last_error"] is not None:
+            entry["error"] = runtime["last_error"]["code"]
+        if runtime["run_state"] == "enabled":
+            broker = self.worker_service.broker(name)
+            entry["services"] = broker.command_names()
+            try:
+                entry["settings"] = broker.settings_view()["schema"]
+            except ValueError:
+                entry["settings"] = []
 
     def get_routes(self) -> list[dict[str, Any]]:
         """
@@ -280,6 +257,8 @@ class PluginRegistry(_PluginState):
         self, plugin_name: str, slot_id: str, html: str, key: str | None, context_key: str | None = None
     ) -> None:
         # 收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加。
+        if not self._candidate_map.get(plugin_name, {}).get("is_system", False):
+            return
         entries = self._slots.setdefault(slot_id, [])
         entry = {"plugin": plugin_name, "html": html}
         if context_key is not None:
@@ -305,6 +284,8 @@ class PluginRegistry(_PluginState):
         context_key: str | None = None,
     ) -> None:
         # 收集 Vue 组件注册事件到插槽，并在全局组件表中登记以供路由引用。
+        if not self._candidate_map.get(plugin_name, {}).get("is_system", False):
+            return
         entries = self._vue_slots.setdefault(slot_id, [])
         entry = {
             "plugin": plugin_name,
@@ -383,6 +364,9 @@ class PluginRegistry(_PluginState):
 
         :param name: 插件名称
         """
+        if self._candidate_map.get(name) and not self._candidate_map[name]["is_system"]:
+            assert self.worker_service is not None
+            return self.worker_service.broker(name).settings_view()
         plugin = self._plugins.get(name)
         if plugin is None:
             return {"schema": None, "values": {}}
@@ -434,6 +418,12 @@ class PluginRegistry(_PluginState):
         ):
             raise PluginCommandError("插件命令参数或超时无效")
         plugin_name, cmd_name = command.split(":", 1)
+        if self._candidate_map.get(plugin_name) and not self._candidate_map[plugin_name]["is_system"]:
+            try:
+                assert self.worker_service is not None
+                return self.worker_service.broker(plugin_name).call_command(cmd_name, params or {}, timeout)
+            except ValueError as exc:
+                raise PluginCommandError("插件命令执行未完成") from exc
         plugin = self._plugins.get(plugin_name)
         if plugin is None or self._status.get(plugin_name) != "enabled":
             raise PluginCommandError(f"插件 {plugin_name} 未启用或不存在")

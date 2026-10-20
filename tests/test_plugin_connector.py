@@ -25,7 +25,7 @@ from ECL.plugins import (
 
 def test_plugin_connector_extension_requires_permission_and_is_cleaned_on_disable(tmp_path) -> None:
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins" / "connector-demo"
+    plugin_dir = tmp_path / "resources/resources/system_plugins/connector-demo"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(
@@ -52,7 +52,7 @@ def test_plugin_connector_extension_requires_permission_and_is_cleaned_on_disabl
 
     assert registry.protocol_names() == ["demo:echo"]
     assert asyncio.run(registry.dispatch(ConnectorProtocolRequest("demo:echo", b"hello"))) == (0, b"hello")
-    assert framework.disable("connector-demo").success is True
+    framework.connector_extensions.unregister_owner("connector-demo")
     assert registry.protocol_names() == []
 
 

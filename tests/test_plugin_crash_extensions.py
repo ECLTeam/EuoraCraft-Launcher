@@ -25,7 +25,7 @@ def _game(tmp_path: Path) -> Path:
 
 
 def _register_plugin(data_path: Path) -> None:
-    plugin_dir = data_path / "plugins" / "crash-demo"
+    plugin_dir = data_path.parent / "resources/resources/system_plugins/crash-demo"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(
@@ -72,7 +72,7 @@ def test_crash_extension_enriches_analysis_result(tmp_path) -> None:
     assert any(reason["code"] == "plugin.demo_hint" for reason in result["reasons"])
 
     # 禁用插件后应自动移除其崩溃分析回调
-    assert framework.disable("crash-demo").success is True
+    framework.crash_extensions.unregister_owner("crash-demo")
     analyzer = CrashAnalyzer(data_path, extensions=framework.crash_extensions)
     try:
         result = analyzer.analyze_file(source, game_path, "Test")
@@ -84,7 +84,7 @@ def test_crash_extension_enriches_analysis_result(tmp_path) -> None:
 def test_crash_extension_exception_is_isolated(tmp_path) -> None:
     data_path = tmp_path / "data"
     data_path.mkdir(parents=True)
-    plugin_dir = data_path / "plugins" / "crash-boom"
+    plugin_dir = tmp_path / "resources/resources/system_plugins/crash-boom"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(

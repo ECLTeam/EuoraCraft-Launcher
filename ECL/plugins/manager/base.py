@@ -25,6 +25,7 @@ from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
+from ECL.plugins.worker_service import PluginWorkerService
 from ECL.utils import get_logger
 
 from .install_transaction import recover_plugin_install_transactions
@@ -105,11 +106,20 @@ class _PluginState:
         self._host_dependency_policy: HostDependencyPolicy | None = None
         self._package_conflicts: set[str] = set()
         self._package_lock = RLock()
+        self._action_locks: dict[str, RLock] = {}
         # 插件实例化/启用失败的详细错误信息，供前端展示
         self._plugin_errors: dict[str, str] = {}
         # 前端是否已就绪；就绪后新启用的插件需要单独补调 on_frontend_ready
         self._frontend_ready = False
         self._sidebar_collapsed: bool | None = None  # 侧栏是否折叠
+        self.worker_service: PluginWorkerService | None = None
+
+    def _plugin_action_lock(self, name: str) -> RLock:
+        """
+        为同一插件的安装与生命周期操作提供稳定串行边界，不锁住其他插件。
+        """
+        with self._package_lock:
+            return self._action_locks.setdefault(name, RLock())
 
     def initialize(self, data_path: Path, resource_path: Path | None = None, *, auto_enable: bool = True) -> None:
         """
@@ -122,6 +132,7 @@ class _PluginState:
             插件保持未加载状态，可由用户在插件页或开发通道按需启用
         """
         self._data_path = Path(data_path)
+        self.worker_service = PluginWorkerService(self._data_path)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
         self._plugin_dir = self._data_path / "plugins"
         self._plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -131,11 +142,7 @@ class _PluginState:
         failed_installs = set(recover_plugin_install_transactions(self._data_path, self._plugin_dir))
         if failed_installs:
             self.logger.error("插件安装恢复失败，启动时跳过这些用户插件: %s", sorted(failed_installs))
-        self.logger.info(
-            "正在初始化插件框架：用户插件目录：%s；系统插件目录：%s",
-            self._plugin_dir,
-            self._resource_path / "resources" / "system_plugins",
-        )
+        self.logger.info("正在初始化插件框架")
         self._load_plugin_state()
         self._startup_auto_enable = auto_enable
         # 订阅 HTML 注入事件，收集插槽内容
@@ -156,17 +163,21 @@ class _PluginState:
         candidates = [
             candidate
             for candidate in user_candidates
-            if candidate["name"] not in failed_installs and candidate["name"] not in package_names
+            if candidate["name"] not in failed_installs
+            and candidate["name"] not in package_names
+            and candidate["name"] not in system_plugins
         ]
         candidates.extend(system_candidates)
         candidates.extend(self._package_candidates.values())
         self.logger.debug(
-            "插件发现完成：候选数量：%d；禁用数量：%d；用户插件目录：%s",
+            "插件发现完成：候选数量：%d；禁用数量：%d",
             len(candidates),
             len(self._disabled_plugins),
-            self._plugin_dir,
         )
         self._candidate_map = {c["name"]: c for c in candidates}
+        for candidate in candidates:
+            if not candidate["is_system"]:
+                self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
         # 禁用状态只属于当前仍安装的插件；插件目录被删除后不应留下幽灵列表项。
         self._prune_plugin_state(
             set(self._candidate_map) | failed_installs | package_names, non_disableable_plugins=system_plugins

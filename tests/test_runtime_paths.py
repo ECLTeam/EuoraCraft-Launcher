@@ -91,7 +91,7 @@ def test_plugin_install_targets_data_path(tmp_path) -> None:
 
     source_path = tmp_path / "source_plugin"
     source_path.mkdir()
-    (source_path / "plugin.json").write_text(json.dumps({"name": "example"}), encoding="utf-8")
+    (source_path / "plugin.json").write_text(json.dumps({"name": "example", "api_version": 2}), encoding="utf-8")
     (source_path / "main.py").write_text(
         "from ECL.plugins import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
     )
@@ -99,4 +99,5 @@ def test_plugin_install_targets_data_path(tmp_path) -> None:
     assert framework.install(str(source_path)).success is True
     installed_path = data_path / "plugins" / "example"
     assert (installed_path / "plugin.json").is_file()
-    assert "example" in framework._plugins
+    assert "example" in framework._candidate_map
+    assert "example" not in framework._plugins
