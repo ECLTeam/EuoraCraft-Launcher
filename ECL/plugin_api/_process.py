@@ -19,15 +19,15 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from ecl_bootstrap import PluginProcessOptions
-from ecl_plugin_api._imports import DependencySnapshot, LockedImports
-from ecl_plugin_api._rpc import RpcPeer, RpcRequest
-from ecl_plugin_api._runtime import PluginRuntime
-from ecl_plugin_api._transport import PipeChannel, connect_pipe
-from ecl_plugin_api._windows import WindowsApi, WindowsRuntimeError
-from ecl_plugin_api.contracts import JsonValue, ProtocolError, ProtocolPolicy, WireMessage
-from ecl_plugin_api.plugin import HostClient
-from ecl_plugin_api.snapshot import CodeSnapshot
+from ECL.bootstrap import PluginProcessOptions
+from ECL.plugin_api._imports import DependencySnapshot, LockedImports
+from ECL.plugin_api._rpc import RpcPeer, RpcRequest
+from ECL.plugin_api._runtime import PluginRuntime
+from ECL.plugin_api._transport import PipeChannel, connect_pipe
+from ECL.plugin_api._windows import WindowsApi, WindowsRuntimeError
+from ECL.plugin_api.contracts import JsonValue, ProtocolError, ProtocolPolicy, WireMessage
+from ECL.plugin_api.plugin import HostClient
+from ECL.plugin_api.snapshot import CodeSnapshot
 
 
 def _load(message: WireMessage, run_id: str) -> tuple[ModuleType, LockedImports]:
@@ -153,7 +153,13 @@ def _serve(channel: PipeChannel, run_id: str) -> None:
                 "pid": os.getpid(),
                 "run_id": run_id,
                 "is_in_job": is_in_job,
-                "has_host_modules": any(name == "ECL" or name.startswith("ECL.") for name in sys.modules),
+                # ECL 包标记、角色分流和插件 API 属于受信引导，其他 ECL 模块仍视为宿主泄漏。
+                "has_host_modules": any(
+                    name.startswith("ECL.")
+                    and name not in {"ECL.bootstrap", "ECL.plugin_api"}
+                    and not name.startswith("ECL.plugin_api.")
+                    for name in sys.modules
+                ),
             },
         )
     )

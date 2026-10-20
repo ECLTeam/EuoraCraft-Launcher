@@ -1,5 +1,7 @@
 # ECL 插件子进程隔离与用户权限管理实施设计 v1.2
 
+> 目录约定更新：启动引导与插件 API 已按 [下沉实施方案](python-entrypoint-consolidation-plan.md) 归入 `ECL/bootstrap.py` 和 `ECL/plugin_api/`。当前插件使用 `from ECL.plugin_api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](headless-runtime.md) 为准。
+
 状态：用户已明确批准 v1.1 开始实施。Worker 基础运行层和 v2 授权存储已分阶段实现；尚未接入第三方插件管理器。真实 WebView2 网络门未通过，原生增补已获批准，但用户随后要求先越过该部分；自定义前端继续关闭。
 
 日期：2026-10-12（Asia/Shanghai）；原始调研与 v1.1 日期为 2026-10-11。

@@ -18,7 +18,7 @@ from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
 
-from ecl_plugin_api._windows import WindowsApi, WindowsRuntimeError
+from ECL.plugin_api._windows import WindowsApi, WindowsRuntimeError
 
 
 @dataclass(slots=True)

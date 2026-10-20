@@ -8,11 +8,11 @@ from pathlib import Path
 import psutil
 import pytest
 
+from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
-from ecl_plugin_api._windows import WindowsRuntimeError
-from ecl_plugin_api.contracts import ProtocolError
-from ecl_plugin_api.snapshot import CodeSnapshot
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="首版仅 Windows x64")
 

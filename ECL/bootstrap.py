@@ -123,7 +123,7 @@ def run_process(argv: Sequence[str]) -> int:
     """
     route = select_process_route(argv)
     if route.role is ProcessRole.plugin:
-        from ecl_plugin_api._process import run_plugin_process
+        from ECL.plugin_api._process import run_plugin_process
 
         assert route.plugin is not None
         return run_plugin_process(route.plugin)

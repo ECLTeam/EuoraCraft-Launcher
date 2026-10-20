@@ -35,3 +35,5 @@ def test_runtime_and_build_do_not_reference_legacy_sdk(relative_path: str) -> No
     assert "ecl_plugin_sdk" not in source
     assert "command_sdk" not in source
     assert "CommandPluginAdapter" not in source
+    assert "ecl_bootstrap" not in source
+    assert "ecl_plugin_api" not in source

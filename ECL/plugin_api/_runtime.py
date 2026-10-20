@@ -17,9 +17,9 @@ import os
 from threading import RLock
 from types import ModuleType
 
-from ecl_plugin_api._rpc import RpcRequest
-from ecl_plugin_api.contracts import JsonValue, ProtocolError
-from ecl_plugin_api.plugin import HostClient, Plugin
+from ECL.plugin_api._rpc import RpcRequest
+from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugin_api.plugin import HostClient, Plugin
 
 
 class PluginRuntime:

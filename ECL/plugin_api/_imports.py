@@ -23,8 +23,8 @@ from pathlib import Path
 from types import MappingProxyType, ModuleType
 from typing import ClassVar, Protocol
 
-from ecl_plugin_api.contracts import ProtocolError
-from ecl_plugin_api.snapshot import CodeSnapshot
+from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugin_api.snapshot import CodeSnapshot
 
 
 class _DllDirectory(Protocol):
@@ -48,7 +48,7 @@ class LockedImports(MetaPathFinder):
     """
 
     protected_imports: ClassVar[frozenset[str]] = frozenset(
-        {"ECL", "ecl_plugin_api", "pytauri", "pytauri_wheel", "pytauri_plugins", "pytauri_utils"}
+        {"ECL", "pytauri", "pytauri_wheel", "pytauri_plugins", "pytauri_utils"}
     )
 
     def __init__(self, roots: Mapping[str, Path], site_path: Path | None, packages: frozenset[str]) -> None:

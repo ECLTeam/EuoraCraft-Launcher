@@ -60,12 +60,9 @@ dev = [
     "uv==0.13.0"
 ]
 
-[tool.setuptools]
-py-modules = ["ecl_bootstrap"]
-
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ECL*", "ecl_plugin_api*"]
+include = ["ECL*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "ECL.foundation.version.__version__"}
@@ -180,7 +177,7 @@ max-complexity = 12
 convention = "google"
 
 [tool.ruff.lint.isort]
-known-first-party = ["ECL", "ecl_plugin_api"]
+known-first-party = ["ECL"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.format]

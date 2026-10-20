@@ -20,8 +20,8 @@ from threading import RLock
 from typing import ClassVar
 from uuid import uuid4
 
-from ecl_plugin_api._rpc import RpcPeer
-from ecl_plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugin_api._rpc import RpcPeer
+from ECL.plugin_api.contracts import JsonValue, ProtocolError
 
 
 class HostApiError(ProtocolError):

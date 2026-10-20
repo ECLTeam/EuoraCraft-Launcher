@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from ECL.plugin_api._rpc import RpcRequest
+from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_models import (
     PermissionDecision,
     PermissionDeclaration,
@@ -16,9 +19,6 @@ from ECL.plugins.grant_models import (
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantStore
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
-from ecl_plugin_api._rpc import RpcRequest
-from ecl_plugin_api._windows import WindowsRuntimeError
-from ecl_plugin_api.contracts import ProtocolError
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 
@@ -114,7 +114,7 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
     (code_path / "value.txt").write_text("resource", encoding="utf-8")
     (code_path / "main.py").write_text(
         "import json, os, importlib.resources\nfrom pathlib import Path\n"
-        "from ecl_plugin_api import Plugin as BasePlugin\nfrom .helper import prefix\n"
+        "from ECL.plugin_api import Plugin as BasePlugin\nfrom .helper import prefix\n"
         f"report = Path({str(report_path)!r})\n"
         "class Plugin(BasePlugin):\n"
         "    async def on_load(self):\n"

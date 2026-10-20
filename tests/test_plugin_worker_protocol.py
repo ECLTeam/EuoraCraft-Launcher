@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ecl_plugin_api.contracts import ProtocolError, ProtocolPolicy, WireMessage
-from ecl_plugin_api.snapshot import CodeSnapshot
+from ECL.plugin_api.contracts import ProtocolError, ProtocolPolicy, WireMessage
+from ECL.plugin_api.snapshot import CodeSnapshot
 
 
 def test_json_envelope_roundtrip_rejects_python_objects() -> None:
@@ -92,7 +92,24 @@ def test_lightweight_sdk_import_does_not_import_host(tmp_path: Path) -> None:
             sys.executable,
             "-S",
             "-c",
-            "import ecl_plugin_api, sys, json; print(json.dumps([n for n in sys.modules if n == 'ECL' or n.startswith(('ECL.', 'pytauri', 'httpx', 'pydantic'))]))",
+            """
+import importlib.abc
+import sys
+import json
+class ImportGuard(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith('ECL.') and fullname != 'ECL.plugin_api' and not fullname.startswith('ECL.plugin_api.'):
+            raise AssertionError('Unexpected host import: ' + fullname)
+        if fullname.split('.')[0] in {'pytauri', 'pytauri_wheel', 'httpx', 'pydantic'}:
+            raise AssertionError('Unexpected dependency import: ' + fullname)
+sys.meta_path.insert(0, ImportGuard())
+import ECL.plugin_api
+assert 'ECL.plugin_api._process' not in sys.modules
+assert 'ECL.plugin_api._windows' not in sys.modules
+print(json.dumps([n for n in sys.modules if
+    (n.startswith('ECL.') and n != 'ECL.plugin_api' and not n.startswith('ECL.plugin_api.'))
+    or n.startswith(('pytauri', 'httpx', 'pydantic'))]))
+""",
         ],
         cwd=root_path,
         capture_output=True,
@@ -101,6 +118,38 @@ def test_lightweight_sdk_import_does_not_import_host(tmp_path: Path) -> None:
         timeout=10,
     )
     assert json.loads(result.stdout) == []
+
+
+@pytest.mark.parametrize("host_module", [None, "ECL.services", "ECL.plugin_api_extra", "ECL.bootstrap_extra"])
+def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | None) -> None:
+    import subprocess
+
+    source = f"""
+import json
+import sys
+from types import ModuleType, SimpleNamespace
+from ECL.plugin_api import _process
+from ECL.plugin_api.contracts import WireMessage
+host_module = {host_module!r}
+if host_module is not None:
+    sys.modules[host_module] = ModuleType(host_module)
+_process.WindowsApi = lambda: SimpleNamespace(
+    is_in_job=lambda *args: True,
+    kernel=SimpleNamespace(GetCurrentProcess=lambda: 1))
+messages = []
+channel = SimpleNamespace(send=messages.append, receive=lambda timeout: WireMessage('shutdown', {{}}))
+_process._serve(channel, 'a' * 32)
+print(json.dumps(messages[0].params['has_host_modules']))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-S", "-c", source],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    assert json.loads(completed.stdout) is (host_module is not None)
 
 
 def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
@@ -113,7 +162,8 @@ def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
         " main.run_launcher(['--headless','--role=plugin','--pipe-address',r'\\\\.\\pipe\\ecl-worker-test','--host-pid','0','--run-id','0'*32])\n"
         "except SystemExit as error:\n"
         " code=error.code\n"
-        "print(json.dumps({'code':code,'host_loaded':any(n=='ECL' or n.startswith('ECL.') for n in sys.modules)}))\n"
+        "print(json.dumps({'code':code,'host_loaded':any(n.startswith('ECL.') "
+        "and n != 'ECL.bootstrap' for n in sys.modules)}))\n"
     )
     result = subprocess.run(
         [sys.executable, "-S", "-c", source], cwd=root_path, capture_output=True, text=True, check=True, timeout=10

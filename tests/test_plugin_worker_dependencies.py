@@ -8,17 +8,17 @@ from pathlib import Path
 import pytest
 from plugin_wheel_helpers import make_wheel, wheel_lock
 
+from ECL.plugin_api._imports import LockedImports
+from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.dependency_lock import plugin_target
 from ECL.plugins.environment_pool import PluginEnvironmentPool, PluginEnvironmentSpec
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
-from ecl_plugin_api._imports import LockedImports
-from ecl_plugin_api.contracts import ProtocolError
-from ecl_plugin_api.snapshot import CodeSnapshot
 
 
 def test_locked_imports_cannot_shadow_standard_library_or_sdk(tmp_path: Path) -> None:
-    for name in ("sys", "pathlib", "ECL", "ecl_plugin_api", "pytauri"):
+    for name in ("sys", "pathlib", "ECL", "pytauri"):
         with pytest.raises(ProtocolError) as error:
             LockedImports({name: tmp_path}, None, frozenset())
         assert error.value.error_code == "PLUGIN_DEPENDENCY_CONFLICT"

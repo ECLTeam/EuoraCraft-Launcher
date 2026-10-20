@@ -23,9 +23,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ECL.bootstrap import ProcessRole, select_process_route
 from ECL.foundation.version import __version__, __version_type__
 from ECL.runtime.contracts import HeadlessTask, RunMode
-from ecl_bootstrap import ProcessRole, select_process_route
 
 _log_level_choices = ("debug", "info", "warning", "error")
 _url_schemes = ("http://", "https://")

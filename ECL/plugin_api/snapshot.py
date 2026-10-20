@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import ClassVar
 
-from ecl_plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugin_api.contracts import JsonValue, ProtocolError
 
 
 @dataclass(frozen=True, slots=True)

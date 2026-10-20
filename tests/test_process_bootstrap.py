@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ecl_bootstrap import ProcessRole, select_process_route
+from ECL.bootstrap import ProcessRole, select_process_route
 
 run_id = "a" * 32
 plugin_arguments = (
@@ -83,8 +83,19 @@ def _run_isolated(source: str) -> dict[str, object]:
     """
     在禁用 site 的独立解释器中检查导入边界，避免主测试进程已加载的宿主掩盖问题。
     """
+    guard = """
+import importlib.abc
+import sys
+class ImportGuard(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith('ECL.') and fullname != 'ECL.bootstrap':
+            raise AssertionError('Unexpected host import: ' + fullname)
+        if fullname.split('.')[0] in {'pytauri', 'pytauri_wheel', 'httpx', 'pydantic'}:
+            raise AssertionError('Unexpected dependency import: ' + fullname)
+sys.meta_path.insert(0, ImportGuard())
+"""
     completed = subprocess.run(
-        [sys.executable, "-S", "-c", source],
+        [sys.executable, "-S", "-c", guard + source],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,
@@ -98,7 +109,7 @@ def test_importing_main_does_not_preload_any_process_executor() -> None:
     result = _run_isolated(
         "import main,sys,json\n"
         "print(json.dumps({'loaded':[name for name in sys.modules "
-        "if name=='ECL' or name.startswith(('ECL.','ecl_plugin_api','pytauri'))]}))\n"
+        "if (name.startswith('ECL.') and name != 'ECL.bootstrap') or name.startswith('pytauri')]}))\n"
     )
     assert result == {"loaded": []}
 
@@ -106,11 +117,12 @@ def test_importing_main_does_not_preload_any_process_executor() -> None:
 def test_plugin_dispatch_loads_only_the_selected_executor() -> None:
     result = _run_isolated(
         "import main,sys,json,types\n"
-        "module=types.ModuleType('ecl_plugin_api._process')\n"
+        "module=types.ModuleType('ECL.plugin_api._process')\n"
         "module.run_plugin_process=lambda options: 7 if options.host_pid==123 else 9\n"
         "sys.modules[module.__name__]=module\n"
         f"code=main.run_launcher({list(plugin_arguments)!r})\n"
-        "print(json.dumps({'code':code,'host_loaded':any(n=='ECL' or n.startswith('ECL.') for n in sys.modules)}))\n"
+        "print(json.dumps({'code':code,'host_loaded':any(n.startswith('ECL.') "
+        "and n not in {'ECL.bootstrap', module.__name__} for n in sys.modules)}))\n"
     )
     assert result == {"code": 7, "host_loaded": False}
 
@@ -124,7 +136,7 @@ def test_rejected_role_never_imports_host_or_plugin_executor(arguments) -> None:
         "except SystemExit as error:\n"
         " code=error.code\n"
         "print(json.dumps({'code':code,'loaded':[n for n in sys.modules "
-        "if n=='ECL' or n.startswith(('ECL.','ecl_plugin_api','pytauri'))]}))\n"
+        "if (n.startswith('ECL.') and n != 'ECL.bootstrap') or n.startswith('pytauri')]}))\n"
     )
     assert result == {"code": 2, "loaded": []}
 

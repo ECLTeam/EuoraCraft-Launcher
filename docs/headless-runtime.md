@@ -78,10 +78,16 @@ ECL.exe --headless --role plugin --pipe-address <宿主端点> --host-pid <PID> 
 
 ## 扩展边界
 
-`ecl_bootstrap` 在 ECL 包导入前确定角色。插件角色只加载 `ecl_plugin_api._process`；桌面和普通任务由 `ECL.cli` 校验业务参数，随后按需导入桌面入口或 `ECL.runtime.headless.run_headless`。普通无头上下文只拥有本次执行的路径与日志资源；新增任务须有明确的输入、结果与资源生命周期契约，不预加载无关服务。
+`main.py` 通过 `ECL.bootstrap` 在宿主业务模块导入前确定角色。`ECL` 根包仅作包标记，不聚合导出版本或服务。插件角色按需加载 `ECL.plugin_api._process`；桌面和普通任务由 `ECL.cli` 校验业务参数，随后按需导入桌面入口或 `ECL.runtime.headless.run_headless`。普通无头上下文只拥有本次执行的路径与日志资源；新增任务须有明确的输入、结果与资源生命周期契约，不预加载无关服务。
 
 复用的是发行物携带的解释器版本、代码、依赖和资源。不同进程的 Python 对象、模块缓存、线程和锁各自独立。启动器可执行文件也不是通用 `python.exe`，没有任意 `-m`、`-c` 或用户脚本入口。
 
 无头插件角色沿用独立 SDK、受限 IPC 和内容绑定的依赖目录。普通探测任务不自动挂载插件依赖。不同进程仍各自占用解释器内存，onefile 引导与解包行为取决于实际构建器；统一入口不等于共享主进程对象或消除这些成本。
 
 `--headless` 控制启动器 UI，不改变打包时的控制台策略，也不绕过 onefile 的打包引导与解压。开发产物仍可能显示终端窗口。
+
+## Python 代码归属
+
+根目录仅保留 `main.py` 作为统一进程入口。启动引导位于 `ECL/bootstrap.py`，轻量插件 API 位于 `ECL/plugin_api/`，插件导入使用 `from ECL.plugin_api import Plugin`。旧 `ecl_bootstrap` 和 `ecl_plugin_api` 导入路径已移除，插件源码需要同步调整；启动器不会自动改写已安装插件或用户数据。
+
+直接导入 `ECL.plugin_api` 不初始化宿主插件管理器、桌面或业务服务。宿主内既有的 `ECL.plugins.Plugin` 接口沿用其自身契约，不能据此次目录迁移宣称第三方插件发现链路已经完成进程隔离。版本信息由 `ECL.foundation.version` 提供。

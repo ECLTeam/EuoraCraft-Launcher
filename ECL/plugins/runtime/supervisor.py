@@ -19,14 +19,14 @@ from threading import RLock
 from time import monotonic, sleep
 from uuid import uuid4
 
+from ECL.plugin_api._imports import DependencySnapshot
+from ECL.plugin_api._rpc import RpcPeer, RpcRequest
+from ECL.plugin_api._transport import PipeChannel, PipeServer
+from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api.contracts import JsonValue, ProtocolError, WireMessage
+from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
-from ecl_plugin_api._imports import DependencySnapshot
-from ecl_plugin_api._rpc import RpcPeer, RpcRequest
-from ecl_plugin_api._transport import PipeChannel, PipeServer
-from ecl_plugin_api._windows import WindowsRuntimeError
-from ecl_plugin_api.contracts import JsonValue, ProtocolError, WireMessage
-from ecl_plugin_api.snapshot import CodeSnapshot
 
 from .executable import ExecutableLaunchSpec
 from .windows import WindowsJob, WindowsProcess

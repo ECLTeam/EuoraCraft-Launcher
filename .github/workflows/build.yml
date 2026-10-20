@@ -312,7 +312,6 @@ jobs:
           fi
           python -m nuitka "${ARGS[@]}" \
             --include-package=ECL \
-            --include-package=ecl_plugin_api \
             --include-package=pytauri \
             --include-package=pytauri_plugins \
             --include-package=pytauri_utils \
@@ -570,7 +569,6 @@ jobs:
             --mode=onefile --onefile-no-compression --enable-plugin=upx \
             --assume-yes-for-downloads --output-dir=build-nuitka \
             --include-package=ECL \
-            --include-package=ecl_plugin_api \
             --include-package=pytauri \
             --include-package=pytauri_plugins \
             --include-package=pytauri_utils \

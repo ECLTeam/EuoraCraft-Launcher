@@ -26,8 +26,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StringConstraints, field_validator
 
+from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepared_code
-from ecl_plugin_api.snapshot import CodeSnapshot
 
 capability_name = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$", max_length=96)]
 resource_reference = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from ecl_plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api._windows import WindowsRuntimeError
 
 
 @dataclass(frozen=True, slots=True)

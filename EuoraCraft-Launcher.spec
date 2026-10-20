@@ -133,7 +133,7 @@ hiddenimports = [
     "pyperclip",
     "ECL.game",
     "ECL.game.auth",
-] + _wheel_hiddenimports + _plugin_hiddenimports + collect_submodules("ECL") + collect_submodules("ecl_plugin_api")
+] + _wheel_hiddenimports + _plugin_hiddenimports + collect_submodules("ECL")
 excludes = [
     "scipy",
     "pandas",

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 
-from ecl_bootstrap import run_process
+from ECL.bootstrap import run_process
 
 
 def run_launcher(argv: list[str] | None = None) -> int:
