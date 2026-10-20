@@ -85,6 +85,17 @@ async def _native_invoke(channel, sequence: int, command: str, params: dict):
                 return reply["result"]["result"]["value"]
 
 
+async def _wait_cleanup(native, identity: str) -> None:
+    async with asyncio.timeout(15):
+        while True:
+            runtime = await _native_invoke(native, 107, "plugin_runtime_info", {"installation_id": identity})
+            assert runtime["success"], runtime
+            if runtime["data"]["cleanup_state"] == "completed":
+                return
+            assert runtime["data"]["cleanup_state"] == "pending", runtime
+            await asyncio.sleep(0.1)
+
+
 @pytest.mark.skipif(
     not os.environ.get("ECL_PLUGIN_SMOKE_EXECUTABLE")
     or platform.system() != "Windows"
@@ -114,10 +125,14 @@ class Plugin(BasePlugin):
         self.define_command('probe', self.probe, output_fields=(
             {'name':'pid','type':'integer'}, {'name':'resource','type':'string'},
             {'name':'native','type':'string'}, {'name':'native_path','type':'string'},
+            {'name':'count','type':'integer'}, {'name':'first','type':'string'},
         ))
 
     def probe(self):
+        resources = self.host.call('resources.list', {'capability':'instances.read'})['items']
+        value = self.host.call('instances.get', {'instance_ref':resources[0]['instance_ref']})
         return {'pid':os.getpid(),
+            'count':len(resources), 'first':value['version_id'],
             'resource':importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
             'native':xxhash.xxh64(b'ecl').hexdigest(), 'native_path':xxhash.__file__}
 """
@@ -129,9 +144,15 @@ class Plugin(BasePlugin):
         permissions=(
             {"capability": "commands.register", "required": True},
             {"capability": "commands.execute", "required": True},
+            {"capability": "instances.read", "required": True},
         ),
     )
     data_path = tmp_path / "data"
+    game_path = tmp_path / "game"
+    for name in ("permitted", "private"):
+        directory = game_path / "versions" / name
+        directory.mkdir(parents=True)
+        (directory / f"{name}.json").write_text(json.dumps({"id": name}), encoding="utf-8")
     for phase in ("install", "restart"):
         log_path = tmp_path / f"{phase}.log"
         with socket.socket() as listener:
@@ -181,6 +202,32 @@ class Plugin(BasePlugin):
                     view = await _native_invoke(native, 1, "plugin_permissions_get", {"installation_id": identity})
                     assert view["success"], view
                     view = view["data"]
+                    game = await _native_invoke(native, 101, "settings_get", {"section": "game"})
+                    game_config = {**game["data"], "minecraft_paths": [{"name": "Test", "path": str(game_path)}]}
+                    configured = await _native_invoke(
+                        native, 102, "settings_set", {"section": "game", "data": game_config}
+                    )
+                    assert configured["success"], configured
+                    candidate_query = {
+                        "installation_id": identity,
+                        "content_digest": view["content_digest"],
+                        "capability": "instances.read",
+                    }
+                    roots = await _native_invoke(native, 103, "plugin_permission_resources", candidate_query)
+                    assert roots["success"], roots
+                    children = await _native_invoke(
+                        native,
+                        104,
+                        "plugin_permission_resources",
+                        {
+                            **candidate_query,
+                            "parent_ref": roots["data"]["items"][0]["resource_id"],
+                        },
+                    )
+                    assert children["success"], children
+                    selected = next(
+                        item["resource_id"] for item in children["data"]["items"] if item["version_id"] == "permitted"
+                    )
                     result = await _native_invoke(
                         native,
                         2,
@@ -190,8 +237,14 @@ class Plugin(BasePlugin):
                             "content_digest": view["content_digest"],
                             "expected_revision": view["revision"],
                             "decisions": [
-                                {"capability": item["capability"], "decision": "allow"} for item in view["items"]
+                                {
+                                    "capability": item["capability"],
+                                    "decision": "allow",
+                                    "resource_refs": [selected] if item["capability"] == "instances.read" else [],
+                                }
+                                for item in view["items"]
                             ],
+                            "resource_revision": children["data"]["catalog_revision"],
                         },
                     )
                     assert result["success"] and result["data"]["persisted"], result
@@ -202,7 +255,27 @@ class Plugin(BasePlugin):
                     probe = result["data"]
                     assert probe["pid"] != info["pid"]
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
+                    assert probe["count"] == 1 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
+                    reviewed = await _native_invoke(
+                        native, 105, "plugin_permissions_get", {"installation_id": identity}
+                    )
+                    revoked = await _native_invoke(
+                        native,
+                        106,
+                        "plugin_permissions_update",
+                        {
+                            "installation_id": identity,
+                            "content_digest": reviewed["data"]["content_digest"],
+                            "expected_revision": reviewed["data"]["revision"],
+                            "decisions": [
+                                {"capability": item["capability"], "decision": "deny", "resource_refs": []}
+                                for item in reviewed["data"]["items"]
+                            ],
+                        },
+                    )
+                    assert revoked["success"] and not revoked["data"]["required_satisfied"], revoked
+                    await _wait_cleanup(native, identity)
                     result = await _native_invoke(native, 5, "plugin_disable", {"plugin_name": "demo"})
                     assert result["success"], result
                     assert not psutil.pid_exists(probe["pid"])

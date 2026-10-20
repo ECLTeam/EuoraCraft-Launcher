@@ -8,6 +8,7 @@
 # 公开接口：
 #   - class CommandDefinition — 命令注册契约。
 #   - class SettingDefinition — 非执行式设置定义。
+#   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
 #   - validate_fields — 校验命令输入输出的基础字段。
 # ============================================================
 
@@ -145,3 +146,32 @@ def validate_fields(fields: list[FieldSpec], values: dict[str, JsonValue]) -> No
         for item in fields
     ):
         raise ProtocolError("插件命令字段不符合定义", "PLUGIN_SCHEMA_INVALID")
+
+
+class ResourceListRequest(RequestModel):
+    """
+    仅发现本运行获准的实例资源，不接受其他能力或宿主路径。
+    """
+
+    capability: Literal["instances.read"]
+    cursor: str | None = Field(default=None, max_length=128)
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class InstanceScanRequest(RequestModel):
+    """
+    通过当前运行目录引用扫描，分页条件在游标中绑定。
+    """
+
+    root_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    force: StrictBool = False
+    cursor: str | None = Field(default=None, max_length=128)
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class InstanceGetRequest(RequestModel):
+    """
+    只接受本运行实例引用，不接受名称或路径替代。
+    """
+
+    instance_ref: str = Field(pattern=r"^[0-9a-f]{32}$")

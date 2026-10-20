@@ -7,6 +7,9 @@
 #
 # 公开接口：
 #   - class PluginHandlers — 处理插件的启用、禁用、路由、插槽和命令调用请求。
+#       - plugin_permission_resources(body, webview_window) — 只为原生主窗口发现可审阅实例资源。
+#       - plugin_permissions_get/update — 查询和保存本安装的内容及精确范围授权。
+#       - plugin_runtime_info — 查询实际 Worker 和清理状态。
 #       - plugin_list(body) -> dict[str, Any] — 获取插件列表。
 #       - plugin_info(body) -> dict[str, Any] — 获取插件信息。
 #       - plugin_enable(body) -> dict[str, Any] — 启用插件。
@@ -36,7 +39,7 @@ from uuid import uuid4
 
 from ECL.api.bridge import WebviewWindow
 from ECL.api.contracts import failure
-from ECL.api.plugin_models import PluginPermissionQuery, PluginPermissionUpdate
+from ECL.api.plugin_models import PluginPermissionQuery, PluginPermissionResources, PluginPermissionUpdate
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.dependency_lock import PluginDependencyError
@@ -44,6 +47,7 @@ from ECL.plugins.framework import PluginActionResult, PluginCommandError
 from ECL.plugins.grant_models import PermissionManagementCaller
 from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.package_archive import PluginPackageError
+from ECL.utils.instance_reading import InstanceReadError
 
 from .bridge import _FrontendState
 
@@ -81,7 +85,7 @@ class PluginHandlers(_FrontendState):
             service = self.plugins.worker_service
             name = service.name_for_installation(query.installation_id)
             return {"success": True, "data": await asyncio.to_thread(service.permissions, name)}
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_permissions_update(
@@ -106,10 +110,39 @@ class PluginHandlers(_FrontendState):
                 request.expected_revision,
                 tuple(request.decisions),
                 caller,
+                request.resource_revision,
             )
             self.plugins.events.emit("plugin:status_changed", {"plugin": name})
             return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
+            return failure(str(exc), exc.error_code)
+
+    async def plugin_permission_resources(
+        self, body: dict[str, Any], webview_window: WebviewWindow = None
+    ) -> dict[str, Any]:
+        """
+        向原生登记的主窗口返回资源候选，发现不会替用户授予权限。
+
+        :param body: 安装、内容与受限候选查询
+        :param webview_window: 原生注入的调用窗口
+        :return: 不含完整路径的候选分页
+        """
+        try:
+            self._permission_caller(webview_window)
+            request = PluginPermissionResources.model_validate(body)
+            service = self.plugins.worker_service
+            name = service.name_for_installation(request.installation_id)
+            result = await asyncio.to_thread(
+                service.permission_resources,
+                name,
+                request.content_digest,
+                request.parent_ref,
+                request.search,
+                request.cursor,
+                request.limit,
+            )
+            return {"success": True, "data": result}
+        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_runtime_info(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:

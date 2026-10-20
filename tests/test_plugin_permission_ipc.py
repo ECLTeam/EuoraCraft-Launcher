@@ -55,3 +55,19 @@ async def test_main_label_without_host_registration_does_not_authorize(api):
     api._window_metadata.clear()
     response = await api.plugin_runtime_info({"installation_id": "a" * 32}, SimpleNamespace(label=lambda: "main"))
     assert response["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
+
+
+@pytest.mark.parametrize("label", [None, "plugin-v2-forged", "unknown"])
+async def test_resource_candidates_require_native_registered_main(api, label):
+    window = SimpleNamespace(label=lambda: label) if label else None
+    response = await api.plugin_permission_resources(
+        {
+            "installation_id": "a" * 32,
+            "content_digest": "b" * 64,
+            "capability": "instances.read",
+            "caller": "main",
+            "window_label": "main",
+        },
+        window,
+    )
+    assert response["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"

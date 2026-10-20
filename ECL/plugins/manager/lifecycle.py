@@ -582,6 +582,7 @@ class PluginLifecycle(_PluginState):
         """
         按依赖拓扑的逆序卸载已加载插件并解除框架事件订阅。
         """
+        self.events.unsubscribe("config:updated", self._on_instance_config_changed)
         if self.worker_service is not None:
             self.worker_service.close()
         self._close_packages()

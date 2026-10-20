@@ -49,6 +49,7 @@ from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
 from ECL.services.updates import AnnouncementService, StartupUpdateService
 from ECL.utils import ConfigStore, Environment
+from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
     from ECL.services.connector import ConnectorService
@@ -315,6 +316,25 @@ class ApplicationContext:
             logger.debug("后台服务已关闭")
 
 
+def _plugin_instance_roots(config: ConfigStore) -> tuple[Path, ...]:
+    """
+    向插件资源目录提供现有游戏路径快照，不读取账户或其他配置分区。
+    """
+    game_config = config.get_config("game")
+    if not isinstance(game_config, dict):
+        raise InstanceReadError("游戏目录配置格式无效", "PLUGIN_RESOURCE_CATALOG_INVALID")
+    entries = game_config.get("minecraft_paths", [])
+    if not isinstance(entries, list):
+        raise InstanceReadError("游戏目录配置格式无效", "PLUGIN_RESOURCE_CATALOG_INVALID")
+    roots = []
+    for item in entries:
+        value = item.get("path") if isinstance(item, dict) else item
+        if not isinstance(value, str) or not value.strip():
+            raise InstanceReadError("游戏目录配置格式无效", "PLUGIN_RESOURCE_CATALOG_INVALID")
+        roots.append(Path(value))
+    return tuple(roots)
+
+
 def create_application(
     runtime_info: RuntimeInfo,
     *,
@@ -487,6 +507,8 @@ def create_application(
             http_client=http,
             auth_providers=accounts.plugin_auth_providers,
             crash_extensions=game.crash_extensions,
+            instance_queries=game,
+            instance_roots=lambda: _plugin_instance_roots(config),
         )
         created.append(plugins)
         plugins.initialize(

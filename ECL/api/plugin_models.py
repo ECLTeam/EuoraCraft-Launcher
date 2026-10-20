@@ -8,9 +8,12 @@
 # 公开接口：
 #   - class PluginPermissionQuery — 安装权限及运行查询。
 #   - class PluginPermissionUpdate — 带内容与并发版本的授权更新。
+#   - class PluginPermissionResources — 可信主窗口的有界资源候选查询。
 # ============================================================
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
@@ -34,3 +37,17 @@ class PluginPermissionUpdate(PluginPermissionQuery):
     content_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_revision: StrictInt = Field(ge=0)
     decisions: list[PermissionDecision] = Field(max_length=128)
+    resource_revision: StrictInt | None = Field(default=None, ge=0)
+
+
+class PluginPermissionResources(PluginPermissionQuery):
+    """
+    仅可信主窗口可发现审阅候选；不接受路径或客户端自报的资源属性。
+    """
+
+    content_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    capability: Literal["instances.read"]
+    parent_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    search: str = Field(default="", max_length=120)
+    cursor: str | None = Field(default=None, max_length=128)
+    limit: StrictInt = Field(default=50, ge=1, le=100)

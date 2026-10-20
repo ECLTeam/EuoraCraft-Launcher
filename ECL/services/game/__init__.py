@@ -9,9 +9,12 @@
 #   - class GameService — 提供实例、安装、启动、扫描和资源管理操作。
 # ============================================================
 
+from __future__ import annotations
+
 from .base import GameServiceError, VersionScanError
 from .install import InstallCoordinator
 from .instance_options import InstanceOptionsCoordinator
+from .instance_queries import InstanceQueryCoordinator
 from .launch import LaunchCoordinator
 from .modpack import ModpackCoordinator
 from .mods import ModCoordinator
@@ -26,6 +29,7 @@ from .worlds import WorldCoordinator
 
 
 class GameService(
+    InstanceQueryCoordinator,
     ProfileCoordinator,
     WorkspaceCoordinator,
     WorldCoordinator,

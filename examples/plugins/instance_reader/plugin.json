@@ -1,0 +1,13 @@
+{
+  "name": "instance_reader",
+  "title": "实例读取示例",
+  "description": "只查询用户在权限页选择的目录或实例。",
+  "api_version": 2,
+  "version": "1.0.0",
+  "entry_point": "main:Plugin",
+  "permissions": [
+    { "capability": "commands.register", "required": true },
+    { "capability": "commands.execute", "required": true },
+    { "capability": "instances.read", "required": true }
+  ]
+}

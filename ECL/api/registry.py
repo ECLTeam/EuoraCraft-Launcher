@@ -232,6 +232,7 @@ class IpcCommandRegistry:
         "download_mod",
         "download_mod_to_path",
         "plugin_permissions_get",
+        "plugin_permission_resources",
         "plugin_permissions_update",
         "plugin_runtime_info",
         "plugin_list",

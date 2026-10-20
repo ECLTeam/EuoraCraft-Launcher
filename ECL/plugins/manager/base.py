@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import RLock
@@ -25,8 +26,10 @@ from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
+from ECL.plugins.runtime.resources import InstanceQueries
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.utils import get_logger
+from ECL.utils.instance_reading import InstanceReadError
 
 from .install_transaction import recover_plugin_install_transactions
 
@@ -51,6 +54,8 @@ class _PluginState:
         http_client: httpx.Client | None = None,
         auth_providers: AuthProviderRegistry | None = None,
         crash_extensions: CrashAnalysisExtensionRegistry | None = None,
+        instance_queries: InstanceQueries | None = None,
+        instance_roots: Callable[[], tuple[Path, ...]] | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -63,6 +68,8 @@ class _PluginState:
         :param http_client: 应用共享 HTTP 客户端，供插件的受控网络请求使用
         :param auth_providers: 与账户服务共享的自定义认证提供方注册表
         :param crash_extensions: 与游戏服务共用的插件崩溃分析回调列表
+        :param instance_queries: 应用现有的无写入实例查询接口
+        :param instance_roots: 当前配置中的游戏根目录快照
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
@@ -71,6 +78,8 @@ class _PluginState:
         self.connector_extensions = connector_extensions or ConnectorExtensionRegistry()
         self.launch_hooks = launch_hooks or LaunchHookRegistry()
         self.http_client = http_client
+        self._instance_queries = instance_queries
+        self._instance_roots = instance_roots
         self.auth_providers = auth_providers or AuthProviderRegistry()
         self.crash_extensions = crash_extensions or CrashAnalysisExtensionRegistry()
         self._command_executor = ThreadPoolExecutor(
@@ -132,7 +141,10 @@ class _PluginState:
             插件保持未加载状态，可由用户在插件页或开发通道按需启用
         """
         self._data_path = Path(data_path)
-        self.worker_service = PluginWorkerService(self._data_path)
+        self.worker_service = PluginWorkerService(
+            self._data_path, instance_queries=self._instance_queries, instance_roots=self._instance_roots
+        )
+        self.events.subscribe("config:updated", self._on_instance_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
         self._plugin_dir = self._data_path / "plugins"
         self._plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -201,3 +213,14 @@ class _PluginState:
             len(self._plugins),
             len(self._disabled_plugins),
         )
+
+    def _on_instance_config_changed(self, section: str, value: object) -> None:
+        """
+        目录配置变化时立即退休被移除的共享资源，不等待页面查询或下一次启用。
+        """
+        if section != "game" or self.worker_service is None or self._instance_queries is None:
+            return
+        try:
+            self.worker_service.refresh_resources()
+        except InstanceReadError:
+            self.logger.warning("游戏目录变更后的插件资源同步失败，相关许可保持拒绝")

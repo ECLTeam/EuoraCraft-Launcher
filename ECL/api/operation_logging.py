@@ -264,6 +264,7 @@ class IpcLogPolicy:
                 "下载在线模组文件到用户指定的保存路径，不安装到任何实例", "action", timed=True
             ),
             "plugin_permissions_get": IpcLogSpec("查询插件权限", "query"),
+            "plugin_permission_resources": IpcLogSpec("查询插件可审阅实例资源", "query"),
             "plugin_permissions_update": IpcLogSpec("审阅和更新插件授权", "action"),
             "plugin_runtime_info": IpcLogSpec("查询插件运行状态", "query"),
             "plugin_list": IpcLogSpec("获取插件列表", "query"),

@@ -27,10 +27,13 @@ from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCal
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession, PluginGrantStore
 from ECL.plugins.installation_store import PluginInstallationStore, WorkerManifest
 from ECL.plugins.package_preparation import PluginPackagePreparer, current_plugin_target
+from ECL.plugins.resource_catalog import PluginResourceCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
+from ECL.plugins.runtime.resources import InstanceQueries, ResourcePages, RuntimeResources
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 from ECL.utils import get_logger
+from ECL.utils.instance_reading import InstanceReadError
 
 
 @dataclass(slots=True)
@@ -56,12 +59,21 @@ class PluginWorkerService:
     此服务的同步操作由管理 API 和启动后台边界执行；不创建桌面或业务服务副本。
     """
 
-    def __init__(self, data_path: Path, executable: ExecutableLaunchSpec | None = None) -> None:
+    def __init__(
+        self,
+        data_path: Path,
+        executable: ExecutableLaunchSpec | None = None,
+        *,
+        instance_queries: InstanceQueries | None = None,
+        instance_roots: Callable[[], tuple[Path, ...]] | None = None,
+    ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
 
         :param data_path: 应用数据根目录
         :param executable: 可选真实发行物验收入口
+        :param instance_queries: 现有应用拥有的只读游戏查询
+        :param instance_roots: 有效配置的游戏根目录快照
         """
         self.data_path: Path = data_path
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
@@ -74,6 +86,115 @@ class PluginWorkerService:
         self._executable = executable
         self._closed = Event()
         self._monitor_thread: Thread | None = None
+        self._instance_queries = instance_queries
+        self._catalog = (
+            PluginResourceCatalog(data_path, instance_roots, instance_queries.query_instance_names)
+            if instance_queries is not None and instance_roots is not None
+            else None
+        )
+        self._resource_pages = ResourcePages()
+
+    def refresh_resources(self) -> int:
+        """
+        在授权锁外检查共享资源身份，然后发布纯内存的有效范围快照。
+
+        :return: 资源目录 revision
+        :raises InstanceReadError: 未提供资源服务或目录记录损坏时抛出
+        """
+        if self._catalog is None:
+            raise InstanceReadError("当前宿主未提供实例资源", "PLUGIN_API_METHOD_NOT_FOUND")
+        try:
+            revision = self._catalog.refresh()
+        except (OSError, ValueError) as exc:
+            if not isinstance(exc, InstanceReadError) or exc.error_code != "PLUGIN_RESOURCE_REVISION_CONFLICT":
+                self.grants.update_resource_scope(frozenset())
+            if isinstance(exc, InstanceReadError):
+                raise
+            raise InstanceReadError("实例资源目录刷新失败", "PLUGIN_RESOURCE_CATALOG_INVALID") from exc
+        self.grants.update_resource_scope(self._catalog.active_refs())
+        return revision
+
+    def _refresh_declared_resources(self, session: PluginGrantSession) -> None:
+        if any(item.capability == "instances.read" for item in session.binding.declarations):
+            try:
+                self.refresh_resources()
+            except InstanceReadError:
+                get_logger("PluginWorkerService").debug("实例资源当前不可用，保持相关许可拒绝")
+
+    def permission_resources(
+        self, name: str, content_digest: str, parent_ref: str | None, search: str, cursor: str | None, limit: int
+    ) -> dict[str, JsonValue]:
+        """
+        为可信权限界面发现配置目录或展开一个目录，不替用户授予许可。
+
+        :param name: 当前安装名
+        :param content_digest: 用户审阅的内容
+        :param parent_ref: 需展开的宿主目录身份
+        :param search: 本级名称过滤
+        :param cursor: 本次查询的短期游标
+        :param limit: 页大小
+        :return: 候选分页与资源目录版本
+        :raises ProtocolError: 内容或已声明能力不匹配时抛出
+        """
+        if self._closed.is_set():
+            raise ProtocolError("插件宿主已经关闭", "PLUGIN_HOST_CLOSED")
+        entry = self._entry(name)
+        try:
+            entry.session.binding.verify()
+        except ValueError as exc:
+            raise ProtocolError("插件内容已变化，请重新审阅", "PLUGIN_CONTENT_CHANGED") from exc
+        if content_digest != entry.session.binding.content_digest:
+            raise ProtocolError("插件内容已变化", "PLUGIN_GRANT_CONTENT_MISMATCH")
+        if not any(item.capability == "instances.read" for item in entry.session.binding.declarations):
+            raise ProtocolError("插件未申请实例读取", "PLUGIN_PERMISSION_DENIED")
+        if self._catalog is None:
+            raise ProtocolError("当前宿主未提供实例资源", "PLUGIN_API_METHOD_NOT_FOUND")
+        revision = self._catalog.refresh(discover=cursor is None, parent_ref=parent_ref)
+        self.grants.update_resource_scope(self._catalog.active_refs())
+        selected = entry.session.selected_resources("instances.read")
+        signature = json.dumps([entry.installation_id, content_digest, parent_ref, search, limit])
+
+        page = self._resource_pages.page(
+            signature,
+            str(revision),
+            cursor,
+            limit,
+            lambda: self._resource_candidates(parent_ref, search, selected),
+        )
+        return {**page, "catalog_revision": revision}
+
+    def _resource_candidates(
+        self, parent_ref: str | None, search: str, selected: tuple[str, ...]
+    ) -> tuple[dict[str, JsonValue], ...]:
+        """
+        将宿主目录快照投影为可信审阅候选，保留已选择的失效项以便撤销。
+        """
+        assert self._catalog is not None
+        resources = self._catalog.resources()
+        root = self._catalog.resolve(parent_ref) if parent_ref else None
+        items: list[dict[str, JsonValue]] = []
+        for item in resources:
+            if root is not None:
+                if item.root_path != root.root_path or item.version_id is None:
+                    continue
+            elif item.version_id is not None and item.resource_id not in selected:
+                continue
+            if not item.is_active and item.resource_id not in selected:
+                continue
+            if search.casefold() not in item.label.casefold():
+                continue
+            items.append(
+                {
+                    "resource_id": item.resource_id,
+                    "kind": "instance_root" if item.version_id is None else "instance",
+                    "label": item.label,
+                    "parent_ref": parent_ref,
+                    "version_id": item.version_id,
+                    "available": item.is_active,
+                    "selected": item.resource_id in selected,
+                }
+            )
+        return tuple(items)
 
     def register(
         self,
@@ -179,6 +300,7 @@ class PluginWorkerService:
                 entry.session = self.grants.open_session(
                     entry.installation_id, entry.session.binding, entry.supervisor.run_id
                 )
+            self._refresh_declared_resources(entry.session)
             entry.session.binding.verify()
             view = entry.session.view()
             if view.error_code:
@@ -191,7 +313,15 @@ class PluginWorkerService:
             try:
                 entry.supervisor.start()
                 entry.broker = PluginHostBroker(
-                    entry.session, self.data_path, entry.supervisor.request, run_state=lambda: entry.state
+                    entry.session,
+                    self.data_path,
+                    entry.supervisor.request,
+                    run_state=lambda: entry.state,
+                    resources=RuntimeResources(
+                        entry.session, self._catalog, self._instance_queries, self.refresh_resources
+                    )
+                    if self._catalog is not None and self._instance_queries is not None
+                    else None,
                 )
                 entry.supervisor.authorize_load(
                     entry.session, entry.manifest.entry_file, entry.dependency, entry_class=entry.manifest.entry_class
@@ -272,6 +402,7 @@ class PluginWorkerService:
                 entry.session = self.grants.open_session(
                     entry.installation_id, entry.session.binding, entry.supervisor.run_id
                 )
+            self._refresh_declared_resources(entry.session)
             view = entry.session.view()
             return {
                 "installation_id": view.installation_id,
@@ -284,6 +415,7 @@ class PluginWorkerService:
                     dict(
                         asdict(item),
                         resource_refs=list(item.resource_refs),
+                        selected_resource_refs=list(entry.session.selected_resources(item.capability)),
                         implemented=item.capability in self.grants.implemented_capabilities,
                     )
                     for item in view.items
@@ -297,6 +429,7 @@ class PluginWorkerService:
         expected_revision: int,
         decisions: tuple[PermissionDecision, ...],
         caller: PermissionManagementCaller,
+        resource_revision: int | None = None,
     ) -> dict[str, JsonValue]:
         """
         由可信主界面持久化决定，改变运行授权后清理原运行，避免旧注册继续使用。
@@ -306,10 +439,15 @@ class PluginWorkerService:
         :param expected_revision: 并发更新版本
         :param decisions: 用户实际选择
         :param caller: 真实调用入口的分类
+        :param resource_revision: 审阅资源候选的目录版本，允许实例读取时必填
         :return: 落盘结果和独立清理状态
         :raises PluginGrantError: 主体、内容、版本或持久化失败时抛出
         """
         entry = self._entry(name)
+        if any(item.capability == "instances.read" and item.decision == "allow" for item in decisions) and (
+            resource_revision is None or resource_revision != self.refresh_resources()
+        ):
+            raise ProtocolError("资源候选已经变化，请刷新后重试", "PLUGIN_RESOURCE_REVISION_CONFLICT")
         # 不持有生命周期锁保存授权，运行中的长回调不能延迟拒绝屏障。
         view = self.grants.update(
             entry.session, decisions, expected_revision=expected_revision, content_digest=content_digest, caller=caller
@@ -395,6 +533,13 @@ class PluginWorkerService:
         while not self._closed.wait(0.25):
             with self._lock:
                 entries = tuple(self._entries.items())
+            if any(
+                any(item.capability == "instances.read" for item in entry.manifest.permissions) for _, entry in entries
+            ):
+                try:
+                    self.refresh_resources()
+                except InstanceReadError:
+                    get_logger("PluginWorkerService").debug("实例资源刷新失败，相关许可保持拒绝")
             for name, entry in entries:
                 with entry.lock:
                     with self._lock:
@@ -428,6 +573,7 @@ class PluginWorkerService:
         停止全部已登记 Worker，失败时保留对象和句柄供重试。
         """
         self._closed.set()
+        self._resource_pages.clear()
         if self._monitor_thread is not None:
             self._monitor_thread.join(1)
         failures = []

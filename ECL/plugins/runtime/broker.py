@@ -33,7 +33,9 @@ from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
+from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.utils import atomic_write_text, get_logger
+from ECL.utils.instance_reading import InstanceReadError
 
 
 @dataclass(slots=True)
@@ -53,7 +55,14 @@ class PluginHostBroker:
     """
 
     implemented_capabilities: ClassVar[frozenset[str]] = frozenset(
-        {"commands.register", "commands.execute", "settings.read", "settings.write", "events.subscribe"}
+        {
+            "commands.register",
+            "commands.execute",
+            "settings.read",
+            "settings.write",
+            "events.subscribe",
+            "instances.read",
+        }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
         {
@@ -75,6 +84,7 @@ class PluginHostBroker:
         invoke: Callable[[str, dict[str, JsonValue], float], dict[str, JsonValue]],
         *,
         run_state: Callable[[], str],
+        resources: RuntimeResources | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -83,11 +93,13 @@ class PluginHostBroker:
         :param data_path: 宿主数据根目录
         :param invoke: 当前 Worker 的受控请求方法
         :param run_state: 唯一运行服务提供的当前状态
+        :param resources: 当前运行的共享实例资源表；未提供时拒绝共享资源 API
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
         self._invoke = invoke
         self._run_state = run_state
+        self._resources = resources
         self._settings_path = data_path / "plugin_settings_v2" / f"{session.view().installation_id}.json"
         self._lock = RLock()
         self._settings_lock = RLock()
@@ -125,6 +137,8 @@ class PluginHostBroker:
                 return self._mutate(request, payload)
             except PluginGrantError as exc:
                 raise ProtocolError("插件权限检查未通过", exc.error_code) from exc
+            except InstanceReadError as exc:
+                raise ProtocolError(str(exc), exc.error_code) from exc
             except ValidationError as exc:
                 raise ProtocolError("插件方法参数无效", "PLUGIN_SCHEMA_INVALID") from exc
 
@@ -214,6 +228,13 @@ class PluginHostBroker:
 
     def _dispatch(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
+        if method in {"resources.list", "instances.scan", "instances.get"}:
+            if self._resources is None:
+                raise ProtocolError("当前宿主未提供实例查询", "PLUGIN_API_METHOD_NOT_FOUND")
+            deadline = min(request.deadline, monotonic() + (30 if method == "instances.scan" else 5))
+            result = self._resources.handle(method, params, deadline)
+            request.check_deadline()
+            return result
         if method == "runtime.info":
             self._keys(params, set())
             return {
@@ -227,21 +248,11 @@ class PluginHostBroker:
         if method == "mutations.get":
             return self._receipt_view(params)
         if method == "permissions.list":
-            self._keys(params, set())
-            view = self.session.view()
-            return {
-                "items": [dict(asdict(item), resource_refs=list(item.resource_refs)) for item in view.items],
-                "grant_epoch": view.grant_epoch,
-            }
+            return self._permission_view(params)
         if method == "commands.register":
             return self._register_command(params)
-        if method == "commands.unregister":
-            self._keys(params, {"registration_ref"})
-            with self._lock:
-                reference = next(
-                    (ref for ref, item in self._commands.items() if item[0] == params["registration_ref"]), None
-                )
-                return {"released": self._commands.pop(reference, None) is not None}
+        if method in {"commands.unregister", "events.unsubscribe"}:
+            return self._release_registration(method, params)
         if method == "commands.call":
             self._keys(params, {"command_ref", "args"})
             reference, args = params["command_ref"], params["args"]
@@ -252,14 +263,34 @@ class PluginHostBroker:
             return self._settings(request)
         if method == "events.subscribe":
             return self._subscribe(params)
-        if method == "events.unsubscribe":
-            self._keys(params, {"subscription_ref"})
-            with self._lock:
-                reference = params["subscription_ref"]
-                if not isinstance(reference, str):
-                    raise ProtocolError("订阅标识无效", "PLUGIN_SCHEMA_INVALID")
-                return {"released": self._subscriptions.pop(reference, None) is not None}
         raise ProtocolError("此 Host API 尚未接线", "PLUGIN_API_METHOD_NOT_FOUND")
+
+    def _release_registration(self, method: str, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        self._keys(params, {"registration_ref"} if method == "commands.unregister" else {"subscription_ref"})
+        with self._lock:
+            if method == "commands.unregister":
+                reference = next(
+                    (ref for ref, item in self._commands.items() if item[0] == params["registration_ref"]), None
+                )
+                return {"released": self._commands.pop(reference, None) is not None}
+            reference = params["subscription_ref"]
+            if not isinstance(reference, str):
+                raise ProtocolError("订阅标识无效", "PLUGIN_SCHEMA_INVALID")
+            return {"released": self._subscriptions.pop(reference, None) is not None}
+
+    def _permission_view(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """
+        自查询只暴露当前运行引用，不交付资源目录的持久身份。
+        """
+        self._keys(params, set())
+        view = self.session.view()
+        items = [dict(asdict(item), resource_refs=list(item.resource_refs)) for item in view.items]
+        for item in items:
+            if item["capability"] == "instances.read":
+                item["resource_refs"] = (
+                    self._resources.permission_refs() if self._resources and item["decision"] == "allow" else []
+                )
+        return {"items": items, "grant_epoch": view.grant_epoch}
 
     def _receipt_view(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         """
@@ -544,6 +575,8 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        if self._resources is not None:
+            self._resources.clear()
         with self._lock:
             self._commands.clear()
             self._subscriptions.clear()

@@ -9,6 +9,7 @@
 #   - class InstanceProfilePolicy — 保存实例资料字段与内置分类规则。
 #   - class InstanceProfileStore — 管理 ECL 自有实例资料、分类和第三方只读元数据的解析结果。
 #       - read_profile(game_path, version_id) -> dict[str, Any] — 读取实例自有资料并过滤未知或损坏字段。
+#       - parse_local_fields(document) — 纯解析公开本地资料字段，不读取外部来源或同步统计。
 #       - patch_profile(game_path, version_id, patch) -> dict[str, Any] — 合并实例资料覆盖字段，显式 ``False`` 会按原值保存。
 #       - reset_profile_fields(game_path, version_id, fields) -> dict[str, Any] — 删除指定覆盖字段，使它们重新跟随第三方或自动扫描值。
 #       - set_icon(game_path, version_id, icon_type, value=…, source_path=…) -> dict[str, Any] — 设置自动、内置、加载器或本地图片图标。
@@ -185,6 +186,30 @@ class InstanceProfileStore:
     @classmethod
     def _profile_path(cls, game_path: Path, version_id: str) -> Path:
         return cls._instance_path(game_path, version_id) / ".ecl" / "instance.json"
+
+    @classmethod
+    def parse_local_fields(cls, document: dict[str, object]) -> dict[str, str | bool | list[str]]:
+        """
+        严格解析公开资料白名单，和资料存储共用标签归一化规则。
+
+        :param document: 经过 JSON 校验的本地资料
+        :return: 仅包含可公开的本地覆盖字段
+        :raises ValueError: 已设置的字段类型无效时抛出
+        """
+        result: dict[str, str | bool | list[str]] = {}
+        for key in ("alias", "description"):
+            if key in document:
+                value = document[key]
+                if not isinstance(value, str):
+                    raise ValueError("实例资料文本类型无效")
+                result[key] = value[: 120 if key == "alias" else 1000]
+        if "favorite" in document:
+            if type(document["favorite"]) is not bool:
+                raise ValueError("实例收藏状态类型无效")
+            result["favorite"] = document["favorite"]
+        if "tags" in document:
+            result["tags"] = _normalize_tags(document["tags"])
+        return result
 
     def read_profile(self, game_path: Path, version_id: str) -> dict[str, Any]:
         """

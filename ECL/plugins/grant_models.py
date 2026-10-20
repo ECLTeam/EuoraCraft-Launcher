@@ -24,7 +24,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+)
 
 from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepared_code
@@ -54,10 +63,18 @@ class PermissionDeclaration(_PermissionScope):
     """
     保存插件请求的能力及宿主解析的资源范围，不赋予实际权限。
 
-    resource_refs 必须来自宿主资源目录；空范围只表示本能力无需共享资源。
+    resource_refs 必须来自宿主资源目录；instances.read 只声明能力，其实际范围
+    由用户在宿主界面选择，其他能力仍按已定义的声明范围处理。
     """
 
     required: StrictBool = False
+
+    @field_validator("resource_refs")
+    @classmethod
+    def _host_selected_instances(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
+        if info.data.get("capability") == "instances.read" and value:
+            raise ValueError("实例资源由宿主用户选择，清单不能指定本机资源")
+        return value
 
 
 class PermissionDecision(_PermissionScope):
