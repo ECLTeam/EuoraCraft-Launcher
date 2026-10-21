@@ -483,8 +483,8 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 | DTO | 精确字段或约束 |
 |---|---|
-| `FileRef` | `{root_ref:string, relative_path:string}`；拒绝绝对路径、`..`、ADS、设备名、编码混淆和未授权链接；不得由客户端指定root实际路径 |
-| `FileView` | `{file_ref:FileRef,name:string,kind:"file"\|"directory",size:int,modified_ns:int,etag:string}`；etag是宿主记录的版本标识，不作为作者签名 |
+| `FileRef` | `{root_ref:32位小写hex,relative_path:string}`；P09 A 只允许当前安装固定私有根，平铺 ASCII 文件名至多120字节，空名称仅用于根 stat/list；拒绝绝对路径、父级、ADS、设备名、尾点和链接 |
+| `FileView` | `{file_ref:FileRef,name:string,kind:"file"\|"directory",size:int,modified_ms:int,etag:string}`；etag绑定实际身份和完整内容摘要，不作为作者签名；纳秒仅用于内部版本计算 |
 | `Page<T>` | `{items:T[],next_cursor:string\|null}`；limit 1—100，游标绑定查询、过滤范围及运行会话 |
 | `TaskReceipt` | `{operation_ref:string,state:"queued"\|"running"}`；内部 Core taskId/OperationManager ID不作为授权依据 |
 | `TaskView` | `{operation_ref,kind,state,percent:0..100,stage,message,can_cancel,cancellation_requested,effect:"none"\|"staged"\|"committing"\|"committed"\|"partial"\|"unknown",result:已登记结果DTO\|null,error_code:string\|null}`；不能返回其他资源路径或完整日志 |
@@ -547,14 +547,16 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 ### 13.6 文件、网络与下载
 
+文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。下表的 delete、network、downloads 仍为后续设计，当前返回 PLUGIN_API_METHOD_NOT_FOUND。
+
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
 | `files.stat` | `{target:FileRef}` | `FileView` | `filesystem.read`，root/相对范围 | `PLUGIN_FILE_INVALID` | Q5；S |
-| `files.list` | `{directory:FileRef,cursor?:string,limit?:int}` | `Page<FileView>` | `filesystem.read`，目录范围 | `PLUGIN_NOT_DIRECTORY` | Q5；S |
-| `files.read` | `{target:FileRef,offset:int>=0,count:int<=262144,expected_etag?:string}` | `{data_b64:string,eof:bool,etag:string}` | `filesystem.read` | `PLUGIN_FILE_CHANGED`,`PLUGIN_FILE_IO_FAILED` | Q30；S |
-| `files.write_begin` | `{target:FileRef,total_bytes:int<=67108864,overwrite:bool,expected_etag?:string}` | `{write_ref,max_chunk_bytes:262144}` | `filesystem.write`，确切目标 | `PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY`,`PLUGIN_STORAGE_FAILED` | W5；O+S |
+| `files.list` | `{directory:FileRef,cursor?:string,limit?:int:1..100}` | `Page<FileView>` | `filesystem.read`，仅私有根 | `PLUGIN_SCHEMA_INVALID` | Q5；S |
+| `files.read` | `{target:FileRef,offset:int>=0,count:int:1..32768,expected_etag?:sha256}` | `{data_b64:string,eof:bool,etag:string}` | `filesystem.read`，普通文件至多8 MiB | `PLUGIN_FILE_CHANGED`,`PLUGIN_FILE_IO_FAILED` | Q30；S |
+| `files.write_begin` | `{target:FileRef,total_bytes:int:0..8388608,overwrite:严格false}` | `{write_ref,max_chunk_bytes:32768}` | `filesystem.write`，只新建确切目标 | `PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY`,`PLUGIN_STORAGE_QUOTA_EXCEEDED` | W5；O+S |
 | `files.write_chunk` | `{write_ref,offset:int,data_b64:string}` | `{received_bytes:int}` | 原write授权仍有效；顺序offset | `PLUGIN_WRITE_SEQUENCE_INVALID`,`PLUGIN_WRITE_SIZE_EXCEEDED` | W5；O |
-| `files.write_commit` | `{write_ref,sha256:string}` | `FileView` | 写入目标重新授权、etag及内容校验 | `PLUGIN_FILE_CHANGED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_STORAGE_FAILED` | W5；O+S |
+| `files.write_commit` | `{write_ref,sha256:string}` | `TaskReceipt`，state固定queued；最终结果为FileView或null | 原始写lease控制执行，独立原始读lease控制结果；根/源身份及完整摘要校验 | `PLUGIN_FILE_CHANGED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
 | `files.write_abort` | `{write_ref}` | `ReleaseResult` | C，自己的暂存 | — | CL5；O |
 | `files.delete` | `{target:FileRef,expected_etag:string}` | `TaskReceipt`；最终`{deleted:true}` | `filesystem.delete`，单个文件 | `PLUGIN_FILE_CHANGED`,`PLUGIN_NOT_FILE`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
 | `network.request` | `{method:"GET"\|"HEAD"\|"POST"\|"PUT"\|"PATCH"\|"DELETE",url:string,headers?:object,body_b64?:string<=64KiB原文}` | `{status_code,url,headers:白名单对象,body_b64}` | GET/HEAD用`network.read`，其他`network.write`；目标域名/端口及LAN范围 | `PLUGIN_NETWORK_FAILED`,`PLUGIN_REDIRECT_DENIED`,`PLUGIN_RESPONSE_TOO_LARGE` | R30；S |
@@ -1046,10 +1048,22 @@ HostClient 为提交产生本运行去重键，明确错误抛出 HostApiError�
 
 ## 23. P08 任务归属与提交控制基础（2026-10-21）
 
-按用户确认的 [实施方案](plugin-operation-ownership-implementation-plan.md)，复用 ApplicationContext 的唯一 OperationManager，以不可变安装/内容/run 来源隔离任务。插件层只维护运行引用和结果投影，开放 operations.get/list/cancel；生产任务创建和下载、Java、Minecraft 等实际适配仍待后续切片。控制没有新业务权限，敏感结果逐次核验原准入，旧 run 不从审计文件恢复控制权。
+按用户确认的 [实施方案](plugin-operation-ownership-implementation-plan.md)，复用 ApplicationContext 的唯一 OperationManager，以不可变安装/内容/run 来源隔离任务。插件层只维护运行引用和结果投影，开放 operations.get/list/cancel；首个生产任务为第 24 节的私有文件新建，下载、Java、Minecraft 等实际适配仍待后续切片。控制没有新业务权限，敏感结果逐次核验显式的原始读取准入，旧 run 不从审计文件恢复控制权。
 
 执行阶段和副作用由任务服务统一维护，桌面五态保持现行投影。取消请求不会掩盖真实异常；提交接受排序在短授权锁和任务锁内完成，业务动作与落盘均在全局锁外执行。设置短写与命令、定义、订阅注册使用同一授权接受边界，保持原同步结果及去重回执；W5 全部业务统一 TaskReceipt 不由本切片完成。
 
 插件任务摘要存入 operations/plugin，按每任务写锁获取最新 revision 后原子保存，不包含完整参数、路径和结果。提交前保存失败不执行动作；动作完成后的保存失败保持真实结果、收尾 pending，只重试摘要。Worker 停止后等待本 run 的实际 future 与审计保存，pending 时拒绝重新启用，完成后释放引用和记录。不会自动重放、迁移或删除用户资源。
 
 源码、真实 Worker、冻结产物与主窗口验证结果集中在 [本轮验收记录](plugin-operation-ownership-implementation-plan.md#10-实施与验收记录)。
+
+## 24. P09 A 私有文件与新建事务（2026-10-21）
+
+按已确认的 [实施方案](plugin-private-files-implementation-plan.md)，开放当前安装固定私有空间中的 stat/list/read 和新文件分块事务。原始块 32 KiB、单文件 8 MiB、时间为 modified_ms；FileRef 只支持平铺 ASCII 名称。读写声明及决定的资源范围必须为空，实际根和精确目标由宿主绑定。首次只读不创建空间；首次授权写入使用独立 preparing/ready 记录，损坏和失踪空间明确拒绝，不自动接纳或迁移。
+
+PluginWorkerService 维护共享存储、上传占用和配额；RuntimeFiles 维护本 run 的代次引用和严格请求。Windows x64 本地 NTFS 通过目录句柄相对创建和原生不覆盖重命名，拒绝重解析和硬链接，无 Path.replace 备用路径。新暂存先登记句柄所有者再校验元数据，校验或清理失败仍由同一上传记录负责，实际释放之前不提前归还配额。
+
+files.write_commit 是首个生产任务入口，返回 queued 接纳回执。最终任务状态沿用 P08，执行绑定原始写 lease，结果必须显式配对独立原始读 lease。快照在发布前捕获，发布后只关闭句柄；后续读取使用 expected_etag 复核当前版本。abort 无需新增回执或业务权限，只减少自己的上传；交给任务之后使用自身任务取消，已接受发布不会被撤销改写为取消。
+
+任务资源清理属于准入生命周期，排队取消、审计失败和工作线程结束均执行，失败仅重试清理和保存，不重做发布。成功清理能确认 staged 消失，不能覆盖 committed/unknown。固定配额计入活跃预留、已有文件和崩溃残留，不自动清扫旧文件。覆盖、删除、子目录、共享空间、实例资料写入和跨重启暂存恢复仍待单独审阅。
+
+现行调用说明与示例见 [归档文档](eclplugin-package-format.md#私有文件与新建事务) 和 [worker_snapshot](../examples/plugins/worker_snapshot/README.md)。源码、两种冻结发行物、真实 WebView2 权限显示与本地交付结果集中在 [P09 验收记录](plugin-private-files-implementation-plan.md#11-实施与验收记录)。

@@ -126,13 +126,29 @@ class Plugin(BasePlugin):
 
 ### 自身任务控制
 
-`operations.get({operation_ref})`、`operations.list({cursor?,limit?})` 和 `operations.cancel({operation_ref})` 只操作当前安装、内容和运行自己的任务。控制自身已有任务不需要重新授予业务权限；结果仍按创建时的原能力和资源范围逐次复核，失权后 result 为 null。不能传入宿主 operationId、owner、路径或其他 run；跨运行引用统一拒绝。取消需要本 run 的 mutation_key，HostClient.call 默认生成；同键重复调用不会重复副作用。
+`operations.get({operation_ref})`、`operations.list({cursor?,limit?})` 和 `operations.cancel({operation_ref})` 只操作当前安装、内容和运行自己的任务。控制自身已有任务不需要重新授予业务权限；结果必须具有创建时显式绑定的读取许可，并在交付时逐次复核，失权后 result 为 null。写许可不能代替读许可。不能传入宿主 operationId、owner、路径或其他 run；跨运行引用统一拒绝。取消需要本 run 的 mutation_key，HostClient.call 默认生成；同键重复调用不会重复副作用。
 
 TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cancellation_requested,effect,result,error_code`。state 为 queued、running、committing、completed、failed 或 cancelled。取消返回 `{requested,state,effect}`，requested 只表示已请求，实际停止要继续查询。提交已接受时取消失败 `PLUGIN_COMMIT_STARTED`，撤销或 Worker 退出不把随后成功或真实错误改成取消。stage/message 为安全阶段说明，不交付原始日志、路径或异常。
 
 列表 limit 为 1—100、默认 50；每页受 64 KiB 限制，游标最多 16 个快照、120 秒，绑定本 run 和 limit。快照固定引用集合，每页重新查询状态和过滤结果。每 run 最多 128 个引用，宿主同时跟踪至多 1024 个插件任务；容量耗尽明确拒绝，不淘汰活跃任务。关闭 run 后只有实际 future 和审计保存完成才释放记录。
 
-本阶段没有生产 `operations.submit` 或真实下载/安装创建接口，正常插件的列表可以为空。任务创建、提交与撤销使用测试专属受信宿主工作函数验证；真实业务适配在后续切片单独开放。设置短写保持现行同步结果和 mutations.get 回执，不因此改为 TaskReceipt。实施边界见 [任务归属与提交控制方案](plugin-operation-ownership-implementation-plan.md)。
+不开放生产 `operations.submit` 或真实下载/安装创建接口。首个业务任务由下节 files.write_commit 创建，未提交文件的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](plugin-operation-ownership-implementation-plan.md)。
+
+## 私有文件与新建事务
+
+声明 `filesystem.read` 或 `filesystem.write`，清单及授权的 resource_refs 必须为空；范围固定为本安装的私有文件空间。两种能力独立，写只允许新建文件，不允许覆盖、删除、建子目录或访问用户选择的目录。首轮限 Windows x64、本地 NTFS；其他文件系统明确拒绝。
+
+先调用 resources.list，capability 为 filesystem.read 或 filesystem.write，取得当前 run 的 root_ref。FileRef 为 `{root_ref,relative_path}`，文件名为 1—120 个 ASCII 字符，须以字母或数字开始，后续仅允许字母、数字、点、下划线和连字符；拒绝设备名、尾点和路径组件。空名称只用于私有根 stat/list。引用不能跨 run/授权代次重用，任何接口都不返回宿主路径。
+
+读取使用 files.stat、files.list、files.read。read 的 count 为 1—32768，结果为 Base64、eof 和完整内容与物理身份绑定的 etag；expected_etag 变化时明确失败。FileView 时间字段为 modified_ms。读取不会初始化首次空间；损坏或丢失的已有空间不能当作空空间重建。
+
+新建按 files.write_begin `{target,total_bytes,overwrite:false}`、files.write_chunk `{write_ref,offset,data_b64}`、files.write_commit `{write_ref,sha256}` 执行。单文件至多 8 MiB，原始块至多 32 KiB；严格 Base64、连续偏移、完整 SHA-256。零长度文件省略 chunk。begin/chunk/commit 需要稳定 mutation_key 才能重试同一请求，HostClient.call 默认每次生成新键；重试须保存原键。
+
+commit 返回 `{operation_ref,state:"queued"}`，表示已接纳；实际结果通过 operations.get/list 查询。发布始终原生不覆盖，目标突现时保留外部文件。任务结果只在提交时和读取时都有有效读许可时交付。提交等待超时后先查 mutations.get，不能将超时解释为任务未创建。
+
+files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放配额或允许重新启用。
+
+同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。崩溃残留计入空间，不自动恢复或删除。参见 [完整协议与验收](plugin-private-files-implementation-plan.md) 和可安装的 [worker_snapshot 示例](../examples/plugins/worker_snapshot/README.md)。
 
 ## 产物验证
 
