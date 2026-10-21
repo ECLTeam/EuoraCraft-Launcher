@@ -32,6 +32,8 @@ from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.runtime.file_api import RuntimeFiles
+from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -65,6 +67,8 @@ class PluginHostBroker:
             "settings.write",
             "events.subscribe",
             "instances.read",
+            "filesystem.read",
+            "filesystem.write",
         }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
@@ -77,6 +81,9 @@ class PluginHostBroker:
             "events.unsubscribe",
             "commands.call",
             "operations.cancel",
+            "files.write_begin",
+            "files.write_chunk",
+            "files.write_commit",
         }
     )
     max_receipts: ClassVar[int] = 1024
@@ -90,6 +97,7 @@ class PluginHostBroker:
         run_state: Callable[[], str],
         resources: RuntimeResources | None = None,
         operations: OperationManager | None = None,
+        file_storage: PluginFileStorage | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -100,6 +108,7 @@ class PluginHostBroker:
         :param run_state: 唯一运行服务提供的当前状态
         :param operations: 应用唯一任务服务；没有该服务时不开放任务控制
         :param resources: 当前运行的共享实例资源表；未提供时拒绝共享资源 API
+        :param file_storage: 应用拥有的私有文件存储；缺少任务服务时不开放文件 API
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -107,6 +116,9 @@ class PluginHostBroker:
         self._run_state = run_state
         self._resources = resources
         self.operations: RuntimeOperations | None = RuntimeOperations(session, operations) if operations else None
+        self.files: RuntimeFiles | None = (
+            RuntimeFiles(session, file_storage, self.operations) if file_storage and self.operations else None
+        )
         self._settings_path = data_path / "plugin_settings_v2" / f"{session.view().installation_id}.json"
         self._lock = RLock()
         self._settings_lock = RLock()
@@ -135,7 +147,7 @@ class PluginHostBroker:
         with self._track_request():
             try:
                 request.check_deadline()
-                if request.method in {"operations.get", "operations.list", "operations.cancel"}:
+                if request.method in {"operations.get", "operations.list", "operations.cancel", "files.write_abort"}:
                     self._ensure_accepting()
                 else:
                     self._check_open()
@@ -177,7 +189,9 @@ class PluginHostBroker:
         """
         if not self._idle.wait(timeout):
             return False
-        return self.operations is None or self.operations.is_idle()
+        if self.operations is not None and not self.operations.is_idle():
+            return False
+        return self.files is None or self.files.is_idle()
 
     @staticmethod
     def _bounded_result(result: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -200,7 +214,9 @@ class PluginHostBroker:
             if receipt is None:
                 if len(self._receipts) >= self.max_receipts:
                     raise ProtocolError("本运行变更回执已达上限", "PLUGIN_RATE_LIMITED")
-                receipt = _Receipt(fingerprint, epoch, is_owner_control=request.method == "operations.cancel")
+                receipt = _Receipt(
+                    fingerprint, epoch, is_owner_control=request.method in {"operations.cancel", "files.write_commit"}
+                )
                 self._receipts[request.mutation_key] = receipt
             elif receipt.fingerprint != fingerprint:
                 raise ProtocolError("同一去重键不能对应不同请求", "PLUGIN_MUTATION_CONFLICT")
@@ -244,7 +260,7 @@ class PluginHostBroker:
 
     def _dispatch(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
-        if method in {
+        if method.startswith("files.") or method in {
             "operations.get",
             "operations.list",
             "operations.cancel",
@@ -285,6 +301,13 @@ class PluginHostBroker:
 
     def _query_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
+        if method.startswith("files.") or (
+            method == "resources.list" and params.get("capability") in ("filesystem.read", "filesystem.write")
+        ):
+            if self.files is None:
+                raise ProtocolError("当前宿主未提供私有文件", "PLUGIN_API_METHOD_NOT_FOUND")
+            deadline = min(request.deadline, monotonic() + (30 if method == "files.read" else 5))
+            return self.files.handle(method, params, deadline)
         if method in {"operations.get", "operations.list", "operations.cancel"}:
             if self.operations is None:
                 raise ProtocolError("当前宿主未提供任务控制", "PLUGIN_API_METHOD_NOT_FOUND")
@@ -622,6 +645,8 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        if self.files is not None:
+            self.files.close()
         if self.operations is not None:
             self.operations.close()
         if self._resources is not None:
@@ -638,6 +663,8 @@ class PluginHostBroker:
         """
         if self.operations is not None:
             self.operations.refresh_permissions()
+        if self.files is not None:
+            self.files.refresh_permissions()
         view = self.session.view()
         allowed = {item.capability for item in view.items if item.decision == "allow"}
         if view.error_code or not view.required_satisfied:

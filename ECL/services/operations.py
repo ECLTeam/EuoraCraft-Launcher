@@ -7,6 +7,7 @@
 #
 # 公开接口：
 #   - class OperationOrigin / OperationAdmission / OperationSnapshot — 可信来源、准入与内部快照。
+#   - class OperationCommitRejectedError — 已证明没有执行提交的明确失败。
 #   - class OperationContext — 向长任务工作函数提供取消状态和统一进度上报。
 #       - check_cancelled() -> None — 在不会留下半成品的步骤检查取消请求，并用固定错误码结束任务。
 #       - progress(percent, message, **details) -> None — 发送统一的应用长任务进度事件。
@@ -35,9 +36,16 @@ from pydantic import BaseModel, ConfigDict
 
 from ECL.foundation import EventBus
 from ECL.utils import atomic_write_text, get_logger
+from ECL.utils.errors import GameServiceError
 from ECL.utils.operation_logging import OperationTrace, trace_scope
 
 OperationWorker = Callable[["OperationContext"], object]
+
+
+class OperationCommitRejectedError(GameServiceError):
+    """
+    由受信提交原语确认未产生业务效果的拒绝；不能用于未确认结果的异常。
+    """
 
 
 @dataclass
@@ -65,8 +73,6 @@ class OperationContext:
         if self.check_callback is not None:
             self.check_callback()
         if self.cancel_event.is_set():
-            from ECL.utils.errors import GameServiceError
-
             raise GameServiceError("操作已取消", "OPERATION_CANCELLED")
 
     def progress(self, percent: float, message: str, **details: object) -> None:
@@ -135,6 +141,8 @@ class OperationAdmission:
     accept: Callable[[Callable[[], None]], None]
     capability: str
     resource_refs: tuple[str, ...] = ()
+    cleanup: Callable[[], bool] | None = None
+    initial_effect: Literal["none", "staged"] = "none"
 
 
 OperationEffect = Literal["none", "staged", "committing", "committed", "partial", "unknown"]
@@ -216,6 +224,7 @@ class _Operation:
     audit_pending: bool = True
     io_lock: RLock = field(default_factory=RLock)
     cancellation_reason: OperationCancellationReason | None = None
+    is_cleanup_complete: bool = False
 
 
 class OperationManager:
@@ -244,6 +253,7 @@ class OperationManager:
             "world_restore": "恢复存档",
             "instance_clone": "复制实例",
             "instance_repair": "修复实例",
+            "plugin_file_write": "插件私有文件写入",
         }
     )
 
@@ -301,25 +311,27 @@ class OperationManager:
         """
         with self._lock:
             if self._closing:
-                from ECL.utils.errors import GameServiceError
-
                 raise GameServiceError("启动器正在关闭，无法创建新任务", "OPERATION_MANAGER_CLOSED")
             if origin is not None and (
                 sum(item.origin is not None for item in self._operations.values()) >= self.max_plugin_operations
                 or sum(item.origin == origin for item in self._operations.values()) >= self.max_owner_operations
             ):
-                from ECL.utils.errors import GameServiceError
-
                 raise GameServiceError("插件任务记录已达上限", "PLUGIN_RATE_LIMITED")
             operation_id = uuid4().hex
             operation = _Operation(operation_id, kind, datetime.now(UTC).isoformat())
             operation.origin = origin
             operation.admission = admission
+            if admission is not None:
+                operation.effect = admission.initial_effect
             operation.trace = OperationTrace(self.kind_titles.get(kind, kind), monotonic(), True)
             self._operations[operation_id] = operation
             if origin is None:
                 self._logger.info("后台任务已提交；任务类型：%s", self.kind_titles.get(kind, kind))
-            operation.future = self._executor.submit(copy_context().run, self._run, operation, worker)
+            try:
+                operation.future = self._executor.submit(copy_context().run, self._run, operation, worker)
+            except RuntimeError as exc:
+                self._operations.pop(operation_id, None)
+                raise GameServiceError("任务执行器未接纳操作", "OPERATION_MANAGER_CLOSED") from exc
         self._emit(operation)
         return {"operationId": operation_id, "status": operation.status}
 
@@ -332,7 +344,8 @@ class OperationManager:
         with self._lock:
             operation.status = "running"
             operation.phase = "executing"
-            operation.effect = "unknown" if operation.origin is None else "none"
+            if operation.origin is None:
+                operation.effect = "unknown"
             operation.message = "正在执行"
             operation.revision += 1
         self._emit(operation)
@@ -351,8 +364,6 @@ class OperationManager:
         )
         try:
             if not is_initial_saved or (operation.origin is not None and not self._persist(operation)):
-                from ECL.utils.errors import GameServiceError
-
                 raise GameServiceError("插件任务摘要保存失败", "PLUGIN_OPERATION_PERSIST_FAILED")
             context.check_cancelled()
             result = worker(context)
@@ -389,8 +400,35 @@ class OperationManager:
                 operation.revision += 1
             if operation.trace is not None:
                 operation.trace.log(self._logger, "后台任务执行完成")
+        self._cleanup_owned(operation)
         self._persist(operation)
         self._emit(operation)
+
+    def _cleanup_owned(self, operation: _Operation) -> bool:
+        """
+        在线程实际结束或排队取消后释放领域资源；失败只重试清理，不重放业务。
+
+        清理成功是受信适配器对暂存实际消失的确认，不再检查已撤销的执行权限。
+        已提交或未知的业务效果不能被清理结果覆盖。
+        """
+        with operation.io_lock:
+            if operation.is_cleanup_complete:
+                return True
+            cleanup = operation.admission.cleanup if operation.admission else None
+            if cleanup is not None:
+                try:
+                    if not cleanup():
+                        return False
+                except Exception:
+                    self._logger.exception("后台任务资源清理失败，保留任务等待重试")
+                    return False
+            with self._lock:
+                operation.is_cleanup_complete = True
+                if cleanup is not None and operation.effect in {"none", "staged"}:
+                    operation.effect = "none"
+                    operation.revision += 1
+                    operation.audit_pending = True
+            return True
 
     def _update(
         self, operation: _Operation, percent: float, message: str, details: dict[str, object]
@@ -425,8 +463,6 @@ class OperationManager:
     @staticmethod
     def _check_active(operation: _Operation) -> None:
         if operation.phase == "terminal":
-            from ECL.utils.errors import GameServiceError
-
             raise GameServiceError("任务已经结束", "OPERATION_FINISHED")
 
     def _report_effect(self, operation: _Operation, effect: OperationEffect) -> None:
@@ -440,8 +476,6 @@ class OperationManager:
             operation.effect = effect
             operation.revision += 1
         if operation.origin is not None and not self._persist(operation):
-            from ECL.utils.errors import GameServiceError
-
             raise GameServiceError("插件任务摘要保存失败", "PLUGIN_OPERATION_PERSIST_FAILED")
 
     def _accept_commit(self, operation: _Operation) -> None:
@@ -450,13 +484,9 @@ class OperationManager:
         """
         with self._lock:
             self._check_active(operation)
-            if operation.effect == "committing":
-                from ECL.utils.errors import GameServiceError
-
+            if operation.accepted_at is not None:
                 raise GameServiceError("当前任务已经在提交", "OPERATION_COMMIT_STARTED")
             if operation.cancel_event.is_set():
-                from ECL.utils.errors import GameServiceError
-
                 raise GameServiceError("操作已取消", "OPERATION_CANCELLED")
             operation.can_cancel = False
             operation.phase = "committing"
@@ -474,16 +504,14 @@ class OperationManager:
         else:
             self._accept_commit(operation)
         if operation.origin is not None and not self._persist(operation):
-            from ECL.utils.errors import GameServiceError
-
             with self._lock:
                 operation.effect = previous_effect
             raise GameServiceError("插件任务摘要保存失败", "PLUGIN_OPERATION_PERSIST_FAILED")
         try:
             result = action()
-        except Exception:
+        except Exception as exc:
             with self._lock:
-                operation.effect = "unknown"
+                operation.effect = previous_effect if isinstance(exc, OperationCommitRejectedError) else "unknown"
             raise
         with self._lock:
             operation.effect = "committed"
@@ -572,8 +600,6 @@ class OperationManager:
         with self._lock:
             operation = self._operations.get(operation_id)
             if operation is None or operation.origin != origin:
-                from ECL.utils.errors import GameServiceError
-
                 raise GameServiceError("未找到自身任务", "PLUGIN_RESOURCE_NOT_FOUND")
             return OperationSnapshot(
                 operation_id,
@@ -621,6 +647,8 @@ class OperationManager:
         for operation in operations:
             if operation.future is None or not operation.future.done():
                 return False
+            if not self._cleanup_owned(operation):
+                return False
             if operation.audit_pending and not self._persist(operation):
                 return False
         return True
@@ -651,8 +679,6 @@ class OperationManager:
             or len(operation_id) != 32
             or any(c not in "0123456789abcdef" for c in operation_id)
         ):
-            from ECL.utils.errors import GameServiceError
-
             raise GameServiceError("任务标识无效", "OPERATION_NOT_FOUND")
         result_path = self._data_path / f"{operation_id}.json"
         if result_path.is_file():
@@ -662,7 +688,6 @@ class OperationManager:
                 return json.loads(result_path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError, ValueError):
                 pass
-        from ECL.utils.errors import GameServiceError
 
         raise GameServiceError("未找到指定任务", "OPERATION_NOT_FOUND")
 
@@ -723,5 +748,6 @@ class OperationManager:
                     operation.revision += 1
                 with trace_scope(operation.trace):
                     self._logger.info("排队中的后台任务已取消，未开始执行")
+                    self._cleanup_owned(operation)
                     self._persist(operation)
                     self._emit(operation)

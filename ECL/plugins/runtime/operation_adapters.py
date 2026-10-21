@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
+from typing import Literal
 from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
@@ -30,6 +31,7 @@ class _OperationReference:
     operation_id: str
     lease: GrantLease
     project_result: Callable[[object], JsonValue] | None
+    result_lease: GrantLease | None
 
 
 class RuntimeOperations:
@@ -59,6 +61,9 @@ class RuntimeOperations:
         lease: GrantLease,
         *,
         project_result: Callable[[object], JsonValue] | None = None,
+        result_lease: GrantLease | None = None,
+        cleanup: Callable[[], bool] | None = None,
+        initial_effect: Literal["none", "staged"] = "none",
     ) -> str:
         """
         供受信业务适配器创建有限任务，不暴露生产 RPC 提交入口。
@@ -67,6 +72,9 @@ class RuntimeOperations:
         :param worker: 受信宿主工作函数
         :param lease: 该工作实际能力和精确资源的原始准入
         :param project_result: 显式安全结果投影；未提供时不交付结果
+        :param result_lease: 独立结果读取权限；缺少时即使写入成功也不交付结果
+        :param cleanup: 实际执行结束或排队取消后的幂等资源清理
+        :param initial_effect: 接纳时已持有的暂存状态
         :return: 本次运行的随机引用
         :raises PluginGrantError: 准入已经失效时抛出
         :raises ProtocolError: 运行已关闭或引用容量耗尽时抛出
@@ -77,6 +85,8 @@ class RuntimeOperations:
             lambda register: self._session.accept(lease, register),
             lease.capability,
             lease.resource_refs,
+            cleanup,
+            initial_effect,
         )
         # 准备后的提交按授权锁 → 引用锁 → 任务锁排列，关闭与创建不能相互越过。
         reference = uuid4().hex
@@ -89,7 +99,7 @@ class RuntimeOperations:
                     raise ProtocolError("本运行任务引用已达上限", "PLUGIN_RATE_LIMITED")
                 # manager 的内部入队只登记状态；昂贵的授权检查已在外层完成。
                 operation_id = self._manager.submit_owned(kind, worker, self._origin, admission)
-                self._references[reference] = _OperationReference(operation_id, lease, project_result)
+                self._references[reference] = _OperationReference(operation_id, lease, project_result, result_lease)
 
         try:
             self._session.accept(lease, register)
@@ -122,12 +132,12 @@ class RuntimeOperations:
             }[snapshot.phase]
         )
         result: JsonValue = None
-        if snapshot.status == "completed" and item.project_result is not None:
+        if snapshot.status == "completed" and item.project_result is not None and item.result_lease is not None:
             try:
-                self._session.check(item.lease)
+                self._session.check(item.result_lease)
                 result = _json_value(item.project_result(snapshot.result))
-                self._session.check(item.lease)
-            except PluginGrantError:
+                self._session.check(item.result_lease)
+            except (PluginGrantError, ProtocolError):
                 result = None
         return {
             "operation_ref": reference,

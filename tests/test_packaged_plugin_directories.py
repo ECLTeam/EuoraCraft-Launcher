@@ -170,6 +170,7 @@ async def test_packaged_launcher_installs_offline_wheels_and_loads_native_extens
     code = """from ECL.plugin_api import Plugin as BasePlugin
 import os
 import importlib.resources
+import time
 import xxhash
 
 class Plugin(BasePlugin):
@@ -180,17 +181,36 @@ class Plugin(BasePlugin):
             {'name':'native','type':'string'}, {'name':'native_path','type':'string'},
             {'name':'count','type':'integer'}, {'name':'first','type':'string'},
             {'name':'tasks','type':'integer'},
+            {'name':'exported','type':'bool'},
         ))
 
     def probe(self):
         resources = self.host.call('resources.list', {'capability':'instances.read'})['items']
         value = self.host.call('instances.get', {'instance_ref':resources[0]['instance_ref']})
+        exported = export_snapshot(self.host)
+        deadline = time.monotonic() + 10
+        while True:
+            task = self.host.call('operations.get', {'operation_ref':exported['operation_ref']})
+            if task['state'] in ('completed','failed','cancelled'):
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert task['state'] == 'completed' and task['effect'] == 'committed', task
+        content = self.host.call('files.read', {'target':{'root_ref':exported['root_ref'],
+            'relative_path':exported['name']}, 'offset':0, 'count':32768})
+        assert json.loads(base64.b64decode(content['data_b64']))['api_version'] == 2
         return {'pid':os.getpid(),
+            'exported':True,
             'tasks':len(self.host.call('operations.list')['items']),
             'count':len(resources), 'first':value['version_id'],
             'resource':importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
             'native':xxhash.xxh64(b'ecl').hexdigest(), 'native_path':xxhash.__file__}
 """
+    code = (
+        (Path(__file__).resolve().parents[1] / "examples/plugins/worker_snapshot/main.py").read_text(encoding="utf-8")
+        + "\n"
+        + code
+    )
     package_path = make_package(
         tmp_path,
         code=code,
@@ -202,6 +222,8 @@ class Plugin(BasePlugin):
             {"capability": "instances.read", "required": True},
             {"capability": "settings.write", "required": True},
             {"capability": "settings.read", "required": True},
+            {"capability": "filesystem.read", "required": True},
+            {"capability": "filesystem.write", "required": True},
         ),
     )
     data_path = tmp_path / "data"
@@ -314,7 +336,11 @@ class Plugin(BasePlugin):
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
                     assert probe["count"] == 1 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
-                    assert probe["tasks"] == 0
+                    assert probe["tasks"] == 1 and probe["exported"]
+                    files_path = data_path / "plugin_data" / identity / "files"
+                    exports = tuple(files_path.glob("snapshot-*.json"))
+                    assert len(exports) == 1
+                    assert all(json.loads(path.read_bytes())["api_version"] == 2 for path in exports)
                     saved = await _native_invoke(
                         native,
                         108,

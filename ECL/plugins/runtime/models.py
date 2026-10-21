@@ -6,6 +6,8 @@
 # 文件作用：定义最小 Worker 宿主接口的严格输入和基础字段约束。
 #
 # 公开接口：
+#   - class FileRef / FileStatRequest / FileListRequest / FileReadRequest — 私有文件引用与读取请求。
+#   - class FileWriteBeginRequest / FileWriteRef / FileWriteChunkRequest / FileWriteCommitRequest — 新建事务请求。
 #   - class CommandDefinition — 命令注册契约。
 #   - class SettingDefinition — 非执行式设置定义。
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
@@ -16,7 +18,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
@@ -154,7 +156,7 @@ class ResourceListRequest(RequestModel):
     仅发现本运行获准的实例资源，不接受其他能力或宿主路径。
     """
 
-    capability: Literal["instances.read"]
+    capability: Literal["instances.read", "filesystem.read", "filesystem.write"]
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
 
@@ -193,3 +195,103 @@ class OperationListRequest(RequestModel):
 
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class FileRef(RequestModel):
+    """
+    私有根中的单个可移植文件名，空名称仅供根 stat/list 使用。
+    """
+
+    root_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    relative_path: str = Field(max_length=120, pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,119})?$")
+    reserved_names: ClassVar[frozenset[str]] = frozenset(
+        {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+    )
+
+    @field_validator("relative_path")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        """
+        拒绝 Windows 别名，不自动净化或转换用户名称。
+
+        :param value: 已经通过 ASCII 语法检查的组件
+        :return: 原始名称
+        """
+        if value.endswith(".") or value.split(".", 1)[0].upper() in cls.reserved_names:
+            raise ValueError("文件名称不能使用设备名或尾点")
+        return value
+
+
+class FileStatRequest(RequestModel):
+    """
+    查询自身根或普通文件，不接受实际宿主路径。
+    """
+
+    target: FileRef
+
+
+class FileListRequest(RequestModel):
+    """
+    对当前 run 的根进行有界分页，不开放任意子目录。
+    """
+
+    directory: FileRef
+    cursor: str | None = Field(default=None, max_length=128)
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class FileReadRequest(FileStatRequest):
+    """
+    读取有限字节，原始块和 Base64 编码共同受业务消息大小约束。
+    """
+
+    offset: StrictInt = Field(ge=0, le=2**53 - 1)
+    count: StrictInt = Field(ge=1, le=32768)
+    expected_etag: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class FileWriteBeginRequest(FileStatRequest):
+    """
+    明确声明有限大小且禁止覆盖，不接受尚未实现的目标版本替换。
+    """
+
+    total_bytes: StrictInt = Field(ge=0, le=8388608)
+    overwrite: StrictBool
+
+    @field_validator("overwrite")
+    @classmethod
+    def no_overwrite(cls, value: bool) -> bool:
+        """
+        只接纳显式 false，不将覆盖请求悄悄降级。
+
+        :param value: 严格布尔参数
+        :return: False
+        """
+        if value:
+            raise ValueError("私有文件首轮不能覆盖")
+        return value
+
+
+class FileWriteRef(RequestModel):
+    """
+    当前 run 的上传引用，不接受任务标识或其他 owner。
+    """
+
+    write_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class FileWriteChunkRequest(FileWriteRef):
+    """
+    限制编码前后大小并要求顺序写入。
+    """
+
+    offset: StrictInt = Field(ge=0, le=8388608)
+    data_b64: str = Field(min_length=4, max_length=43692)
+
+
+class FileWriteCommitRequest(FileWriteRef):
+    """
+    提交前必须核对完整字节摘要，不接受缺省或其他算法。
+    """
+
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

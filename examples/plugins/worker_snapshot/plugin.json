@@ -1,0 +1,14 @@
+{
+  "name": "worker_snapshot",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "私有文件快照示例",
+  "description": "通过有限分块上传和宿主任务导出 JSON 快照。",
+  "entry_point": "main:Plugin",
+  "permissions": [
+    { "capability": "commands.register", "required": true },
+    { "capability": "commands.execute", "required": true },
+    { "capability": "filesystem.read", "required": false },
+    { "capability": "filesystem.write", "required": false }
+  ]
+}

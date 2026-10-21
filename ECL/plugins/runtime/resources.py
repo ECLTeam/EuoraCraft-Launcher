@@ -279,6 +279,8 @@ class RuntimeResources:
         """
         if method == "resources.list":
             query = ResourceListRequest.model_validate(params)
+            if query.capability != "instances.read":
+                raise ProtocolError("当前服务仅提供实例资源", "PLUGIN_SCHEMA_INVALID")
         elif method == "instances.get":
             query = InstanceGetRequest.model_validate(params)
         elif method == "instances.scan":

@@ -28,13 +28,12 @@ def setup_grants(tmp_path: Path):
     (code_path / "main.py").write_text("value = 1", encoding="utf-8")
     declarations = (
         PermissionDeclaration(capability="settings.read", required=True),
-        PermissionDeclaration(capability="filesystem.read", resource_refs=("root-a", "root-b")),
+        # 通用范围集合测试使用自定义测试能力；文件能力现仅允许固定私有空间。
+        PermissionDeclaration(capability="test.resources", resource_refs=("root-a", "root-b")),
         PermissionDeclaration(capability="ui.custom.execute"),
     )
     binding = PluginContentBinding.capture(code_path, declarations, "windows-x86_64-cp311")
-    store = PluginGrantStore(
-        tmp_path / "data", implemented_capabilities=frozenset({"settings.read", "filesystem.read"})
-    )
+    store = PluginGrantStore(tmp_path / "data", implemented_capabilities=frozenset({"settings.read", "test.resources"}))
     session = store.open_session(store.new_installation_id(), binding)
     return store, session, binding
 
@@ -132,19 +131,19 @@ def test_resource_grants_are_exact_subsets_and_required_scopes_are_complete(setu
     store, session, _binding = setup_grants
     decisions = (
         PermissionDecision(capability="settings.read", decision="allow"),
-        PermissionDecision(capability="filesystem.read", decision="allow", resource_refs=("root-a",)),
+        PermissionDecision(capability="test.resources", decision="allow", resource_refs=("root-a",)),
     )
     grant(store, session, decisions=decisions)
-    session.authorize("filesystem.read", ("root-a",))
+    session.authorize("test.resources", ("root-a",))
     for references in ((), ("root-a-subdir",), ("root-b",), ("root-a", "root-a")):
         with pytest.raises(PluginGrantError) as error:
-            session.authorize("filesystem.read", references)
+            session.authorize("test.resources", references)
         assert error.value.error_code == "PLUGIN_RESOURCE_DENIED"
     with pytest.raises(PluginGrantError):
         grant(
             store,
             session,
-            decisions=(PermissionDecision(capability="filesystem.read", decision="allow", resource_refs=("other",)),),
+            decisions=(PermissionDecision(capability="test.resources", decision="allow", resource_refs=("other",)),),
         )
 
 
@@ -176,7 +175,7 @@ def test_every_epoch_change_invalidates_existing_leases(setup_grants) -> None:
     grant(
         store,
         session,
-        decisions=(PermissionDecision(capability="filesystem.read", decision="allow", resource_refs=("root-a",)),),
+        decisions=(PermissionDecision(capability="test.resources", decision="allow", resource_refs=("root-a",)),),
     )
     with pytest.raises(PluginGrantError) as error:
         session.check(lease)
@@ -329,8 +328,8 @@ import sys
 from pathlib import Path
 from ECL.plugins.grant_models import PermissionDeclaration, PermissionDecision, PermissionManagementCaller, PluginContentBinding
 from ECL.plugins.grant_store import PluginGrantStore, PluginGrantError
-binding = PluginContentBinding.capture(Path(sys.argv[1]), (PermissionDeclaration(capability='settings.read',required=True),PermissionDeclaration(capability='filesystem.read',resource_refs=('root-a','root-b')),PermissionDeclaration(capability='ui.custom.execute')), 'windows-x86_64-cp311')
-store = PluginGrantStore(Path(sys.argv[2]), implemented_capabilities=frozenset({'settings.read','filesystem.read'}))
+binding = PluginContentBinding.capture(Path(sys.argv[1]), (PermissionDeclaration(capability='settings.read',required=True),PermissionDeclaration(capability='test.resources',resource_refs=('root-a','root-b')),PermissionDeclaration(capability='ui.custom.execute')), 'windows-x86_64-cp311')
+store = PluginGrantStore(Path(sys.argv[2]), implemented_capabilities=frozenset({'settings.read','test.resources'}))
 session = store.open_session(sys.argv[3], binding)
 try:
     store.update(session,(PermissionDecision(capability='settings.read',decision='deny'),),expected_revision=1,content_digest=binding.content_digest,caller=PermissionManagementCaller.main_webview)

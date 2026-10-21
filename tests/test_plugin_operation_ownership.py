@@ -72,6 +72,7 @@ def submit(broker, worker, *, result=False):
         worker,
         broker.session.authorize("settings.write"),
         project_result=(lambda value: {"value": value}) if result else None,
+        result_lease=broker.session.authorize("settings.read") if result else None,
     )
 
 
@@ -239,6 +240,21 @@ def test_revoke_before_accept_prevents_action(runtime):
     view = finish(broker, manager, reference)
     assert view["state"] == "failed"
     assert actions == []
+
+
+def test_successful_commit_cannot_accept_second_action(runtime):
+    broker, manager, _, _ = runtime
+    actions = []
+
+    def work(context):
+        context.finalize(lambda: actions.append(1))
+        with pytest.raises(GameServiceError) as error:
+            context.finalize(lambda: actions.append(2))
+        assert error.value.error_code == "OPERATION_COMMIT_STARTED"
+
+    view = finish(broker, manager, submit(broker, work))
+    assert view["state"] == "completed" and view["effect"] == "committed"
+    assert actions == [1]
 
 
 @pytest.mark.parametrize("failed_phase", ["queued", "executing", "committing", "terminal"])
