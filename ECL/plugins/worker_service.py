@@ -572,8 +572,8 @@ class PluginWorkerService:
                             if entry.broker is None or entry.broker.wait_idle():
                                 self.stop(name)
                             continue
-                        if entry.broker and entry.broker.operations:
-                            entry.broker.operations.refresh_permissions()
+                        if entry.broker:
+                            entry.broker.refresh_pending_work()
                         view = entry.session.view()
                         if (
                             entry.supervisor.is_alive()

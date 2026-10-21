@@ -65,6 +65,7 @@ class NetworkCallGuard(Protocol):
 
 @dataclass(slots=True)
 class _WireBudget:
+    limit: int = 262144
     received: int = 0
 
 
@@ -111,7 +112,7 @@ class _GuardedStream(httpcore.NetworkStream):
         限制每次实际收包和每跳原始 HTTP 字节，包括头、临时响应与尾部。
         """
         self._guard.accept()
-        remaining = 262144 - self._budget.received
+        remaining = self._budget.limit - self._budget.received
         if remaining <= 0:
             raise ProtocolError("网络响应超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
         chunk = self._stream.read(min(max_bytes, 8192, remaining), self._guard.timeout())
@@ -195,6 +196,7 @@ class PinnedNetworkBackend(httpcore.NetworkBackend):
         address: IPv4Address | IPv6Address,
         guard: NetworkCallGuard,
         dialer: httpcore.NetworkBackend,
+        wire_limit: int = 262144,
     ) -> None:
         """
         绑定宿主已检查的站点、数字地址和当前调用的关闭归属。
@@ -203,11 +205,13 @@ class PinnedNetworkBackend(httpcore.NetworkBackend):
         :param address: 本跳唯一已准入地址
         :param guard: 当前请求原始租约及资源归属
         :param dialer: 宿主拥有的公开数字地址拨号后端
+        :param wire_limit: 宿主为当前查询或下载确定的单跳原始收包上限
         """
         self._origin = origin
         self._address = address
         self._guard = guard
         self._dialer = dialer
+        self._wire_limit = wire_limit
 
     def connect_tcp(
         self,
@@ -232,7 +236,7 @@ class PinnedNetworkBackend(httpcore.NetworkBackend):
             raise ProtocolError("网络连接目标无效", "PLUGIN_NETWORK_TARGET_DENIED")
         self._guard.accept()
         raw = self._dialer.connect_tcp(str(self._address), port, timeout=self._guard.timeout())
-        stream = _GuardedStream(raw, self._guard, self._origin, self._address, _WireBudget())
+        stream = _GuardedStream(raw, self._guard, self._origin, self._address, _WireBudget(self._wire_limit))
         self._guard.attach(stream)
         stream.verify_peer()
         self._guard.check()

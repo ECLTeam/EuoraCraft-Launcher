@@ -6,7 +6,7 @@
 # 文件作用：维护安装私有空间、上传资源和配额，业务任务仍由应用 OperationManager 执行。
 #
 # 公开接口：
-#   - class FileUpload — 当前上传的唯一字节及资源状态。
+#   - class StagedFile — 上传与下载共用的唯一暂存和预留状态。
 #   - class PluginFileStorage — Worker 服务共同持有的私有文件存储。
 # ============================================================
 
@@ -52,15 +52,16 @@ class _FileSpace:
 
 
 @dataclass(slots=True)
-class FileUpload:
+class StagedFile:
     """
-    保存一个上传的字节偏移、原始授权和句柄，不复制任务执行状态。
+    保存暂存预留、期望长度、实际偏移、原始写授权和句柄，不复制任务执行状态。
     """
 
     target: FileRef
     lease: GrantLease
     directory: FileDirectory
-    total_bytes: int
+    reserved_bytes: int
+    expected_bytes: int | None
     write_ref: str = field(default_factory=lambda: uuid4().hex)
     temporary_name: str = field(default_factory=lambda: f".upload-{uuid4().hex}")
     io_lock: RLock = field(default_factory=RLock)
@@ -94,7 +95,7 @@ class PluginFileStorage:
         self._data: FileDirectory | None = None
         self._records: FileDirectory | None = None
         self._spaces: dict[str, _FileSpace] = {}
-        self._uploads: dict[str, FileUpload] = {}
+        self._uploads: dict[str, StagedFile] = {}
 
     def _containers(self, *, initialize: bool) -> None:
         """
@@ -230,7 +231,7 @@ class PluginFileStorage:
                 self._save(_SpaceRecord(installation_id=installation_id, state="ready", identity=space.identity))
             yield space
 
-    def uploads(self, run_id: str) -> tuple[FileUpload, ...]:
+    def uploads(self, run_id: str) -> tuple[StagedFile, ...]:
         """
         返回当前 run 仍由服务持有的上传资源；调用方不得绕过其 I/O 锁。
 
@@ -240,7 +241,7 @@ class PluginFileStorage:
         with self._lock:
             return tuple(item for item in self._uploads.values() if item.lease.run_id == run_id)
 
-    def find(self, write_ref: str, run_id: str) -> FileUpload | None:
+    def find(self, write_ref: str, run_id: str) -> StagedFile | None:
         """
         按引用和当前 run 查找，不透露其他来源是否存在。
 
@@ -252,7 +253,7 @@ class PluginFileStorage:
             item = self._uploads.get(write_ref)
             return item if item and item.lease.run_id == run_id else None
 
-    def reserve(self, upload: FileUpload) -> None:
+    def reserve(self, upload: StagedFile) -> None:
         """
         在短锁内占用精确目标及声明总量；调用方已经完成磁盘配额检查。
 
@@ -269,8 +270,8 @@ class PluginFileStorage:
                 for item in items
             ):
                 raise FileBoundaryError("该目标正在上传", "PLUGIN_FILE_BUSY")
-            if sum(item.total_bytes for item in own) + upload.total_bytes > self.max_run_bytes or (
-                sum(item.total_bytes for item in items) + upload.total_bytes > self.max_host_bytes
+            if sum(item.reserved_bytes for item in own) + upload.reserved_bytes > self.max_run_bytes or (
+                sum(item.reserved_bytes for item in items) + upload.reserved_bytes > self.max_host_bytes
             ):
                 raise FileBoundaryError("上传预留空间不足", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
             self._uploads[upload.write_ref] = upload
@@ -296,7 +297,7 @@ class PluginFileStorage:
         with self._lock:
             own = tuple(item for item in self._uploads.values() if item.lease.installation_id == installation_id)
             active_names = {item.temporary_name for item in own}
-            total = sum(item.total_bytes for item in own) + additional
+            total = sum(item.reserved_bytes for item in own) + additional
         names = directory.names(deadline)
         if is_new_upload and len(names) >= 1024:
             raise FileBoundaryError("私有目录项数超限", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
@@ -313,7 +314,7 @@ class PluginFileStorage:
         if total > self.max_space_bytes:
             raise FileBoundaryError("私有空间已满", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
 
-    def cleanup(self, upload: FileUpload) -> bool:
+    def cleanup(self, upload: StagedFile) -> bool:
         """
         实际释放唯一暂存或已发布句柄后才放开目标和配额；失败保留供重试。
 

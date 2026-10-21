@@ -13,6 +13,7 @@
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
 #   - class OperationGetRequest / OperationListRequest — 自身任务控制输入契约。
 #   - validate_fields — 校验命令输入输出的基础字段。
+#   - class DownloadSubmitRequest — 私有空间新文件下载任务请求。
 #   - class NetworkRequest — GET/HEAD 只读网络请求的严格边界。
 # ============================================================
 
@@ -335,3 +336,22 @@ class FileWriteCommitRequest(FileWriteRef):
     """
 
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class DownloadSubmitRequest(FileStatRequest):
+    """
+    仅允许已批准公网站点到私有平铺新文件，拒绝覆盖与自定义 HTTP 参数。
+    """
+
+    url: str
+    overwrite: StrictBool
+    expected_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def _validate_download(self) -> DownloadSubmitRequest:
+        NetworkOrigin.from_url(self.url)
+        if self.overwrite or not self.target.relative_path:
+            raise ValueError("下载只允许新建命名文件")
+        if "expected_sha256" in self.model_fields_set and self.expected_sha256 is None:
+            raise ValueError("摘要不得显式为空")
+        return self

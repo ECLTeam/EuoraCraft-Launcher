@@ -228,6 +228,38 @@ class PluginGrantSession:
         with self._store._lock:
             self._check_locked(lease)
 
+    def check_all(self, leases: tuple[GrantLease, ...]) -> None:
+        """
+        在一次内容刷新后同时核验同一运行的全部原始准入，不执行部分授权动作。
+
+        :param leases: 受信调用方捕获的非空准入集合
+        :raises PluginGrantError: 任一准入失效或来源、代次不同则抛出
+        """
+        self.view()
+        with self._store._lock:
+            self._check_all_locked(leases)
+
+    def _check_all_locked(self, leases: tuple[GrantLease, ...]) -> None:
+        if not leases or len({lease.grant_epoch for lease in leases}) != 1:
+            raise PluginGrantError("插件组合准入已经失效", "PLUGIN_GRANT_EXPIRED")
+        for lease in leases:
+            self._check_locked(lease)
+
+    def accept_all(self, leases: tuple[GrantLease, ...], register: Callable[[], None]) -> None:
+        """
+        在同一短授权锁内核验全部原始准入并接受一个纯内存登记。
+
+        锁外刷新内容及磁盘，回调禁止 I/O、文件锁、重新查询权限或插件代码。
+
+        :param leases: 同一运行和代次的全部执行准入
+        :param register: 不包含 I/O 的有限登记
+        :raises PluginGrantError: 任一准入失效时不执行登记
+        """
+        self.check_all(leases)
+        with self._store._lock:
+            self._check_all_locked(leases)
+            register()
+
     def _check_locked(self, lease: GrantLease) -> None:
         state = self._store._state(self)
         if state.blocked_error == "PLUGIN_CONTENT_CHANGED":

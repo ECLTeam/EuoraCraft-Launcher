@@ -254,6 +254,7 @@ class OperationManager:
             "instance_clone": "复制实例",
             "instance_repair": "修复实例",
             "plugin_file_write": "插件私有文件写入",
+            "plugin_download": "插件私有文件下载",
         }
     )
 

@@ -7,6 +7,7 @@
 #
 # 公开接口：
 #   - class PluginNetworkService — 应用唯一网络请求名额与 DNS 工作者所有者。
+#   - class NetworkCall — 保存查询或任务的原始准入与真实网络资源。
 #   - class RuntimeNetwork — 当前 Worker run 的只读网络门面。
 # ============================================================
 
@@ -17,8 +18,9 @@ import logging
 import socket
 import ssl
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, TimeoutError
+from contextlib import contextmanager
 from contextvars import copy_context
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from pathlib import Path
@@ -37,6 +39,7 @@ from ECL.plugins.network_targets import NetworkOrigin, NetworkTargetPolicy
 from ECL.plugins.runtime.models import NetworkRequest
 from ECL.plugins.runtime.network_transport import PinnedNetworkBackend
 from ECL.utils import get_logger
+from ECL.utils.errors import GameServiceError
 from ECL.utils.operation_logging import operation_scope, private_transport_scope
 
 
@@ -47,15 +50,37 @@ def _resolve_addresses(host: str, port: int) -> tuple[str, ...]:
     return tuple(dict.fromkeys(item[4][0] for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)))
 
 
-class _NetworkCall:
+class NetworkCall:
     """
     保留原租约和真实 DNS/流，等待方返回不等于底层工作已经结束。
     """
 
-    def __init__(self, owner: RuntimeNetwork, lease: GrantLease, deadline: float) -> None:
-        self.owner = owner
-        self.lease = lease
-        self.deadline = deadline
+    def __init__(
+        self,
+        owner: RuntimeNetwork,
+        lease: GrantLease,
+        deadline: float,
+        *,
+        additional_leases: tuple[GrantLease, ...] = (),
+        cancel_event: Event | None = None,
+        wire_limit: int = 262144,
+    ) -> None:
+        """
+        绑定宿主原始准入、取消信号与查询或下载预算，不读取插件自报权限。
+
+        :param owner: 当前运行网络门面
+        :param lease: 原网络准入
+        :param deadline: 所有跳转共享的总截止
+        :param additional_leases: 同时必须有效的原始写准入
+        :param cancel_event: 任务服务拥有的真实取消信号
+        :param wire_limit: 宿主确定的单跳原始收包上限
+        """
+        self.owner: RuntimeNetwork = owner
+        self.lease: GrantLease = lease
+        self.leases: tuple[GrantLease, ...] = (lease, *additional_leases)
+        self.cancel_event: Event | None = cancel_event
+        self.wire_limit: int = wire_limit
+        self.deadline: float = deadline
         self._lock = RLock()
         self._cancelled = Event()
         self._streams: set[httpcore.NetworkStream] = set()
@@ -63,7 +88,11 @@ class _NetworkCall:
         self._is_active = True
 
     def check(self) -> None:
-        self.owner.session.check(self.lease)
+        """
+        逐次检查全部原始准入、真实任务取消和共同截止，不延续失效调用。
+        """
+        self.owner.session.check_all(self.leases)
+        self._check_task_cancelled()
         if self._cancelled.is_set() or self.owner.is_closed:
             raise ProtocolError("插件网络请求已停止", "PLUGIN_SESSION_EXPIRED")
         if monotonic() >= self.deadline:
@@ -73,15 +102,40 @@ class _NetworkCall:
         """
         授权锁内只登记接受，实际有限 I/O 在其后执行，撤销先发生则不接受。
         """
-        self.owner.session.accept(self.lease, self._accept_locked)
+        self.accept_action(lambda: None)
+
+    def accept_action(self, register: Callable[[], None]) -> None:
+        """
+        将全部原权限、取消和截止核验与有限资源登记放在同一接受点。
+
+        :param register: 仅访问受信内存的登记动作
+        :raises ProtocolError: 截止或网络运行状态失效时拒绝
+        """
+
+        def accepted() -> None:
+            self._accept_locked()
+            register()
+
+        self.owner.session.accept_all(self.leases, accepted)
+
+    def _check_task_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise GameServiceError("操作已取消", "OPERATION_CANCELLED")
 
     def _accept_locked(self) -> None:
+        self._check_task_cancelled()
         if self._cancelled.is_set() or self.owner.is_closed:
             raise ProtocolError("插件网络请求已停止", "PLUGIN_SESSION_EXPIRED")
         if monotonic() >= self.deadline:
             raise ProtocolError("插件网络请求超过截止时间", "PLUGIN_DEADLINE_EXCEEDED")
 
     def timeout(self) -> float:
+        """
+        返回单次有限 I/O 与总剩余截止的较短预算。
+
+        :return: 至多五秒的剩余预算
+        :raises ProtocolError: 总截止已经到达时抛出
+        """
         remaining = self.deadline - monotonic()
         if remaining <= 0:
             raise ProtocolError("插件网络请求超过截止时间", "PLUGIN_DEADLINE_EXCEEDED")
@@ -95,16 +149,26 @@ class _NetworkCall:
             self._streams.add(stream)
         try:
             self.check()
-        except (ProtocolError, PluginGrantError):
+        except (ProtocolError, PluginGrantError, GameServiceError):
             self.cancel()
             raise
 
     def detach(self, stream: httpcore.NetworkStream) -> None:
+        """
+        确认关闭或移交后移除旧流，再检查是否能够归还网络名额。
+
+        :param stream: 已确认不再拥有实际连接的旧流
+        """
         with self._lock:
             self._streams.discard(stream)
         self.owner.service.reap(self)
 
     def set_dns(self, future: Future[tuple[str, ...]]) -> None:
+        """
+        保存唯一实际解析 future，等待方返回也不能释放其名额。
+
+        :param future: 宿主已接纳的实际解析
+        """
         with self._lock:
             self._dns_future = future
 
@@ -173,21 +237,40 @@ class PluginNetworkService:
         self._dialer = dialer if dialer is not None else httpcore.SyncBackend()
         self._ssl_context = ssl_context
         self._lock = RLock()
-        self._calls: set[_NetworkCall] = set()
+        self._calls: set[NetworkCall] = set()
         self._is_closed = False
         self._dns_count = 0
 
-    def begin(self, owner: RuntimeNetwork, lease: GrantLease, deadline: float) -> _NetworkCall:
+    def begin(
+        self,
+        owner: RuntimeNetwork,
+        lease: GrantLease,
+        deadline: float,
+        *,
+        additional_leases: tuple[GrantLease, ...] = (),
+        cancel_event: Event | None = None,
+        wire_limit: int = 262144,
+    ) -> NetworkCall:
         """
         在原始授权接受点保留 run 和宿主名额，不排队重放请求。
 
         :param owner: 当前 run 门面
         :param lease: 本调用原始租约
         :param deadline: 包含所有跳转的截止时间
+        :param additional_leases: 下载同时需要的原始写准入
+        :param cancel_event: 任务取消信号，查询不提供
+        :param wire_limit: 宿主指定的单跳原始预算
         :return: 持续跟踪至真实结束的调用
         :raises ProtocolError: 已关闭或实际请求名额耗尽时抛出
         """
-        call = _NetworkCall(owner, lease, deadline)
+        call = NetworkCall(
+            owner,
+            lease,
+            deadline,
+            additional_leases=additional_leases,
+            cancel_event=cancel_event,
+            wire_limit=wire_limit,
+        )
 
         def register() -> None:
             with self._lock:
@@ -197,10 +280,10 @@ class PluginNetworkService:
                     raise ProtocolError("插件网络请求名额已满", "PLUGIN_RATE_LIMITED")
                 self._calls.add(call)
 
-        owner.session.accept(lease, register)
+        call.accept_action(register)
         return call
 
-    def resolve(self, call: _NetworkCall, origin: NetworkOrigin) -> IPv4Address | IPv6Address:
+    def resolve(self, call: NetworkCall, origin: NetworkOrigin) -> IPv4Address | IPv6Address:
         """
         有界等待实际解析，任何禁止地址使整跳拒绝，不回退到其他解析或连接。
 
@@ -229,7 +312,7 @@ class PluginNetworkService:
             if len(addresses) != len(set(results)) or any(not NetworkTargetPolicy.allows(item) for item in addresses):
                 raise ProtocolError("插件网络目标不允许访问", "PLUGIN_NETWORK_TARGET_DENIED")
             return addresses[0]
-        except (ProtocolError, PluginGrantError):
+        except (ProtocolError, PluginGrantError, GameServiceError):
             raise
         except (socket.gaierror, OSError, ValueError):
             raise ProtocolError("插件网络域名解析失败", "PLUGIN_NETWORK_RESOLUTION_FAILED") from None
@@ -237,7 +320,7 @@ class PluginNetworkService:
             if not future.done():
                 call.cancel()
 
-    def _submit_dns(self, call: _NetworkCall, origin: NetworkOrigin) -> Future[tuple[str, ...]]:
+    def _submit_dns(self, call: NetworkCall, origin: NetworkOrigin) -> Future[tuple[str, ...]]:
         """
         在原始租约接受点占用实际 DNS 名额，回调仅归还资源，不延续业务。
         """
@@ -255,7 +338,7 @@ class PluginNetworkService:
                 self._dns_count += 1
                 call.set_dns(future)
 
-        call.owner.session.accept(call.lease, submit)
+        call.accept_action(submit)
         assert future is not None
 
         def completed(_: Future[tuple[str, ...]]) -> None:
@@ -285,7 +368,7 @@ class PluginNetworkService:
         return future
 
     def pool(
-        self, origin: NetworkOrigin, address: IPv4Address | IPv6Address, call: _NetworkCall
+        self, origin: NetworkOrigin, address: IPv4Address | IPv6Address, call: NetworkCall
     ) -> httpcore.ConnectionPool:
         """
         创建单跳独立 HTTP/1 连接，不继承代理、Cookie、账户或证书环境。
@@ -304,10 +387,10 @@ class PluginNetworkService:
             retries=0,
             http1=True,
             http2=False,
-            network_backend=PinnedNetworkBackend(origin, address, call, self._dialer),
+            network_backend=PinnedNetworkBackend(origin, address, call, self._dialer, call.wire_limit),
         )
 
-    def reap(self, call: _NetworkCall) -> None:
+    def reap(self, call: NetworkCall) -> None:
         """
         实际调用、DNS 和全部流均已结束后才释放名额。
 
@@ -317,7 +400,7 @@ class PluginNetworkService:
             with self._lock:
                 self._calls.discard(call)
 
-    def calls(self, owner: RuntimeNetwork) -> tuple[_NetworkCall, ...]:
+    def calls(self, owner: RuntimeNetwork) -> tuple[NetworkCall, ...]:
         """
         取得当前 run 的资源快照，调用方在锁外检查或关闭。
 
@@ -412,9 +495,22 @@ class RuntimeNetwork:
                 trace.log(logger, f"插件网络读取异常；类型：{type(exc).__name__}；调用位置：{locations}", logging.ERROR)
                 raise ProtocolError("插件网络读取失败", "PLUGIN_NETWORK_FAILED") from None
 
-    def _request(self, call: _NetworkCall, request: NetworkRequest) -> dict[str, JsonValue]:
+    def _request(self, call: NetworkCall, request: NetworkRequest) -> dict[str, JsonValue]:
         """
         每跳独立解析与连接，跨站永久去掉身份头，先关闭前跳再继续。
+        """
+        with self.stream(call, request) as (url, response):
+            return self._result(call, request.method, url, response)
+
+    @contextmanager
+    def stream(self, call: NetworkCall, request: NetworkRequest) -> Iterator[tuple[str, httpcore.Response]]:
+        """
+        为查询或下载逐跳执行同一受控请求，响应只在上下文内可读取。
+
+        :param call: 原始执行授权、任务取消和实际资源归属
+        :param request: 严格验证的 GET/HEAD 请求
+        :return: 最终规范 URL 与原始响应；退出关闭每跳连接
+        :raises ProtocolError: 站点、跳转、网络或期限不满足时抛出
         """
         origin, url = NetworkOrigin.from_url(request.url)
         headers = {name.lower(): value for name, value in request.headers.items()}
@@ -440,7 +536,8 @@ class RuntimeNetwork:
                 ) as response:
                     call.check()
                     if response.status not in self.redirects:
-                        return self._result(call, request.method, url, response)
+                        yield url, response
+                        return
                     next_origin, next_url = self._redirect(origin, url, response, hop)
             call.close_streams()
             if next_origin != origin:
@@ -489,7 +586,7 @@ class RuntimeNetwork:
             raise ProtocolError("插件网络响应头超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
         return headers, encodings
 
-    def _result(self, call: _NetworkCall, method: str, url: str, response: httpcore.Response) -> dict[str, JsonValue]:
+    def _result(self, call: NetworkCall, method: str, url: str, response: httpcore.Response) -> dict[str, JsonValue]:
         """
         返回完整小型实体，无体响应不按描述性的 Content-Length 读取。
         """
@@ -521,7 +618,7 @@ class RuntimeNetwork:
         for call in self.service.calls(self):
             try:
                 call.check()
-            except (ProtocolError, PluginGrantError):
+            except (ProtocolError, PluginGrantError, GameServiceError):
                 call.cancel()
             call.retry_cleanup()
             self.service.reap(call)

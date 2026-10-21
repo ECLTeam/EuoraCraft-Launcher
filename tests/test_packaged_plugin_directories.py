@@ -184,6 +184,7 @@ class Plugin(BasePlugin):
             {'name':'tasks','type':'integer'},
             {'name':'exported','type':'bool'},
             {'name':'network_checked','type':'bool'},
+            {'name':'download_checked','type':'bool'},
         ))
 
     def probe(self):
@@ -217,9 +218,39 @@ class Plugin(BasePlugin):
         content = self.host.call('files.read', {'target':{'root_ref':exported['root_ref'],
             'relative_path':exported['name']}, 'offset':0, 'count':32768})
         assert json.loads(base64.b64decode(content['data_b64']))['api_version'] == 2
+        download_checked = False
+        if live_download_checks:
+            params = {'url':'http://www.msftconnecttest.com/connecttest.txt',
+                'target':{'root_ref':exported['root_ref'],'relative_path':'download.bin'},
+                'overwrite':False, 'expected_sha256':hashlib.sha256(b'Microsoft Connect Test').hexdigest()}
+            receipt = self.host.call('downloads.submit', params, mutation_key='native-download')
+            deadline = time.monotonic() + 15
+            while True:
+                downloaded = self.host.call('operations.get', {'operation_ref':receipt['operation_ref']})
+                if downloaded['state'] in ('completed','failed','cancelled'):
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(0.02)
+            assert downloaded['state'] == 'completed' and downloaded['effect'] == 'committed', downloaded
+            assert self.host.call('downloads.submit', params, mutation_key='native-download') == receipt
+            content = self.host.call('files.read', {'target':params['target'], 'offset':0,'count':32768})
+            assert base64.b64decode(content['data_b64']) == b'Microsoft Connect Test'
+            params['target'] = {'root_ref':exported['root_ref'],'relative_path':'cancel-download.bin'}
+            cancelled = self.host.call('downloads.submit', params)
+            self.host.call('operations.cancel', {'operation_ref':cancelled['operation_ref']})
+            deadline = time.monotonic() + 10
+            while True:
+                stopped = self.host.call('operations.get', {'operation_ref':cancelled['operation_ref']})
+                if stopped['state'] in ('completed','failed','cancelled'):
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(0.02)
+            assert stopped['state'] == 'cancelled' and stopped['effect'] == 'none', stopped
+            download_checked = True
         return {'pid':os.getpid(),
             'exported':True,
             'network_checked':network_checked,
+            'download_checked':download_checked,
             'tasks':len(self.host.call('operations.list')['items']),
             'count':len(resources), 'first':value['version_id'],
             'resource':importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
@@ -228,6 +259,7 @@ class Plugin(BasePlugin):
     code = (
         (Path(__file__).resolve().parents[1] / "examples/plugins/worker_snapshot/main.py").read_text(encoding="utf-8")
         + f"\nlive_network_checks = {bool(os.environ.get('ECL_PLUGIN_SMOKE_LIVE_NETWORK'))!r}\n"
+        + f"live_download_checks = {bool(os.environ.get('ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD'))!r}\n"
         + code
     )
     package_path = make_package(
@@ -367,12 +399,19 @@ class Plugin(BasePlugin):
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
                     assert probe["count"] == 1 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
-                    assert probe["tasks"] == 1 and probe["exported"]
+                    assert (
+                        probe["tasks"] == (3 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 1)
+                        and probe["exported"]
+                    )
+                    assert probe["download_checked"] == bool(os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD"))
                     assert probe["network_checked"] == bool(os.environ.get("ECL_PLUGIN_SMOKE_LIVE_NETWORK"))
                     files_path = data_path / "plugin_data" / identity / "files"
                     exports = tuple(files_path.glob("snapshot-*.json"))
                     assert len(exports) == 1
                     assert all(json.loads(path.read_bytes())["api_version"] == 2 for path in exports)
+                    if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD"):
+                        assert (files_path / "download.bin").read_bytes() == b"Microsoft Connect Test"
+                        assert not (files_path / "cancel-download.bin").exists()
                     saved = await _native_invoke(
                         native,
                         108,

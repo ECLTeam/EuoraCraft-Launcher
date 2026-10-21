@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
+from time import monotonic
 from typing import Literal
 from uuid import uuid4
 
@@ -29,7 +30,7 @@ from ECL.utils.errors import GameServiceError
 @dataclass(frozen=True, slots=True)
 class _OperationReference:
     operation_id: str
-    lease: GrantLease
+    leases: tuple[GrantLease, ...]
     project_result: Callable[[object], JsonValue] | None
     result_lease: GrantLease | None
 
@@ -64,6 +65,9 @@ class RuntimeOperations:
         result_lease: GrantLease | None = None,
         cleanup: Callable[[], bool] | None = None,
         initial_effect: Literal["none", "staged"] = "none",
+        additional_leases: tuple[GrantLease, ...] = (),
+        deadline: float | None = None,
+        submission_deadline: float | None = None,
     ) -> str:
         """
         供受信业务适配器创建有限任务，不暴露生产 RPC 提交入口。
@@ -75,14 +79,34 @@ class RuntimeOperations:
         :param result_lease: 独立结果读取权限；缺少时即使写入成功也不交付结果
         :param cleanup: 实际执行结束或排队取消后的幂等资源清理
         :param initial_effect: 接纳时已持有的暂存状态
+        :param additional_leases: 同一任务必须共同有效的其他原始执行准入
+        :param deadline: 执行及最终提交接受的总截止
+        :param submission_deadline: 仅控制新任务入队的 RPC 截止
         :return: 本次运行的随机引用
         :raises PluginGrantError: 准入已经失效时抛出
         :raises ProtocolError: 运行已关闭或引用容量耗尽时抛出
         """
-        self._session.check(lease)
+        leases = (lease, *additional_leases)
+
+        def check_deadline() -> None:
+            if deadline is not None and monotonic() >= deadline:
+                raise ProtocolError("插件任务超过截止时间", "PLUGIN_DEADLINE_EXCEEDED")
+
+        def check() -> None:
+            self._session.check_all(leases)
+            check_deadline()
+
+        def accept(register: Callable[[], None]) -> None:
+            def accepted() -> None:
+                check_deadline()
+                register()
+
+            self._session.accept_all(leases, accepted)
+
+        check()
         admission = OperationAdmission(
-            lambda: self._session.check(lease),
-            lambda register: self._session.accept(lease, register),
+            check,
+            accept,
             lease.capability,
             lease.resource_refs,
             cleanup,
@@ -93,16 +117,18 @@ class RuntimeOperations:
 
         def register() -> None:
             with self._lock:
+                if submission_deadline is not None and monotonic() >= submission_deadline:
+                    raise ProtocolError("插件提交超过截止时间", "PLUGIN_DEADLINE_EXCEEDED")
                 if self._closed:
                     raise ProtocolError("插件运行已经关闭", "PLUGIN_SESSION_EXPIRED")
                 if len(self._references) >= 128:
                     raise ProtocolError("本运行任务引用已达上限", "PLUGIN_RATE_LIMITED")
                 # manager 的内部入队只登记状态；昂贵的授权检查已在外层完成。
                 operation_id = self._manager.submit_owned(kind, worker, self._origin, admission)
-                self._references[reference] = _OperationReference(operation_id, lease, project_result, result_lease)
+                self._references[reference] = _OperationReference(operation_id, leases, project_result, result_lease)
 
         try:
-            self._session.accept(lease, register)
+            accept(register)
         except GameServiceError as exc:
             raise ProtocolError("插件任务未能提交", exc.error_code) from exc
         return reference
@@ -209,7 +235,7 @@ class RuntimeOperations:
             items = tuple(self._references.values())
         for item in items:
             try:
-                self._session.check(item.lease)
+                self._session.check_all(item.leases)
             except PluginGrantError:
                 with self._lock:
                     if not self._closed:

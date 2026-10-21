@@ -32,6 +32,7 @@ from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.runtime.download_api import RuntimeDownloads
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
@@ -86,6 +87,7 @@ class PluginHostBroker:
             "files.write_begin",
             "files.write_chunk",
             "files.write_commit",
+            "downloads.submit",
         }
     )
     max_receipts: ClassVar[int] = 1024
@@ -124,6 +126,11 @@ class PluginHostBroker:
             RuntimeFiles(session, file_storage, self.operations) if file_storage and self.operations else None
         )
         self.network: RuntimeNetwork | None = RuntimeNetwork(session, network_service) if network_service else None
+        self.downloads: RuntimeDownloads | None = (
+            RuntimeDownloads(session, self.files, self.network, self.operations)
+            if self.files is not None and self.network is not None and self.operations is not None
+            else None
+        )
         self._settings_path = data_path / "plugin_settings_v2" / f"{session.view().installation_id}.json"
         self._lock = RLock()
         self._settings_lock = RLock()
@@ -222,7 +229,9 @@ class PluginHostBroker:
                 if len(self._receipts) >= self.max_receipts:
                     raise ProtocolError("本运行变更回执已达上限", "PLUGIN_RATE_LIMITED")
                 receipt = _Receipt(
-                    fingerprint, epoch, is_owner_control=request.method in {"operations.cancel", "files.write_commit"}
+                    fingerprint,
+                    epoch,
+                    is_owner_control=request.method in {"operations.cancel", "files.write_commit", "downloads.submit"},
                 )
                 self._receipts[request.mutation_key] = receipt
             elif receipt.fingerprint != fingerprint:
@@ -275,6 +284,7 @@ class PluginHostBroker:
             "instances.scan",
             "instances.get",
             "network.request",
+            "downloads.submit",
         }:
             return self._query_service(request)
         if method == "runtime.info":
@@ -309,6 +319,10 @@ class PluginHostBroker:
 
     def _query_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
+        if method == "downloads.submit":
+            if self.downloads is None:
+                raise ProtocolError("当前宿主未提供下载任务", "PLUGIN_API_METHOD_NOT_FOUND")
+            return self.downloads.submit(params, request.deadline)
         if method == "network.request":
             if self.network is None:
                 raise ProtocolError("当前宿主未提供网络读取", "PLUGIN_API_METHOD_NOT_FOUND")
@@ -673,16 +687,22 @@ class PluginHostBroker:
         if current_thread() is not self._event_thread:
             self._event_thread.join(1)
 
+    def refresh_pending_work(self) -> None:
+        """
+        监管现有任务、网络和暂存的原始授权及取消信号，并重试真实资源清理。
+        """
+        if self.operations is not None:
+            self.operations.refresh_permissions()
+        if self.network is not None:
+            self.network.refresh_permissions()
+        if self.files is not None:
+            self.files.refresh_permissions()
+
     def refresh_permissions(self) -> None:
         """
         授权版本变化后只保留仍获准的注册，并为自身事件重新建立有效准入。
         """
-        if self.network is not None:
-            self.network.refresh_permissions()
-        if self.operations is not None:
-            self.operations.refresh_permissions()
-        if self.files is not None:
-            self.files.refresh_permissions()
+        self.refresh_pending_work()
         view = self.session.view()
         allowed = {item.capability for item in view.items if item.decision == "allow"}
         if view.error_code or not view.required_satisfied:

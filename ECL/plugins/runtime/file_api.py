@@ -23,7 +23,7 @@ from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
-from ECL.plugins.runtime.file_storage import FileUpload, PluginFileStorage
+from ECL.plugins.runtime.file_storage import PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import (
     FileListRequest,
     FileReadRequest,
@@ -245,31 +245,62 @@ class RuntimeFiles:
         先验证根和精确目标，再登记预留并独占创建暂存；清理失败保留资源归属。
         """
         query = FileWriteBeginRequest.model_validate(params)
-        if not query.target.relative_path:
-            raise FileBoundaryError("新文件必须有名称", "PLUGIN_SCHEMA_INVALID")
         lease = self._session.authorize("filesystem.write")
+        upload = self.prepare(query.target, lease, query.total_bytes, query.total_bytes, deadline)
+        return {"write_ref": upload.write_ref, "max_chunk_bytes": 32768}
+
+    def prepare(
+        self,
+        target: FileRef,
+        lease: GrantLease,
+        reserved_bytes: int,
+        expected_bytes: int | None,
+        deadline: float,
+        *,
+        additional_leases: tuple[GrantLease, ...] = (),
+    ) -> StagedFile:
+        """
+        为上传或下载绑定精确私有目标、预留容量并创建拥有唯一归属的原生暂存。
+
+        :param target: 当前运行的非空文件引用
+        :param lease: 原始写准入
+        :param reserved_bytes: 共享配额中的预留上限
+        :param expected_bytes: 已知精确长度；未知长度下载为 None
+        :param deadline: 准备截止
+        :param additional_leases: 准备动作同时需要的原始执行准入
+        :return: 已登记归属的暂存
+        :raises FileBoundaryError: 目标、配额或原生文件边界不满足时抛出
+        """
+        if not target.relative_path:
+            raise FileBoundaryError("新文件必须有名称", "PLUGIN_SCHEMA_INVALID")
+        leases = (lease, *additional_leases)
+
+        def accept() -> None:
+            self._session.accept_all(leases, self._ensure_open)
+
+        self._session.check_all(leases)
         # 根创建是先接受的有限准备动作；随后仍需接受具体上传，不借初始化自动授权发布。
         with self._storage.access(self._installation_id) as existing:
-            self._resolve(query.target, lease, existing.identity)
+            self._resolve(target, lease, existing.identity)
             self._check(lease, deadline)
-        with self._storage.access(self._installation_id, initialize=True, admit=lambda: self._accept(lease)) as space:
+        with self._storage.access(self._installation_id, initialize=True, admit=accept) as space:
             assert space.directory is not None
             with self._lock:
                 self._root_identity = space.identity
-            self._resolve(query.target, lease, space.identity)
+            self._resolve(target, lease, space.identity)
             self._check(lease, deadline)
-            self._absent(space.directory, query.target.relative_path)
+            self._absent(space.directory, target.relative_path)
             self._storage.check_quota(
-                self._installation_id, space.directory, deadline, query.total_bytes, is_new_upload=True
+                self._installation_id, space.directory, deadline, reserved_bytes, is_new_upload=True
             )
-            upload = FileUpload(query.target, lease, space.directory, query.total_bytes)
+            upload = StagedFile(target, lease, space.directory, reserved_bytes, expected_bytes)
             with upload.io_lock:
 
                 def reserve() -> None:
                     self._ensure_open()
                     self._storage.reserve(upload)
 
-                self._session.accept(lease, reserve)
+                self._session.accept_all(leases, reserve)
                 try:
 
                     def own_stream(stream: FileHandle) -> None:
@@ -280,9 +311,34 @@ class RuntimeFiles:
                 except BaseException:
                     self._storage.cleanup(upload)
                     raise
-            return {"write_ref": upload.write_ref, "max_chunk_bytes": 32768}
+            return upload
 
-    def _upload(self, reference: str) -> FileUpload:
+    def cleanup(self, upload: StagedFile) -> bool:
+        """
+        只减少当前运行暂存资源，不要求已经撤销的写权限。
+
+        :param upload: 受信适配器持有的暂存
+        :return: 真实句柄和暂存已释放时为 True
+        """
+        return self._storage.cleanup(upload)
+
+    def write_staged(self, upload: StagedFile, block: bytes) -> None:
+        """
+        为已接纳任务顺序写入有限块，调用方已在网络接受点核验原始双权限。
+
+        :param upload: 任务拥有的原生暂存
+        :param block: 至多 32 KiB 的实体字节
+        :raises FileBoundaryError: 归属、长度或原生写入失败时抛出
+        """
+        with upload.io_lock:
+            if upload.owner != "task" or upload.stream is None:
+                raise FileBoundaryError("暂存已交付或释放", "PLUGIN_RESOURCE_NOT_FOUND")
+            if len(block) > 32768 or upload.received_bytes + len(block) > upload.reserved_bytes:
+                raise FileBoundaryError("插件下载文件超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
+            upload.stream.write(upload.received_bytes, block)
+            upload.received_bytes += len(block)
+
+    def _upload(self, reference: str) -> StagedFile:
         """
         只允许当前宿主 run 查找上传，其他来源和已释放引用无法区分。
         """
@@ -291,7 +347,7 @@ class RuntimeFiles:
             raise FileBoundaryError("未找到自身上传", "PLUGIN_RESOURCE_NOT_FOUND")
         return upload
 
-    def _check_upload(self, upload: FileUpload, deadline: float) -> None:
+    def _check_upload(self, upload: StagedFile, deadline: float) -> None:
         """
         调用方持有上传 I/O 锁，旧租约或空闲过期不得换新后继续。
         """
@@ -318,7 +374,7 @@ class RuntimeFiles:
             self._check_upload(upload, deadline)
             if query.offset != upload.received_bytes:
                 raise FileBoundaryError("上传偏移不连续", "PLUGIN_WRITE_SEQUENCE_INVALID")
-            if upload.received_bytes + len(block) > upload.total_bytes:
+            if upload.expected_bytes is None or upload.received_bytes + len(block) > upload.expected_bytes:
                 raise FileBoundaryError("上传超过声明大小", "PLUGIN_WRITE_SIZE_EXCEEDED")
             self._accept(upload.lease)
             assert upload.stream is not None
@@ -332,11 +388,20 @@ class RuntimeFiles:
                 raise
             return {"received_bytes": upload.received_bytes}
 
-    def _publish(self, upload: FileUpload, digest: str, context: OperationContext) -> _PublishedFile:
+    def publish(
+        self, upload: StagedFile, digest: str, context: OperationContext, *, deadline: float | None = None
+    ) -> _PublishedFile:
         """
         先取得暂存最终快照，再接受一次原生发布；发布后只交付捕获的快照。
+
+        :param upload: 已交付任务的唯一暂存
+        :param digest: 接收过程的完整摘要
+        :param context: 任务真实取消与提交上下文
+        :param deadline: 可选任务总截止，与本地 30 秒预算取较早值
+        :return: 发布前捕获的不可变快照
+        :raises FileBoundaryError: 长度、摘要、身份或不覆盖发布失败时抛出
         """
-        deadline = monotonic() + 30
+        deadline = min(deadline, monotonic() + 30) if deadline is not None else monotonic() + 30
         # 统一锁序为安装目录 → 上传，避免与 begin 的配额查询、退出清理相互等待。
         with self._storage.access(self._installation_id) as space, upload.io_lock:
             context.check_cancelled()
@@ -345,7 +410,7 @@ class RuntimeFiles:
                 raise FileBoundaryError("上传根身份变化", "PLUGIN_FILE_CHANGED")
             self._storage.check_quota(self._installation_id, space.directory, deadline)
             information = upload.stream.information()
-            if information.identity != upload.stream.identity or information.size != upload.total_bytes:
+            if information.identity != upload.stream.identity or information.size != upload.received_bytes:
                 raise FileBoundaryError("暂存大小或身份变化", "PLUGIN_FILE_CHANGED")
             actual = upload.stream.digest(deadline)
             if actual != digest:
@@ -368,9 +433,13 @@ class RuntimeFiles:
             context.finalize(publish)
             return published
 
-    def _project(self, result: object) -> JsonValue:
+    def project(self, result: object) -> JsonValue:
         """
         仅从已发布快照构建视图；根核验失败隐藏结果，不改变已提交任务状态。
+
+        :param result: 任务保存的已发布快照
+        :return: 不含真实路径的文件视图
+        :raises FileBoundaryError: 快照类型或根身份无效时抛出
         """
         if not isinstance(result, _PublishedFile):
             raise FileBoundaryError("文件结果类型无效", "PLUGIN_FILE_INVALID")
@@ -387,7 +456,7 @@ class RuntimeFiles:
         upload = self._upload(query.write_ref)
         with upload.io_lock:
             self._check_upload(upload, deadline)
-            if upload.received_bytes != upload.total_bytes:
+            if upload.received_bytes != upload.expected_bytes:
                 raise FileBoundaryError("上传尚未完成", "PLUGIN_WRITE_SEQUENCE_INVALID")
             try:
                 result_lease = self._session.authorize("filesystem.read")
@@ -399,9 +468,9 @@ class RuntimeFiles:
             try:
                 reference = self._operations.submit(
                     "plugin_file_write",
-                    lambda context: self._publish(upload, query.sha256, context),
+                    lambda context: self.publish(upload, query.sha256, context),
                     upload.lease,
-                    project_result=self._project,
+                    project_result=self.project,
                     result_lease=result_lease,
                     cleanup=lambda: self._storage.cleanup(upload),
                     initial_effect="staged",

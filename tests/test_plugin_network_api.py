@@ -580,19 +580,19 @@ def test_broker_idle_retains_orphan_dns_until_actual_return(tmp_path):
 
 
 def test_delivery_rechecks_original_lease_after_final_cleanup(tmp_path, monkeypatch):
-    from ECL.plugins.runtime.network_api import _NetworkCall
+    from ECL.plugins.runtime.network_api import NetworkCall
 
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") as (port, _requests, _sni):
         runtime, store = make_runtime(
             tmp_path, [f"http:p10.example.test:{port}"], resolver=lambda *_: ("1.1.1.1",), dialer=MappedDialer()
         )
-        original = _NetworkCall.finish
+        original = NetworkCall.finish
 
         def finish(call):
             original(call)
             decide(store, runtime.session, [], is_allowed=False)
 
-        monkeypatch.setattr(_NetworkCall, "finish", finish)
+        monkeypatch.setattr(NetworkCall, "finish", finish)
         try:
             with pytest.raises(PluginGrantError):
                 read(runtime, f"http://p10.example.test:{port}/")
@@ -603,13 +603,13 @@ def test_delivery_rechecks_original_lease_after_final_cleanup(tmp_path, monkeypa
 
 
 def test_public_backend_with_actual_numeric_peer_preserves_tls_identity_without_second_dns(tmp_path, monkeypatch):
-    from ECL.plugins.runtime.network_api import _NetworkCall
+    from ECL.plugins.runtime.network_api import NetworkCall
 
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", is_tls=True) as (port, requests, sni):
         reference = f"https:p10.example.test:{port}"
         runtime, _ = make_runtime(tmp_path, [reference], dialer=httpcore.SyncBackend(), ssl_context=ssl_context())
         lease = runtime.session.authorize("network.read", (reference,))
-        call = _NetworkCall(runtime, lease, monotonic() + 4)
+        call = NetworkCall(runtime, lease, monotonic() + 4)
         original = socket.getaddrinfo
         lookups = []
 
