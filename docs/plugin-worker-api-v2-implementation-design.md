@@ -1042,4 +1042,14 @@ HostClient 为提交产生本运行去重键，明确错误抛出 HostApiError�
 
 可信 `plugin_permission_resources` 提供按目录展开的有界候选；保存同时检查内容摘要、授权 revision 与资源目录 revision。所有读取和最终交付均复核许可及物理身份，扫描 30 秒、单项/资源列表 5 秒，分页最多 16 个快照、120 秒、每页 1—100 项且结果受 64 KiB 限制。完成的单页查询立即释放分页容量。
 
-源码、真实冻结与 WebView2 验证见 [本轮验收记录](plugin-instance-read-api-implementation-plan.md#9-实施与验收记录)。这只完成 P07 的实例读取切片；其他查询、任务提交/取消、实例写入和自定义前端保持后续推进。
+源码、真实冻结与 WebView2 验证见 [本轮验收记录](plugin-instance-read-api-implementation-plan.md#9-实施与验收记录)。这只完成 P07 的实例读取切片；其他查询、真实业务任务提交、实例写入和自定义前端保持后续推进；自身任务控制基础见第 23 节。
+
+## 23. P08 任务归属与提交控制基础（2026-10-21）
+
+按用户确认的 [实施方案](plugin-operation-ownership-implementation-plan.md)，复用 ApplicationContext 的唯一 OperationManager，以不可变安装/内容/run 来源隔离任务。插件层只维护运行引用和结果投影，开放 operations.get/list/cancel；生产任务创建和下载、Java、Minecraft 等实际适配仍待后续切片。控制没有新业务权限，敏感结果逐次核验原准入，旧 run 不从审计文件恢复控制权。
+
+执行阶段和副作用由任务服务统一维护，桌面五态保持现行投影。取消请求不会掩盖真实异常；提交接受排序在短授权锁和任务锁内完成，业务动作与落盘均在全局锁外执行。设置短写与命令、定义、订阅注册使用同一授权接受边界，保持原同步结果及去重回执；W5 全部业务统一 TaskReceipt 不由本切片完成。
+
+插件任务摘要存入 operations/plugin，按每任务写锁获取最新 revision 后原子保存，不包含完整参数、路径和结果。提交前保存失败不执行动作；动作完成后的保存失败保持真实结果、收尾 pending，只重试摘要。Worker 停止后等待本 run 的实际 future 与审计保存，pending 时拒绝重新启用，完成后释放引用和记录。不会自动重放、迁移或删除用户资源。
+
+源码、真实 Worker、冻结产物与主窗口验证结果集中在 [本轮验收记录](plugin-operation-ownership-implementation-plan.md#10-实施与验收记录)。

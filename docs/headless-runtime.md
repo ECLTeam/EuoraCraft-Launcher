@@ -74,7 +74,7 @@ ECL.exe --headless --role plugin --pipe-address <宿主端点> --host-pid <PID> 
 
 插件生命周期与双向调用通过 IPC 交付，不使用 stdout 的探测结果协议。参数、连接或授权失败不会回退桌面。断连及关闭由宿主监管和会话资源清理处理；已经提交到宿主的业务任务须另按任务所有权和取消规则管理。
 
-正式 PluginManager 已接入目录与归档第三方插件：安装和发现只登记，完成内容审阅及必要授权后才创建 Worker；禁用、崩溃及必要权限撤销均由宿主持有的监管服务确认进程停止。Windows x64 以外平台明确拒绝第三方执行。可信主窗口提供权限审阅与撤销，当前 Host API 开放自身命令、设置、自查询、自身设置事件，以及用户明确批准的目录/单实例只读查询。完整业务 API 仍需后续切片。实现与验收见 [管理器接入方案](plugin-worker-manager-integration-plan.md) 和 [实例读取方案](plugin-instance-read-api-implementation-plan.md)。自定义前端原生隔离保持暂缓。
+正式 PluginManager 已接入目录与归档第三方插件：安装和发现只登记，完成内容审阅及必要授权后才创建 Worker；禁用、崩溃及必要权限撤销均由宿主持有的监管服务确认进程停止。Windows x64 以外平台明确拒绝第三方执行。可信主窗口提供权限审阅与撤销，当前 Host API 开放自身命令、设置、自查询、自身设置事件，用户明确批准的目录/单实例只读查询，以及当前 run 的自身任务状态查询和取消。任务控制不包含生产下载或安装创建接口；宿主任务收尾等待实际 future 和审计保存，不能以 Worker 退出代替。完整业务 API 仍需后续切片。实现与验收见 [管理器接入方案](plugin-worker-manager-integration-plan.md) 和 [实例读取方案](plugin-instance-read-api-implementation-plan.md)。自定义前端原生隔离保持暂缓。
 
 ## 扩展边界
 
