@@ -13,6 +13,7 @@
 #   - safe_log_text — 脱敏项目日志文本。
 #   - class OperationLogFilter — 为日志记录补充脱敏消息，并在计时操作中附带耗时。
 #   - class ReadableLogFormatter — 脱敏异常堆栈，保留原日志格式。
+#   - private_transport_scope — 在当前上下文过滤可能包含原始网络数据的库日志。
 # ============================================================
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ __all__ = [
     "ReadableLogFormatter",
     "current_operation",
     "operation_scope",
+    "private_transport_scope",
     "safe_log_text",
     "trace_scope",
 ]
@@ -89,6 +91,21 @@ class OperationLogState:
     """
 
     current: ContextVar[OperationTrace | None] = ContextVar("ecl_operation_trace", default=None)
+    is_private_transport: ContextVar[bool] = ContextVar("ecl_private_transport", default=False)
+
+
+@contextmanager
+def private_transport_scope() -> Iterator[None]:
+    """
+    仅过滤当前网络调用的传输日志，退出时恢复，不改变其他任务的日志级别。
+
+    :return: 退出后恢复原过滤上下文
+    """
+    token = OperationLogState.is_private_transport.set(True)
+    try:
+        yield
+    finally:
+        OperationLogState.is_private_transport.reset(token)
 
 
 def current_operation() -> OperationTrace | None:
@@ -142,8 +159,10 @@ class OperationLogFilter(logging.Filter):
         修改项目日志消息的内容，保留级别和前端协议字段。
 
         :param record: 标准库日志记录
-        :return: 始终允许记录输出
+        :return: 当前敏感传输上下文中的库日志为 False，其他日志照常脱敏输出
         """
+        if OperationLogState.is_private_transport.get() and record.name.split(".", 1)[0] in {"httpcore", "httpx"}:
+            return False
         if getattr(record, "is_operation_processed", False):
             return True
         message = safe_log_text(record.getMessage())

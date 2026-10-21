@@ -1,0 +1,13 @@
+{
+  "name": "worker_network_read",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "只读网络请求示例",
+  "description": "审阅精确站点后读取小型公开资源，不接收宿主凭据。",
+  "entry_point": "main:Plugin",
+  "permissions": [
+    { "capability": "commands.register", "required": true },
+    { "capability": "commands.execute", "required": true },
+    { "capability": "network.read", "required": false, "resource_refs": ["https:connectivitycheck.gstatic.com:443"] }
+  ]
+}

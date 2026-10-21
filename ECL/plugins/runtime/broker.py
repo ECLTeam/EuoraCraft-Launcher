@@ -35,6 +35,7 @@ from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
+from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.services.operations import OperationManager
@@ -69,6 +70,7 @@ class PluginHostBroker:
             "instances.read",
             "filesystem.read",
             "filesystem.write",
+            "network.read",
         }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
@@ -98,6 +100,7 @@ class PluginHostBroker:
         resources: RuntimeResources | None = None,
         operations: OperationManager | None = None,
         file_storage: PluginFileStorage | None = None,
+        network_service: PluginNetworkService | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -109,6 +112,7 @@ class PluginHostBroker:
         :param operations: 应用唯一任务服务；没有该服务时不开放任务控制
         :param resources: 当前运行的共享实例资源表；未提供时拒绝共享资源 API
         :param file_storage: 应用拥有的私有文件存储；缺少任务服务时不开放文件 API
+        :param network_service: 应用唯一只读网络服务；未提供时不开放网络方法
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -119,6 +123,7 @@ class PluginHostBroker:
         self.files: RuntimeFiles | None = (
             RuntimeFiles(session, file_storage, self.operations) if file_storage and self.operations else None
         )
+        self.network: RuntimeNetwork | None = RuntimeNetwork(session, network_service) if network_service else None
         self._settings_path = data_path / "plugin_settings_v2" / f"{session.view().installation_id}.json"
         self._lock = RLock()
         self._settings_lock = RLock()
@@ -190,6 +195,8 @@ class PluginHostBroker:
         if not self._idle.wait(timeout):
             return False
         if self.operations is not None and not self.operations.is_idle():
+            return False
+        if self.network is not None and not self.network.is_idle():
             return False
         return self.files is None or self.files.is_idle()
 
@@ -267,6 +274,7 @@ class PluginHostBroker:
             "resources.list",
             "instances.scan",
             "instances.get",
+            "network.request",
         }:
             return self._query_service(request)
         if method == "runtime.info":
@@ -301,6 +309,12 @@ class PluginHostBroker:
 
     def _query_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
+        if method == "network.request":
+            if self.network is None:
+                raise ProtocolError("当前宿主未提供网络读取", "PLUGIN_API_METHOD_NOT_FOUND")
+            result = self.network.handle(params, request.deadline)
+            request.check_deadline()
+            return result
         if method.startswith("files.") or (
             method == "resources.list" and params.get("capability") in ("filesystem.read", "filesystem.write")
         ):
@@ -645,6 +659,8 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        if self.network is not None:
+            self.network.close()
         if self.files is not None:
             self.files.close()
         if self.operations is not None:
@@ -661,6 +677,8 @@ class PluginHostBroker:
         """
         授权版本变化后只保留仍获准的注册，并为自身事件重新建立有效准入。
         """
+        if self.network is not None:
+            self.network.refresh_permissions()
         if self.operations is not None:
             self.operations.refresh_permissions()
         if self.files is not None:

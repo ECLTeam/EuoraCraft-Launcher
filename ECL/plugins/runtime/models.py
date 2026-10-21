@@ -13,16 +13,19 @@
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
 #   - class OperationGetRequest / OperationListRequest — 自身任务控制输入契约。
 #   - validate_fields — 校验命令输入输出的基础字段。
+#   - class NetworkRequest — GET/HEAD 只读网络请求的严格边界。
 # ============================================================
 
 from __future__ import annotations
 
 import math
+import re
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.network_targets import NetworkOrigin
 
 
 class RequestModel(BaseModel):
@@ -31,6 +34,43 @@ class RequestModel(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class NetworkRequest(RequestModel):
+    """
+    拒绝请求体、任意头和超限输入；凭据只允许显式提供给 HTTPS。
+    """
+
+    method: Literal["GET", "HEAD"]
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    allowed_headers: ClassVar[frozenset[str]] = frozenset(
+        {"accept", "if-none-match", "if-modified-since", "user-agent", "authorization", "x-api-key"}
+    )
+
+    @model_validator(mode="after")
+    def _validate_request(self) -> NetworkRequest:
+        origin, _ = NetworkOrigin.from_url(self.url)
+        names: set[str] = set()
+        size = 0
+        for name, value in self.headers.items():
+            lowered = name.lower()
+            if (
+                len(name) > 64
+                or re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) is None
+                or lowered not in self.allowed_headers
+                or lowered in names
+                or len(value) > 1024
+                or any(not 32 <= ord(char) <= 126 for char in value)
+            ):
+                raise ValueError("网络请求头无效")
+            if lowered in {"authorization", "x-api-key"} and origin.scheme != "https":
+                raise ValueError("认证头仅允许 HTTPS")
+            names.add(lowered)
+            size += len(name.encode()) + len(value.encode())
+        if size > 4096:
+            raise ValueError("网络请求头超过上限")
+        return self
 
 
 class FieldSpec(RequestModel):

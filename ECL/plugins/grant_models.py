@@ -33,9 +33,11 @@ from pydantic import (
     StringConstraints,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepared_code
 
 capability_name = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$", max_length=96)]
@@ -69,6 +71,15 @@ class PermissionDeclaration(_PermissionScope):
 
     required: StrictBool = False
 
+    @model_validator(mode="after")
+    def _network_origins(self) -> Self:
+        if self.capability == "network.read":
+            if not 1 <= len(self.resource_refs) <= 16:
+                raise ValueError("网络读取必须声明 1 至 16 个精确站点")
+            for reference in self.resource_refs:
+                NetworkOrigin.parse(reference)
+        return self
+
     @field_validator("resource_refs")
     @classmethod
     def _host_selected_instances(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
@@ -89,6 +100,15 @@ class PermissionDecision(_PermissionScope):
     decision: Literal["allow", "deny"]
     lifetime: Literal["session", "permanent"] = "permanent"
     expires_at: StrictFloat | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _network_origins(self) -> Self:
+        if self.capability == "network.read":
+            if len(self.resource_refs) > 16 or (self.decision == "allow" and not self.resource_refs):
+                raise ValueError("允许网络读取必须指定精确站点")
+            for reference in self.resource_refs:
+                NetworkOrigin.parse(reference)
+        return self
 
 
 class PermissionManagementCaller(Enum):

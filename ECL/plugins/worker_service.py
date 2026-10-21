@@ -31,6 +31,7 @@ from ECL.plugins.resource_catalog import PluginResourceCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.file_storage import PluginFileStorage
+from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.plugins.runtime.resources import InstanceQueries, ResourcePages, RuntimeResources
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 from ECL.services.operations import OperationManager
@@ -92,6 +93,7 @@ class PluginWorkerService:
         self._monitor_thread: Thread | None = None
         self._operations = operations
         self._file_storage = PluginFileStorage(data_path)
+        self._network_service = PluginNetworkService()
         self._instance_queries = instance_queries
         self._catalog = (
             PluginResourceCatalog(data_path, instance_roots, instance_queries.query_instance_names)
@@ -327,6 +329,7 @@ class PluginWorkerService:
                     run_state=lambda: entry.state,
                     operations=self._operations,
                     file_storage=self._file_storage,
+                    network_service=self._network_service,
                     resources=RuntimeResources(
                         entry.session, self._catalog, self._instance_queries, self.refresh_resources
                     )
@@ -426,6 +429,13 @@ class PluginWorkerService:
                         asdict(item),
                         resource_refs=list(item.resource_refs),
                         selected_resource_refs=list(entry.session.selected_resources(item.capability)),
+                        requested_resource_refs=list(
+                            next(
+                                declaration.resource_refs
+                                for declaration in entry.session.binding.declarations
+                                if declaration.capability == item.capability
+                            )
+                        ),
                         implemented=item.capability in self.grants.implemented_capabilities,
                     )
                     for item in view.items
@@ -594,7 +604,8 @@ class PluginWorkerService:
                 self.stop(name)
             except (OSError, ValueError, WindowsRuntimeError) as exc:
                 failures.append(exc)
+        is_network_idle = self._network_service.close()
         if failures:
             raise WindowsRuntimeError("部分插件进程树尚未确认停止", "PLUGIN_JOB_STOP_PENDING") from failures[0]
-        if not self._file_storage.close():
-            raise WindowsRuntimeError("插件文件资源尚未释放", "PLUGIN_HOST_CLEANUP_PENDING")
+        if not self._file_storage.close() or not is_network_idle:
+            raise WindowsRuntimeError("插件宿主资源尚未释放", "PLUGIN_HOST_CLEANUP_PENDING")

@@ -23,13 +23,21 @@ def broker_setup(tmp_path: Path):
     root = tmp_path / "code"
     root.mkdir()
     (root / "main.py").write_text("value = 1", encoding="utf-8")
-    declarations = tuple(PermissionDeclaration(capability=c) for c in sorted(PluginHostBroker.implemented_capabilities))
+    declarations = tuple(
+        PermissionDeclaration(capability=c, resource_refs=("https:example.com:443",) if c == "network.read" else ())
+        for c in sorted(PluginHostBroker.implemented_capabilities)
+    )
     binding = PluginContentBinding.capture(root, declarations, "windows-x86_64-cp311")
     store = PluginGrantStore(tmp_path, implemented_capabilities=PluginHostBroker.implemented_capabilities)
     session = store.open_session(store.new_installation_id(), binding)
     store.update(
         session,
-        tuple(PermissionDecision(capability=c, decision="allow") for c in PluginHostBroker.implemented_capabilities),
+        tuple(
+            PermissionDecision(
+                capability=c, decision="allow", resource_refs=("https:example.com:443",) if c == "network.read" else ()
+            )
+            for c in PluginHostBroker.implemented_capabilities
+        ),
         expected_revision=0,
         content_digest=binding.content_digest,
         caller=PermissionManagementCaller.main_webview,
