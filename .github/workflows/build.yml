@@ -363,7 +363,7 @@ jobs:
             if [ "${{ matrix.os }}" != "windows-11-arm" ]; then
               export ECL_WORKER_SMOKE_EXECUTABLE="$ECL_PLUGIN_SMOKE_EXECUTABLE"
               export ECL_WORKER_SMOKE_BUILDER="nuitka"
-              python -m pytest tests/test_plugin_worker_bootstrap.py tests/test_plugin_windows_supervision.py tests/test_plugin_worker_dependencies.py tests/test_plugin_worker_lifecycle.py -q
+              python -m pytest tests/test_plugin_worker_bootstrap.py tests/test_plugin_windows_supervision.py tests/test_plugin_worker_dependencies.py tests/test_plugin_worker_lifecycle.py tests/test_plugin_operation_worker.py -q
             fi
           elif [ "$RUNNER_OS" = "macOS" ]; then
             export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher.app/Contents/MacOS/EuoraCraft Launcher"

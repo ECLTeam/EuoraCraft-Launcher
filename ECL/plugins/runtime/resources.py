@@ -98,6 +98,8 @@ class ResourcePages:
         cursor: str | None,
         limit: int,
         load: Callable[[], tuple[dict[str, JsonValue], ...]],
+        *,
+        project: Callable[[dict[str, JsonValue]], dict[str, JsonValue]] | None = None,
     ) -> dict[str, JsonValue]:
         """
         创建或读取绑定查询及代次的分页，按结果字节数提前分页。
@@ -107,6 +109,7 @@ class ResourcePages:
         :param cursor: 宿主生成的短期游标
         :param limit: 已校验的分页条目上限
         :param load: 锁外执行的实际读取
+        :param project: 按页交付时投影最新视图；快照仍只保存原始引用集合
         :return: items 和下一游标
         :raises ProtocolError: 游标失效或容量耗尽时抛出
         """
@@ -131,6 +134,8 @@ class ResourcePages:
         items: list[JsonValue] = []
         size = 256
         for item in snapshot.items[index : index + limit]:
+            if project is not None:
+                item = project(item)
             item_size = len(json.dumps(item, ensure_ascii=False).encode("utf-8")) + 1
             if size + item_size > 60000:
                 if not items:

@@ -508,6 +508,7 @@ def create_application(
             auth_providers=accounts.plugin_auth_providers,
             crash_extensions=game.crash_extensions,
             instance_queries=game,
+            operations=operations,
             instance_roots=lambda: _plugin_instance_roots(config),
         )
         created.append(plugins)

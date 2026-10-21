@@ -33,7 +33,9 @@ from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
+from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
+from ECL.services.operations import OperationManager
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.instance_reading import InstanceReadError
 
@@ -45,6 +47,7 @@ class _Receipt:
     ready: Event = field(default_factory=Event)
     result: dict[str, JsonValue] | None = None
     error_code: str | None = None
+    is_owner_control: bool = False
 
 
 class PluginHostBroker:
@@ -73,6 +76,7 @@ class PluginHostBroker:
             "events.subscribe",
             "events.unsubscribe",
             "commands.call",
+            "operations.cancel",
         }
     )
     max_receipts: ClassVar[int] = 1024
@@ -85,6 +89,7 @@ class PluginHostBroker:
         *,
         run_state: Callable[[], str],
         resources: RuntimeResources | None = None,
+        operations: OperationManager | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -93,6 +98,7 @@ class PluginHostBroker:
         :param data_path: 宿主数据根目录
         :param invoke: 当前 Worker 的受控请求方法
         :param run_state: 唯一运行服务提供的当前状态
+        :param operations: 应用唯一任务服务；没有该服务时不开放任务控制
         :param resources: 当前运行的共享实例资源表；未提供时拒绝共享资源 API
         """
         self.session: PluginGrantSession = session
@@ -100,6 +106,7 @@ class PluginHostBroker:
         self._invoke = invoke
         self._run_state = run_state
         self._resources = resources
+        self.operations: RuntimeOperations | None = RuntimeOperations(session, operations) if operations else None
         self._settings_path = data_path / "plugin_settings_v2" / f"{session.view().installation_id}.json"
         self._lock = RLock()
         self._settings_lock = RLock()
@@ -128,7 +135,10 @@ class PluginHostBroker:
         with self._track_request():
             try:
                 request.check_deadline()
-                self._check_open()
+                if request.method in {"operations.get", "operations.list", "operations.cancel"}:
+                    self._ensure_accepting()
+                else:
+                    self._check_open()
                 payload = _json_value(request.params)
                 if not isinstance(payload, dict) or len(json.dumps(payload, ensure_ascii=False).encode()) > 65536:
                     raise ProtocolError("插件业务载荷超限", "PLUGIN_MESSAGE_TOO_LARGE")
@@ -165,7 +175,9 @@ class PluginHostBroker:
         :param timeout: 等待上限，零只查询
         :return: 所有已接纳调用均已实际返回时为 True
         """
-        return self._idle.wait(timeout)
+        if not self._idle.wait(timeout):
+            return False
+        return self.operations is None or self.operations.is_idle()
 
     @staticmethod
     def _bounded_result(result: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -181,13 +193,14 @@ class PluginHostBroker:
         if not request.mutation_key or len(request.mutation_key) > 64:
             raise ProtocolError("变更请求缺少有效去重键", "PLUGIN_INVALID_REQUEST")
         fingerprint = json.dumps([request.method, payload], sort_keys=True, ensure_ascii=False)
+        epoch = 0 if request.method == "operations.cancel" else self.session.view().grant_epoch
         with self._lock:
             receipt = self._receipts.get(request.mutation_key)
             is_new = receipt is None
             if receipt is None:
                 if len(self._receipts) >= self.max_receipts:
                     raise ProtocolError("本运行变更回执已达上限", "PLUGIN_RATE_LIMITED")
-                receipt = _Receipt(fingerprint, self.session.view().grant_epoch)
+                receipt = _Receipt(fingerprint, epoch, is_owner_control=request.method == "operations.cancel")
                 self._receipts[request.mutation_key] = receipt
             elif receipt.fingerprint != fingerprint:
                 raise ProtocolError("同一去重键不能对应不同请求", "PLUGIN_MUTATION_CONFLICT")
@@ -218,8 +231,11 @@ class PluginHostBroker:
         """
         if not receipt.ready.wait(max(0, request.deadline - monotonic())):
             raise ProtocolError("变更结果尚未确认", "PLUGIN_OUTCOME_PENDING")
-        self._check_open()
-        if receipt.grant_epoch != self.session.view().grant_epoch:
+        if receipt.is_owner_control:
+            self._ensure_accepting()
+        else:
+            self._check_open()
+        if not receipt.is_owner_control and receipt.grant_epoch != self.session.view().grant_epoch:
             raise ProtocolError("回执授权版本已失效", "PLUGIN_PERMISSION_REVOKED")
         if receipt.error_code:
             raise ProtocolError("此前变更未完成", receipt.error_code)
@@ -228,13 +244,15 @@ class PluginHostBroker:
 
     def _dispatch(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
-        if method in {"resources.list", "instances.scan", "instances.get"}:
-            if self._resources is None:
-                raise ProtocolError("当前宿主未提供实例查询", "PLUGIN_API_METHOD_NOT_FOUND")
-            deadline = min(request.deadline, monotonic() + (30 if method == "instances.scan" else 5))
-            result = self._resources.handle(method, params, deadline)
-            request.check_deadline()
-            return result
+        if method in {
+            "operations.get",
+            "operations.list",
+            "operations.cancel",
+            "resources.list",
+            "instances.scan",
+            "instances.get",
+        }:
+            return self._query_service(request)
         if method == "runtime.info":
             self._keys(params, set())
             return {
@@ -264,6 +282,21 @@ class PluginHostBroker:
         if method == "events.subscribe":
             return self._subscribe(params)
         raise ProtocolError("此 Host API 尚未接线", "PLUGIN_API_METHOD_NOT_FOUND")
+
+    def _query_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        method, params = request.method, request.params
+        if method in {"operations.get", "operations.list", "operations.cancel"}:
+            if self.operations is None:
+                raise ProtocolError("当前宿主未提供任务控制", "PLUGIN_API_METHOD_NOT_FOUND")
+            return self.operations.handle(method, params)
+        if method in {"resources.list", "instances.scan", "instances.get"}:
+            if self._resources is None:
+                raise ProtocolError("当前宿主未提供实例查询", "PLUGIN_API_METHOD_NOT_FOUND")
+            deadline = min(request.deadline, monotonic() + (30 if method == "instances.scan" else 5))
+            result = self._resources.handle(method, params, deadline)
+            request.check_deadline()
+            return result
+        raise ProtocolError("服务方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
 
     def _release_registration(self, method: str, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         self._keys(params, {"registration_ref"} if method == "commands.unregister" else {"subscription_ref"})
@@ -304,7 +337,7 @@ class PluginHostBroker:
             receipt = self._receipts.get(key)
         if receipt is None:
             raise ProtocolError("本运行没有此变更回执", "PLUGIN_RESOURCE_NOT_FOUND")
-        if receipt.grant_epoch != self.session.view().grant_epoch:
+        if not receipt.is_owner_control and receipt.grant_epoch != self.session.view().grant_epoch:
             raise ProtocolError("回执授权版本已失效", "PLUGIN_PERMISSION_REVOKED")
         if not receipt.ready.is_set():
             state = "pending"
@@ -320,38 +353,46 @@ class PluginHostBroker:
 
     def _register_command(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         """
-        复核注册授权并只把本运行回调登记到有界命令表。
+        在授权接受点原子登记本 run 的命令，实际回调在锁外执行。
         """
         lease = self.session.authorize("commands.register")
         definition = CommandDefinition.model_validate(params)
         if definition.exported:
             raise ProtocolError("跨插件命令尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
-        self.session.check(lease)
-        with self._lock:
-            self._check_open()
-            if len(self._commands) >= 64 or any(item[1].name == definition.name for item in self._commands.values()):
-                raise ProtocolError("命令已登记或超过上限", "PLUGIN_REGISTRATION_CONFLICT")
-            reference = uuid4().hex
-            self._commands[reference] = (uuid4().hex, definition, lease)
-            return {"command_ref": reference, "registration_ref": self._commands[reference][0]}
+        reference, registration = uuid4().hex, uuid4().hex
+
+        def register() -> None:
+            with self._lock:
+                self._ensure_accepting()
+                if len(self._commands) >= 64 or any(
+                    item[1].name == definition.name for item in self._commands.values()
+                ):
+                    raise ProtocolError("命令已登记或超过上限", "PLUGIN_REGISTRATION_CONFLICT")
+                self._commands[reference] = (registration, definition, lease)
+
+        self.session.accept(lease, register)
+        return {"command_ref": reference, "registration_ref": registration}
 
     def _subscribe(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         """
-        只订阅本安装设置事件，拒绝完整宿主事件总线和未知回调。
+        只在授权接受点登记自身设置订阅，不开放完整宿主事件总线。
         """
         self._keys(params, {"event", "callback_ref"})
         lease = self.session.authorize("events.subscribe")
         callback = params["callback_ref"]
         if params["event"] != "settings.changed" or not isinstance(callback, str) or len(callback) != 32:
             raise ProtocolError("该事件或回调尚未开放", "PLUGIN_EVENT_NOT_EXPOSED")
-        self.session.check(lease)
-        with self._lock:
-            self._check_open()
-            if len(self._subscriptions) >= 32:
-                raise ProtocolError("订阅超过上限", "PLUGIN_RATE_LIMITED")
-            reference = uuid4().hex
-            self._subscriptions[reference] = (callback, lease)
-            return {"subscription_ref": reference}
+        reference = uuid4().hex
+
+        def register() -> None:
+            with self._lock:
+                self._ensure_accepting()
+                if len(self._subscriptions) >= 32:
+                    raise ProtocolError("订阅超过上限", "PLUGIN_RATE_LIMITED")
+                self._subscriptions[reference] = (callback, lease)
+
+        self.session.accept(lease, register)
+        return {"subscription_ref": reference}
 
     def call_command(self, reference: str, args: dict[str, JsonValue], timeout: float = 30) -> JsonValue:
         """
@@ -436,8 +477,12 @@ class PluginHostBroker:
                 definitions = [SettingDefinition.model_validate(item) for item in raw]
                 if len({item.key for item in definitions}) != len(definitions):
                     raise ProtocolError("设置键重复", "PLUGIN_SCHEMA_INVALID")
-                self.session.check(lease)
-                self._definitions = {item.key: item for item in definitions}
+
+                def register() -> None:
+                    self._ensure_accepting()
+                    self._definitions = {item.key: item for item in definitions}
+
+                self.session.accept(lease, register)
                 return {"schema_revision": 1}
             if method == "settings.get":
                 self._keys(params, {"keys"})
@@ -467,8 +512,7 @@ class PluginHostBroker:
                     raise ProtocolError("设置已由其他操作修改", "PLUGIN_REVISION_CONFLICT")
                 candidate = values | patch
                 request.check_deadline()
-                self.session.check(lease)  # 此次单目标原子写的提交接受点；后续撤销不承诺回滚。
-                self._check_open()
+                self.session.accept(lease, self._ensure_accepting)
                 atomic_write_text(
                     self._settings_path,
                     json.dumps(
@@ -545,9 +589,12 @@ class PluginHostBroker:
             except (PluginGrantError, ProtocolError, OSError):
                 get_logger("PluginHostBroker").debug("插件事件未交付，订阅或运行已经失效")
 
-    def _check_open(self) -> None:
+    def _ensure_accepting(self) -> None:
         if self._closed.is_set():
             raise ProtocolError("插件运行已停止接收请求", "PLUGIN_SESSION_EXPIRED")
+
+    def _check_open(self) -> None:
+        self._ensure_accepting()
         view = self.session.view()
         if view.error_code:
             raise ProtocolError("插件授权状态不可用", view.error_code)
@@ -575,6 +622,8 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        if self.operations is not None:
+            self.operations.close()
         if self._resources is not None:
             self._resources.clear()
         with self._lock:
@@ -587,6 +636,8 @@ class PluginHostBroker:
         """
         授权版本变化后只保留仍获准的注册，并为自身事件重新建立有效准入。
         """
+        if self.operations is not None:
+            self.operations.refresh_permissions()
         view = self.session.view()
         allowed = {item.capability for item in view.items if item.decision == "allow"}
         if view.error_code or not view.required_satisfied:

@@ -9,6 +9,7 @@
 #   - class CommandDefinition — 命令注册契约。
 #   - class SettingDefinition — 非执行式设置定义。
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
+#   - class OperationGetRequest / OperationListRequest — 自身任务控制输入契约。
 #   - validate_fields — 校验命令输入输出的基础字段。
 # ============================================================
 
@@ -175,3 +176,20 @@ class InstanceGetRequest(RequestModel):
     """
 
     instance_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class OperationGetRequest(RequestModel):
+    """
+    只接受当前运行任务引用，拒绝主体、路径及内部任务标识。
+    """
+
+    operation_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class OperationListRequest(RequestModel):
+    """
+    限制自身任务分页大小，不允许客户端指定其他运行或筛选主体。
+    """
+
+    cursor: str | None = Field(default=None, max_length=128)
+    limit: StrictInt = Field(default=50, ge=1, le=100)

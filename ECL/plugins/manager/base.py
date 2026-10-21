@@ -4,6 +4,8 @@
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
 # 文件作用：插件管理器内部共享基类与工具。
+#
+# 公开接口：无；内部基类由 PluginManager 组合使用。
 # ============================================================
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
 from ECL.plugins.runtime.resources import InstanceQueries
 from ECL.plugins.worker_service import PluginWorkerService
+from ECL.services.operations import OperationManager
 from ECL.utils import get_logger
 from ECL.utils.instance_reading import InstanceReadError
 
@@ -56,6 +59,7 @@ class _PluginState:
         crash_extensions: CrashAnalysisExtensionRegistry | None = None,
         instance_queries: InstanceQueries | None = None,
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
+        operations: OperationManager | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -69,6 +73,7 @@ class _PluginState:
         :param auth_providers: 与账户服务共享的自定义认证提供方注册表
         :param crash_extensions: 与游戏服务共用的插件崩溃分析回调列表
         :param instance_queries: 应用现有的无写入实例查询接口
+        :param operations: 应用共用的后台任务执行与取消服务
         :param instance_roots: 当前配置中的游戏根目录快照
         """
         self.logger = get_logger("PluginManager")
@@ -78,6 +83,7 @@ class _PluginState:
         self.connector_extensions = connector_extensions or ConnectorExtensionRegistry()
         self.launch_hooks = launch_hooks or LaunchHookRegistry()
         self.http_client = http_client
+        self._operations = operations
         self._instance_queries = instance_queries
         self._instance_roots = instance_roots
         self.auth_providers = auth_providers or AuthProviderRegistry()
@@ -142,7 +148,10 @@ class _PluginState:
         """
         self._data_path = Path(data_path)
         self.worker_service = PluginWorkerService(
-            self._data_path, instance_queries=self._instance_queries, instance_roots=self._instance_roots
+            self._data_path,
+            instance_queries=self._instance_queries,
+            instance_roots=self._instance_roots,
+            operations=self._operations,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path

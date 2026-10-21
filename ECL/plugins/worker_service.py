@@ -32,6 +32,7 @@ from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.resources import InstanceQueries, ResourcePages, RuntimeResources
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.services.operations import OperationManager
 from ECL.utils import get_logger
 from ECL.utils.instance_reading import InstanceReadError
 
@@ -66,6 +67,7 @@ class PluginWorkerService:
         *,
         instance_queries: InstanceQueries | None = None,
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
+        operations: OperationManager | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -73,6 +75,7 @@ class PluginWorkerService:
         :param data_path: 应用数据根目录
         :param executable: 可选真实发行物验收入口
         :param instance_queries: 现有应用拥有的只读游戏查询
+        :param operations: 应用唯一任务服务，不创建独立执行器
         :param instance_roots: 有效配置的游戏根目录快照
         """
         self.data_path: Path = data_path
@@ -86,6 +89,7 @@ class PluginWorkerService:
         self._executable = executable
         self._closed = Event()
         self._monitor_thread: Thread | None = None
+        self._operations = operations
         self._instance_queries = instance_queries
         self._catalog = (
             PluginResourceCatalog(data_path, instance_roots, instance_queries.query_instance_names)
@@ -291,6 +295,8 @@ class PluginWorkerService:
                 raise ProtocolError("插件宿主已经关闭", "PLUGIN_HOST_CLOSED")
             if entry.state == "enabled":
                 return
+            if entry.cleanup_state == "pending":
+                raise ProtocolError("上一运行仍在完成清理", "PLUGIN_HOST_CLEANUP_PENDING")
             if platform.system() != "Windows" or platform.machine().casefold() not in {"amd64", "x86_64"}:
                 raise ProtocolError("当前平台尚未支持第三方插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
             if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED":
@@ -317,6 +323,7 @@ class PluginWorkerService:
                     self.data_path,
                     entry.supervisor.request,
                     run_state=lambda: entry.state,
+                    operations=self._operations,
                     resources=RuntimeResources(
                         entry.session, self._catalog, self._instance_queries, self.refresh_resources
                     )
@@ -552,6 +559,8 @@ class PluginWorkerService:
                             if entry.broker is None or entry.broker.wait_idle():
                                 self.stop(name)
                             continue
+                        if entry.broker and entry.broker.operations:
+                            entry.broker.operations.refresh_permissions()
                         view = entry.session.view()
                         if (
                             entry.supervisor.is_alive()

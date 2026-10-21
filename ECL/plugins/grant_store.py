@@ -117,7 +117,7 @@ class PluginGrantSession:
     """
     只访问宿主持有的当前授权；不接受 Worker 自报主体或 epoch 来赋权。
 
-    检查点仅建立授权准入语义，任务取消、提交互斥和 Worker 停止仍由后续集成执行。
+    检查点和提交接受共同维护授权先后顺序，实际任务与 Worker 收尾由运行服务负责。
     """
 
     def __init__(self, store: PluginGrantStore, state: _SessionState) -> None:
@@ -178,56 +178,83 @@ class PluginGrantSession:
         :return: 当前运行代次和授权版本的准入记录
         :raises PluginGrantError: 能力、资源、必要许可或内容不满足时抛出
         """
+        view = self.view()
         with self._store._lock:
             state = self._store._state(self)
-            self._store._verify_content(state)
-            view = self.view()
-            if view.error_code:
-                raise PluginGrantError("本次插件运行不具备授权准入", view.error_code)
-            if not view.required_satisfied:
-                raise PluginGrantError("插件缺少必要授权", "PLUGIN_REQUIRED_PERMISSION_DENIED")
-            permission = next((item for item in view.items if item.capability == capability), None)
-            if permission is None or permission.decision != "allow":
-                raise PluginGrantError("插件能力未获准", "PLUGIN_PERMISSION_DENIED")
-            declared = next(item for item in state.binding.declarations if item.capability == capability)
-            if (
-                not isinstance(resource_refs, tuple)
-                or not all(isinstance(item, str) for item in resource_refs)
-                or len(set(resource_refs)) != len(resource_refs)
-                or (declared.resource_refs and not resource_refs)
-                or (capability == "instances.read" and not resource_refs)
-                or not set(resource_refs).issubset(permission.resource_refs)
-            ):
-                raise PluginGrantError("插件资源范围未获准", "PLUGIN_RESOURCE_DENIED")
-            return GrantLease(
-                state.installation_id,
-                state.binding.content_digest,
-                state.run_id,
-                view.grant_epoch,
-                capability,
-                tuple(sorted(resource_refs)),
-            )
+            if view.grant_epoch != state.epoch:
+                raise PluginGrantError("插件授权准入记录已经失效", "PLUGIN_GRANT_EXPIRED")
+            return self._authorize_locked(capability, resource_refs)
+
+    def _authorize_locked(self, capability: str, resource_refs: tuple[str, ...]) -> GrantLease:
+        """
+        只核验锁保护的内存状态与到期时间，不执行磁盘或内容哈希。
+        """
+        state = self._store._state(self)
+        view = self._store._view_locked(state)
+        if view.error_code:
+            raise PluginGrantError("本次插件运行不具备授权准入", view.error_code)
+        if not view.required_satisfied:
+            raise PluginGrantError("插件缺少必要授权", "PLUGIN_REQUIRED_PERMISSION_DENIED")
+        permission = next((item for item in view.items if item.capability == capability), None)
+        if permission is None or permission.decision != "allow":
+            raise PluginGrantError("插件能力未获准", "PLUGIN_PERMISSION_DENIED")
+        declared = next(item for item in state.binding.declarations if item.capability == capability)
+        if (
+            not isinstance(resource_refs, tuple)
+            or not all(isinstance(item, str) for item in resource_refs)
+            or len(set(resource_refs)) != len(resource_refs)
+            or (declared.resource_refs and not resource_refs)
+            or (capability == "instances.read" and not resource_refs)
+            or not set(resource_refs).issubset(permission.resource_refs)
+        ):
+            raise PluginGrantError("插件资源范围未获准", "PLUGIN_RESOURCE_DENIED")
+        return GrantLease(
+            state.installation_id,
+            state.binding.content_digest,
+            state.run_id,
+            view.grant_epoch,
+            capability,
+            tuple(sorted(resource_refs)),
+        )
 
     def check(self, lease: GrantLease) -> None:
         """
-        在执行、交付或提交前拒绝旧主体、旧内容及任何旧授权版本。
+        在锁外复核内容和磁盘，再于短授权锁中拒绝失效租约。
 
-        :param lease: 宿主在入队时持有的准入记录，不来自 IPC 请求体
-        :raises PluginGrantError: 撤销、到期、跨运行或内容变化时抛出
+        :param lease: 入队时的可信准入
+        :raises PluginGrantError: 内容、期限、范围或代次失效时抛出
         """
+        self.view()
         with self._store._lock:
-            state = self._store._state(self)
-            view = self.view()
-            if (
-                lease.installation_id != state.installation_id
-                or lease.content_digest != state.binding.content_digest
-                or lease.run_id != state.run_id
-                or lease.grant_epoch != view.grant_epoch
-            ):
-                raise PluginGrantError("插件授权准入记录已经失效", "PLUGIN_GRANT_EXPIRED")
-            current = self.authorize(lease.capability, lease.resource_refs)
-            if current != lease:
-                raise PluginGrantError("插件授权准入记录已经失效", "PLUGIN_GRANT_EXPIRED")
+            self._check_locked(lease)
+
+    def _check_locked(self, lease: GrantLease) -> None:
+        state = self._store._state(self)
+        if state.blocked_error == "PLUGIN_CONTENT_CHANGED":
+            raise PluginGrantError("插件内容与审阅记录不一致", state.blocked_error)
+        if (lease.installation_id, lease.content_digest, lease.run_id, lease.grant_epoch) != (
+            state.installation_id,
+            state.binding.content_digest,
+            state.run_id,
+            state.epoch,
+        ) or self._authorize_locked(lease.capability, lease.resource_refs) != lease:
+            raise PluginGrantError("插件授权准入记录已经失效", "PLUGIN_GRANT_EXPIRED")
+
+    def accept(self, lease: GrantLease, register: Callable[[], None]) -> None:
+        """
+        将权限仍有效与一次确定动作的接受登记置于同一授权临界区。
+
+        register 仅更新受信内存状态；业务动作、文件锁和落盘必须在返回后执行。
+        锁序为授权锁再任务或注册锁，禁止回调重新查询授权或执行插件代码。
+
+        :param lease: 本次动作原始准入
+        :param register: 不含 I/O 的短时登记
+        :raises PluginGrantError: 撤销、关闭或到期先于接受时抛出
+        """
+        self.check(lease)
+        with self._store._lock:
+            self._check_locked(lease)
+            register()
 
     def close(self) -> None:
         """
@@ -272,6 +299,7 @@ class PluginGrantStore:
         self.implemented_capabilities: frozenset[str] = frozenset(implemented_capabilities)
         self._clock = clock
         self._lock = RLock()
+        self._io_locks: dict[tuple[str, str], RLock] = {}
         self._states_by_run: dict[str, _SessionState] = {}
         self._used_run_ids: set[str] = set()
         self._available_instance_refs: frozenset[str] = frozenset()
@@ -314,10 +342,8 @@ class PluginGrantStore:
         run_id = run_id or uuid4().hex
         self._validate_token(installation_id)
         self._validate_token(run_id)
-        with self._lock:
-            if run_id in self._used_run_ids:
-                raise PluginGrantError("插件运行标识已使用", "PLUGIN_SESSION_EXPIRED")
-            state = _SessionState(installation_id, binding, run_id, 0, {})
+        state = _SessionState(installation_id, binding, run_id, 0, {})
+        with self._record_lock(state):
             self._verify_content(state)
             try:
                 record = self._read(state)
@@ -325,9 +351,12 @@ class PluginGrantStore:
                 state.permanent_grants = {item.capability: item for item in record.grants}
             except PluginGrantError as exc:
                 state.blocked_error = exc.error_code
-            self._used_run_ids.add(run_id)
-            self._states_by_run[run_id] = state
-            return PluginGrantSession(self, state)
+            with self._lock:
+                if run_id in self._used_run_ids:
+                    raise PluginGrantError("插件运行标识已使用", "PLUGIN_SESSION_EXPIRED")
+                self._used_run_ids.add(run_id)
+                self._states_by_run[run_id] = state
+        return PluginGrantSession(self, state)
 
     def update(
         self,
@@ -354,32 +383,37 @@ class PluginGrantStore:
         """
         if caller is not PermissionManagementCaller.main_webview:
             raise PluginGrantError("此入口不能管理插件授权", "PLUGIN_MANAGEMENT_CALLER_DENIED")
-        with self._lock:
-            state = self._state(session)
-            if state.is_closed:
-                raise PluginGrantError("插件运行已经结束", "PLUGIN_SESSION_EXPIRED")
-            if content_digest != state.binding.content_digest:
-                raise PluginGrantError("授权审阅内容不匹配", "PLUGIN_GRANT_CONTENT_MISMATCH")
-            self._validate_decisions(state, decisions)
+        state = self._state(session)
+        if content_digest != state.binding.content_digest:
+            raise PluginGrantError("授权审阅内容不匹配", "PLUGIN_GRANT_CONTENT_MISMATCH")
+        with self._record_lock(state):
+            with self._lock:
+                if state.is_closed:
+                    raise PluginGrantError("插件运行已经结束", "PLUGIN_SESSION_EXPIRED")
+                self._validate_decisions(state, decisions)
             self._verify_content(state)
             record_path = self._record_path(state)
             try:
                 with _exclusive_lock(record_path.with_suffix(".lock"), wait_seconds=2):
                     previous = self._read(state)
-                    if (
-                        type(expected_revision) is not int
-                        or previous.revision != expected_revision
-                        or previous.revision < state.revision
-                    ):
-                        raise PluginGrantError("授权记录版本已变化", "PLUGIN_GRANT_REVISION_CONFLICT")
+                    with self._lock:
+                        if state.is_closed:
+                            raise PluginGrantError("插件运行已经结束", "PLUGIN_SESSION_EXPIRED")
+                        self._validate_decisions(state, decisions)
+                        if (
+                            type(expected_revision) is not int
+                            or previous.revision != expected_revision
+                            or previous.revision < state.revision
+                        ):
+                            raise PluginGrantError("授权记录版本已变化", "PLUGIN_GRANT_REVISION_CONFLICT")
                     self._commit_decisions(record_path, state, previous, decisions)
             except PluginGrantError:
                 raise
             except (OSError, PluginDependencyError, ValidationError) as exc:
-                # 即使在创建锁文件时失败，也不能保留当前运行的旧许可。
-                self._block(state, "PLUGIN_GRANT_PERSIST_FAILED")
+                with self._lock:
+                    self._block(state, "PLUGIN_GRANT_PERSIST_FAILED")
                 raise PluginGrantError("插件授权保存失败", "PLUGIN_GRANT_PERSIST_FAILED") from exc
-            return self._view(session)
+        return self._view(session)
 
     def _commit_decisions(
         self,
@@ -389,38 +423,51 @@ class PluginGrantStore:
         decisions: tuple[PermissionDecision, ...],
     ) -> None:
         """
-        在调用方持有的服务锁及文件锁内，先发布拒绝屏障再原子替换记录。
-
-        写入失败时保持屏障，由 update 转换错误；不恢复旧运行的允许状态。
+        发布内存拒绝屏障、锁外保存、再发布结果；调用方只持有每内容 I/O 锁。
         """
-        grants = {item.capability: item for item in previous.grants}
-        for item in decisions:
-            if item.decision == "deny" or item.lifetime == "permanent":
-                grants[item.capability] = item.model_copy(update={"lifetime": "permanent"})
-            else:
-                grants.pop(item.capability, None)
-        candidate = _GrantRecord(
-            installation_id=state.installation_id,
-            content_digest=state.binding.content_digest,
-            revision=previous.revision + 1,
-            reviewed_at=self._clock(),
-            grants=tuple(sorted(grants.values(), key=lambda item: item.capability)),
-        )
-        affected = self._matching_states(state)
-        for active in affected:
-            active.epoch += 1
-            active.blocked_error = "PLUGIN_GRANT_PERSIST_FAILED"
-        atomic_write_text(record_path, candidate.model_dump_json())
-        for active in affected:
-            active.revision = candidate.revision
-            active.permanent_grants = dict(grants)
-            active.expired_capabilities.clear()
-            active.blocked_error = None
+        with self._lock:
+            if state.is_closed:
+                raise PluginGrantError("插件运行已经结束", "PLUGIN_SESSION_EXPIRED")
+            self._validate_decisions(state, decisions)
+            grants = {item.capability: item for item in previous.grants}
             for item in decisions:
-                active.session_grants.pop(item.capability, None)
-        for item in decisions:
-            if item.decision == "allow" and item.lifetime == "session":
-                state.session_grants[item.capability] = item
+                if item.decision == "deny" or item.lifetime == "permanent":
+                    grants[item.capability] = item.model_copy(update={"lifetime": "permanent"})
+                else:
+                    grants.pop(item.capability, None)
+            candidate = _GrantRecord(
+                installation_id=state.installation_id,
+                content_digest=state.binding.content_digest,
+                revision=previous.revision + 1,
+                reviewed_at=self._clock(),
+                grants=tuple(sorted(grants.values(), key=lambda item: item.capability)),
+            )
+            affected = self._matching_states(state)
+            for active in affected:
+                active.epoch += 1
+                active.blocked_error = "PLUGIN_GRANT_PERSIST_FAILED"
+        atomic_write_text(record_path, candidate.model_dump_json())
+        with self._lock:
+            for active in affected:
+                if active.is_closed:
+                    continue
+                active.revision = candidate.revision
+                active.permanent_grants = dict(grants)
+                active.expired_capabilities.clear()
+                active.blocked_error = None
+                for item in decisions:
+                    active.session_grants.pop(item.capability, None)
+            if not state.is_closed:
+                for item in decisions:
+                    if item.decision == "allow" and item.lifetime == "session":
+                        state.session_grants[item.capability] = item
+
+    def _record_lock(self, state: _SessionState) -> RLock:
+        """
+        串行同一安装内容的磁盘准备和保存，等待时不持有全局授权锁。
+        """
+        with self._lock:
+            return self._io_locks.setdefault((state.installation_id, state.binding.content_digest), RLock())
 
     def _state(self, session: PluginGrantSession) -> _SessionState:
         """
@@ -456,7 +503,8 @@ class PluginGrantStore:
         try:
             state.binding.verify()
         except (OSError, ValueError) as exc:
-            self._block(state, "PLUGIN_CONTENT_CHANGED")
+            with self._lock:
+                self._block(state, "PLUGIN_CONTENT_CHANGED")
             raise PluginGrantError("插件内容与审阅记录不一致", "PLUGIN_CONTENT_CHANGED") from exc
 
     @classmethod
@@ -550,74 +598,85 @@ class PluginGrantStore:
 
     def _view(self, session: PluginGrantSession) -> GrantView:
         """
-        在锁内同步磁盘新版本与到期屏障，不让跨进程撤销被内存缓存覆盖。
+        在每内容 I/O 锁内复核磁盘和代码，再短时发布版本和到期状态。
         """
-        with self._lock:
-            state = self._state(session)
-            if not state.is_closed and state.blocked_error is None:
+        state = self._state(session)
+        with self._record_lock(state):
+            with self._lock:
+                should_refresh = not state.is_closed and state.blocked_error is None
+            if should_refresh:
                 try:
+                    self._verify_content(state)
                     record = self._read(state)
-                    if record.revision < state.revision:
-                        raise PluginGrantError("授权记录版本发生回退", "PLUGIN_GRANT_STORE_CORRUPTED")
-                    if (
-                        record.revision == state.revision
-                        and {item.capability: item for item in record.grants} != state.permanent_grants
-                    ):
-                        raise PluginGrantError("授权内容变化但版本未更新", "PLUGIN_GRANT_STORE_CORRUPTED")
-                    if record.revision != state.revision:
-                        for active in self._matching_states(state):
-                            active.epoch += 1
-                            active.revision = record.revision
-                            active.permanent_grants = {item.capability: item for item in record.grants}
-                            active.session_grants.clear()
-                            active.expired_capabilities.clear()
+                    with self._lock:
+                        if not state.is_closed and state.blocked_error is None:
+                            if record.revision < state.revision or (
+                                record.revision == state.revision
+                                and {item.capability: item for item in record.grants} != state.permanent_grants
+                            ):
+                                raise PluginGrantError("授权记录版本或内容发生回退", "PLUGIN_GRANT_STORE_CORRUPTED")
+                            if record.revision != state.revision:
+                                for active in self._matching_states(state):
+                                    active.epoch += 1
+                                    active.revision = record.revision
+                                    active.permanent_grants = {item.capability: item for item in record.grants}
+                                    active.session_grants.clear()
+                                    active.expired_capabilities.clear()
                 except PluginGrantError as exc:
-                    self._block(state, exc.error_code)
-            grants = {**state.permanent_grants, **state.session_grants}
-            expired = {
-                item.capability
-                for item in grants.values()
-                if item.decision == "allow" and item.expires_at is not None and item.expires_at <= self._clock()
-            }
-            if expired - state.expired_capabilities:
-                state.epoch += 1
-                state.expired_capabilities.update(expired)
-            items: list[PermissionView] = []
-            required_satisfied = state.blocked_error is None
-            for declared in state.binding.declarations:
-                grant = grants.get(declared.capability)
-                is_allowed = (
-                    state.blocked_error is None
-                    and grant is not None
-                    and grant.decision == "allow"
-                    and declared.capability in self.implemented_capabilities
-                    and declared.capability not in state.expired_capabilities
-                )
-                resources = grant.resource_refs if is_allowed and grant else ()
-                if declared.capability == "instances.read":
-                    resources = tuple(ref for ref in resources if ref in self._available_instance_refs)
-                    is_allowed = is_allowed and bool(resources)
-                    is_required_missing = not is_allowed
-                else:
-                    is_required_missing = not is_allowed or not set(declared.resource_refs).issubset(resources)
-                if declared.required and is_required_missing:
-                    required_satisfied = False
-                items.append(
-                    PermissionView(
-                        declared.capability,
-                        declared.required,
-                        "allow" if is_allowed else "deny",
-                        resources,
-                        grant.expires_at if grant else None,
-                        state.epoch,
-                    )
-                )
-            return GrantView(
-                state.installation_id,
-                state.binding.content_digest,
-                state.revision,
-                state.epoch,
-                tuple(items),
-                required_satisfied,
-                state.blocked_error,
+                    with self._lock:
+                        self._block(state, exc.error_code)
+            with self._lock:
+                return self._view_locked(state)
+
+    def _view_locked(self, state: _SessionState) -> GrantView:
+        """
+        只从内存生成当前许可，同时发布到期屏障；调用方持有授权锁。
+        """
+        grants = {**state.permanent_grants, **state.session_grants}
+        expired = {
+            item.capability
+            for item in grants.values()
+            if item.decision == "allow" and item.expires_at is not None and item.expires_at <= self._clock()
+        }
+        if expired - state.expired_capabilities:
+            state.epoch += 1
+            state.expired_capabilities.update(expired)
+        items: list[PermissionView] = []
+        required_satisfied = state.blocked_error is None
+        for declared in state.binding.declarations:
+            grant = grants.get(declared.capability)
+            is_allowed = (
+                state.blocked_error is None
+                and grant is not None
+                and grant.decision == "allow"
+                and declared.capability in self.implemented_capabilities
+                and declared.capability not in state.expired_capabilities
             )
+            resources = grant.resource_refs if is_allowed and grant else ()
+            if declared.capability == "instances.read":
+                resources = tuple(ref for ref in resources if ref in self._available_instance_refs)
+                is_allowed = is_allowed and bool(resources)
+                is_required_missing = not is_allowed
+            else:
+                is_required_missing = not is_allowed or not set(declared.resource_refs).issubset(resources)
+            if declared.required and is_required_missing:
+                required_satisfied = False
+            items.append(
+                PermissionView(
+                    declared.capability,
+                    declared.required,
+                    "allow" if is_allowed else "deny",
+                    resources,
+                    grant.expires_at if grant else None,
+                    state.epoch,
+                )
+            )
+        return GrantView(
+            state.installation_id,
+            state.binding.content_digest,
+            state.revision,
+            state.epoch,
+            tuple(items),
+            required_satisfied,
+            state.blocked_error,
+        )

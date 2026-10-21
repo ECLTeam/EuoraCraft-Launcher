@@ -96,6 +96,58 @@ async def _wait_cleanup(native, identity: str) -> None:
             await asyncio.sleep(0.1)
 
 
+async def _check_user_task_cancel(native, data_path: Path) -> None:
+    started, release = asyncio.Event(), asyncio.Event()
+    connections: set[asyncio.Task] = set()
+
+    async def serve(reader, writer):
+        task = asyncio.current_task()
+        connections.add(task)
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            started.set()
+            await release.wait()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            connections.discard(task)
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    target_path = data_path / "cancelled-download.bin"
+    try:
+        response = await _native_invoke(
+            native,
+            110,
+            "custom_download_start",
+            {
+                "url": f"http://127.0.0.1:{port}/fixture.bin",
+                "target_path": str(target_path),
+            },
+        )
+        assert response["success"], response
+        operation_id = response["data"]["operationId"]
+        async with asyncio.timeout(15):
+            await started.wait()
+        cancelled = await _native_invoke(native, 111, "game_operation_cancel", {"operation_id": operation_id})
+        assert cancelled["success"], cancelled
+        async with asyncio.timeout(15):
+            while True:
+                state = await _native_invoke(native, 112, "game_operation_get", {"operation_id": operation_id})
+                assert state["success"], state
+                if state["data"]["status"] in {"cancelled", "failed", "completed"}:
+                    break
+                await asyncio.sleep(0.05)
+        assert state["data"]["status"] == "cancelled", state
+        assert not target_path.exists()
+    finally:
+        release.set()
+        server.close()
+        await server.wait_closed()
+        if connections:
+            await asyncio.gather(*tuple(connections))
+
+
 @pytest.mark.skipif(
     not os.environ.get("ECL_PLUGIN_SMOKE_EXECUTABLE")
     or platform.system() != "Windows"
@@ -122,16 +174,19 @@ import xxhash
 
 class Plugin(BasePlugin):
     def on_load(self):
+        self.host.call('settings.define', {'definitions':[{'key':'label','type':'string','default':'before'}]})
         self.define_command('probe', self.probe, output_fields=(
             {'name':'pid','type':'integer'}, {'name':'resource','type':'string'},
             {'name':'native','type':'string'}, {'name':'native_path','type':'string'},
             {'name':'count','type':'integer'}, {'name':'first','type':'string'},
+            {'name':'tasks','type':'integer'},
         ))
 
     def probe(self):
         resources = self.host.call('resources.list', {'capability':'instances.read'})['items']
         value = self.host.call('instances.get', {'instance_ref':resources[0]['instance_ref']})
         return {'pid':os.getpid(),
+            'tasks':len(self.host.call('operations.list')['items']),
             'count':len(resources), 'first':value['version_id'],
             'resource':importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
             'native':xxhash.xxh64(b'ecl').hexdigest(), 'native_path':xxhash.__file__}
@@ -145,6 +200,8 @@ class Plugin(BasePlugin):
             {"capability": "commands.register", "required": True},
             {"capability": "commands.execute", "required": True},
             {"capability": "instances.read", "required": True},
+            {"capability": "settings.write", "required": True},
+            {"capability": "settings.read", "required": True},
         ),
     )
     data_path = tmp_path / "data"
@@ -257,6 +314,22 @@ class Plugin(BasePlugin):
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
                     assert probe["count"] == 1 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
+                    assert probe["tasks"] == 0
+                    saved = await _native_invoke(
+                        native,
+                        108,
+                        "plugin_update_setting",
+                        {
+                            "plugin_name": "demo",
+                            "key": "label",
+                            "value": "saved",
+                            "expected_revision": 0,
+                        },
+                    )
+                    assert saved["success"], saved
+                    settings = await _native_invoke(native, 109, "plugin_get_settings", {"plugin_name": "demo"})
+                    assert settings["success"] and settings["data"]["values"]["label"] == "saved", settings
+                    await _check_user_task_cancel(native, data_path)
                     reviewed = await _native_invoke(
                         native, 105, "plugin_permissions_get", {"installation_id": identity}
                     )
