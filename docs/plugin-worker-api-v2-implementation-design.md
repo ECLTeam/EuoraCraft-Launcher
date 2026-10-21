@@ -547,7 +547,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 ### 13.6 文件、网络与下载
 
-文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。下表的 delete、network、downloads 仍为后续设计，当前返回 PLUGIN_API_METHOD_NOT_FOUND。
+文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；下表的 files.delete、downloads.submit 仍未开放，当前返回 PLUGIN_API_METHOD_NOT_FOUND。下载的首个切片与总体设想的收窄范围见 [待审阅的 P10 B 方案](plugin-download-task-implementation-plan.md)。
 
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
@@ -562,7 +562,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `network.request` | `{method:"GET"\|"HEAD",url:string<=4096字节,headers?:白名单对象}` | `{status_code,url,headers:白名单对象,body_b64}`，GET实体至多32KiB | `network.read`；精确协议/DNS域名/端口，仅普通公网 | `PLUGIN_NETWORK_FAILED`,`PLUGIN_REDIRECT_DENIED`,`PLUGIN_RESPONSE_TOO_LARGE`,`PLUGIN_NETWORK_TARGET_DENIED` | R30；S |
 | `downloads.submit` | `{url,target:FileRef,overwrite:bool,expected_sha256?:string}` | `TaskReceipt`；最终`FileView` | `network.read`各目标 + `filesystem.write`目标 | `PLUGIN_DOWNLOAD_FAILED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY` | T5/1800秒；O+S |
 
-写入会话60秒空闲过期，未commit只触及自己的暂存文件；分块最大256KiB，offset必须等于已接收字节，commit须等于声明total_bytes。delete首版仅文件，通过同卷可恢复暂存后提交；不递归删除目录。不开放通用shell文件操作或绝对路径API。
+写入会话60秒空闲过期，未commit只触及自己的暂存文件；分块最大32KiB，offset必须等于已接收字节，commit须等于声明total_bytes。delete首版仍为后续设计，仅文件，通过同卷可恢复暂存后提交；不递归删除目录。不开放通用shell文件操作或绝对路径API。
 
 `network.request`当前只开放GET/HEAD，使用独立HTTP/1上下文。GET完整实体至多32KiB，每次底层读最多8KiB、每跳原始HTTP收包最多256KiB；超限失败，不交付截断内容。HEAD及无体状态不读实体。只返回Content-Type/Content-Length/ETag/Last-Modified/Cache-Control，总4096字节。不解压、不共享Cookie或账户、不继承环境代理/证书设置。请求头白名单、准确站点键和稳定错误见 [现行协议](eclplugin-package-format.md#只读网络请求)。network.write、network.lan及下载仍未开放，不保留原拟写方法或body字段。
 
