@@ -547,7 +547,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 ### 13.6 文件、网络与下载
 
-文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；下表的 files.delete、downloads.submit 仍未开放，当前返回 PLUGIN_API_METHOD_NOT_FOUND。下载的首个切片与总体设想的收窄范围见 [待审阅的 P10 B 方案](plugin-download-task-implementation-plan.md)。
+文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](plugin-download-task-implementation-plan.md) 开放私有空间新文件下载；files.delete 仍未开放，返回 PLUGIN_API_METHOD_NOT_FOUND。
 
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
@@ -560,11 +560,11 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `files.write_abort` | `{write_ref}` | `ReleaseResult` | C，自己的暂存 | — | CL5；O |
 | `files.delete` | `{target:FileRef,expected_etag:string}` | `TaskReceipt`；最终`{deleted:true}` | `filesystem.delete`，单个文件 | `PLUGIN_FILE_CHANGED`,`PLUGIN_NOT_FILE`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
 | `network.request` | `{method:"GET"\|"HEAD",url:string<=4096字节,headers?:白名单对象}` | `{status_code,url,headers:白名单对象,body_b64}`，GET实体至多32KiB | `network.read`；精确协议/DNS域名/端口，仅普通公网 | `PLUGIN_NETWORK_FAILED`,`PLUGIN_REDIRECT_DENIED`,`PLUGIN_RESPONSE_TOO_LARGE`,`PLUGIN_NETWORK_TARGET_DENIED` | R30；S |
-| `downloads.submit` | `{url,target:FileRef,overwrite:bool,expected_sha256?:string}` | `TaskReceipt`；最终`FileView` | `network.read`各目标 + `filesystem.write`目标 | `PLUGIN_DOWNLOAD_FAILED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY` | T5/1800秒；O+S |
+| `downloads.submit` | `{url,target:FileRef,overwrite:严格false,expected_sha256?:sha256}` | `TaskReceipt`；最终`FileView`或null | `network.read`各目标 + `filesystem.write`目标 | `PLUGIN_DOWNLOAD_FAILED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY` | T5/1800秒；O+S |
 
 写入会话60秒空闲过期，未commit只触及自己的暂存文件；分块最大32KiB，offset必须等于已接收字节，commit须等于声明total_bytes。delete首版仍为后续设计，仅文件，通过同卷可恢复暂存后提交；不递归删除目录。不开放通用shell文件操作或绝对路径API。
 
-`network.request`当前只开放GET/HEAD，使用独立HTTP/1上下文。GET完整实体至多32KiB，每次底层读最多8KiB、每跳原始HTTP收包最多256KiB；超限失败，不交付截断内容。HEAD及无体状态不读实体。只返回Content-Type/Content-Length/ETag/Last-Modified/Cache-Control，总4096字节。不解压、不共享Cookie或账户、不继承环境代理/证书设置。请求头白名单、准确站点键和稳定错误见 [现行协议](eclplugin-package-format.md#只读网络请求)。network.write、network.lan及下载仍未开放，不保留原拟写方法或body字段。
+`network.request`当前只开放GET/HEAD，使用独立HTTP/1上下文。GET完整实体至多32KiB，每次底层读最多8KiB、每跳原始HTTP收包最多256KiB；超限失败，不交付截断内容。HEAD及无体状态不读实体。只返回Content-Type/Content-Length/ETag/Last-Modified/Cache-Control，总4096字节。不解压、不共享Cookie或账户、不继承环境代理/证书设置。请求头白名单、准确站点键和稳定错误见 [现行协议](eclplugin-package-format.md#只读网络请求)。network.write、network.lan仍未开放，不保留原拟写方法或body字段。
 
 重定向逐跳重新校验scheme、域名、端口与DNS/IP，最多5跳；禁止HTTPS降级，跨站永久移除认证头。固定已准入数字IP连接并核实peer，原域名始终用于TLS SNI与证书校验；任何禁止解析地址拒绝整跳。全部动作使用原租约和总截止，接受后实际I/O不持授权锁。GET/HEAD发送也不承诺远端零副作用；撤销只能停止后续传输和结果交付。DNS等待取消仍保留实际future与名额，迟到结果不继续连接；关闭失败与阻塞连接/TLS如实保持pending。
 
@@ -1076,4 +1076,15 @@ PluginWorkerService拥有唯一PluginNetworkService，每个Broker持有RuntimeN
 
 HTTPcore公开NetworkBackend/NetworkStream仅向已准入数字IP连接，发送HTTP前核实peer；TLS验证、SNI和Host保留原站点。每跳独立池，HTTP/1、无代理、无复用、无Cookie。租约接受点仅记录有限动作，真实I/O在锁外；总30秒/单阶段5秒，原始收包及完整实体分别限额。最终清理后再次检查原租约与截止，撤销不通过新租约恢复旧请求。
 
-网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](eclplugin-package-format.md#只读网络请求)、[worker_network_read](../examples/plugins/worker_network_read/README.md) 与 [P10验收记录](plugin-network-read-implementation-plan.md#12-实施与验收记录)。下载任务和实例写入继续独立审阅。
+网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](eclplugin-package-format.md#只读网络请求)、[worker_network_read](../examples/plugins/worker_network_read/README.md) 与 [P10验收记录](plugin-network-read-implementation-plan.md#12-实施与验收记录)。下载任务见第26节；实例写入继续独立审阅。
+
+
+## 26. P10 B 私有空间下载任务（2026-10-21）
+
+按已确认的 [实施方案](plugin-download-task-implementation-plan.md) 开放 downloads.submit，只新建当前安装私有文件，实体至多8 MiB，固定预留8 MiB。双原始网络/写lease在同一短授权接受点控制准备、网络有限I/O和最终发布；结果仍依赖独立原始读lease，不通过写权限返回敏感文件视图。
+
+RuntimeDownloads连接现有网络、文件和唯一OperationManager，不增加下载执行器、任务状态或恢复协议。查询与下载共享逐跳HTTP/1传输及真实请求/DNS配额；下载总1800秒、每阶段5秒、每跳原始收包9 MiB，查询原预算不变。只接收完整200实体，流式写入、完整摘要复核、实际关闭网络后再执行原生不覆盖发布。StagedFile将共享配额预留与期望/实际长度分开，不保留旧内存类型别名。
+
+Broker现有mutation回执用于提交去重和超时后查询；权限撤销后回执只返回自身控制引用，不恢复权限。Worker监管同时检查任务、网络取消与暂存清理。排队取消不等于future已完成；任务终态也不等于网络、暂存及审计已经收尾，真实pending继续阻止重新启用。关闭失败只重试清理，不重发HTTP或删除已发布目标。
+
+协议和示例见 [归档文档](eclplugin-package-format.md#私有空间下载任务)、[worker_download](../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 [下载验收记录](plugin-download-task-implementation-plan.md#12-实施与验收记录)。覆盖/删除、实例写入、安装任务和自定义前端继续分别审阅。

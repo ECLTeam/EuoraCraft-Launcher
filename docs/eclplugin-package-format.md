@@ -132,7 +132,7 @@ TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cance
 
 列表 limit 为 1—100、默认 50；每页受 64 KiB 限制，游标最多 16 个快照、120 秒，绑定本 run 和 limit。快照固定引用集合，每页重新查询状态和过滤结果。每 run 最多 128 个引用，宿主同时跟踪至多 1024 个插件任务；容量耗尽明确拒绝，不淘汰活跃任务。关闭 run 后只有实际 future 和审计保存完成才释放记录。
 
-不开放生产 `operations.submit` 或真实下载/安装创建接口。首个业务任务由下节 files.write_commit 创建，未提交文件的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](plugin-operation-ownership-implementation-plan.md)。
+不开放通用 `operations.submit` 或安装任务创建接口。具体业务入口为 files.write_commit 与下文 downloads.submit；未提交任务的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](plugin-operation-ownership-implementation-plan.md)。
 
 ## 私有文件与新建事务
 
@@ -164,8 +164,22 @@ files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限
 
 每 run 同时2个请求，宿主8个请求、4个真实 DNS 工作者；满额立即拒绝。DNS超时或取消不证明实际解析结束，未结束时保留名额和清理 pending，阻止同安装重新启用；迟到结果只清理，不继续连接。解析工作者为有界守护线程，应用不无限 join，实际结束仍如实跟踪。连接/TLS 尚未返回真实流时按有限阶段预算等待，返回后登记并清理；关闭失败保留监管重试。
 
-稳定失败包含 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_RESOURCE_DENIED`、`PLUGIN_NETWORK_TARGET_DENIED`、`PLUGIN_NETWORK_RESOLUTION_FAILED`、`PLUGIN_NETWORK_FAILED`、`PLUGIN_REDIRECT_DENIED`、`PLUGIN_RESPONSE_TOO_LARGE`、`PLUGIN_NETWORK_ENCODING_UNSUPPORTED`、`PLUGIN_DEADLINE_EXCEEDED`、`PLUGIN_RATE_LIMITED`，授权失效沿用原授权错误码。项目文件、控制台和前端日志不记录 URL、头、响应或传输原始异常；其他上下文日志保持原行为。下载、network.write、network.lan 仍未开放。参见 [实施与验收](plugin-network-read-implementation-plan.md) 和 [worker_network_read](../examples/plugins/worker_network_read/README.md)。
+稳定失败包含 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_RESOURCE_DENIED`、`PLUGIN_NETWORK_TARGET_DENIED`、`PLUGIN_NETWORK_RESOLUTION_FAILED`、`PLUGIN_NETWORK_FAILED`、`PLUGIN_REDIRECT_DENIED`、`PLUGIN_RESPONSE_TOO_LARGE`、`PLUGIN_NETWORK_ENCODING_UNSUPPORTED`、`PLUGIN_DEADLINE_EXCEEDED`、`PLUGIN_RATE_LIMITED`，授权失效沿用原授权错误码。项目文件、控制台和前端日志不记录 URL、头、响应或传输原始异常；其他上下文日志保持原行为。network.write、network.lan 仍未开放；私有空间下载见下节。参见 [实施与验收](plugin-network-read-implementation-plan.md) 和 [worker_network_read](../examples/plugins/worker_network_read/README.md)。
+
+## 私有空间下载任务
+
+`downloads.submit({url,target:FileRef,overwrite:false,expected_sha256?})` 只向已批准的精确公网站点发送 GET，将完整 HTTP 200 实体新建到当前安装私有根。URL 至多4096字节，文件至多8 MiB；文件名规则与 FileRef 相同，必须非空。overwrite 必须显式严格 false，拒绝覆盖、任意路径、子目录、请求体、自定义请求头、Range、续传或解压。expected_sha256 可省略，提供时须为64位小写十六进制，不接受 null。
+
+必须同时拥有原始 network.read 与 filesystem.write 许可。每跳重新核验许可、DNS/IP/peer/TLS 与总截止，最多5次重定向、不降级、不重试、不继承代理/Cookie/账户。仅最终200进入文件写入；204、206、304和错误状态不发布文件，返回 PLUGIN_DOWNLOAD_FAILED。固定长度响应须完整匹配，缺少长度允许到 EOF；实体和原始收包分别限制8 MiB、每跳9 MiB，分块开销过大也明确失败。network.request 仍保持32 KiB实体、256 KiB每跳原始收包和30秒限制。
+
+提交 RPC 至多5秒，返回 `{operation_ref,state:"queued"}`，通过 `operations.get/list/cancel` 查询与取消，不能把接纳当成文件已经保存。整个任务从首次提交开始最多1800秒，含排队与最终提交前校验；每个网络阶段至多5秒。队列不占网络/DNS名额，但预留目标和8 MiB空间，与上传共用每run4个暂存、32 MiB预留、宿主128 MiB预留和安装64 MiB空间。空间不足8 MiB时小文件也可能被拒绝；实际资源释放前不提前归还对应名额。
+
+同一 run 的 mutation_key 和相同请求只接纳一次。RPC 等待超时用原键查询 mutations.get，不换键自动重放；任务控制回执不因业务授权变更而恢复执行许可。下载的原网络和写 lease 必须共同有效，最终发布按同一授权锁与任务锁排序；取消/撤销先于提交接受则无目标文件，发布接受先发生则按真实结果完成，不伪造回滚。
+
+成功为 completed、effect committed；最终 result 使用发布前捕获的 FileView，仅有提交时独立 filesystem.read lease 且交付时仍有效才返回，否则为 null。重新允许读取不会恢复旧结果 lease；可以通过当前 files API 重新读取。摘要始终计算并从原生暂存复核，可选期望摘要不符为 PLUGIN_HASH_MISMATCH。未知长度接收阶段不伪造百分比；只有文件发布完成才到100%。
+
+失败、排队取消和审计失败都尝试清理暂存与实际网络工作；系统 DNS 尚未返回、关闭/删除失败或审计未保存时保持 cleanup pending，阻止同安装重新启用。清理重试不会重做 HTTP 或发布，不删除成功文件，不扫描清除崩溃残留，不恢复旧run控制权。其余稳定错误沿用网络、文件和任务接口。参见 [完整下载方案与验收](plugin-download-task-implementation-plan.md) 和 [worker_download](../examples/plugins/worker_download/README.md)。
 
 ## 产物验证
 
-真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py` 和 `test_plugin_network_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
+真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py`、`test_plugin_network_worker.py` 和 `test_plugin_download_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。下载的流式实体、双权限/提交竞争、配额、取消和失败恢复由 `test_plugin_download_api.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。

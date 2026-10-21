@@ -1,14 +1,14 @@
 # 插件私有空间下载任务实施方案
 
-日期：2026-10-21（Asia/Shanghai）。状态：方案待审阅；尚未实施或开放 `downloads.submit`。
+日期：2026-10-21（Asia/Shanghai）。状态：用户以“开始实施”确认方案，功能与第12节验收已完成。
 
-调研基线为主仓库及原工作区本地 main `87db961`，前端 `320cc0d`。本方案接续已验收的 [P10 A 受控 GET/HEAD](plugin-network-read-implementation-plan.md)，采用 [P09 A 私有文件](plugin-private-files-implementation-plan.md) 与 [P08 自身任务控制](plugin-operation-ownership-implementation-plan.md)。本轮“开始下一步”用于形成下载切片方案，功能实施须在本方案审阅后确认。
+调研基线为主仓库及原工作区本地 main `87db961`，前端 `320cc0d`。本方案接续已验收的 [P10 A 受控 GET/HEAD](plugin-network-read-implementation-plan.md)，采用 [P09 A 私有文件](plugin-private-files-implementation-plan.md) 与 [P08 自身任务控制](plugin-operation-ownership-implementation-plan.md)。方案阶段“开始下一步”用于形成下载切片方案；其后用户以“开始实施”明确确认功能实施。
 
 ## 1. 路线与验收目标
 
 | 路线 | 改动及取舍 | 本轮决定 |
 | --- | --- | --- |
-| A：私有空间单文件下载 | 复用受控网络传输和原生文件事务；至多 8 MiB，只新建，无自动重试 | 推荐；本方案细化此路线 |
+| A：私有空间单文件下载 | 复用受控网络传输和原生文件事务；至多 8 MiB，只新建，无自动重试 | 已确认实施 |
 | B：复用桌面/Core 下载器 | 须先为每次连接、重定向、重试及写入增加授权钩子，影响现有下载业务及子模块 | 延后单独审阅 |
 | C：先补文件覆盖与删除 | 须确定条件替换、冲突和恢复协议，不能直接沿用不覆盖发布 | 延后单独审阅 |
 
@@ -154,7 +154,7 @@ flush、最终文件信息与摘要在提交接受前取得。最终 `context.fi
 
 按 [AGENTS.md 第6节](../AGENTS.md#6-测试与验收) 执行全部适用检查：主仓库 `ruff check ECL tests`、`ruff format --check ECL tests`、`ruff check . --format github`、完整 `python -m pytest --tb=short -q`，以及 CI 要求的 Core Ruff 与集成测试。平台分支覆盖 Windows 与 POSIX 的策略/拒绝测试，真实 Worker/原生 NTFS 发布使用 Windows x64；没有 POSIX 实机证据时明确标注。
 
-下载接线会改变启动器的运行流程，因此功能实施的验收包含先 pnpm check、再 pnpm build，然后实际启动启动器验收原生权限审阅、提交/查询/取消和停止后的清理状态，分别验证两种冻结产物，不能以纯 Worker 单测代替。若实施中实际修改前端界面，再补第6节规定的主题、窗口尺寸和布局验收。本轮仅编写文档，不提前执行这些功能实施门禁或将基线测试充作完成证据。
+下载接线会改变启动器的运行流程，因此功能实施的验收包含先 pnpm check、再 pnpm build，然后实际启动启动器验收原生权限审阅、提交/查询/取消和停止后的清理状态，分别验证两种冻结产物，不能以纯 Worker 单测代替。若实施中实际修改前端界面，再补第6节规定的主题、窗口尺寸和布局验收。方案编写阶段未提前执行这些功能实施门禁；当前实施结果见第12节。
 
 任一原始双 lease、逐跳传输、原生发布、资源归属或取消竞争缺少实际控制点，downloads.submit 保持关闭，不以方案、模拟成功或历史 P10 A 测试结果宣称完成。实施完成后记录实际命令、源码/真实 Windows/冻结/未运行远端 CI 的区别，再提交功能与验收文档。
 
@@ -162,7 +162,33 @@ flush、最终文件信息与摘要在提交接受前取得。最终 `context.fi
 
 本节只记录方案阶段验证，不代表下载已经实现。
 
-- 当前 Windows x64 基线：文件、原生文件句柄、文件 Worker、任务归属/Worker、网络站点/API/日志/Worker/退出测试共 261 passed、4 skipped，耗时 48.73 秒。跳过项保留 pytest 的当前平台与条件要求，不能据此宣称 POSIX 实机或下载已经验收。
+- 方案阶段 Windows x64 基线：文件、原生文件句柄、文件 Worker、任务归属/Worker、网络站点/API/日志/Worker/退出测试共 261 passed、4 skipped，耗时 48.73 秒。跳过项保留 pytest 的当前平台与条件要求，不能据此宣称 POSIX 实机或下载已经验收。
 - 本轮改动只含方案文档及总体设计的现行状态/计划入口；提交前核验 Markdown 本地链接、章节和 git diff --check，不执行无关构建或改动生产代码。
 
 功能完成后按 [AGENTS.md 第7节](../AGENTS.md#7-git-提交与本地交付) 提交并安全集成原工作区本地 main，保护无关修改；若没有子模块改动则不改其指针。本方案文档同样独立提交并同步本地。远端 main 的既有分歧保留，不自动合并远端、推送或发布。
+
+
+## 12. 实施与验收记录
+
+用户确认实施后按本方案开放 downloads.submit。实际实现复用网络服务的原始双lease与任务取消 Event，资源引用由任务 cleanup 回调持有；Broker原有 network/files/operations 空闲判定即可聚合真实状态，无需再建立下载注册表或独立生命周期状态。新增 refresh_pending_work 供权限变更与既有监管循环共同使用，不新增监管线程。
+
+本轮不修改前端、Core、Florolding、桌面下载服务及依赖版本；不加入兼容、迁移、覆盖、恢复和重试。
+
+| 检查 | 本轮实际结果 |
+| --- | --- |
+| 主仓库质量门禁 | ruff check ECL tests、ruff format --check ECL tests、全仓 GitHub 格式检查全部通过；全仓使用当前 Ruff 支持的 --output-format github，规范文字中的旧 --format 选项已被工具拒绝 |
+| 完整源码后端 | PYTHONUTF8=1 的最终 python -m pytest --tb=short -q：1918 passed、20 skipped，186.85秒，无警告；含57项下载领域测试及真实源码Worker |
+| Core | 子仓库 ruff check . 通过，主仓库 python -m pytest ECL/game/tests --tb=short -q：16 passed |
+| 前端 | pnpm check 通过：915 passed、1 todo；随后 pnpm build 成功，未修改前端代码或gitlink |
+| PyInstaller | 最终生产代码构建成功；指定实际产物后引导/文件/网络/任务/下载Worker组合16 passed；最终示例明确mutation_key后的下载Worker复验2 passed |
+| Nuitka | 最终生产代码onefile构建成功；同一Worker组合16 passed，最终示例下载Worker复验2 passed |
+| 两种真实主窗口 | 各运行test_packaged_plugin_directories.py，分别1 passed；真实WebView2主窗口保存站点许可，经正式原生IPC调用独立Worker下载Microsoft公开连接测试文本，校验摘要、相同键不重复创建、读回文件、取消并确认无目标文件；依赖/实例/快照/设置及撤销停止回归同时通过 |
+| 作者交付 | worker_download经正式packaging/build-eclplugin.py制作成功；正式协议、示例与总体设计本地链接、章节和git diff --check通过 |
+
+下载领域测试使用受信宿主本地HTTP/TLS夹具覆盖精确8 MiB与多1字节、未知长度、分块实体、9 MiB信息响应开销、非200/编码/截断、摘要、双lease竞争、排队配额、提交接受前后取消、迟到DNS、实际关闭/删除失败及审计故障。系统调用未结束时如实保留pending，清理重试未重复HTTP或发布。冻结Worker的确定性故障由当前受信测试宿主驱动；真实冻结宿主的下载、去重、读取、取消和权限管理另由主窗口用例执行，二者不混称。
+
+首轮完整源码测试通过但有一个旧作者CLI用例的GBK子进程解码警告，最终设置PYTHONUTF8=1完整复验后无警告。Nuitka首次因自身版本检查缓存原子替换返回WinError17而中止，按已安装工具公开的--update-check=never重建成功；没有修改工具、依赖或项目逻辑绕过测试。构建保留既有体积/依赖提示，未以此扩大改动范围。
+
+本轮真实平台为Windows x64/NTFS/WebView2；另执行现有POSIX策略及拒绝分支，未做POSIX实机Worker或远端CI/发布。检查与发行物日志保存在被Git忽略的build/worker-manager/p10b-*，可安装示例包为build/worker-manager/worker_download.eclplugin。
+
+本地交付：功能提交0fb5cd7，协议与验收文档单独提交docs。提交前确认原工作区本地main为ac90c88且干净；提交后仅快进集成本地main。frontend仍为320cc0d、Core为fce6b10、Florolding为80d037e，未改子模块指针；远端原有分歧保留，不推送或发布。
