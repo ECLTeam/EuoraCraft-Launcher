@@ -150,6 +150,22 @@ files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限
 
 同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。崩溃残留计入空间，不自动恢复或删除。参见 [完整协议与验收](plugin-private-files-implementation-plan.md) 和可安装的 [worker_snapshot 示例](../examples/plugins/worker_snapshot/README.md)。
 
+## 只读网络请求
+
+清单声明 `{"capability":"network.read","required":false,"resource_refs":["https:api.example.com:443"]}`。必须指定 1—16 个唯一精确站点键，使用小写 ASCII DNS/punycode、显式规范端口；不接受 URL 形式、通配符、尾点、单标签或 IP 字面量。不同协议、端口、父域和子域不互相授权。用户在现行权限弹窗审阅完整站点列表，整组允许或拒绝；允许覆盖站点全部路径与查询。
+
+可信管理视图每个 PermissionItem 都提供 `requested_resource_refs`（绑定清单的申请范围）、`selected_resource_refs`（用户决定）和 `resource_refs`（当前实际有效范围）。Worker 的 permissions.list 仍只表示实际许可，不取得管理入口。
+
+调用 `host.call("network.request", {"method":"GET","url":"https://api.example.com/meta"}, timeout=30)`，严格只支持 GET/HEAD，无请求体。返回 `{status_code,url,headers,body_b64}`，url 为校验后的最终 URL。输入与规范 URL 各至多4096字节；GET 完整实体至多32768字节，超限、断流或长度不符明确失败。HEAD、204、304不读实体；HTTP 4xx/5xx 返回真实 HTTP 状态。请求不是任务，也不保存 mutation 回执；重复调用可能重新发送，不承诺远端零副作用或撤回已发送字节。
+
+请求头仅 Accept、If-None-Match、If-Modified-Since、User-Agent、Authorization、X-API-Key，认证头只允许 HTTPS。最多16项、总4096字节、值最多1024个可打印 ASCII 字符；拒绝大小写重复、控制字符和其他头。响应仅投影小写 content-type、content-length、etag、last-modified、cache-control，总4096字节。GET 不解压，宿主要求 identity，其他实体编码拒绝；无 Cookie、共享账户、环境代理、自定义 CA 或 HTTP/2。
+
+每跳独立 DNS 和 HTTP/1 连接，只连接已验证数字公网地址，并核实真实 peer，TLS 始终保留原 DNS 名称与证书校验。任一 DNS 结果是内网、特殊用途、映射或转换地址则整跳拒绝；公网许可也不能访问这些目标。最多5次跳转，逐跳复核精确许可和原租约；禁止 HTTPS 降级，跨站永久移除认证头，Cookie 不保存。总截止最多30秒，每次阶段 I/O 最多5秒，每次底层读取最多8 KiB，每跳原始 HTTP 收包最多256 KiB。
+
+每 run 同时2个请求，宿主8个请求、4个真实 DNS 工作者；满额立即拒绝。DNS超时或取消不证明实际解析结束，未结束时保留名额和清理 pending，阻止同安装重新启用；迟到结果只清理，不继续连接。解析工作者为有界守护线程，应用不无限 join，实际结束仍如实跟踪。连接/TLS 尚未返回真实流时按有限阶段预算等待，返回后登记并清理；关闭失败保留监管重试。
+
+稳定失败包含 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_RESOURCE_DENIED`、`PLUGIN_NETWORK_TARGET_DENIED`、`PLUGIN_NETWORK_RESOLUTION_FAILED`、`PLUGIN_NETWORK_FAILED`、`PLUGIN_REDIRECT_DENIED`、`PLUGIN_RESPONSE_TOO_LARGE`、`PLUGIN_NETWORK_ENCODING_UNSUPPORTED`、`PLUGIN_DEADLINE_EXCEEDED`、`PLUGIN_RATE_LIMITED`，授权失效沿用原授权错误码。项目文件、控制台和前端日志不记录 URL、头、响应或传输原始异常；其他上下文日志保持原行为。下载、network.write、network.lan 仍未开放。参见 [实施与验收](plugin-network-read-implementation-plan.md) 和 [worker_network_read](../examples/plugins/worker_network_read/README.md)。
+
 ## 产物验证
 
-真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py` 和 `test_plugin_operation_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py` 与 `test_plugin_manager_packages.py`。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
+真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py` 和 `test_plugin_network_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。

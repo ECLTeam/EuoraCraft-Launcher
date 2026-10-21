@@ -559,14 +559,14 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `files.write_commit` | `{write_ref,sha256:string}` | `TaskReceipt`，state固定queued；最终结果为FileView或null | 原始写lease控制执行，独立原始读lease控制结果；根/源身份及完整摘要校验 | `PLUGIN_FILE_CHANGED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
 | `files.write_abort` | `{write_ref}` | `ReleaseResult` | C，自己的暂存 | — | CL5；O |
 | `files.delete` | `{target:FileRef,expected_etag:string}` | `TaskReceipt`；最终`{deleted:true}` | `filesystem.delete`，单个文件 | `PLUGIN_FILE_CHANGED`,`PLUGIN_NOT_FILE`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
-| `network.request` | `{method:"GET"\|"HEAD"\|"POST"\|"PUT"\|"PATCH"\|"DELETE",url:string,headers?:object,body_b64?:string<=64KiB原文}` | `{status_code,url,headers:白名单对象,body_b64}` | GET/HEAD用`network.read`，其他`network.write`；目标域名/端口及LAN范围 | `PLUGIN_NETWORK_FAILED`,`PLUGIN_REDIRECT_DENIED`,`PLUGIN_RESPONSE_TOO_LARGE` | R30；S |
+| `network.request` | `{method:"GET"\|"HEAD",url:string<=4096字节,headers?:白名单对象}` | `{status_code,url,headers:白名单对象,body_b64}`，GET实体至多32KiB | `network.read`；精确协议/DNS域名/端口，仅普通公网 | `PLUGIN_NETWORK_FAILED`,`PLUGIN_REDIRECT_DENIED`,`PLUGIN_RESPONSE_TOO_LARGE`,`PLUGIN_NETWORK_TARGET_DENIED` | R30；S |
 | `downloads.submit` | `{url,target:FileRef,overwrite:bool,expected_sha256?:string}` | `TaskReceipt`；最终`FileView` | `network.read`各目标 + `filesystem.write`目标 | `PLUGIN_DOWNLOAD_FAILED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY` | T5/1800秒；O+S |
 
 写入会话60秒空闲过期，未commit只触及自己的暂存文件；分块最大256KiB，offset必须等于已接收字节，commit须等于声明total_bytes。delete首版仅文件，通过同卷可恢复暂存后提交；不递归删除目录。不开放通用shell文件操作或绝对路径API。
 
-`network.request`使用独立无共享账户cookies/凭据的HTTP上下文，响应体最多256KiB，流式限长，超限停止读取并返回RESPONSE_TOO_LARGE，不把不完整JSON误当完整成功数据。返回头仅Content-Type/Content-Length/ETag/Last-Modified/Cache-Control。禁止URL内嵌凭据、CONNECT/TRACE、Cookie自动共享、任意代理和客户端覆盖Host。插件显式提交自己的认证头不能进入日志。
+`network.request`当前只开放GET/HEAD，使用独立HTTP/1上下文。GET完整实体至多32KiB，每次底层读最多8KiB、每跳原始HTTP收包最多256KiB；超限失败，不交付截断内容。HEAD及无体状态不读实体。只返回Content-Type/Content-Length/ETag/Last-Modified/Cache-Control，总4096字节。不解压、不共享Cookie或账户、不继承环境代理/证书设置。请求头白名单、准确站点键和稳定错误见 [现行协议](eclplugin-package-format.md#只读网络请求)。network.write、network.lan及下载仍未开放，不保留原拟写方法或body字段。
 
-重定向逐跳重新校验scheme、域名、端口、DNS/IP及LAN范围，最多5跳；禁止HTTP代理复用宿主账户身份。DNS重绑定、IPv6、重定向及库内实际连接地址不一致是实现验收项，单次hostname检查不算通过。HTTP写请求发送后即存在不可逆远端副作用；撤销只能终止后续传输和结果交付。
+重定向逐跳重新校验scheme、域名、端口与DNS/IP，最多5跳；禁止HTTPS降级，跨站永久移除认证头。固定已准入数字IP连接并核实peer，原域名始终用于TLS SNI与证书校验；任何禁止解析地址拒绝整跳。全部动作使用原租约和总截止，接受后实际I/O不持授权锁。GET/HEAD发送也不承诺远端零副作用；撤销只能停止后续传输和结果交付。DNS等待取消仍保留实际future与名额，迟到结果不继续连接；关闭失败与阻塞连接/TLS如实保持pending。
 
 下载适配不能仅用前后两个权限检查包裹现有Downloader；必须能校验每次连接/重定向，并在暂存写入和最终提交检查授权。若现有下载库不暴露这些控制点，对应API保持关闭并列为阶段阻塞；不假设它已经具备这些能力。
 
@@ -864,7 +864,7 @@ frame的CSP使用deny-by-default：禁用connect、object、base和form，图片
 | P07：公共只读服务，依赖P06 | Broker实例/账户/公开配置、Java及游戏catalog查询门面；过滤DTO和资源ref目录 | `test_plugin_host_queries.py`：授权过滤、跨root/runtime/account、输出敏感字段、query timeout；现有accounts/java/scan回归 | 能查询获准资源，没有裸服务输出或隐私字段；断线后无结果交付。需要透传完整配置才工作则拒绝该接口并修订 | 撤下查询方法白名单/资源refs，原可信前端接口保持 |
 | P08：任务来源与提交准入，依赖P05/P06 | `services/operations.py`、`runtime/operation_adapters.py`，注册/短写的提交上下文；先用测试任务验证 | V01—V05/V07/V12；`test_plugin_operation_ownership.py`；完整既有OperationManager测试 | pending/running/committing/terminal可区分；T与提交许可顺序可确定；不在全局锁执行长提交；自己的cancel不影响用户。任何旧服务任务回归失败是阻塞 | 撤回可回滚接口接线，不删除任务日志；已经提交的数据不通过Git回退还原 |
 | P09：受控文件与配置短写，依赖P08 | `runtime/file_api.py`、同卷暂存、root/句柄校验；settings/profile原子revision适配 | V02/V03/V04；`test_plugin_host_files.py`：read分块、etag冲突、write/abort、delete恢复、junction/ADS、并发用户修改；settings/profile回归 | 撤销前后操作符合第15节；不越界、不覆盖冲突；failed清理保留原文件；控制句柄竞态未解决则阻塞相关写API | 仅清理自己的未提交暂存；保留用户目标；已提交效果由任务记录说明，必要恢复经用户操作 |
-| P10：网络与下载，依赖P08/P09 | `runtime/network_api.py`及`custom_downloads.py`/Downloader授权控制点 | `test_plugin_host_network.py`、`test_plugin_host_downloads.py`：每跳redirect、LAN/IPv6/DNS重绑定、大小限制、超时/取消、hash、提交竞态；现有download回归 | 实际连接/重定向可复核，流式限长，无共享凭据；下载取消真实收敛。底层绕过policy或无法加hook则阻塞，不前后包检查交付 | 关闭新方法，停止本任务传输，清理本任务暂存；保留缓存和原目标 |
+| P10 A：只读网络；下载待审阅，依赖P08/P09 | `network_targets.py`、`runtime/network_api.py`、`network_transport.py`；后续下载另行适配 | `test_plugin_network_targets/api/logging/worker/shutdown.py`：准确范围、真实HTTP/TLS、peer、逐跳认证、DNS重绑定、预算/撤销/实际清理；下载保持既有回归 | A仅GET/HEAD、32KiB；固定数字IP、TLS原域身份，无共享凭据。下载任务、hash和提交竞态仍未完成，不把本切片计为完整P10 | 关闭网络门面，收尾所属真实流；DNS未结束保留pending，迟到不继续连接；不影响用户下载 |
 | P11：Java所有者与安装，依赖P08/P10 | `java/manager.py`、`java/installer.py`、Broker计划ref/任务去重 | V03/V04/V07；`test_plugin_host_java.py`：同源/异源目标合并、计划过期、取消解包/commit、租约引用；现有Java测试 | 计划URL/目标不可改，不能取得别人的task，实际安装/登记及回滚正确。来源在合并之后才检查是阻塞 | 保留已经登记的运行时；撤回插件门面，不自动删共享Java；取消未提交自己任务 |
 | P12：Minecraft安装/启动，依赖P08/P10/P11 | `services/game/install.py`插件任务适配；`launch.py`来源租约、提交闸门；Broker最小LaunchOptions | `test_plugin_host_game.py`：增量安装partial、后台真实退出、用户启动并发、自己的cancel、创建前后撤销、已启动游戏保留；现有launch/install回归 | 不调用无owner的全局cancel；安装取消不得报原子回滚；真实线程/下载器结束可观察。需要Core新接口才保证时停止并修订子模块范围 | 不卸载已装合法文件/共享cache；保留已启动Minecraft；撤下插件接口，来源租约有界释放 |
 | P13：工具进程，依赖P01/P08 | supervisor工具创建；`processes.py`带owner监督入口/终端适配 | `test_plugin_host_processes.py`：参数模板、stdin限制、tool digest、同Job、跨owner/跨run操作、停止、日志限频；现有process tests | 首条工具代码运行前在J；端口/工具身份不可伪造；终端显示兼容；不把游戏加入插件Job。需改Core接口时先评审 | 回收本插件工具；不停止用户Minecraft；撤回provider适配 |
@@ -1067,3 +1067,13 @@ files.write_commit 是首个生产任务入口，返回 queued 接纳回执。�
 任务资源清理属于准入生命周期，排队取消、审计失败和工作线程结束均执行，失败仅重试清理和保存，不重做发布。成功清理能确认 staged 消失，不能覆盖 committed/unknown。固定配额计入活跃预留、已有文件和崩溃残留，不自动清扫旧文件。覆盖、删除、子目录、共享空间、实例资料写入和跨重启暂存恢复仍待单独审阅。
 
 现行调用说明与示例见 [归档文档](eclplugin-package-format.md#私有文件与新建事务) 和 [worker_snapshot](../examples/plugins/worker_snapshot/README.md)。源码、两种冻结发行物、真实 WebView2 权限显示与本地交付结果集中在 [P09 验收记录](plugin-private-files-implementation-plan.md#11-实施与验收记录)。
+
+## 25. P10 A 受控只读网络（2026-10-21）
+
+按用户选择并确认的 [实施方案](plugin-network-read-implementation-plan.md)，开放精确站点的 GET/HEAD。NetworkOrigin统一声明、决定和URL；可信管理PermissionItem新增requested_resource_refs，弹窗显示最多16个站点，整组允许覆盖全部路径。selected与effective范围保留各自语义，不增加旧字段适配。六语言同步。
+
+PluginWorkerService拥有唯一PluginNetworkService，每个Broker持有RuntimeNetwork。每run同时2个请求，宿主8个请求、4个真实DNS工作者；不创建OperationManager任务、请求缓存或重试。解析在有界守护工作者中执行，超时不释放实际DNS名额，不无限join；原请求实际返回、DNS结束和全部流关闭后才释放请求。Broker空闲、停止pending及重新启用门禁纳入网络资源。
+
+HTTPcore公开NetworkBackend/NetworkStream仅向已准入数字IP连接，发送HTTP前核实peer；TLS验证、SNI和Host保留原站点。每跳独立池，HTTP/1、无代理、无复用、无Cookie。租约接受点仅记录有限动作，真实I/O在锁外；总30秒/单阶段5秒，原始收包及完整实体分别限额。最终清理后再次检查原租约与截止，撤销不通过新租约恢复旧请求。
+
+网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](eclplugin-package-format.md#只读网络请求)、[worker_network_read](../examples/plugins/worker_network_read/README.md) 与 [P10验收记录](plugin-network-read-implementation-plan.md#12-实施与验收记录)。下载任务和实例写入继续独立审阅。

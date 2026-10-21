@@ -1,8 +1,8 @@
 # 插件只读网络请求实施方案
 
-日期：2026-10-21（Asia/Shanghai）。状态：用户已选择 A（GET/HEAD 只读请求），本文件待审阅与实施确认；本轮未修改功能代码。
+日期：2026-10-21（Asia/Shanghai）。状态：用户选择 A（GET/HEAD 只读请求）并以“继续”确认实施；功能已实现，验收与交付记录见第12节。
 
-基线：主仓库及原工作区本地 main 为 `c553e21`，前端为 `0ead9f3`。接续 [P09 A 私有文件](plugin-private-files-implementation-plan.md)，细化 [总体设计](plugin-worker-api-v2-implementation-design.md) 的 P10 首个切片。本轮不把完整 P10 或完整文件管理能力标为完成。
+基线：方案调研时主仓库及原工作区本地 main 为 `c553e21`，方案提交 `8f19c46` 后开始实施，前端为 `0ead9f3`。接续 [P09 A 私有文件](plugin-private-files-implementation-plan.md)，细化 [总体设计](plugin-worker-api-v2-implementation-design.md) 的 P10 首个切片。本轮不把完整 P10 或完整文件管理能力标为完成。
 
 ## 1. 已选路线与交付目标
 
@@ -175,10 +175,39 @@ Core/Florolding及桌面下载服务不改。若必须改它们才能满足本�
 
 任何实际连接、TLS、权限接受顺序、DNS真实结束或日志隔离不能证明成立时，暂停对应接线并说明阻碍；不靠增加外层检查宣称实现。功能完成后按根规范独立提交功能/文档，前端本地main先集成，随后主仓库；本轮无远端推送或发布授权。
 
-## 11. 本轮调研交付与待确认
+## 11. 方案阶段调研与实施确认
 
-本轮仅提交方案、公开文档核对、隔离TLS接口探针和现有功能基线结果。探针、专用测试密钥和日志只在忽略目录，不进入代码或发行资源。现有network.read/network.request保持未实现。
+方案阶段仅提交文档、公开文档核对、隔离TLS接口探针和现有功能基线结果。该探针、探针密钥和日志保留在忽略目录，没有进入生产代码或发行资源；当时network.read/network.request未实现。用户审阅后以“继续”确认进入实施。
 
-当前基线验证：授权存储、Broker、私有文件、任务归属、操作日志和Worker RPC相关用例共185通过、1跳过，见 build/worker-manager/p10-plan-baseline.txt；本轮未重跑完整主仓库、前端或冻结构建，不能把上轮验收记作本轮网络功能通过。方案本地链接和git diff --check通过。
+方案基线验证：授权存储、Broker、私有文件、任务归属、操作日志和Worker RPC相关用例共185通过、1跳过，见 build/worker-manager/p10-plan-baseline.txt；该阶段未重跑完整主仓库、前端或冻结构建，不把上轮验收记作网络功能通过。方案本地链接和git diff --check通过。实施后的独立验证见下节。
 
-实施确认覆盖：公网DNS站点的精确协议/域名/端口范围、管理requested_resource_refs字段、32 KiB完整响应、明确的请求头/编码限制、真实DNS/连接生命周期以及六语言站点审阅。确认后按第9节实施，验收通过后再讨论下载任务；不将本文件视为功能已经完成。
+实施确认覆盖：公网DNS站点的精确协议/域名/端口范围、管理requested_resource_refs字段、32 KiB完整响应、明确的请求头/编码限制、真实DNS/连接生命周期以及六语言站点审阅。该确认授权按第9节实施，未授权下载任务；本节只保留方案阶段的事实，完成情况以下节为准。
+
+## 12. 实施与验收记录
+
+已实现NetworkOrigin/NetworkTargetPolicy、严格请求模型、共享PluginNetworkService、每run RuntimeNetwork以及公开HTTPcore固定地址后端。Broker开放network.read/network.request并将真实网络资源纳入空闲和停止门禁；WorkerService关闭共享网络服务。管理视图新增必填requested_resource_refs，六语言弹窗展示完整精确站点并按展示范围整组保存；原有实例选择保持自身语义。新增可安装示例worker_network_read和构建CI验收入口。
+
+解析工作者采用应用持有的有界守护线程与Future，最多4个实际解析，无待办队列。没有采用标准ThreadPoolExecutor：其解释器退出钩子会join未结束的系统解析，单独的shutdown(wait=False)不足以保证有界退出。独立进程回归证实卡住的DNS仍保持pending，但进程不会无限join；迟到结果只归还资源。连接、TLS尚未返回时保持实际调用pending，TLS新流先登记再移交旧流，关闭失败保留重试。
+
+测试使用专门生成的自签名证书与测试私钥，位于tests/fixtures/plugin_network，仅供测试宿主加载；与方案探针密钥不同，不进入生产资源或提供给插件。受信测试Python依赖将逻辑公网地址映射到用例自己的真实HTTP/TLS服务器；生产清单、RPC与环境没有这些注入入口。另以未经peer映射的公开SyncBackend直连用例服务器，确认真实peer、原域SNI/Host和仅数字地址解析。
+
+本机example.com、httpbin.org解析到策略禁止地址，请求在拨号前拒绝，未放宽规则。公开外网验收选用实际可解析为普通公网的Google连通性HTTPS端点和Microsoft HTTP测试文本；分别检查真实GET/HEAD无体状态、完整文本及未批准站点拒绝。无个人账号、身份头或宿主凭据。
+
+最终验收使用修正长站点挤压复选框后的前端与最终源码构建，不使用旧产物替代。真实主窗口新增德语960×600回归，修复前“允许”文字为两行，修复后为一行；脚本等待弹窗实际可交互后操作，不把v-show隐藏等同DOM删除。网络仍保持单阶段5秒和不重试：Nuitka外网首轮GET曾返回NETWORK_FAILED，独立重新发起夹具后HTTPS GET/HEAD和HTTP文本均成功，没有增加API回退或放宽目标策略。
+
+| 验收 | 最终结果与证据 |
+| --- | --- |
+| 主仓库Ruff、格式和全仓GitHub输出检查 | 全部通过；检查范围ECL/tests及全仓，284个文件格式检查通过 |
+| 完整主仓库pytest | **1860通过、19跳过**；build/worker-manager/p10-backend-final.txt。冻结与平台环境用例分别验证，不把跳过当作通过 |
+| Core | 子仓库ruff通过；从主仓库运行Core测试 **16通过**，未修改Core/Florolding |
+| 前端 | pnpm check通过，**166个测试文件、915通过、1 todo**；随后pnpm build通过。见p10-frontend-check.txt、p10-frontend-build.txt |
+| PyInstaller最终产物 | 非主窗口既有及网络回归259项通过；新增真实主窗口用例定向复测1通过（p10-ui-after-fix.txt）；最大URL/转义头/实体和加强后的源码、冻结Worker边界用例3通过（p10-pyinstaller-boundary.txt） |
+| Nuitka最终产物 | 非主窗口回归 **259通过**，p10-nuitka-smoke.txt；上述边界用例 **3通过**，p10-nuitka-boundary.txt；真实主窗口由下行夹具完成 |
+| 最终真实WebView2 | **每种产物144组**：六语言、Classic/Folia、亮暗、有无背景及透明/模糊、1200×800/960×600/1600×1000外框。最小实际client为944×591。标签无挤压、页脚/末行可达、16个站点经End滚至末项、Tab至允许框及单行文字全部通过 |
+| 原生管理与公开网络 | 每个产物均通过实际权限弹窗保存16个展示站点，并核对native管理视图；随后原生IPC审阅、独立Worker、HTTPS GET/HEAD、HTTP完整文本、未准站点拒绝、依赖/原生Wheel/实例/私有文件/设置/用户下载取消及撤销清理通过 |
+
+主窗口完整夹具日志为build/worker-manager/p10-pyinstaller-ui.txt与p10-nuitka-ui.txt，均确认144组；实际矩阵、德语截图和Playwright CLI快照位于build/worker-manager/output/playwright/p10-ui-pyinstaller与p10-ui-nuitka。TLS、超限和撤销的确定性用例使用真实源代码及对应冻结Worker，不把回环测试夹具描述成生产可访问内网。
+
+当前验证为真实Windows x64、已运行的跨平台通用策略/连接用例及模拟平台拒绝分支；本轮没有POSIX实机Worker或远端CI执行记录，也没有远端推送/发布。下载、network.write、network.lan和实例写入仍待后续独立审阅。
+
+功能提交为主仓库 **fa1ddf8**、前端 **320cc0d**；本记录和调用文档独立docs提交。本地交付按前端main先、主仓库main后执行fast-forward，保留原有远端分歧，不合并远端历史或推送。最终HEAD、gitlink与两工作区状态在同步后另行核验。
