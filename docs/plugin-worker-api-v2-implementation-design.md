@@ -547,7 +547,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 ### 13.6 文件、网络与下载
 
-文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](plugin-download-task-implementation-plan.md) 开放私有空间新文件下载；files.delete 仍未开放，返回 PLUGIN_API_METHOD_NOT_FOUND。
+文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](plugin-download-task-implementation-plan.md) 开放私有空间新文件下载；files.delete 仍未开放，返回 PLUGIN_API_METHOD_NOT_FOUND。删除的原生边界、恢复范围及路线取舍见 [待审阅的按版本删除方案](plugin-private-file-delete-implementation-plan.md)，该方案尚未替换下述设计或开放接口。
 
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
