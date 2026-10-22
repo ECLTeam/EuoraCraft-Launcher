@@ -1088,3 +1088,9 @@ RuntimeDownloads连接现有网络、文件和唯一OperationManager，不增加
 Broker现有mutation回执用于提交去重和超时后查询；权限撤销后回执只返回自身控制引用，不恢复权限。Worker监管同时检查任务、网络取消与暂存清理。排队取消不等于future已完成；任务终态也不等于网络、暂存及审计已经收尾，真实pending继续阻止重新启用。关闭失败只重试清理，不重发HTTP或删除已发布目标。
 
 协议和示例见 [归档文档](eclplugin-package-format.md#私有空间下载任务)、[worker_download](../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 [下载验收记录](plugin-download-task-implementation-plan.md#12-实施与验收记录)。覆盖/删除、实例写入、安装任务和自定义前端继续分别审阅。
+
+## 27. 私有文件替换下一阶段（2026-10-22，待审阅）
+
+按版本删除已另行完成，见 [删除验收记录](plugin-private-file-delete-implementation-plan.md#11-实施与本地验收)。下一阶段的 [按版本替换草案](plugin-private-file-replace-implementation-plan.md) 已完成当前代码调研及隔离原生探针，生产接口和权限尚未修改。
+
+已测试的直接replace没有证明“完整版本检查与替换不可插入竞争”的契约。草案推荐先保留原对象，再不覆盖发布，配套持久恢复及可信主窗口处理；代价是目标名称可能短暂缺失。这与一次原子覆盖不同，须由用户确认路线和恢复范围后实施；当前write_begin及downloads.submit仍禁止覆盖。
