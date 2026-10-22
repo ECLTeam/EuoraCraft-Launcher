@@ -1,6 +1,6 @@
 # 插件私有文件按版本删除实施方案
 
-日期：2026-10-22（Asia/Shanghai）。状态：方案待审阅；本轮只完成调研、隔离探针和文档，尚未开放 `files.delete`。
+日期：2026-10-22（Asia/Shanghai）。状态：用户已确认路线A并实施，`files.delete` 已开放；验收与交付见第11节。第2、10节保留方案阶段证据。
 
 基线：主仓库及原工作区本地 main 为 `f209f93`，前端为 `320cc0d`。接续 [P09 A 私有文件](plugin-private-files-implementation-plan.md)、[P10 B 下载任务](plugin-download-task-implementation-plan.md) 和 [总体设计](plugin-worker-api-v2-implementation-design.md)。目标为补齐私有空间文件清理，不同时实施覆盖写入、实例修改或声明式 UI。
 
@@ -12,7 +12,7 @@
 | B：同卷备份/隔离区事务 | 原目标改名到内部隔离区，需持久化阶段记录、回滚冲突处理、崩溃后用户恢复入口和额外界面；可提供更强的恢复能力 | 需要保留已提交文件的恢复能力时另行细化 |
 | C：覆盖和删除一起完成 | 增加替换新旧对象的原子条件与恢复，关联暂存和目标的双重版本竞争 | 暂不采用 |
 
-总体设计13.6原有“同卷可恢复暂存后提交”的删除设想属于路线B。本方案提议先采用A；这是需要随本方案明确确认的范围收窄，未确认前不修改该原设计或开放接口。
+总体设计13.6原有“同卷可恢复暂存后提交”的删除设想属于路线B。用户已确认先采用A及其恢复范围收窄，总体设计和现行协议同步更新。
 
 A的恢复范围为仍持有原目标句柄、尚能撤回删除标记的失败。成功删除不进入回收站，不提供撤销删除；提交接受后的崩溃或原生状态不确定不能承诺恢复。需要跨重启恢复或已删除文件找回时，应选择B，不能把A的验证当作B完成。
 
@@ -150,10 +150,39 @@ RuntimeFiles.is_idle、PluginFileStorage.close与Worker停止/重新启用门禁
 
 Windows/POSIX公共分支及拒绝策略测试应通过；正式文件删除及Worker只承诺真实Windows x64/NTFS。明确记录没有执行的POSIX实机或远端CI，不能把方案探针或既有下载验收当作本切片完成。
 
-## 10. 本轮方案交付
+## 10. 原方案阶段交付记录
 
 本轮只新增实施文档及总体设计中的待审阅链接。原生人工探针证明关键的可恢复标记与延迟删除边界，基线131 passed、1 skipped；正式删除API、六语言文案和TaskView字段均未修改。
 
 提交前检查本地链接/章节、Markdown结构及git diff --check；文档独立提交并快进同步原工作区本地main。frontend/Core/Florolding不改指针，保留无关改动和现有远端分歧，不推送。
 
-功能实施需要用户审阅并确认本方案，尤其路线A的恢复范围、延迟删除的unknown/pending结果及TaskView新增字段；确认后才执行第8节。
+上述方案随后获用户“开始实施”确认，按第8节实施路线A，结果如下。
+
+## 11. 实施与本地验收
+
+功能提交 `b6ba117`；前端提交 `ae37c5ff6c0ae9d8ccefabaa4be2bef2d801a4d6`。主仓库及前端均先完成检查和提交，再快进集成到原工作区本地main。Core和Florolding指针未变；无迁移、兼容入口、历史文件扫描或远端推送。
+
+已实现严格删除DTO、独立权限及根发现、跨上传/下载名称占用、30秒含排队预算、原句柄完整版本核验、接受前审计、删除标记撤回分类和按根目录文件ID确认实际移除。正式目标始终使用删除资源记录，不交给暂存discard。等待外部元数据句柄期间释放安装I/O锁，保留原对象及名称占用；仅重试观察，不重开名称补删。
+
+OperationSnapshot与TaskView增加派生cleanup_pending。监管和自身查询重试终态清理/审计；一个活动future不阻止其他终态任务收尾。撤回或晚到清理完成不覆盖unknown；已关闭目标但原目录项尚存时保留资源并阻止重新启用。当前上传/下载暂存同样确认已知原身份消失才归还预留，未新增旧残留清理。
+
+六语言权限说明明确自身私有、本地NTFS及删除成功不可恢复；复用现有权限弹窗。新增worker_file_cleanup示例，显式要求目标、etag与保留的mutation_key，加载/卸载均不自动删除。已用正式打包器生成本地 `build/worker-manager/worker_file_cleanup.eclplugin`。
+
+| 检查 | 本地结果 |
+| --- | --- |
+| 主仓库 Ruff | `ruff check ECL tests`、`ruff format --check ECL tests`、`ruff check . --output-format github` 均通过；CI旧 `--format github` 被当前版本明确拒绝，使用等价选项，不修改工具 |
+| 完整pytest | 1954 passed、21 skipped，192.19秒；最终改动仅补公开接口docstring说明后，相关回归68 passed |
+| Core | 子仓库 `ruff check .` 通过；主仓库运行Core测试16 passed |
+| 前端 | pnpm check通过：格式、ESLint、类型及921 passed / 1 todo；随后pnpm build通过 |
+| 原生及删除边界 | 目录身份ABI、真实独占和元数据延迟、撤回标记、映射占用、只读/目录/硬链接拒绝、同内容重建、8 MiB边界、关闭/标记/查询/撤回故障、暂存延迟归还及进程终止行为通过 |
+| 任务与授权 | 去重并发、名称竞争、run限额、排队取消/截止、执行器拒绝、接受前撤销/审计失败、接受后撤销、无read安全确认、unknown及晚到清理、活动任务不阻止终态收尾通过 |
+| PyInstaller / Nuitka Worker | 两种onefile重建，各18 passed，覆盖源码和冻结Worker的删除、新建、下载、本地TLS网络、任务及bootstrap |
+| 实际启动器 | 两种原生主窗口均验收离线归档安装/重启、权限保存、真实Worker创建→取得etag→删除→确认、设置/实例/原生扩展及撤销停止；每种144个WebView2布局组合，共288个 |
+
+界面矩阵覆盖六语言、Classic/Folia、亮暗、背景关闭/开启（透明度0.55、模糊12）及1200×800、960×600、1600×1000。检查文件标签与复选框不重叠、无横向溢出、页尾/保存可达、末项可滚动、键盘焦点和站点列表End/Tab；真实主窗口核对filesystem.delete允许和撤销后的实际决定。Playwright通过CDP连接实际WebView2，截图与矩阵保留在Git忽略的 `build/worker-manager/output/playwright/delete-ui-{pyinstaller,nuitka}`。最终仅docstring补充后的产物重建再次验证相同界面和删除流程；布局文案不变，复用已通过的完整矩阵。
+
+源码全量和冻结Worker日志位于Git忽略的 `build/worker-manager/delete-*.log`。额外公网下载探测曾遇到PLUGIN_NETWORK_FAILED（连接或响应失败）；没有放宽网络策略或重试逻辑。最终原生界面验收不依赖公网下载，本地TLS下载/网络源码和两种冻结Worker回归均通过。该次公网探测不计作成功。
+
+正式删除仅承诺本机Windows x64、本地NTFS；POSIX显式拒绝分支已自动测试，未做POSIX实机删除或远端CI。成功删除不进回收站、不可撤销；未标记进程退出保留文件，已标记进程退出可能完成删除，不提供跨重启恢复。保留unknown是实际可知效果的边界，不能因资源最终释放改报成功。
+
+本地集成保留原有远端分歧，仅更新本地main；没有推送、标签或发布。本轮文档以独立docs提交交付。

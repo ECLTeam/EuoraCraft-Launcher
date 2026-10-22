@@ -126,19 +126,19 @@ class Plugin(BasePlugin):
 
 ### 自身任务控制
 
-`operations.get({operation_ref})`、`operations.list({cursor?,limit?})` 和 `operations.cancel({operation_ref})` 只操作当前安装、内容和运行自己的任务。控制自身已有任务不需要重新授予业务权限；结果必须具有创建时显式绑定的读取许可，并在交付时逐次复核，失权后 result 为 null。写许可不能代替读许可。不能传入宿主 operationId、owner、路径或其他 run；跨运行引用统一拒绝。取消需要本 run 的 mutation_key，HostClient.call 默认生成；同键重复调用不会重复副作用。
+`operations.get({operation_ref})`、`operations.list({cursor?,limit?})` 和 `operations.cancel({operation_ref})` 只操作当前安装、内容和运行自己的任务。控制自身已有任务不需要重新授予业务权限；结果必须具有创建时显式绑定的结果准入，并在交付时逐次复核，失权后 result 为 null。FileView必须有独立读取许可，删除的无内容确认绑定原删除许可；写许可不能代替读许可。不能传入宿主 operationId、owner、路径或其他 run；跨运行引用统一拒绝。取消需要本 run 的 mutation_key，HostClient.call 默认生成；同键重复调用不会重复副作用。
 
-TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cancellation_requested,effect,result,error_code`。state 为 queued、running、committing、completed、failed 或 cancelled。取消返回 `{requested,state,effect}`，requested 只表示已请求，实际停止要继续查询。提交已接受时取消失败 `PLUGIN_COMMIT_STARTED`，撤销或 Worker 退出不把随后成功或真实错误改成取消。stage/message 为安全阶段说明，不交付原始日志、路径或异常。
+TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cancellation_requested,effect,cleanup_pending,result,error_code`。state 为 queued、running、committing、completed、failed 或 cancelled。cleanup_pending 为布尔值，非终态为 false；终态仍有实际 future、领域资源或审计未收尾时为 true。查询和监管只重试清理、观察及保存，不重放业务。取消返回 `{requested,state,effect}`，requested 只表示已请求，实际停止要继续查询。提交已接受时取消失败 `PLUGIN_COMMIT_STARTED`，撤销或 Worker 退出不把随后成功或真实错误改成取消。stage/message 为安全阶段说明，不交付原始日志、路径或异常。
 
 列表 limit 为 1—100、默认 50；每页受 64 KiB 限制，游标最多 16 个快照、120 秒，绑定本 run 和 limit。快照固定引用集合，每页重新查询状态和过滤结果。每 run 最多 128 个引用，宿主同时跟踪至多 1024 个插件任务；容量耗尽明确拒绝，不淘汰活跃任务。关闭 run 后只有实际 future 和审计保存完成才释放记录。
 
-不开放通用 `operations.submit` 或安装任务创建接口。具体业务入口为 files.write_commit 与下文 downloads.submit；未提交任务的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](plugin-operation-ownership-implementation-plan.md)。
+不开放通用 `operations.submit` 或安装任务创建接口。具体业务入口为 files.write_commit、files.delete 与下文 downloads.submit；未提交任务的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](plugin-operation-ownership-implementation-plan.md)。
 
 ## 私有文件与新建事务
 
-声明 `filesystem.read` 或 `filesystem.write`，清单及授权的 resource_refs 必须为空；范围固定为本安装的私有文件空间。两种能力独立，写只允许新建文件，不允许覆盖、删除、建子目录或访问用户选择的目录。首轮限 Windows x64、本地 NTFS；其他文件系统明确拒绝。
+声明 `filesystem.read`、`filesystem.write` 或 `filesystem.delete`，清单及授权的 resource_refs 必须为空；范围固定为本安装的私有文件空间。三种能力独立，写只允许新建文件，不允许覆盖、删除、建子目录或访问用户选择的目录。首轮限 Windows x64、本地 NTFS；其他文件系统明确拒绝。
 
-先调用 resources.list，capability 为 filesystem.read 或 filesystem.write，取得当前 run 的 root_ref。FileRef 为 `{root_ref,relative_path}`，文件名为 1—120 个 ASCII 字符，须以字母或数字开始，后续仅允许字母、数字、点、下划线和连字符；拒绝设备名、尾点和路径组件。空名称只用于私有根 stat/list。引用不能跨 run/授权代次重用，任何接口都不返回宿主路径。
+先调用 resources.list，capability 为 filesystem.read、filesystem.write 或 filesystem.delete，取得当前 run 的 root_ref。FileRef 为 `{root_ref,relative_path}`，文件名为 1—120 个 ASCII 字符，须以字母或数字开始，后续仅允许字母、数字、点、下划线和连字符；拒绝设备名、尾点和路径组件。空名称只用于私有根 stat/list。引用不能跨 run/授权代次重用，任何接口都不返回宿主路径。
 
 读取使用 files.stat、files.list、files.read。read 的 count 为 1—32768，结果为 Base64、eof 和完整内容与物理身份绑定的 etag；expected_etag 变化时明确失败。FileView 时间字段为 modified_ms。读取不会初始化首次空间；损坏或丢失的已有空间不能当作空空间重建。
 
@@ -149,6 +149,18 @@ commit 返回 `{operation_ref,state:"queued"}`，表示已接纳；实际结果�
 files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放配额或允许重新启用。
 
 同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。崩溃残留计入空间，不自动恢复或删除。参见 [完整协议与验收](plugin-private-files-implementation-plan.md) 和可安装的 [worker_snapshot 示例](../examples/plugins/worker_snapshot/README.md)。
+
+### 按版本删除私有文件
+
+`files.delete({target:FileRef,expected_etag:64位小写十六进制})` 需要独立 filesystem.delete；不要求同时有 read/write。目标必须是当前私有根内非空名称的普通单链接文件，至多8 MiB。拒绝目录、ADS、链接、递归、force、额外字段和真实路径；目标缺失返回 PLUGIN_RESOURCE_NOT_FOUND，超大返回 PLUGIN_FILE_TOO_LARGE。根发现和删除均不初始化首次空间。
+
+RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；任务 plugin_file_delete 从本次提交起共30秒，包含排队。上传、下载和删除共用大小写不敏感目标占用，冲突为 PLUGIN_FILE_BUSY。每run至多4个、宿主32个未释放删除资源，与上传字节预留独立。
+
+执行时相对原根独占打开目标，在同一句柄计算完整SHA-256并核对身份、长度、修改时间和expected_etag；同名同内容重建也拒绝。原lease、取消及截止均在最终接受前复核，先保存committing审计，再设置内核删除标记。接受前取消/失权/审计失败保留原文件。标记或关闭失败只有原句柄撤回标记并确认后才报告零效果；无法确认则保留unknown和待清理资源。
+
+成功必须确认原对象目录项已消失，最终仅返回 `{deleted:true}`。该无内容确认绑定原删除lease，失权后result为null，effect不改。自身CloseHandle成功不代表实际删除；外部元数据句柄可能延迟移除，超时返回 PLUGIN_FILE_DELETE_PENDING、effect=unknown、cleanup_pending=true。内核删除仍可能晚到完成；后续只观察原对象身份，不重开名称补删，不触及同名新对象。实际清理完成可以清除cleanup_pending，但不把unknown改报成功。
+
+这是直接删除，成功后不可恢复，不进入回收站，不提供跨重启恢复。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 [实施与验收](plugin-private-file-delete-implementation-plan.md) 和 [显式清理示例](../examples/plugins/worker_file_cleanup/README.md)。
 
 ## 只读网络请求
 

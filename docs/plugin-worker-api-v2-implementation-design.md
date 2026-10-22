@@ -487,7 +487,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `FileView` | `{file_ref:FileRef,name:string,kind:"file"\|"directory",size:int,modified_ms:int,etag:string}`；etag绑定实际身份和完整内容摘要，不作为作者签名；纳秒仅用于内部版本计算 |
 | `Page<T>` | `{items:T[],next_cursor:string\|null}`；limit 1—100，游标绑定查询、过滤范围及运行会话 |
 | `TaskReceipt` | `{operation_ref:string,state:"queued"\|"running"}`；内部 Core taskId/OperationManager ID不作为授权依据 |
-| `TaskView` | `{operation_ref,kind,state,percent:0..100,stage,message,can_cancel,cancellation_requested,effect:"none"\|"staged"\|"committing"\|"committed"\|"partial"\|"unknown",result:已登记结果DTO\|null,error_code:string\|null}`；不能返回其他资源路径或完整日志 |
+| `TaskView` | `{operation_ref,kind,state,percent:0..100,stage,message,can_cancel,cancellation_requested,cleanup_pending:bool,effect:"none"\|"staged"\|"committing"\|"committed"\|"partial"\|"unknown",result:已登记结果DTO\|null,error_code:string\|null}`；不能返回其他资源路径或完整日志 |
 | `ReleaseResult` | `{released:bool}`；重复释放返回false或已释放，不扩展控制范围 |
 | `InstanceView` | `{instance_ref,version_id,alias,loader,game_version,profile:{description,favorite,tags},profile_etag:string,running_count:int}`；本轮只读实例接口不返回文件路径，etag 为公开资料摘要，不承诺单调递增或写入并发令牌 |
 | `LaunchOptions` | `{memory_mb?:512..65536,width?:320..16384,height?:240..4320,fullscreen?:bool,runtime_ref?:string}`；不接收原始命令、wrapper、pre/post脚本、环境变量或令牌 |
@@ -547,7 +547,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 ### 13.6 文件、网络与下载
 
-文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](plugin-download-task-implementation-plan.md) 开放私有空间新文件下载；files.delete 仍未开放，返回 PLUGIN_API_METHOD_NOT_FOUND。删除的原生边界、恢复范围及路线取舍见 [待审阅的按版本删除方案](plugin-private-file-delete-implementation-plan.md)，该方案尚未替换下述设计或开放接口。
+文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write/delete 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](plugin-download-task-implementation-plan.md) 开放私有空间新文件下载；files.delete 已按用户确认的 [按版本删除路线A](plugin-private-file-delete-implementation-plan.md) 开放。三种文件权限彼此独立，删除只提供不含内容的自身控制确认。
 
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
@@ -558,11 +558,11 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `files.write_chunk` | `{write_ref,offset:int,data_b64:string}` | `{received_bytes:int}` | 原write授权仍有效；顺序offset | `PLUGIN_WRITE_SEQUENCE_INVALID`,`PLUGIN_WRITE_SIZE_EXCEEDED` | W5；O |
 | `files.write_commit` | `{write_ref,sha256:string}` | `TaskReceipt`，state固定queued；最终结果为FileView或null | 原始写lease控制执行，独立原始读lease控制结果；根/源身份及完整摘要校验 | `PLUGIN_FILE_CHANGED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
 | `files.write_abort` | `{write_ref}` | `ReleaseResult` | C，自己的暂存 | — | CL5；O |
-| `files.delete` | `{target:FileRef,expected_etag:string}` | `TaskReceipt`；最终`{deleted:true}` | `filesystem.delete`，单个文件 | `PLUGIN_FILE_CHANGED`,`PLUGIN_NOT_FILE`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
+| `files.delete` | `{target:FileRef,expected_etag:string}` | `TaskReceipt`；最终`{deleted:true}` | `filesystem.delete`，自身至多8 MiB普通单链接文件 | `PLUGIN_FILE_CHANGED`,`PLUGIN_FILE_TOO_LARGE`,`PLUGIN_FILE_DELETE_PENDING` | T5/30秒；O+S |
 | `network.request` | `{method:"GET"\|"HEAD",url:string<=4096字节,headers?:白名单对象}` | `{status_code,url,headers:白名单对象,body_b64}`，GET实体至多32KiB | `network.read`；精确协议/DNS域名/端口，仅普通公网 | `PLUGIN_NETWORK_FAILED`,`PLUGIN_REDIRECT_DENIED`,`PLUGIN_RESPONSE_TOO_LARGE`,`PLUGIN_NETWORK_TARGET_DENIED` | R30；S |
 | `downloads.submit` | `{url,target:FileRef,overwrite:严格false,expected_sha256?:sha256}` | `TaskReceipt`；最终`FileView`或null | `network.read`各目标 + `filesystem.write`目标 | `PLUGIN_DOWNLOAD_FAILED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY` | T5/1800秒；O+S |
 
-写入会话60秒空闲过期，未commit只触及自己的暂存文件；分块最大32KiB，offset必须等于已接收字节，commit须等于声明total_bytes。delete首版仍为后续设计，仅文件，通过同卷可恢复暂存后提交；不递归删除目录。不开放通用shell文件操作或绝对路径API。
+写入会话60秒空闲过期，未commit只触及自己的暂存文件；分块最大32KiB，offset必须等于已接收字节，commit须等于声明total_bytes。delete首版采用原句柄按版本直接删除：接受前及仍持有原句柄时可撤回标记，目录项实际消失才成功；成功后不可恢复，不提供回收站或跨重启恢复。外部元数据句柄延迟删除时保留unknown/cleanup_pending，后续只观察原对象，不补删同名新对象；不递归删除目录。不开放通用shell文件操作或绝对路径API。
 
 `network.request`当前只开放GET/HEAD，使用独立HTTP/1上下文。GET完整实体至多32KiB，每次底层读最多8KiB、每跳原始HTTP收包最多256KiB；超限失败，不交付截断内容。HEAD及无体状态不读实体。只返回Content-Type/Content-Length/ETag/Last-Modified/Cache-Control，总4096字节。不解压、不共享Cookie或账户、不继承环境代理/证书设置。请求头白名单、准确站点键和稳定错误见 [现行协议](eclplugin-package-format.md#只读网络请求)。network.write、network.lan仍未开放，不保留原拟写方法或body字段。
 
