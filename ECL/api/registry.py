@@ -171,6 +171,7 @@ class IpcCommandRegistry:
         "accounts_auth_providers",
         "accounts_add_plugin",
         "accounts_add_offline",
+        "accounts_preview_offline_uuid",
         "accounts_default_skins",
         "accounts_set_offline_skin",
         "accounts_add_authlib",

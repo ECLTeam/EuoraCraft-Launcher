@@ -12,6 +12,7 @@
 #       - accounts_auth_providers(body) -> dict[str, Any] — 获取插件注册的全部认证提供方定义。
 #       - accounts_add_plugin(body) -> dict[str, Any] — 通过插件认证提供方新增账户。
 #       - accounts_add_offline(body) -> dict[str, Any] — 添加离线账户。
+#       - accounts_preview_offline_uuid(body) -> dict[str, Any] — 预演离线账户将使用的 UUID，不写入账户状态。
 #       - accounts_default_skins(body) -> dict[str, Any] — 获取可供离线账户选择的默认皮肤列表。
 #       - accounts_set_offline_skin(body) -> dict[str, Any] — 设置离线账户的默认皮肤。
 #       - accounts_add_authlib(body) -> dict[str, Any] — 添加外置登录账户。
@@ -123,6 +124,19 @@ class AccountHandlers(_FrontendState):
         """
         account_data = self.accounts.add_offline(body.get("username"), body.get("uuid"), body.get("skin"))
         return {"success": True, "data": account_data}
+
+    @_ipc_handler("ACCOUNT_OPERATION_FAILED")
+    async def accounts_preview_offline_uuid(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        预演离线账户将使用的 UUID，不写入任何账户状态。
+
+        供前端在用户输入用户名时即时展示最终 UUID；只读取账户服务的派生规则，
+        不新增账户、不切换当前账户，也不触发账户变更事件。
+
+        :param body: 包含待预览 username 的 IPC 请求数据
+        """
+        preview = self.accounts.preview_offline_uuid(body.get("username"))
+        return {"success": True, "data": preview}
 
     async def accounts_default_skins(self, body: dict[str, Any]) -> dict[str, Any]:
         """

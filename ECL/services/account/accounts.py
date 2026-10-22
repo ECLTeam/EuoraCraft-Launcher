@@ -19,6 +19,7 @@
 #       - current_account() -> dict[str, Any] | None — 获取当前账户。
 #       - get_launch_credentials() -> dict[str, str] — 返回启动游戏所需的当前账户凭据。
 #       - add_offline(username, custom_uuid=…, skin=…) -> dict[str, Any] — 添加离线账户。
+#       - preview_offline_uuid(username) -> dict[str, str] — 预演离线账户将使用的 UUID，不写入任何状态。
 #       - set_offline_skin(account_id, skin) -> list[dict[str, Any]] — 设置离线账户的默认皮肤并持久化，返回刷新后的账户列表。
 #       - add_authlib(server_url, username, password) -> dict[str, Any] — 添加外置登录账户。
 #       - select_authlib_profile(account_id, profile_id) -> dict[str, Any] — 完成多角色外置登录，只保存用户选中的一个角色。
@@ -730,6 +731,20 @@ class AccountManager:
             return str(UUID(value))
         except ValueError as exc:
             raise AccountError("自定义 UUID 格式无效", "INVALID_OFFLINE_UUID") from exc
+
+    def preview_offline_uuid(self, username: Any) -> dict[str, str]:
+        """
+        按用户名预演离线账户将使用的 UUID，不写入任何账户状态。
+
+        与添加离线账户共用同一套用户名规范化与 UUID 派生规则，因此预览结果就是
+        最终落盘的 UUID；本方法只读，不切换当前账户、不触发账户变更事件。
+
+        :param username: 待预览的离线用户名
+        :return: 含规范化后的 ``player_name`` 与标准带连字符 ``uuid`` 的预览结果
+        :raises AccountError: 用户名为空、超过 16 字符或包含空格时抛出
+        """
+        normalized = self._validate_username(username)
+        return {"player_name": normalized, "uuid": self._resolve_offline_uuid(normalized)}
 
     def add_offline(self, username: Any, custom_uuid: Any = None, skin: Any = None) -> dict[str, Any]:
         """

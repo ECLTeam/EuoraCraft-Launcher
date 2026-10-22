@@ -11,6 +11,7 @@
 #       - microsoft_login_config() -> Any
 #       - texture_urls(account_id) -> Any
 #       - add_offline(username, custom_uuid=…, skin=…) -> Any
+#       - preview_offline_uuid(username) -> dict[str, str]
 #       - default_skins() -> Any
 #       - set_offline_skin(account_id, skin) -> Any
 #       - add_authlib(server_url, username, password) -> Any
@@ -171,6 +172,10 @@ class FakeAccounts:
         self.last_offline_input = (username, custom_uuid)
         self.last_offline_skin = skin
         return {"id": "offline-id", "alias": username, "type": "offline", "uuid": "offline-uuid"}
+
+    def preview_offline_uuid(self, username):
+        self.last_offline_preview_username = username
+        return {"player_name": username, "uuid": "offline-preview-uuid"}
 
     def default_skins(self):
         return [{"id": "alice", "name": "Alice", "skinUrl": "data:image/png;base64,AAAA"}]
@@ -1028,6 +1033,17 @@ def test_offline_account_delegates_to_registered_service(tmp_path) -> None:
     assert result == {
         "success": True,
         "data": {"id": "offline-id", "alias": "Steve", "type": "offline", "uuid": "offline-uuid"},
+    }
+
+
+def test_offline_uuid_preview_delegates_without_creating_account(tmp_path) -> None:
+    api = _build_api(tmp_path)
+
+    result = asyncio.run(api.accounts_preview_offline_uuid({"username": "Steve"}))
+
+    assert result == {
+        "success": True,
+        "data": {"player_name": "Steve", "uuid": "offline-preview-uuid"},
     }
 
 

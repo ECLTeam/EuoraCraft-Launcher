@@ -33,6 +33,8 @@
 #       - add_microsoft_account() -> str
 #   - test_offline_accounts_persist_and_emit_changes(tmp_path) -> None
 #   - test_offline_account_accepts_custom_uuid(tmp_path) -> None
+#   - test_offline_preview_matches_generated_uuid_without_persisting(tmp_path) -> None
+#   - test_offline_preview_rejects_invalid_username(tmp_path) -> None
 #   - test_offline_account_exposes_launch_credentials(tmp_path) -> None
 #   - test_offline_account_rejects_invalid_custom_uuid(tmp_path) -> None
 #   - test_offline_default_skins_load_from_resource_path(tmp_path) -> None
@@ -290,6 +292,24 @@ def test_offline_account_accepts_custom_uuid(tmp_path) -> None:
 
     assert account["uuid"] == "01234567-89ab-cdef-0123-456789abcdef"
     assert account["id"] == "offline:01234567-89ab-cdef-0123-456789abcdef"
+
+
+def test_offline_preview_matches_generated_uuid_without_persisting(tmp_path) -> None:
+    manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
+
+    preview = manager.preview_offline_uuid("  Steve  ")
+
+    assert preview == {"player_name": "Steve", "uuid": "5627dd98-e6be-3c21-b8a8-e92344183641"}
+    assert manager.list_accounts()["accounts"] == []
+
+
+def test_offline_preview_rejects_invalid_username(tmp_path) -> None:
+    manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
+
+    with pytest.raises(accounts_service.AccountError) as error:
+        manager.preview_offline_uuid("   ")
+
+    assert error.value.error_code == "INVALID_OFFLINE_USERNAME"
 
 
 async def test_offline_account_exposes_launch_credentials(tmp_path) -> None:
