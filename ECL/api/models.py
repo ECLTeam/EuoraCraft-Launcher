@@ -135,7 +135,13 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from ECL.api.plugin_models import PluginPermissionQuery, PluginPermissionResources, PluginPermissionUpdate
+from ECL.api.plugin_models import (
+    PluginFileRecoveriesQuery,
+    PluginFileRecoveryResolve,
+    PluginPermissionQuery,
+    PluginPermissionResources,
+    PluginPermissionUpdate,
+)
 from ECL.game import GameDataError, WorldSeedStore
 from ECL.services.account.skin_avatar import SkinAvatarExporter
 from ECL.services.custom_downloads import CustomDownloadRequest
@@ -1010,6 +1016,8 @@ class RequestModelRegistry:
     models: dict[str, type[BaseModel]] = {
         "plugin_permissions_get": PluginPermissionQuery,
         "plugin_permission_resources": PluginPermissionResources,
+        "plugin_file_recoveries_list": PluginFileRecoveriesQuery,
+        "plugin_file_recovery_resolve": PluginFileRecoveryResolve,
         "plugin_permissions_update": PluginPermissionUpdate,
         "plugin_runtime_info": PluginPermissionQuery,
         "search_mods": OnlineResourceSearchRequest,

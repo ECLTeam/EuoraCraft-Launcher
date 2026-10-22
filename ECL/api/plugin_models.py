@@ -9,15 +9,17 @@
 #   - class PluginPermissionQuery — 安装权限及运行查询。
 #   - class PluginPermissionUpdate — 带内容与并发版本的授权更新。
 #   - class PluginPermissionResources — 可信主窗口的有界资源候选查询。
+#   - class PluginFileRecoveriesQuery / PluginFileRecoveryResolve — 有界恢复查询与审阅动作。
 # ============================================================
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from ECL.plugins.grant_models import PermissionDecision
+from ECL.plugins.runtime.models import FileRef
 
 
 class PluginPermissionQuery(BaseModel):
@@ -51,3 +53,41 @@ class PluginPermissionResources(PluginPermissionQuery):
     search: str = Field(default="", max_length=120)
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class PluginFileRecoveriesQuery(BaseModel):
+    """
+    查询所有安装含孤立安装的待恢复记录，不接受宿主路径。
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    cursor: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class PluginFileRecoveryResolve(BaseModel):
+    """
+    绑定主窗口审阅的实际对象版本及明确恢复选择。
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    recovery_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    expected_revision: StrictInt = Field(ge=0, le=2**53 - 1)
+    expected_etag: str = Field(pattern=r"^[0-9a-f]{64}$")
+    action: Literal["restore", "save_as", "discard"]
+    saved_name: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+    @model_validator(mode="after")
+    def validate_choice(self) -> PluginFileRecoveryResolve:
+        """
+        只有另存需要名称，拒绝额外名称改变其他动作的含义。
+
+        :return: 通过选择与名称一致性校验的请求
+        """
+        if self.action == "save_as":
+            if self.saved_name is None:
+                raise ValueError("另存需要明确名称")
+            FileRef.valid_name(self.saved_name)
+        elif "saved_name" in self.model_fields_set:
+            raise ValueError("此恢复动作不接受另存名称")
+        return self

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -71,3 +72,18 @@ async def test_resource_candidates_require_native_registered_main(api, label):
         window,
     )
     assert response["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
+
+
+@pytest.mark.parametrize("method", ["plugin_file_recoveries_list", "plugin_file_recovery_resolve"])
+@pytest.mark.parametrize("window", [None, SimpleNamespace(label=lambda: "plugin-v2-forged")])
+async def test_file_recovery_requires_native_registered_main_even_for_queries(api, method, window):
+    response = await getattr(api, method)({"caller": "main", "window_label": "main"}, window)
+    assert response["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="原生私有文件恢复仅支持Windows")
+async def test_main_file_recovery_does_not_require_an_installed_or_enabled_plugin(api):
+    window = SimpleNamespace(label=lambda: "main")
+    response = await api.plugin_file_recoveries_list({}, window)
+    assert response["success"]
+    assert response["data"] == {"items": [], "next_cursor": None}

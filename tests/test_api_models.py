@@ -254,6 +254,8 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
     assert set(schemas) == {
         "plugin_permissions_get",
         "plugin_permission_resources",
+        "plugin_file_recoveries_list",
+        "plugin_file_recovery_resolve",
         "plugin_permissions_update",
         "plugin_runtime_info",
         "search_mods",

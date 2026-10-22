@@ -90,10 +90,12 @@ async def check_network_permission_layout(channel, process):
             const range=document.createRange();range.selectNodeContents(text);
             const fragments=[...range.getClientRects()].filter(rect=>rect.width>0);
             const footer=row.closest('.modal-container').querySelector('.modal-footer').getBoundingClientRect();
+            const toolbar=document.querySelector('.plugins-toolbar');
             return {sites:sites.children.length,lines:fragments.length,footer:footer.bottom<=innerHeight+1,
+                toolbarFits:toolbar.scrollWidth<=toolbar.clientWidth+1,
                 noOverlap:row.querySelector('.permission-label').getBoundingClientRect().right<=box.getBoundingClientRect().left+1}
         })()""")
-        assert result == {"sites": 16, "lines": 1, "footer": True, "noOverlap": True}, result
+        assert result == {"sites": 16, "lines": 1, "footer": True, "toolbarFits": True, "noOverlap": True}, result
         await evaluate(
             "document.querySelector('.plugin-permissions').closest('.modal-container').querySelector('.modal-header button').click();true"
         )

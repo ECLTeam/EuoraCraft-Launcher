@@ -6,6 +6,7 @@ import os
 import platform
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -239,6 +240,24 @@ class Plugin(BasePlugin):
             time.sleep(0.02)
         assert removed['state'] == 'completed' and removed['effect'] == 'committed', removed
         assert removed['result'] == {'deleted':True}, removed
+        target = {'root_ref':exported['root_ref'], 'relative_path':exported['name']}
+        version = self.host.call('files.stat', {'target':target})['etag']
+        payload = json.dumps({'api_version':2,'replaced':True}).encode()
+        upload = self.host.call('files.replace_begin', {
+            'target':target,'expected_etag':version,'total_bytes':len(payload)}, mutation_key='replace-begin')['write_ref']
+        self.host.call('files.write_chunk', {
+            'write_ref':upload,'offset':0,'data_b64':base64.b64encode(payload).decode()}, mutation_key='replace-chunk')
+        replacement = self.host.call('files.write_commit', {
+            'write_ref':upload,'sha256':hashlib.sha256(payload).hexdigest()}, mutation_key='replace-commit')
+        deadline = time.monotonic() + 10
+        while True:
+            replaced = self.host.call('operations.get', {'operation_ref':replacement['operation_ref']})
+            if replaced['state'] in ('completed','failed','cancelled') and not replaced['cleanup_pending']:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert replaced['state'] == 'completed' and replaced['effect'] == 'committed', replaced
+        assert replaced['result']['etag'] != version
         download_checked = False
         if live_download_checks:
             params = {'url':'http://www.msftconnecttest.com/connecttest.txt',
@@ -297,6 +316,7 @@ class Plugin(BasePlugin):
             {"capability": "filesystem.read", "required": True},
             {"capability": "filesystem.write", "required": True},
             {"capability": "filesystem.delete", "required": True},
+            {"capability": "filesystem.replace", "required": True},
             {
                 "capability": "network.read",
                 "required": True,
@@ -325,8 +345,13 @@ class Plugin(BasePlugin):
             WEBVIEW2_USER_DATA_FOLDER=str(data_path / "webview-profile"),
         )
         with log_path.open("wb") as log_file:
+            launcher = (
+                [sys.executable, str(Path(__file__).resolve().parents[1] / "main.py")]
+                if os.environ.get("ECL_PLUGIN_SMOKE_SOURCE")
+                else [str(executable_path)]
+            )
             process = subprocess.Popen(
-                [str(executable_path), "--data-dir", str(data_path), "--dev-channel"],
+                [*launcher, "--data-dir", str(data_path), "--dev-channel"],
                 env=environment,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -422,7 +447,7 @@ class Plugin(BasePlugin):
                     assert probe["count"] == 1 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
                     assert (
-                        probe["tasks"] == (5 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 3)
+                        probe["tasks"] == (6 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 4)
                         and probe["exported"]
                     )
                     assert probe["download_checked"] == bool(os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD"))
@@ -431,6 +456,7 @@ class Plugin(BasePlugin):
                     exports = tuple(files_path.glob("snapshot-*.json"))
                     assert len(exports) == 1
                     assert all(json.loads(path.read_bytes())["api_version"] == 2 for path in exports)
+                    assert all(json.loads(path.read_bytes())["replaced"] for path in exports)
                     if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD"):
                         assert (files_path / "download.bin").read_bytes() == b"Microsoft Connect Test"
                         assert not (files_path / "cancel-download.bin").exists()

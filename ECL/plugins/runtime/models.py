@@ -9,6 +9,7 @@
 #   - class FileRef / FileStatRequest / FileListRequest / FileReadRequest — 私有文件引用与读取请求。
 #   - class FileWriteBeginRequest / FileWriteRef / FileWriteChunkRequest / FileWriteCommitRequest — 新建事务请求。
 #   - class FileDeleteRequest — 按明确版本删除普通私有文件。
+#   - class FileReplaceBeginRequest — 明确选择原版本的替换上传请求。
 #   - class CommandDefinition — 命令注册契约。
 #   - class SettingDefinition — 非执行式设置定义。
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
@@ -198,7 +199,9 @@ class ResourceListRequest(RequestModel):
     仅发现本运行获准的实例资源，不接受其他能力或宿主路径。
     """
 
-    capability: Literal["instances.read", "filesystem.read", "filesystem.write", "filesystem.delete"]
+    capability: Literal[
+        "instances.read", "filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"
+    ]
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
 
@@ -341,6 +344,14 @@ class FileWriteRef(RequestModel):
     """
 
     write_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class FileReplaceBeginRequest(FileDeleteRequest):
+    """
+    显式选择原版本并声明新大小，不支持缺失目标时新建或无条件覆盖。
+    """
+
+    total_bytes: StrictInt = Field(ge=0, le=8388608)
 
 
 class FileWriteChunkRequest(FileWriteRef):

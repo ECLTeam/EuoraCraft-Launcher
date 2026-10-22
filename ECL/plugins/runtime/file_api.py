@@ -29,6 +29,7 @@ from ECL.plugins.runtime.models import (
     FileListRequest,
     FileReadRequest,
     FileRef,
+    FileReplaceBeginRequest,
     FileStatRequest,
     FileWriteBeginRequest,
     FileWriteChunkRequest,
@@ -122,7 +123,7 @@ class RuntimeFiles:
         只发现当前安装的逻辑根；首次只读发现不创建任何目录或记录。
         """
         query = ResourceListRequest.model_validate(params)
-        if query.capability not in {"filesystem.read", "filesystem.write", "filesystem.delete"}:
+        if query.capability not in {"filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"}:
             raise ProtocolError("此资源类别不属于私有文件", "PLUGIN_SCHEMA_INVALID")
         lease = self._session.authorize(query.capability)
         with self._storage.access(self._installation_id) as space:
@@ -210,7 +211,7 @@ class RuntimeFiles:
                 return tuple(
                     {"target": FileRef(root_ref=query.directory.root_ref, relative_path=name).model_dump()}
                     for name in names
-                    if not name.startswith(".upload-")
+                    if not name.startswith((".upload-", ".replace-"))
                 )
 
             def project(entry: dict[str, JsonValue]) -> dict[str, JsonValue]:
@@ -250,6 +251,17 @@ class RuntimeFiles:
         upload = self.prepare(query.target, lease, query.total_bytes, query.total_bytes, deadline)
         return {"write_ref": upload.write_ref, "max_chunk_bytes": 32768}
 
+    def _replace_begin(self, params: dict[str, JsonValue], deadline: float) -> dict[str, JsonValue]:
+        """
+        只准备已有空间的替换上传，原文件完整版本由提交工作线程核对。
+        """
+        query = FileReplaceBeginRequest.model_validate(params)
+        lease = self._session.authorize("filesystem.replace")
+        upload = self.prepare(
+            query.target, lease, query.total_bytes, query.total_bytes, deadline, expected_etag=query.expected_etag
+        )
+        return {"write_ref": upload.write_ref, "max_chunk_bytes": 32768}
+
     def prepare(
         self,
         target: FileRef,
@@ -259,6 +271,7 @@ class RuntimeFiles:
         deadline: float,
         *,
         additional_leases: tuple[GrantLease, ...] = (),
+        expected_etag: str | None = None,
     ) -> StagedFile:
         """
         为上传或下载绑定精确私有目标、预留容量并创建拥有唯一归属的原生暂存。
@@ -269,6 +282,7 @@ class RuntimeFiles:
         :param expected_bytes: 已知精确长度；未知长度下载为 None
         :param deadline: 准备截止
         :param additional_leases: 准备动作同时需要的原始执行准入
+        :param expected_etag: 独立替换授权绑定的原版本；None表示只新建
         :return: 已登记归属的暂存
         :raises FileBoundaryError: 目标、配额或原生文件边界不满足时抛出
         """
@@ -284,17 +298,23 @@ class RuntimeFiles:
         with self._storage.access(self._installation_id) as existing:
             self._resolve(target, lease, existing.identity)
             self._check(lease, deadline)
-        with self._storage.access(self._installation_id, initialize=True, admit=accept) as space:
+            if expected_etag is not None and existing.directory is None:
+                raise FileBoundaryError("插件文件不存在", "PLUGIN_RESOURCE_NOT_FOUND")
+        with self._storage.access(self._installation_id, initialize=expected_etag is None, admit=accept) as space:
             assert space.directory is not None
             with self._lock:
                 self._root_identity = space.identity
             self._resolve(target, lease, space.identity)
             self._check(lease, deadline)
-            self._absent(space.directory, target.relative_path)
+            if expected_etag is None:
+                self._absent(space.directory, target.relative_path)
+            elif space.directory.entry_identity(target.relative_path, deadline) is None:
+                raise FileBoundaryError("插件文件不存在", "PLUGIN_RESOURCE_NOT_FOUND")
             self._storage.check_quota(
                 self._installation_id, space.directory, deadline, reserved_bytes, is_new_upload=True
             )
             upload = StagedFile(target, lease, space.directory, reserved_bytes, expected_bytes)
+            upload.expected_etag = expected_etag
             with upload.io_lock:
 
                 def reserve() -> None:
@@ -422,6 +442,23 @@ class RuntimeFiles:
             context.check_cancelled()
             published = _PublishedFile(upload.target, space.identity, information, actual)
 
+            if upload.expected_etag is not None:
+                original = space.directory.delete_target(
+                    upload.target.relative_path, lambda stream: setattr(upload, "original", stream)
+                )
+                old = original.information()
+                if old.size > self._storage.max_file_bytes:
+                    raise FileBoundaryError("原文件大小超限", "PLUGIN_FILE_TOO_LARGE")
+                old_digest = original.digest(deadline)
+                if old != original.information() or old.etag(old_digest) != upload.expected_etag:
+                    raise FileBoundaryError("原文件版本已变化", "PLUGIN_FILE_CHANGED")
+                self._check(upload.lease, deadline)
+                context.check_cancelled()
+                context.finalize(
+                    lambda: self._storage.replacements.commit(upload, original, old, information, actual, old_digest)
+                )
+                return _PublishedFile(upload.target, space.identity, upload.stream.information(), actual)
+
             def publish() -> None:
                 assert upload.stream is not None
                 try:
@@ -455,6 +492,7 @@ class RuntimeFiles:
         """
         query = FileWriteCommitRequest.model_validate(params)
         upload = self._upload(query.write_ref)
+        task_deadline = monotonic() + 30 if upload.expected_etag is not None else None
         with upload.io_lock:
             self._check_upload(upload, deadline)
             if upload.received_bytes != upload.expected_bytes:
@@ -468,13 +506,15 @@ class RuntimeFiles:
             upload.owner = "task"
             try:
                 reference = self._operations.submit(
-                    "plugin_file_write",
-                    lambda context: self.publish(upload, query.sha256, context),
+                    "plugin_file_replace" if upload.expected_etag is not None else "plugin_file_write",
+                    lambda context: self.publish(upload, query.sha256, context, deadline=task_deadline),
                     upload.lease,
                     project_result=self.project,
                     result_lease=result_lease,
                     cleanup=lambda: self._storage.cleanup(upload),
                     initial_effect="staged",
+                    deadline=task_deadline,
+                    submission_deadline=deadline,
                 )
             except BaseException:
                 upload.owner = "upload"
@@ -611,6 +651,8 @@ class RuntimeFiles:
             return self._list(params, deadline)
         if method == "files.write_begin":
             return self._begin(params, deadline)
+        if method == "files.replace_begin":
+            return self._replace_begin(params, deadline)
         if method == "files.write_chunk":
             return self._chunk(params, deadline)
         if method == "files.write_commit":

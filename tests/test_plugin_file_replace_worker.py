@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+from threading import Event
+from time import monotonic, sleep
+
+import pytest
+
+from ECL.foundation import EventBus
+from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
+from ECL.plugins.runtime.executable import ExecutableLaunchSpec
+from ECL.plugins.worker_service import PluginWorkerService
+from ECL.services.operations import OperationManager
+from tests.test_plugin_file_delete import published
+from tests.test_plugin_host_files import call
+
+
+@pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
+def test_actual_worker_replace_and_cancel_without_automatic_rewrite(tmp_path, is_frozen):
+    if sys.platform != "win32":
+        pytest.skip("第三方Worker仅支持Windows x64")
+    artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
+    if is_frozen and not artifact:
+        pytest.skip("需要最终冻结发行物")
+    executable = (
+        ExecutableLaunchSpec(Path(artifact), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka"))
+        if is_frozen
+        else None
+    )
+    example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_file_replace"
+    metadata = json.loads((example / "plugin.json").read_bytes())
+    metadata["permissions"].append({"capability": "filesystem.write"})
+    code = tmp_path / "code"
+    code.mkdir()
+    (code / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
+    (code / "main.py").write_bytes((example / "main.py").read_bytes())
+    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    service = PluginWorkerService(tmp_path, executable, operations=manager)
+    gate = Event()
+
+    def wait(receipt):
+        deadline = monotonic() + 10
+        while True:
+            view = broker.call_command("status", {"operation_ref": receipt["operation_ref"]})
+            if view["state"] in {"completed", "failed", "cancelled"} and not view["cleanup_pending"]:
+                return view
+            assert monotonic() < deadline
+            sleep(0.02)
+
+    try:
+        service.register(metadata, code, "directory")
+        review = service.permissions(metadata["name"])
+        service.update_permissions(
+            metadata["name"],
+            review["content_digest"],
+            review["revision"],
+            tuple(PermissionDecision(capability=item["capability"], decision="allow") for item in review["items"]),
+            PermissionManagementCaller.main_webview,
+        )
+        service.enable(metadata["name"])
+        broker = service.broker(metadata["name"])
+        target, version = published(broker, manager)
+        params = {
+            "root_ref": target["root_ref"],
+            "name": target["relative_path"],
+            "expected_etag": version,
+            "text": "replaced by worker",
+            "mutation_key": "worker-replace",
+        }
+        assert wait(broker.call_command("replace", params))["state"] == "completed"
+        version = call(broker, "files.stat", {"target": target})["etag"]
+        params.update(expected_etag=version, text="must not appear", mutation_key="cancel-replace")
+        blocker = manager._executor.submit(gate.wait, 10)
+        try:
+            receipt = broker.call_command("replace", params)
+            assert broker.call_command("cancel", {"operation_ref": receipt["operation_ref"]})["requested"]
+        finally:
+            gate.set()
+            blocker.result(10)
+        assert wait(receipt)["state"] == "cancelled"
+        saved = next(tmp_path.glob("plugin_data/*/files/target.bin"))
+        assert saved.read_text(encoding="utf-8") == "replaced by worker"
+        service.stop(metadata["name"])
+        service.enable(metadata["name"])
+        assert saved.read_text(encoding="utf-8") == "replaced by worker"
+    finally:
+        gate.set()
+        service.close()
+        manager.close()

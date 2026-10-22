@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import platform
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -244,6 +245,7 @@ class PluginWorkerService:
                     return
             if previous:
                 self.stop(manifest.name)
+                self._check_file_recoveries(installation_id)
             if source == "directory":
                 dependency = PluginPackagePreparer(self.data_path).prepare_dependencies(
                     root_path, tuple(manifest.python_dependencies), allow_network=allow_network
@@ -303,6 +305,7 @@ class PluginWorkerService:
                 raise ProtocolError("上一运行仍在完成清理", "PLUGIN_HOST_CLEANUP_PENDING")
             if platform.system() != "Windows" or platform.machine().casefold() not in {"amd64", "x86_64"}:
                 raise ProtocolError("当前平台尚未支持第三方插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
+            self._check_file_recoveries(entry.installation_id)
             if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED":
                 entry.supervisor = WorkerSupervisor(
                     self._executable, host_handler=lambda request: self._handle(name, request)
@@ -394,6 +397,53 @@ class PluginWorkerService:
             entry.cleanup_state = "completed"
             if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:
                 entry.error_code = None
+
+    def _check_file_recoveries(self, installation_id: str) -> None:
+        """
+        Windows原生文件事务未结束时阻止重新启用、覆盖安装或卸载。
+        """
+        if sys.platform != "win32":
+            return
+        self._file_storage.replacements.refresh(installation_id)
+        if self._file_storage.replacements.has_pending(installation_id):
+            raise ProtocolError("插件文件需要先完成恢复", "PLUGIN_FILE_RECOVERY_REQUIRED")
+
+    def file_recoveries(self, cursor: str | None = None, limit: int = 50) -> dict[str, JsonValue]:
+        """
+        为可信管理入口查询登记事务，不要求安装仍存在或Worker可启用。
+
+        :param cursor: 当前宿主分页引用
+        :param limit: 有界项数
+        :return: 脱敏恢复页面
+        """
+        return self._file_storage.replacements.page(cursor, limit)
+
+    def resolve_file_recovery(
+        self,
+        reference: str,
+        revision: int,
+        etag: str,
+        action: str,
+        saved_name: str | None,
+        caller: PermissionManagementCaller,
+    ) -> dict[str, str]:
+        """
+        只允许主窗口接纳用户恢复任务，不恢复旧插件主体或业务授权。
+
+        :param reference: 当次宿主的恢复引用
+        :param revision: 审阅的记录版本
+        :param etag: 审阅的对象摘要
+        :param action: 明确恢复动作
+        :param saved_name: 另存时的新名称
+        :param caller: 原生注入的可信调用身份
+        :return: 应用用户任务回执
+        :raises ProtocolError: 来源不可信或应用未提供任务服务
+        """
+        if caller is not PermissionManagementCaller.main_webview:
+            raise ProtocolError("此入口不能恢复插件文件", "PLUGIN_MANAGEMENT_CALLER_DENIED")
+        if self._operations is None:
+            raise ProtocolError("当前应用未提供任务服务", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self._file_storage.replacements.resolve(reference, revision, etag, action, saved_name, self._operations)
 
     def permissions(self, name: str) -> dict[str, JsonValue]:
         """
@@ -535,6 +585,7 @@ class PluginWorkerService:
         entry = self._entry(name)
         with entry.lock:
             self.stop(name)
+            self._check_file_recoveries(entry.installation_id)
             self.installations.retire(name)
             remove_files()
             with self._lock:

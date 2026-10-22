@@ -72,6 +72,7 @@ class PluginHostBroker:
             "filesystem.read",
             "filesystem.write",
             "filesystem.delete",
+            "filesystem.replace",
             "network.read",
         }
     )
@@ -89,6 +90,7 @@ class PluginHostBroker:
             "files.write_chunk",
             "files.write_commit",
             "files.delete",
+            "files.replace_begin",
             "downloads.submit",
         }
     )
@@ -334,7 +336,8 @@ class PluginHostBroker:
             return result
         if method.startswith("files.") or (
             method == "resources.list"
-            and params.get("capability") in ("filesystem.read", "filesystem.write", "filesystem.delete")
+            and params.get("capability")
+            in ("filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace")
         ):
             if self.files is None:
                 raise ProtocolError("当前宿主未提供私有文件", "PLUGIN_API_METHOD_NOT_FOUND")

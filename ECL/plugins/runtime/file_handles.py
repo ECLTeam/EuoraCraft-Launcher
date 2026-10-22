@@ -657,6 +657,20 @@ class FileHandle:
 
         :param name: 已校验的最终单个文件名
         """
+        if self.is_published:
+            raise FileBoundaryError("文件已经发布", "PLUGIN_FILE_INVALID")
+        self._rename(name, replace=False)
+
+    def move(self, name: str) -> None:
+        """
+        按原对象句柄不覆盖移动，供正式文件备份和恢复使用。
+
+        移动后的正式对象始终禁止discard，允许同一所有者再次不覆盖恢复。
+
+        :param name: 所有者校验的单个目标名称
+        """
+        if self.is_closed or self.deletion_pending():
+            raise FileBoundaryError("文件不能移动", "PLUGIN_FILE_INVALID")
         self._rename(name, replace=False)
 
     def _rename(self, name: str, *, replace: bool) -> None:
@@ -665,8 +679,6 @@ class FileHandle:
         """
         self.directory._component(name)
         self.directory.information()
-        if self.is_published:
-            raise FileBoundaryError("文件已经发布", "PLUGIN_FILE_INVALID")
 
         class Rename(ctypes.Structure):
             _fields_ = [

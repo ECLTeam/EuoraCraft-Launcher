@@ -1,0 +1,14 @@
+{
+  "name": "worker_file_replace",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "私有文件按版本替换示例",
+  "description": "明确指定原版本与新文本，失败保留原对象并通过主窗口恢复。",
+  "entry_point": "main:Plugin",
+  "permissions": [
+    { "capability": "commands.register", "required": true },
+    { "capability": "commands.execute", "required": true },
+    { "capability": "filesystem.replace", "required": false },
+    { "capability": "filesystem.read", "required": false }
+  ]
+}

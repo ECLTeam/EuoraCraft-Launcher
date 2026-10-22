@@ -63,7 +63,7 @@ def test_create_only_requires_explicit_strict_false(overwrite):
 
 
 def test_filesystem_declaration_cannot_select_host_paths():
-    for capability in ("filesystem.read", "filesystem.write", "filesystem.delete"):
+    for capability in ("filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"):
         with pytest.raises(ValidationError):
             PermissionDeclaration(capability=capability, resource_refs=("host-path",))
 
@@ -75,7 +75,7 @@ def files(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "main.py").write_text("value = 1", encoding="utf-8")
-    capabilities = {"filesystem.read", "filesystem.write", "filesystem.delete"}
+    capabilities = {"filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"}
     binding = PluginContentBinding.capture(
         code, tuple(PermissionDeclaration(capability=c) for c in sorted(capabilities)), "windows-x86_64-cp311"
     )

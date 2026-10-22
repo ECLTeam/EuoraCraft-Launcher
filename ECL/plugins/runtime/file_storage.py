@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity
+from ECL.plugins.runtime.file_replacement import FileReplacementStore
 from ECL.plugins.runtime.models import FileRef
 from ECL.utils import get_logger
 
@@ -71,6 +72,8 @@ class StagedFile:
     touched_at: float = field(default_factory=monotonic)
     owner: Literal["upload", "task", "cleanup", "closed"] = "upload"
     temporary_identity: FileIdentity | None = None
+    expected_etag: str | None = None
+    original: FileHandle | None = None
 
 
 @dataclass(slots=True)
@@ -120,6 +123,22 @@ class PluginFileStorage:
         self._spaces: dict[str, _FileSpace] = {}
         self._uploads: dict[str, StagedFile] = {}
         self._deletions: dict[str, FileDeletion] = {}
+        self._replacement_records: FileDirectory | None = None
+        self.replacements: FileReplacementStore = FileReplacementStore(self)
+
+    def replacement_records(self, *, initialize: bool = False) -> FileDirectory | None:
+        """
+        打开独立的替换事务目录，仅接受已接纳替换时允许首次创建。
+
+        :param initialize: 是否允许创建缺失的事务容器
+        :return: 宿主持有的目录或首次未创建时的None
+        """
+        with self._bootstrap_lock:
+            if self._root is None:
+                self._root = FileDirectory.open(self._data_path)
+            if self._replacement_records is None:
+                self._replacement_records = self._container("plugin_file_replacements", initialize)
+            return self._replacement_records
 
     def _containers(self, *, initialize: bool) -> None:
         """
@@ -239,6 +258,7 @@ class PluginFileStorage:
         :param admit: 初始化之前接受一次确定动作，回调不执行 I/O
         :return: 锁保护的空间；只读首次访问可没有物理目录
         """
+        self.replacements.discover()
         with self._lock:
             space = self._spaces.setdefault(installation_id, _FileSpace(installation_id))
         with space.io_lock:
@@ -284,6 +304,8 @@ class PluginFileStorage:
         :param upload: 尚未创建暂存的资源
         """
         with self._lock:
+            if self.replacements.blocks(upload.lease.installation_id, upload.target.relative_path):
+                raise FileBoundaryError("该目标需要完成恢复", "PLUGIN_FILE_RECOVERY_REQUIRED")
             items = tuple(self._uploads.values())
             own = tuple(item for item in items if item.lease.run_id == upload.lease.run_id)
             if len(own) >= self.max_run_uploads:
@@ -307,6 +329,8 @@ class PluginFileStorage:
         :param deletion: 已绑定当前根和原始授权的资源
         """
         with self._lock:
+            if self.replacements.blocks(deletion.lease.installation_id, deletion.target.relative_path):
+                raise FileBoundaryError("该目标需要完成恢复", "PLUGIN_FILE_RECOVERY_REQUIRED")
             own = sum(item.lease.run_id == deletion.lease.run_id for item in self._deletions.values())
             if own >= self.max_run_deletions or len(self._deletions) >= self.max_host_deletions:
                 raise FileBoundaryError("删除资源数量超限", "PLUGIN_RATE_LIMITED")
@@ -409,11 +433,26 @@ class PluginFileStorage:
         :param upload: 当前服务拥有的资源
         :return: 是否实际清理完成
         """
+        replacement = self.replacements.for_upload(upload.write_ref)
+        if replacement is not None:
+            return self.replacements.cleanup(replacement)
+        return self.cleanup_upload(upload)
+
+    def cleanup_upload(self, upload: StagedFile) -> bool:
+        """
+        释放已完成其领域收尾的上传，新建或替换均仅在这里归还预留。
+
+        :param upload: 没有待恢复备份的上传资源
+        :return: 暂存或已发布句柄实际释放时为True
+        """
         with upload.io_lock:
             if upload.owner == "closed":
                 return True
             upload.owner = "cleanup"
             try:
+                if upload.original is not None:
+                    upload.original.close()
+                    upload.original = None
                 if upload.stream is not None:
                     if upload.stream.is_published:
                         upload.stream.close()
@@ -440,6 +479,8 @@ class PluginFileStorage:
 
         :return: 是否关闭全部存储资源
         """
+        if self.replacements.has_pending():
+            return False
         with self._lock:
             if self._uploads or self._deletions:
                 return False
@@ -451,7 +492,7 @@ class PluginFileStorage:
                 if space.parent:
                     space.parent.close()
         with self._bootstrap_lock:
-            for directory in (self._records, self._data, self._root):
+            for directory in (self._replacement_records, self._records, self._data, self._root):
                 if directory is not None:
                     directory.close()
         return True

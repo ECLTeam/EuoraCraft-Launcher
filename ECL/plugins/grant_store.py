@@ -609,7 +609,10 @@ class PluginGrantStore:
             declared = declared_by_capability.get(item.capability)
             if declared is None:
                 raise PluginGrantError("授权决定超出已审阅声明", "PLUGIN_GRANT_INVALID")
-            if item.capability in {"filesystem.read", "filesystem.write", "filesystem.delete"} and item.resource_refs:
+            if (
+                item.capability in {"filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"}
+                and item.resource_refs
+            ):
                 raise PluginGrantError("文件许可只允许安装私有空间", "PLUGIN_GRANT_INVALID")
             if item.capability == "instances.read":
                 if any(re.fullmatch(r"[0-9a-f]{32}", ref) is None for ref in item.resource_refs):
