@@ -100,3 +100,6 @@ docs/junsi-dev-docs
 
 # 本地 AI 技能目录
 .skills/
+
+# 本地 AI 助手工作目录
+/.workbuddy-ai/
