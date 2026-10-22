@@ -3,10 +3,11 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：维护安装私有空间、上传资源和配额，业务任务仍由应用 OperationManager 执行。
+# 文件作用：维护安装私有空间、上传和删除资源及配额，任务状态由应用 OperationManager 维护。
 #
 # 公开接口：
 #   - class StagedFile — 上传与下载共用的唯一暂存和预留状态。
+#   - class FileDeletion — 跟踪原目标句柄、回滚及实际移除确认。
 #   - class PluginFileStorage — Worker 服务共同持有的私有文件存储。
 # ============================================================
 
@@ -69,6 +70,26 @@ class StagedFile:
     received_bytes: int = 0
     touched_at: float = field(default_factory=monotonic)
     owner: Literal["upload", "task", "cleanup", "closed"] = "upload"
+    temporary_identity: FileIdentity | None = None
+
+
+@dataclass(slots=True)
+class FileDeletion:
+    """
+    只保存删除资源生命周期，不复制任务服务的状态或业务效果。
+    """
+
+    target: FileRef
+    lease: GrantLease
+    directory: FileDirectory
+    root_identity: FileIdentity
+    deletion_ref: str = field(default_factory=lambda: uuid4().hex)
+    io_lock: RLock = field(default_factory=RLock)
+    stream: FileHandle | None = None
+    identity: FileIdentity | None = None
+    needs_rollback: bool = False
+    needs_observation: bool = False
+    is_released: bool = False
 
 
 class PluginFileStorage:
@@ -81,6 +102,8 @@ class PluginFileStorage:
     max_run_bytes: ClassVar[int] = 32 * 1024 * 1024
     max_host_bytes: ClassVar[int] = 128 * 1024 * 1024
     max_run_uploads: ClassVar[int] = 4
+    max_run_deletions: ClassVar[int] = 4
+    max_host_deletions: ClassVar[int] = 32
 
     def __init__(self, data_path: Path) -> None:
         """
@@ -96,6 +119,7 @@ class PluginFileStorage:
         self._records: FileDirectory | None = None
         self._spaces: dict[str, _FileSpace] = {}
         self._uploads: dict[str, StagedFile] = {}
+        self._deletions: dict[str, FileDeletion] = {}
 
     def _containers(self, *, initialize: bool) -> None:
         """
@@ -267,7 +291,7 @@ class PluginFileStorage:
             if any(
                 item.lease.installation_id == upload.lease.installation_id
                 and item.target.relative_path.casefold() == upload.target.relative_path.casefold()
-                for item in items
+                for item in (*items, *self._deletions.values())
             ):
                 raise FileBoundaryError("该目标正在上传", "PLUGIN_FILE_BUSY")
             if sum(item.reserved_bytes for item in own) + upload.reserved_bytes > self.max_run_bytes or (
@@ -275,6 +299,70 @@ class PluginFileStorage:
             ):
                 raise FileBoundaryError("上传预留空间不足", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
             self._uploads[upload.write_ref] = upload
+
+    def reserve_deletion(self, deletion: FileDeletion) -> None:
+        """
+        与上传共用精确名称占用；删除不占用上传字节配额。
+
+        :param deletion: 已绑定当前根和原始授权的资源
+        """
+        with self._lock:
+            own = sum(item.lease.run_id == deletion.lease.run_id for item in self._deletions.values())
+            if own >= self.max_run_deletions or len(self._deletions) >= self.max_host_deletions:
+                raise FileBoundaryError("删除资源数量超限", "PLUGIN_RATE_LIMITED")
+            if any(
+                item.lease.installation_id == deletion.lease.installation_id
+                and item.target.relative_path.casefold() == deletion.target.relative_path.casefold()
+                for item in (*self._uploads.values(), *self._deletions.values())
+            ):
+                raise FileBoundaryError("该目标正在处理", "PLUGIN_FILE_BUSY")
+            self._deletions[deletion.deletion_ref] = deletion
+
+    def deletions(self, run_id: str) -> tuple[FileDeletion, ...]:
+        """
+        返回当前运行尚未释放的删除资源。
+
+        :param run_id: 宿主运行身份
+        :return: 不可变资源集合
+        """
+        with self._lock:
+            return tuple(item for item in self._deletions.values() if item.lease.run_id == run_id)
+
+    def cleanup_deletion(self, deletion: FileDeletion) -> bool:
+        """
+        仅撤回原句柄标记或观察已关闭原对象，永不重新按路径删除。
+
+        :param deletion: 当前服务持有的删除资源
+        :return: 已确认所有资源释放；未知状态保持 False
+        """
+        with deletion.io_lock:
+            if deletion.is_released:
+                return True
+            try:
+                stream = deletion.stream
+                if deletion.needs_rollback:
+                    if stream is None or stream.is_closed:
+                        return False
+                    stream.mark_deletion(False)
+                    if stream.deletion_pending():
+                        return False
+                    stream.close()
+                    deletion.needs_rollback = False
+                elif stream is not None and not stream.is_closed:
+                    stream.close()
+                if deletion.needs_observation:
+                    if deletion.identity is None or deletion.directory.information().identity != deletion.root_identity:
+                        return False
+                    current = deletion.directory.entry_identity(deletion.target.relative_path, monotonic() + 0.1)
+                    if current == deletion.identity:
+                        return False
+                    deletion.needs_observation = False
+            except FileBoundaryError:
+                return False
+            with self._lock:
+                self._deletions.pop(deletion.deletion_ref, None)
+                deletion.is_released = True
+            return True
 
     def check_quota(
         self,
@@ -330,7 +418,14 @@ class PluginFileStorage:
                     if upload.stream.is_published:
                         upload.stream.close()
                     else:
+                        if upload.temporary_identity is None:
+                            upload.temporary_identity = upload.stream._native.information(
+                                upload.stream._handle
+                            ).identity
                         upload.stream.discard()
+                        current = upload.directory.entry_identity(upload.temporary_name, monotonic() + 0.1)
+                        if current == upload.temporary_identity:
+                            return False
             except FileBoundaryError:
                 get_logger("PluginFileStorage").warning("插件暂存清理未完成，保留资源等待重试")
                 return False
@@ -346,7 +441,7 @@ class PluginFileStorage:
         :return: 是否关闭全部存储资源
         """
         with self._lock:
-            if self._uploads:
+            if self._uploads or self._deletions:
                 return False
             spaces = tuple(self._spaces.values())
         for space in spaces:

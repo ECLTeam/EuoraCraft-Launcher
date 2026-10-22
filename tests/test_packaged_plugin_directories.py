@@ -218,6 +218,27 @@ class Plugin(BasePlugin):
         content = self.host.call('files.read', {'target':{'root_ref':exported['root_ref'],
             'relative_path':exported['name']}, 'offset':0, 'count':32768})
         assert json.loads(base64.b64decode(content['data_b64']))['api_version'] == 2
+        selected = export_snapshot(self.host)
+        deadline = time.monotonic() + 10
+        while True:
+            ready = self.host.call('operations.get', {'operation_ref':selected['operation_ref']})
+            if ready['state'] in ('completed','failed','cancelled'):
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert ready['state'] == 'completed', ready
+        target = {'root_ref':selected['root_ref'], 'relative_path':selected['name']}
+        version = self.host.call('files.stat', {'target':target})['etag']
+        deletion = self.host.call('files.delete', {'target':target, 'expected_etag':version}, mutation_key='selected-delete')
+        deadline = time.monotonic() + 10
+        while True:
+            removed = self.host.call('operations.get', {'operation_ref':deletion['operation_ref']})
+            if removed['state'] in ('completed','failed','cancelled') and not removed['cleanup_pending']:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert removed['state'] == 'completed' and removed['effect'] == 'committed', removed
+        assert removed['result'] == {'deleted':True}, removed
         download_checked = False
         if live_download_checks:
             params = {'url':'http://www.msftconnecttest.com/connecttest.txt',
@@ -275,6 +296,7 @@ class Plugin(BasePlugin):
             {"capability": "settings.read", "required": True},
             {"capability": "filesystem.read", "required": True},
             {"capability": "filesystem.write", "required": True},
+            {"capability": "filesystem.delete", "required": True},
             {
                 "capability": "network.read",
                 "required": True,
@@ -400,7 +422,7 @@ class Plugin(BasePlugin):
                     assert probe["count"] == 1 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
                     assert (
-                        probe["tasks"] == (3 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 1)
+                        probe["tasks"] == (5 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 3)
                         and probe["exported"]
                     )
                     assert probe["download_checked"] == bool(os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD"))

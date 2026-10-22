@@ -76,7 +76,7 @@ class RuntimeOperations:
         :param worker: 受信宿主工作函数
         :param lease: 该工作实际能力和精确资源的原始准入
         :param project_result: 显式安全结果投影；未提供时不交付结果
-        :param result_lease: 独立结果读取权限；缺少时即使写入成功也不交付结果
+        :param result_lease: 显式结果准入；文件视图需独立读许可，删除确认绑定原删除许可
         :param cleanup: 实际执行结束或排队取消后的幂等资源清理
         :param initial_effect: 接纳时已持有的暂存状态
         :param additional_leases: 同一任务必须共同有效的其他原始执行准入
@@ -175,6 +175,7 @@ class RuntimeOperations:
             "can_cancel": snapshot.can_cancel,
             "cancellation_requested": snapshot.cancellation_requested,
             "effect": snapshot.effect,
+            "cleanup_pending": snapshot.cleanup_pending,
             "result": result,
             "error_code": snapshot.error_code,
         }
@@ -240,6 +241,7 @@ class RuntimeOperations:
                 with self._lock:
                     if not self._closed:
                         self._manager.cancel_owned(item.operation_id, self._origin, reason="permission_changed")
+        self._manager.owner_idle(self._origin)
 
     def close(self) -> None:
         """

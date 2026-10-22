@@ -21,6 +21,7 @@ from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from time import monotonic
 from uuid import uuid4
 
@@ -103,6 +104,16 @@ class _HandleInformation(ctypes.Structure):
     ]
 
 
+class _StandardInformation(ctypes.Structure):
+    _fields_ = [
+        ("allocation", ctypes.c_longlong),
+        ("size", ctypes.c_longlong),
+        ("links", wintypes.DWORD),
+        ("pending", wintypes.BOOLEAN),
+        ("directory", wintypes.BOOLEAN),
+    ]
+
+
 class _NativeFiles:
     """
     仅在受支持运行时绑定原生 ABI，函数对象不作为业务状态传播。
@@ -157,6 +168,12 @@ class _NativeFiles:
         )
         self.info = self._bind(
             kernel, "GetFileInformationByHandle", [wintypes.HANDLE, ctypes.POINTER(_HandleInformation)], wintypes.BOOL
+        )
+        self.standard = self._bind(
+            kernel,
+            "GetFileInformationByHandleEx",
+            [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD],
+            wintypes.BOOL,
         )
         self.volume = self._bind(
             kernel,
@@ -223,7 +240,9 @@ class _NativeFiles:
             raise FileBoundaryError("插件文件正被占用", "PLUGIN_FILE_BUSY")
         raise FileBoundaryError("插件文件对象不可用", "PLUGIN_FILE_INVALID")
 
-    def create(self, root: int | None, name: str, *, directory: bool, create: bool, writable: bool) -> int:
+    def create(
+        self, root: int | None, name: str, *, directory: bool, create: bool, writable: bool, deleting: bool = False
+    ) -> int:
         """
         相对已持有对象交由内核创建/打开，所有路径解析均拒绝重解析，不共享删除。
         """
@@ -236,6 +255,8 @@ class _NativeFiles:
         access = 0x100080 | (1 if not directory else 0x21)
         if writable:
             access |= (2 | 4) if directory else (2 | 0x10000)
+        if deleting:
+            access |= 0x10000
         options = 0x200020 | (1 if directory else 0x40)
         self.check(
             self.open(
@@ -245,7 +266,7 @@ class _NativeFiles:
                 ctypes.byref(status),
                 None,
                 0x80,
-                3 if directory else 1,
+                0 if deleting else (3 if directory else 1),
                 2 if create else 1,
                 options,
                 None,
@@ -287,6 +308,7 @@ class FileDirectory:
         """
         self._native = native
         self._handle = handle
+        self._enumeration_lock = RLock()
         self.identity: FileIdentity = self.information().identity
 
     @classmethod
@@ -388,6 +410,13 @@ class FileDirectory:
         :param limit: 总项数上限，包含内部暂存
         :return: 直属名称集合，不包括点目录
         """
+        with self._enumeration_lock:
+            return self._names(deadline, limit)
+
+    def _names(self, deadline: float, limit: int) -> tuple[str, ...]:
+        """
+        串行使用同一目录句柄的枚举游标。
+        """
         self.information()
         result: list[str] = []
         restart = True
@@ -417,6 +446,77 @@ class FileDirectory:
                 if not following:
                     break
                 offset += following
+
+    def entry_identity(self, name: str, deadline: float) -> FileIdentity | None:
+        """
+        按已持有目录枚举文件 ID 与创建时间，包含仍被其他句柄延迟删除的目录项。
+
+        不重新打开名称；同名替换只返回新对象身份，调用方不得对它补删。
+
+        :param name: 单个已校验名称
+        :param deadline: 本次有限枚举截止
+        :return: 当前目录项身份；没有匹配项时为 None
+        """
+        with self._enumeration_lock:
+            return self._entry_identity(name, deadline)
+
+    def _entry_identity(self, name: str, deadline: float) -> FileIdentity | None:
+        """
+        与名称枚举共用游标锁，按原生 FILE_ID_BOTH_DIR_INFORMATION 布局解码。
+        """
+        self._component(name)
+        volume = self.information().identity.volume
+        restart, count = True, 0
+        while True:
+            if monotonic() >= deadline:
+                raise FileBoundaryError("文件查询超时", "PLUGIN_DEADLINE_EXCEEDED")
+            buffer, status = ctypes.create_string_buffer(65536), _StatusBlock()
+            outcome = self._native.list(
+                self._handle, None, None, None, ctypes.byref(status), buffer, len(buffer), 37, False, None, restart
+            )
+            if outcome & 0xFFFFFFFF == 0x80000006:
+                return None
+            self._native.check(outcome)
+            restart = False
+            content, offset = buffer.raw[: status.information], 0
+            while True:
+                if offset + 104 > len(content):
+                    raise FileBoundaryError("目录身份结果无效", "PLUGIN_FILE_INVALID")
+                following = int.from_bytes(content[offset : offset + 4], "little")
+                length = int.from_bytes(content[offset + 60 : offset + 64], "little")
+                if length % 2 or offset + 104 + length > len(content):
+                    raise FileBoundaryError("目录身份结果无效", "PLUGIN_FILE_INVALID")
+                current = content[offset + 104 : offset + 104 + length].decode("utf-16-le")
+                if current.casefold() == name.casefold():
+                    return FileIdentity(
+                        volume=volume,
+                        index=int.from_bytes(content[offset + 96 : offset + 104], "little"),
+                        created=int.from_bytes(content[offset + 8 : offset + 16], "little"),
+                    )
+                count += 1
+                if count > 1026:
+                    raise FileBoundaryError("私有目录项数超限", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
+                if not following:
+                    break
+                if following < 104 + length or offset + following >= len(content):
+                    raise FileBoundaryError("目录身份结果无效", "PLUGIN_FILE_INVALID")
+                offset += following
+
+    def delete_target(self, name: str, own: Callable[[FileHandle], None]) -> FileHandle:
+        """
+        独占打开正式目标，先交接资源归属再验证普通单链接对象。
+
+        :param name: 已验证的平铺名称
+        :param own: 保存句柄的所有者；后续任何失败均由它负责安全收尾
+        :return: 持有 READ_DATA、DELETE 且不共享访问的原对象
+        """
+        self._component(name)
+        self.information()
+        handle = self._native.create(self._handle, name, directory=False, create=False, writable=False, deleting=True)
+        stream = FileHandle(self, handle)
+        own(stream)
+        stream._identity = stream.information().identity
+        return stream
 
     def close(self) -> None:
         """
@@ -598,6 +698,39 @@ class FileHandle:
             )
             self._is_delete_pending = True
         self.close()
+
+    @property
+    def is_closed(self) -> bool:
+        """
+        返回已确认的自身句柄关闭状态，不代表目录项已经消失。
+
+        :return: 自身句柄是否已确认关闭
+        """
+        return self._handle == 0
+
+    def deletion_pending(self) -> bool:
+        """
+        查询仍持有的原对象内核删除标记，失败不推断为已撤回。
+
+        :return: 内核确认的删除标记
+        """
+        value = _StandardInformation()
+        if not self._handle or not self._native.standard(self._handle, 1, ctypes.byref(value), ctypes.sizeof(value)):
+            raise FileBoundaryError("不能确认文件删除状态", "PLUGIN_FILE_IO_FAILED")
+        return bool(value.pending)
+
+    def mark_deletion(self, pending: bool) -> None:
+        """
+        在原句柄设置或撤回删除，不执行关闭或重新解析名称。
+
+        :param pending: 是否请求删除；撤回后仍须查询确认
+        """
+        if not self._handle:
+            raise FileBoundaryError("删除句柄已关闭", "PLUGIN_FILE_INVALID")
+        status, value = _StatusBlock(), wintypes.BOOLEAN(pending)
+        self._native.check(
+            self._native.set(self._handle, ctypes.byref(status), ctypes.byref(value), ctypes.sizeof(value), 13)
+        )
 
     def close(self) -> None:
         """

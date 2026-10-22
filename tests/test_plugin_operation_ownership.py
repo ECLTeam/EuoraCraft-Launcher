@@ -360,6 +360,39 @@ def test_origin_snapshot_does_not_restore_from_journal(runtime):
     assert error.value.error_code == "PLUGIN_RESOURCE_NOT_FOUND"
 
 
+def test_running_task_does_not_block_other_terminal_cleanup_and_supervision_retries(runtime):
+    broker, manager, _, _ = runtime
+    started, release = Event(), Event()
+    may_clean, cleaned = Event(), Event()
+
+    def active(context):
+        started.set()
+        assert release.wait(10)
+
+    def cleanup():
+        if not may_clean.is_set():
+            return False
+        cleaned.set()
+        return True
+
+    first = submit(broker, active)
+    try:
+        assert started.wait(3)
+        second = broker.operations.submit(
+            "host_fixture", lambda context: None, broker.session.authorize("settings.write"), cleanup=cleanup
+        )
+        view = finish(broker, manager, second)
+        assert view["cleanup_pending"]
+        may_clean.set()
+        broker.refresh_pending_work()
+        assert cleaned.is_set()
+        assert not call(broker, "operations.get", {"operation_ref": second})["cleanup_pending"]
+        assert call(broker, "operations.get", {"operation_ref": first})["state"] == "running"
+    finally:
+        release.set()
+        finish(broker, manager, first)
+
+
 @pytest.mark.parametrize(
     "method,params",
     [

@@ -16,15 +16,16 @@ import binascii
 import hashlib
 from dataclasses import dataclass
 from threading import RLock
-from time import monotonic
+from time import monotonic, sleep
 from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
-from ECL.plugins.runtime.file_storage import PluginFileStorage, StagedFile
+from ECL.plugins.runtime.file_storage import FileDeletion, PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import (
+    FileDeleteRequest,
     FileListRequest,
     FileReadRequest,
     FileRef,
@@ -121,7 +122,7 @@ class RuntimeFiles:
         只发现当前安装的逻辑根；首次只读发现不创建任何目录或记录。
         """
         query = ResourceListRequest.model_validate(params)
-        if query.capability not in {"filesystem.read", "filesystem.write"}:
+        if query.capability not in {"filesystem.read", "filesystem.write", "filesystem.delete"}:
             raise ProtocolError("此资源类别不属于私有文件", "PLUGIN_SCHEMA_INVALID")
         lease = self._session.authorize(query.capability)
         with self._storage.access(self._installation_id) as space:
@@ -493,6 +494,105 @@ class RuntimeFiles:
                 return {"released": False}
             return {"released": self._storage.cleanup(upload)}
 
+    def _delete(self, params: dict[str, JsonValue], submission_deadline: float) -> dict[str, JsonValue]:
+        """
+        只登记名称占用和原始准入，不在 RPC 中打开或哈希正式目标。
+        """
+        deadline = monotonic() + 30
+        query = FileDeleteRequest.model_validate(params)
+        lease = self._session.authorize("filesystem.delete")
+        with self._storage.access(self._installation_id) as space:
+            self._resolve(query.target, lease, space.identity)
+            self._check(lease, submission_deadline)
+            if space.directory is None or space.identity is None:
+                raise FileBoundaryError("插件文件不存在", "PLUGIN_RESOURCE_NOT_FOUND")
+            deletion = FileDeletion(query.target, lease, space.directory, space.identity)
+            self._session.accept(lease, lambda: self._storage.reserve_deletion(deletion))
+        try:
+            reference = self._operations.submit(
+                "plugin_file_delete",
+                lambda context: self._execute_delete(deletion, query.expected_etag, deadline, context),
+                lease,
+                project_result=lambda result: {"deleted": True} if result is True else None,
+                result_lease=lease,
+                cleanup=lambda: self._storage.cleanup_deletion(deletion),
+                deadline=deadline,
+                submission_deadline=submission_deadline,
+            )
+        except BaseException:
+            self._storage.cleanup_deletion(deletion)
+            raise
+        return {"operation_ref": reference, "state": "queued"}
+
+    @staticmethod
+    def _mark_delete(deletion: FileDeletion, stream: FileHandle) -> None:
+        """
+        标记并关闭原对象；只有确认撤回且关闭后才将失败归类为零效果。
+        """
+        deletion.needs_rollback = True
+        try:
+            stream.mark_deletion(True)
+            if not stream.deletion_pending():
+                raise FileBoundaryError("文件删除标记未确认", "PLUGIN_FILE_IO_FAILED")
+            stream.close()
+        except FileBoundaryError as exc:
+            if not stream.is_closed:
+                try:
+                    stream.mark_deletion(False)
+                    if stream.deletion_pending():
+                        raise FileBoundaryError("删除撤回未确认", "PLUGIN_FILE_IO_FAILED")
+                    stream.close()
+                    deletion.needs_rollback = False
+                except FileBoundaryError as rollback_error:
+                    raise exc from rollback_error
+                raise OperationCommitRejectedError("删除未执行，原文件已保留", exc.error_code) from exc
+            raise
+        deletion.needs_rollback = False
+        deletion.needs_observation = True
+
+    def _execute_delete(
+        self, deletion: FileDeletion, expected_etag: str, deadline: float, context: OperationContext
+    ) -> bool:
+        """
+        在同一独占原对象上核对完整版本，接受后只观察其真实移除。
+        """
+        with self._storage.access(self._installation_id) as space, deletion.io_lock:
+            self._resolve(deletion.target, deletion.lease, space.identity)
+            self._check(deletion.lease, deadline)
+            context.check_cancelled()
+            if space.identity != deletion.root_identity or space.directory is not deletion.directory:
+                raise FileBoundaryError("私有根对象已变化", "PLUGIN_FILE_CHANGED")
+            stream = deletion.directory.delete_target(
+                deletion.target.relative_path, lambda opened: setattr(deletion, "stream", opened)
+            )
+            information = stream.information()
+            deletion.identity = information.identity
+            if information.size > self._storage.max_file_bytes:
+                raise FileBoundaryError("插件文件大小超限", "PLUGIN_FILE_TOO_LARGE")
+            digest = stream.digest(deadline)
+            final = stream.information()
+            if final != information or information.etag(digest) != expected_etag:
+                raise FileBoundaryError("插件文件版本已变化", "PLUGIN_FILE_CHANGED")
+            deletion.directory.information()
+            self._check(deletion.lease, deadline)
+            context.check_cancelled()
+
+        def remove() -> None:
+            with self._storage.access(self._installation_id) as current, deletion.io_lock:
+                if current.identity != deletion.root_identity or stream.information() != information:
+                    raise OperationCommitRejectedError("删除前原对象已变化", "PLUGIN_FILE_CHANGED")
+                self._mark_delete(deletion, stream)
+            while monotonic() < deadline:
+                current_identity = deletion.directory.entry_identity(deletion.target.relative_path, deadline)
+                if current_identity != deletion.identity:
+                    deletion.needs_observation = False
+                    return
+                sleep(min(0.025, max(0, deadline - monotonic())))
+            raise FileBoundaryError("原文件仍等待内核删除", "PLUGIN_FILE_DELETE_PENDING")
+
+        context.finalize(remove)
+        return True
+
     def handle(self, method: str, params: dict[str, JsonValue], deadline: float) -> dict[str, JsonValue]:
         """
         分派严格白名单，只允许固定私有根中的普通文件和新建事务。
@@ -517,6 +617,8 @@ class RuntimeFiles:
             return self._commit(params, deadline)
         if method == "files.write_abort":
             return self._abort(params)
+        if method == "files.delete":
+            return self._delete(params, deadline)
         raise ProtocolError("此文件方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
 
     def refresh_permissions(self) -> None:
@@ -558,4 +660,4 @@ class RuntimeFiles:
         :return: 当前运行已无上传、暂存或待关闭的已发布句柄
         """
         self.refresh_permissions()
-        return not self._storage.uploads(self._session.run_id)
+        return not self._storage.uploads(self._session.run_id) and not self._storage.deletions(self._session.run_id)

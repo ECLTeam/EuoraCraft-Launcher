@@ -8,6 +8,7 @@
 # 公开接口：
 #   - class FileRef / FileStatRequest / FileListRequest / FileReadRequest — 私有文件引用与读取请求。
 #   - class FileWriteBeginRequest / FileWriteRef / FileWriteChunkRequest / FileWriteCommitRequest — 新建事务请求。
+#   - class FileDeleteRequest — 按明确版本删除普通私有文件。
 #   - class CommandDefinition — 命令注册契约。
 #   - class SettingDefinition — 非执行式设置定义。
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
@@ -197,7 +198,7 @@ class ResourceListRequest(RequestModel):
     仅发现本运行获准的实例资源，不接受其他能力或宿主路径。
     """
 
-    capability: Literal["instances.read", "filesystem.read", "filesystem.write"]
+    capability: Literal["instances.read", "filesystem.read", "filesystem.write", "filesystem.delete"]
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
 
@@ -279,6 +280,27 @@ class FileListRequest(RequestModel):
     directory: FileRef
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class FileDeleteRequest(FileStatRequest):
+    """
+    要求明确版本的平铺文件删除，不接受根目录或可选的版本条件。
+    """
+
+    expected_etag: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("target")
+    @classmethod
+    def named_file(cls, value: FileRef) -> FileRef:
+        """
+        拒绝根目录删除，保持原始严格引用。
+
+        :param value: 已验证的文件引用
+        :return: 非空文件名称引用
+        """
+        if not value.relative_path:
+            raise ValueError("只能删除命名文件")
+        return value
 
 
 class FileReadRequest(FileStatRequest):

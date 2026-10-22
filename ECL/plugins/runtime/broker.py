@@ -71,6 +71,7 @@ class PluginHostBroker:
             "instances.read",
             "filesystem.read",
             "filesystem.write",
+            "filesystem.delete",
             "network.read",
         }
     )
@@ -87,6 +88,7 @@ class PluginHostBroker:
             "files.write_begin",
             "files.write_chunk",
             "files.write_commit",
+            "files.delete",
             "downloads.submit",
         }
     )
@@ -231,7 +233,8 @@ class PluginHostBroker:
                 receipt = _Receipt(
                     fingerprint,
                     epoch,
-                    is_owner_control=request.method in {"operations.cancel", "files.write_commit", "downloads.submit"},
+                    is_owner_control=request.method
+                    in {"operations.cancel", "files.write_commit", "downloads.submit", "files.delete"},
                 )
                 self._receipts[request.mutation_key] = receipt
             elif receipt.fingerprint != fingerprint:
@@ -330,7 +333,8 @@ class PluginHostBroker:
             request.check_deadline()
             return result
         if method.startswith("files.") or (
-            method == "resources.list" and params.get("capability") in ("filesystem.read", "filesystem.write")
+            method == "resources.list"
+            and params.get("capability") in ("filesystem.read", "filesystem.write", "filesystem.delete")
         ):
             if self.files is None:
                 raise ProtocolError("当前宿主未提供私有文件", "PLUGIN_API_METHOD_NOT_FOUND")

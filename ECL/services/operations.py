@@ -170,6 +170,7 @@ class OperationSnapshot:
     result: object
     error_code: str | None
     audit_pending: bool
+    cleanup_pending: bool
 
 
 class _PluginJournal(BaseModel):
@@ -255,6 +256,7 @@ class OperationManager:
             "instance_repair": "修复实例",
             "plugin_file_write": "插件私有文件写入",
             "plugin_download": "插件私有文件下载",
+            "plugin_file_delete": "插件私有文件删除",
         }
     )
 
@@ -602,6 +604,8 @@ class OperationManager:
             operation = self._operations.get(operation_id)
             if operation is None or operation.origin != origin:
                 raise GameServiceError("未找到自身任务", "PLUGIN_RESOURCE_NOT_FOUND")
+        self._retry_terminal(operation)
+        with self._lock:
             return OperationSnapshot(
                 operation_id,
                 origin,
@@ -615,6 +619,13 @@ class OperationManager:
                 operation.result,
                 operation.error_code,
                 operation.audit_pending,
+                operation.phase == "terminal"
+                and (
+                    operation.future is None
+                    or not operation.future.done()
+                    or not operation.is_cleanup_complete
+                    or operation.audit_pending
+                ),
             )
 
     def cancel_owned(
@@ -633,8 +644,25 @@ class OperationManager:
         :return: 是否接受取消
         """
         with self._lock:
-            self.owned_snapshot(operation_id, origin)
+            operation = self._operations.get(operation_id)
+            if operation is None or operation.origin != origin:
+                raise GameServiceError("未找到自身任务", "PLUGIN_RESOURCE_NOT_FOUND")
             return self.cancel(operation_id, reason=reason)
+
+    def _retry_terminal(self, operation: _Operation) -> bool:
+        """
+        对已结束 future 尝试一次清理和审计；其他查询正收尾时立即返回。
+        """
+        if operation.future is None or not operation.future.done():
+            return False
+        if not operation.io_lock.acquire(blocking=False):
+            return False
+        try:
+            is_clean = self._cleanup_owned(operation)
+            is_saved = not operation.audit_pending or self._persist(operation)
+            return is_clean and is_saved
+        finally:
+            operation.io_lock.release()
 
     def owner_idle(self, origin: OperationOrigin) -> bool:
         """
@@ -645,14 +673,11 @@ class OperationManager:
         """
         with self._lock:
             operations = tuple(item for item in self._operations.values() if item.origin == origin)
+        is_idle = True
         for operation in operations:
-            if operation.future is None or not operation.future.done():
-                return False
-            if not self._cleanup_owned(operation):
-                return False
-            if operation.audit_pending and not self._persist(operation):
-                return False
-        return True
+            if not self._retry_terminal(operation):
+                is_idle = False
+        return is_idle
 
     def release_owner(self, origin: OperationOrigin) -> bool:
         """

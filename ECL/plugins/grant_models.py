@@ -85,7 +85,7 @@ class PermissionDeclaration(_PermissionScope):
     def _host_selected_instances(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
         if info.data.get("capability") == "instances.read" and value:
             raise ValueError("实例资源由宿主用户选择，清单不能指定本机资源")
-        if info.data.get("capability") in {"filesystem.read", "filesystem.write"} and value:
+        if info.data.get("capability") in {"filesystem.read", "filesystem.write", "filesystem.delete"} and value:
             raise ValueError("文件能力仅允许当前安装的私有空间")
         return value
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import mmap
 import struct
+import subprocess
 import sys
 from pathlib import Path
 from time import monotonic
@@ -10,6 +12,111 @@ from time import monotonic
 import pytest
 
 from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows NTFS")
+@pytest.mark.parametrize("is_marked", [False, True])
+def test_process_exit_preserves_unmarked_or_finishes_marked_original(tmp_path, is_marked):
+    target_path = tmp_path / "target.bin"
+    target_path.write_bytes(b"original")
+    script = """from pathlib import Path
+import sys
+from ECL.plugins.runtime.file_handles import FileDirectory
+root = FileDirectory.open(Path(sys.argv[1]))
+owned = []
+stream = root.delete_target('target.bin', owned.append)
+if sys.argv[2] == 'marked':
+    stream.mark_deletion(True)
+print('ready', flush=True)
+sys.stdin.read()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(tmp_path), "marked" if is_marked else "unmarked"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout.readline().strip() == "ready"
+    finally:
+        process.terminate()
+        process.communicate(timeout=5)
+    assert target_path.exists() is not is_marked
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows NTFS")
+def test_memory_mapped_original_is_not_falsely_reported_deleted(tmp_path):
+    target_path = tmp_path / "mapped.bin"
+    target_path.write_bytes(b"original")
+    with target_path.open("r+b") as source:
+        mapping = mmap.mmap(source.fileno(), 0)
+    root = FileDirectory.open(tmp_path)
+    owned = []
+    try:
+        with pytest.raises(FileBoundaryError):
+            stream = root.delete_target("mapped.bin", owned.append)
+            stream.mark_deletion(True)
+        assert target_path.exists()
+    finally:
+        mapping.close()
+        for stream in owned:
+            if not stream.is_closed:
+                stream.mark_deletion(False)
+                stream.close()
+        root.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows NTFS")
+def test_delete_identity_rollback_and_metadata_delayed_removal(tmp_path):
+    from ctypes import wintypes
+
+    (tmp_path / "target.bin").write_bytes(b"original")
+    root = FileDirectory.open(tmp_path)
+    owned = []
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create.restype = wintypes.HANDLE
+    metadata = create(str(tmp_path / "target.bin"), 0x100080, 7, None, 3, 0x200000, None)
+    assert metadata != ctypes.c_void_p(-1).value
+    try:
+        stream = root.delete_target("target.bin", owned.append)
+        identity = stream.identity
+        assert root.entry_identity("TARGET.BIN", monotonic() + 2) == identity
+        version = stream.information().etag(stream.digest(monotonic() + 2))
+        with pytest.raises(PermissionError):
+            (tmp_path / "target.bin").read_bytes()
+        stream.mark_deletion(True)
+        assert stream.deletion_pending()
+        stream.mark_deletion(False)
+        assert not stream.deletion_pending()
+        assert stream.information().etag(stream.digest(monotonic() + 2)) == version
+        stream.mark_deletion(True)
+        stream.close()
+        assert stream.is_closed
+        assert root.entry_identity("target.bin", monotonic() + 2) == identity
+        assert root._native.close(metadata)
+        metadata = None
+        assert root.entry_identity("target.bin", monotonic() + 2) is None
+        (tmp_path / "target.bin").write_bytes(b"original")
+        assert root.entry_identity("target.bin", monotonic() + 2) != identity
+    finally:
+        if metadata:
+            root._native.close(metadata)
+        for stream in owned:
+            if not stream.is_closed:
+                stream.mark_deletion(False)
+                stream.close()
+        root.close()
 
 
 def test_posix_file_boundary_is_explicitly_unavailable(tmp_path, monkeypatch):
