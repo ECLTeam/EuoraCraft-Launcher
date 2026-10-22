@@ -136,9 +136,9 @@ TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cance
 
 ## 私有文件与新建事务
 
-声明 `filesystem.read`、`filesystem.write` 或 `filesystem.delete`，清单及授权的 resource_refs 必须为空；范围固定为本安装的私有文件空间。三种能力独立，写只允许新建文件，不允许覆盖、删除、建子目录或访问用户选择的目录。首轮限 Windows x64、本地 NTFS；其他文件系统明确拒绝。
+声明 `filesystem.read`、`filesystem.write`、`filesystem.delete` 或 `filesystem.replace`，清单及授权的 resource_refs 必须为空；范围固定为本安装的私有文件空间。四种能力独立，write只允许新建文件，替换已有文件必须单独授予replace；不允许建子目录或访问用户选择的目录。首轮限 Windows x64、本地 NTFS；其他文件系统明确拒绝。
 
-先调用 resources.list，capability 为 filesystem.read、filesystem.write 或 filesystem.delete，取得当前 run 的 root_ref。FileRef 为 `{root_ref,relative_path}`，文件名为 1—120 个 ASCII 字符，须以字母或数字开始，后续仅允许字母、数字、点、下划线和连字符；拒绝设备名、尾点和路径组件。空名称只用于私有根 stat/list。引用不能跨 run/授权代次重用，任何接口都不返回宿主路径。
+先调用 resources.list，capability 为上述独立文件能力，取得当前 run 的 root_ref。FileRef 为 `{root_ref,relative_path}`，文件名为 1—120 个 ASCII 字符，须以字母或数字开始，后续仅允许字母、数字、点、下划线和连字符；拒绝设备名、尾点和路径组件。空名称只用于私有根 stat/list。引用不能跨 run/授权代次重用，任何接口都不返回宿主路径。
 
 读取使用 files.stat、files.list、files.read。read 的 count 为 1—32768，结果为 Base64、eof 和完整内容与物理身份绑定的 etag；expected_etag 变化时明确失败。FileView 时间字段为 modified_ms。读取不会初始化首次空间；损坏或丢失的已有空间不能当作空空间重建。
 
@@ -148,7 +148,7 @@ commit 返回 `{operation_ref,state:"queued"}`，表示已接纳；实际结果�
 
 files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放配额或允许重新启用。
 
-同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。崩溃残留计入空间，不自动恢复或删除。参见 [完整协议与验收](plugin-private-files-implementation-plan.md) 和可安装的 [worker_snapshot 示例](../examples/plugins/worker_snapshot/README.md)。
+同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换登记事务按下节恢复。参见 [完整协议与验收](plugin-private-files-implementation-plan.md) 和可安装的 [worker_snapshot 示例](../examples/plugins/worker_snapshot/README.md)。
 
 ### 按版本删除私有文件
 
@@ -161,6 +161,22 @@ RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；�
 成功必须确认原对象目录项已消失，最终仅返回 `{deleted:true}`。该无内容确认绑定原删除lease，失权后result为null，effect不改。自身CloseHandle成功不代表实际删除；外部元数据句柄可能延迟移除，超时返回 PLUGIN_FILE_DELETE_PENDING、effect=unknown、cleanup_pending=true。内核删除仍可能晚到完成；后续只观察原对象身份，不重开名称补删，不触及同名新对象。实际清理完成可以清除cleanup_pending，但不把unknown改报成功。
 
 这是直接删除，成功后不可恢复，不进入回收站，不提供跨重启恢复。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 [实施与验收](plugin-private-file-delete-implementation-plan.md) 和 [显式清理示例](../examples/plugins/worker_file_cleanup/README.md)。
+
+### 按版本替换私有文件
+
+`files.replace_begin({target:FileRef,expected_etag,total_bytes})` 需要独立filesystem.replace，返回与新建相同的 `{write_ref,max_chunk_bytes}`。随后使用既有write_chunk、write_commit、write_abort；上传始终绑定原replace许可，不能换成write许可继续。原、新文件均至多8 MiB，分块32 KiB；不接受overwrite、force或真实路径。begin不初始化缺失空间或目标。已有文件和新暂存同时计入配额。
+
+commit创建plugin_file_replace任务，从提交起共30秒，包含排队。执行时从原句柄完整核对原对象与expected_etag，最终接纳前复核原lease、取消、截止及审计。先持久保存事务凭据，再把原对象不覆盖移到内部备份，最后不覆盖发布新暂存。**原名称可能短暂不存在，不承诺一次原子覆盖。** 新建与下载继续禁止覆盖。
+
+接受前失败保留原文件；接受后按真实结果报告effect。失败若原名称仍空缺，只按原对象不覆盖恢复；后来文件占用名称时保留外部文件及原备份，effect保持unknown，cleanup_pending保持true。旧备份、暂存、记录和实际句柄全部结束后才释放名称及预留；外部元数据句柄延迟删除时，新文件可以正常读取，清理仍保留pending。成功替换不提供历史撤销。
+
+重启仅处理有严格凭据的登记事务，核对原根、卷和文件ID及完整SHA-256；不继续旧上传，不恢复旧run控制引用，不扫描删除未知残留。NTFS复用名称可能继承原创建时间，替换恢复只识别本次新对象的明确创建时间过渡，不放宽公开FileRef版本规则。无法核实的记录或对象保留，并阻止相关安装重新启用、覆盖登记或卸载。
+
+可信主窗口“文件恢复”可查看孤立安装记录，选择仅在缺失时恢复原位置、按明确新名称另存原文件，或二次确认永久丢弃原备份。`plugin_file_recoveries_list({cursor?,limit?})` 默认50、最多100项；返回当前宿主opaque recovery_ref、revision、etag、状态及可执行动作，不返回宿主路径和内部名称。状态为pending、conflict、cleanup或invalid；后两者无破坏性操作。
+
+`plugin_file_recovery_resolve({recovery_ref,expected_revision,expected_etag,action,saved_name?})` 仅原生注册主WebView可调用，返回应用任务回执。action为restore/save_as/discard，只有save_as可且必须提供saved_name。执行前重新核对记录及实际文件，同一审阅选择返回同一任务；失败后刷新取得新版本才可再次尝试。关闭弹窗不停止已接纳任务，成功提示以实际任务终态为准。Worker和Dev Channel均不能调用恢复管理入口。
+
+示例见 [worker_file_replace](../examples/plugins/worker_file_replace/README.md)，设计及验收见 [替换实施方案](plugin-private-file-replace-implementation-plan.md)。
 
 ## 只读网络请求
 

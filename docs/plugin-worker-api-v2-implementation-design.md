@@ -547,7 +547,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 ### 13.6 文件、网络与下载
 
-文件方法当前按 [P09 A](plugin-private-files-implementation-plan.md) 实施，仅限 Windows x64 本地 NTFS。filesystem.read/write/delete 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；写不隐含读。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](plugin-download-task-implementation-plan.md) 开放私有空间新文件下载；files.delete 已按用户确认的 [按版本删除路线A](plugin-private-file-delete-implementation-plan.md) 开放。三种文件权限彼此独立，删除只提供不含内容的自身控制确认。
+文件方法仅限 Windows x64 本地 NTFS。filesystem.read/write/delete/replace 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；四种权限彼此独立，写不隐含读。基础读取和新建见 [P09 A](plugin-private-files-implementation-plan.md)，按版本删除见 [删除路线A](plugin-private-file-delete-implementation-plan.md)，按版本替换和可信恢复见 [替换路线B](plugin-private-file-replace-implementation-plan.md)。删除只提供不含内容的自身控制确认。network.request 已按 [P10 A](plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](plugin-download-task-implementation-plan.md) 开放私有空间新文件下载。
 
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
@@ -559,6 +559,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `files.write_commit` | `{write_ref,sha256:string}` | `TaskReceipt`，state固定queued；最终结果为FileView或null | 原始写lease控制执行，独立原始读lease控制结果；根/源身份及完整摘要校验 | `PLUGIN_FILE_CHANGED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_STORAGE_FAILED` | T5/30秒；O+S |
 | `files.write_abort` | `{write_ref}` | `ReleaseResult` | C，自己的暂存 | — | CL5；O |
 | `files.delete` | `{target:FileRef,expected_etag:string}` | `TaskReceipt`；最终`{deleted:true}` | `filesystem.delete`，自身至多8 MiB普通单链接文件 | `PLUGIN_FILE_CHANGED`,`PLUGIN_FILE_TOO_LARGE`,`PLUGIN_FILE_DELETE_PENDING` | T5/30秒；O+S |
+| `files.replace_begin` | `{target:FileRef,expected_etag:string,total_bytes:int}` | 与新建共用write_ref；commit生成plugin_file_replace任务 | 独立`filesystem.replace`，自身至多8 MiB普通单链接文件 | `PLUGIN_FILE_CHANGED`,`PLUGIN_FILE_RECOVERY_REQUIRED` | W5；commit为T5/30秒含排队；O+S |
 | `network.request` | `{method:"GET"\|"HEAD",url:string<=4096字节,headers?:白名单对象}` | `{status_code,url,headers:白名单对象,body_b64}`，GET实体至多32KiB | `network.read`；精确协议/DNS域名/端口，仅普通公网 | `PLUGIN_NETWORK_FAILED`,`PLUGIN_REDIRECT_DENIED`,`PLUGIN_RESPONSE_TOO_LARGE`,`PLUGIN_NETWORK_TARGET_DENIED` | R30；S |
 | `downloads.submit` | `{url,target:FileRef,overwrite:严格false,expected_sha256?:sha256}` | `TaskReceipt`；最终`FileView`或null | `network.read`各目标 + `filesystem.write`目标 | `PLUGIN_DOWNLOAD_FAILED`,`PLUGIN_HASH_MISMATCH`,`PLUGIN_FILE_EXISTS`,`PLUGIN_FILE_BUSY` | T5/1800秒；O+S |
 
@@ -1089,8 +1090,10 @@ Broker现有mutation回执用于提交去重和超时后查询；权限撤销后
 
 协议和示例见 [归档文档](eclplugin-package-format.md#私有空间下载任务)、[worker_download](../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 [下载验收记录](plugin-download-task-implementation-plan.md#12-实施与验收记录)。覆盖/删除、实例写入、安装任务和自定义前端继续分别审阅。
 
-## 27. 私有文件替换下一阶段（2026-10-22，待审阅）
+## 27. 私有文件按版本替换与可信恢复（2026-10-22）
 
-按版本删除已另行完成，见 [删除验收记录](plugin-private-file-delete-implementation-plan.md#11-实施与本地验收)。下一阶段的 [按版本替换草案](plugin-private-file-replace-implementation-plan.md) 已完成当前代码调研及隔离原生探针，生产接口和权限尚未修改。
+按用户确认的路线B接入独立filesystem.replace、replace_begin和既有上传管线。FileReplacementStore维护唯一事务资源与严格持久记录，OperationManager继续拥有执行状态及effect，不恢复旧run控制权或重放旧上传。按版本删除仍采用原直接删除契约，见 [删除验收记录](plugin-private-file-delete-implementation-plan.md#11-实施与本地验收)。
 
-已测试的直接replace没有证明“完整版本检查与替换不可插入竞争”的契约。草案推荐先保留原对象，再不覆盖发布，配套持久恢复及可信主窗口处理；代价是目标名称可能短暂缺失。这与一次原子覆盖不同，须由用户确认路线和恢复范围后实施；当前write_begin及downloads.submit仍禁止覆盖。
+原对象完整版本核对后先保存记录，再按原句柄移至备份，最后不覆盖发布。目标名称可能短暂缺失，不承诺一次原子覆盖。跨重启只处理登记事务，冲突保留后来文件和原备份；新文件已发布后的旧备份及记录实际清理结束前保留pending和配额。NTFS创建时间过渡只在替换恢复内识别，公开FileRef的版本判断保持严格。
+
+可信主WebView通过有界恢复查询和带revision/etag的明确选择提交用户任务，允许孤立安装恢复；Worker和Dev Channel无管理资格。前端共享应用任务服务，关闭弹窗不取消已接纳任务，六语言支持恢复、另存和二次确认丢弃原备份。write_begin和downloads.submit继续禁止覆盖。现行协议见 [归档文档](eclplugin-package-format.md#按版本替换私有文件)，实施证据见 [替换方案](plugin-private-file-replace-implementation-plan.md)。

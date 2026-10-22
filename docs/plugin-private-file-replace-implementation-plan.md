@@ -1,8 +1,8 @@
 # 插件私有文件按版本替换实施方案
 
-日期：2026-10-22（Asia/Shanghai）。状态：下一阶段调研与路线B草案，待用户选择并确认实施；生产接口尚未修改。
+日期：2026-10-22（Asia/Shanghai）。状态：路线B已实现，完成源码、最终发行物验收及原工作区本地main集成。下列第1—10节保留经批准的方案；实际结果见第12节。
 
-基线：主仓库与原工作区本地main为 `d03ac01`，前端 `ae37c5f`。接续 [新建事务](plugin-private-files-implementation-plan.md)、[按版本删除](plugin-private-file-delete-implementation-plan.md) 和 [现行协议](eclplugin-package-format.md)。本轮只做隔离探针、相关基线回归和方案文档。
+调研基线：主仓库与原工作区本地main为 `d03ac01`，前端 `ae37c5f`；实施从方案提交 `5748c12` 开始。接续 [新建事务](plugin-private-files-implementation-plan.md)、[按版本删除](plugin-private-file-delete-implementation-plan.md) 和 [现行协议](eclplugin-package-format.md)。
 
 ## 1. 目标、路线和需要确认的取舍
 
@@ -171,10 +171,44 @@ commit返回TaskReceipt，类型plugin_file_replace；从commit接纳起30秒总
 
 本机NTFS结果不能推导POSIX或其他文件系统支持；平台拒绝分支须自动测试，未执行的平台实机和远端CI独立记录。两种最终冻结产物都要验证正常替换、备份恢复冲突、实际主窗口恢复和重启，不能只复用本轮原生探针或既有删除验收。
 
-## 11. 本轮调研交付与下一步确认
+## 11. 调研阶段归档
 
-本轮完成现状检索、微软原生契约核对、12项隔离探针复现；现有文件句柄、Host文件、新删除及任务归属基线125 passed，22.70秒。生产代码、权限、前端、接口、包格式与数据均未修改，没有执行新功能的冻结构建或界面验收。
+实施前完成现状检索、微软原生契约核对、12项隔离探针复现；文件句柄、Host文件、新删除及任务归属基线125 passed，22.70秒。这些结果属于调研基线，不代表本功能验收。
 
 文档检查涵盖Markdown结构、相对链接、现行章节引用和git diff --check；以docs提交安全同步原工作区本地main，不推送。
 
-需要用户审阅并选择：采用推荐B，确认目标名称短暂缺失、同卷事务备份与跨重启恢复、独立filesystem.replace权限和可信恢复界面的范围；或继续研究A/暂缓C。根据AGENTS第0节“未获用户确认前，禁止进入实施阶段”，本轮不开放替换能力。确认B并要求实施后才开始第9节。
+用户随后选择推荐B并明确要求“开始实施”，接受目标名称短暂缺失、同卷事务备份与跨重启恢复、独立filesystem.replace权限和可信恢复界面的范围。
+
+## 12. 实施与本地验收
+
+已接入独立替换许可、replace_begin、原对象按版本备份、不覆盖发布、严格事务记录及可信主窗口恢复。登记恢复支持孤立安装；不继续旧上传、不开放旧run引用、不加入历史兼容或格式迁移。恢复动作沿用唯一OperationManager，页面只订阅实际状态。
+
+真实进程终止覆盖prepared写入前/后、原对象移动后、old_saved后、实际发布后、published后、备份实际删除后及外部文件占位。新宿主只恢复旧原对象或确认已经发布的新对象；冲突另存保留外部字节。格式损坏及无法核实对象保留，不猜测删除。
+
+Windows原生测试确认两项必须单独处理的事实：写句柄关闭后时间字段可能最终更新；NTFS名称复用可能继承原文件创建时间。恢复凭据使用明确的卷、文件ID及完整SHA-256，新对象创建时间只允许本事务记录的暂存值或旧名称值。此规则不改变公开FileRef的严格etag。同名同内容重建仍不能通过公开版本核验。依据见微软[文件时间](https://learn.microsoft.com/en-us/windows/win32/sysinfo/file-times)及[NTFS名称隧道行为](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltgettunneledname)。
+
+外部元数据句柄可能延迟旧备份实际消失；此时任务效果可已committed，cleanup_pending和原预留继续保留，新文件句柄先释放以允许正常读取。未知effect不会因为恢复后清理成功而改成成功。恢复提交另将极短任务的可变即时状态转换为稳定接纳回执，再由应用任务查询取得真实终态，覆盖真实WebView发现的快速任务竞态。
+
+功能提交 `49c5170`，前端提交 `ffffd04cb469cdc3a98a6d9d0dad8ace7520c762`。先快进集成前端原工作区本地main，再将主仓库功能提交快进到原工作区本地main；没有覆盖无关文件，Core及Florolding指针保持原值。文档独立提交。
+
+| 检查 | 最终本地结果 |
+| --- | --- |
+| 主仓库Ruff | `ruff check ECL tests`、`ruff format --check ECL tests`、`ruff check . --output-format github` 均通过；最后一项与CI旧选项等价，不改变工具版本 |
+| 完整pytest | 2005 passed、22 skipped，215.93秒；随后补入既有私有权限声明循环的replace分支，相关用例1 passed |
+| Core | 子仓库Ruff通过；主仓库执行Core测试16 passed |
+| 前端 | pnpm check通过，含Prettier、ESLint、类型及931 passed / 1 todo；随后pnpm build通过 |
+| 原生替换与恢复 | 严格输入、独立权限、无read结果隐藏、0字节/8 MiB、同内容重建、版本变化、排队取消/撤权/到期、去重并发、阶段记录失败、外部竞争、实际元数据延迟、三种恢复选择、陈旧审阅及刷新重试通过 |
+| 实际进程中断 | 上述8个崩溃点以真实子进程终止后新宿主处理，未继续旧上传；无效记录及孤立安装处理通过 |
+| PyInstaller / Nuitka Worker | 最终onefile分别20 passed，覆盖源码/冻结Worker的替换、取消、新建、删除、下载、本地TLS网络、任务与bootstrap |
+| 源码及两种真实主窗口 | 每种144个权限布局加144个恢复布局；离线归档安装/重启、原生权限允许/拒绝、真实Worker替换、孤立安装冲突另存及实际用户任务取消均通过 |
+
+三种真实主窗口各覆盖六语言、Classic/Folia、亮暗、背景开启/关闭（开启时透明度0.55、模糊12）及1200×800、960×600、1600×1000窗口，共864次布局组合检查。确认按钮、页尾、末项滚动、输入焦点和键盘站点End/Tab可达，无横向溢出及内部路径泄露；另存后的原文件为原字节，原位置后来文件保持不变。最小窗口新增按钮溢出已修复，真实布局回归纳入原生UI辅助检查。Playwright通过CDP连接实际WebView2，未用jsdom代替布局验收。
+
+验收日志保留在Git忽略的 `build/worker-manager/replace-*.log`，截图及JSON矩阵在 `build/worker-manager/output/playwright/replace-ui-{source,pyinstaller,nuitka}`。正式打包器生成本地 `build/worker-manager/worker_file_replace.eclplugin`，未发布。
+
+本机为Windows 11 x64 build 26300、本地NTFS、WebView2 155.0.4283.62；Python 3.11.9，PyInstaller 6.22.3，Nuitka 4.2.2，PyTauri/pytauri-wheel 0.8.0，Pydantic 2.13.5，Ruff 0.16.10。最终产物SHA-256：
+
+- PyInstaller：`947fc2c8131dda0ba8c89269261c00913b0fd3a3f829d59ff07b0ab0fe5a3b63`。
+- Nuitka：`105f5a2586f967e9039ece2ce179d29e98aaf605cb651ab576969e99bdca9418`。
+
+平台拒绝与生命周期单元回归通过，未在POSIX实机或远端CI运行；不把本机结果扩展为其他文件系统支持。替换仍允许原名称短暂缺失，成功后旧版本不可撤销；损坏记录和无法确认的对象需人工排障，界面不提供猜测删除。没有推送、创建标签或发布，保留主仓库既有远端分歧。
