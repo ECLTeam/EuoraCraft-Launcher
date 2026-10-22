@@ -6,6 +6,6 @@
 
 在权限页撤销全部授权后，Worker 停止，命令不再可用。重新审阅后可以启用新的运行会话；修改代码后也必须重新审阅。仅支持已验收的 Windows x64 Worker。
 
-制作归档时运行 `python packaging/build-eclplugin.py examples/plugins/worker_echo build/worker_echo.eclplugin`。本示例无第三方 Python 依赖；有依赖时使用完整锁和兼容 Wheel，见 [归档格式说明](../../../docs/eclplugin-package-format.md)。
+制作归档时运行 `python packaging/build-eclplugin.py examples/plugins/worker_echo build/worker_echo.eclplugin`。本示例无第三方 Python 依赖；有依赖时使用完整锁和兼容 Wheel，见 [归档格式说明](../../../docs/protocols/eclplugin-package-format.md)。
 
 Worker 以当前操作系统用户运行，不提供恶意 Python 的文件或网络沙箱。该示例不加载插件自定义前端。

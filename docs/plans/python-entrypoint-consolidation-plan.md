@@ -8,7 +8,7 @@
 
 用户已选择同时迁移 `ecl_bootstrap.py` 和 `ecl_plugin_api/`，并统一调整插件导入路径。`tests/`、`tools/`、`packaging/` 和资源内的插件示例保留各自职责；前端与 Core 等子模块不因本次目录整理迁移。
 
-本文落实 [项目规范](../AGENTS.md) 第 0 节的实施前审阅要求；范围确认不等于代码实施批准。
+本文落实 [项目规范](../../AGENTS.md) 第 0 节的实施前审阅要求；范围确认不等于代码实施批准。
 
 ## 2. 当前实现与影响
 
@@ -71,7 +71,7 @@ from ECL.plugin_api.contracts import ProtocolError
 5. 调整依赖解析器的受保护模块名。以 `ECL` 顶层命名空间继续保护新的 API；移除无现行职责的旧包名保留项，保持标准库、宿主模块和锁定依赖的冲突拒绝行为。
 6. 更新 `pyproject.toml`：删除旧 `py-modules` 配置，包发现只收集 `ECL*`，Ruff 第一方包配置移除旧名称。更新 spec、PowerShell 构建脚本和 `.github/workflows/build.yml`，统一依靠 ECL 包收集新模块，清除旧独立包的显式收集项。
 7. 更新入口和插件导入边界测试，增加根目录结构与旧路径移除的架构约束，补齐下一节的行为验证。
-8. 更新 [无头运行说明](headless-runtime.md) 中的现行路径与导入边界。在相关插件设计文档中标明本方案取代的目录约定，更新仍作为当前使用指导的导入示例；保留明确标注的历史现状记录，避免把旧阶段描述伪装为当前实现。
+8. 更新 [无头运行说明](../guides/headless-runtime.md) 中的现行路径与导入边界。在相关插件设计文档中标明本方案取代的目录约定，更新仍作为当前使用指导的导入示例；保留明确标注的历史现状记录，避免把旧阶段描述伪装为当前实现。
 9. 按第 5 节通过检查后提交并完成安全的本地 main 集成。远端推送与发布仍需针对当前变更的明确授权。
 
 ## 5. 测试与验收
@@ -93,7 +93,7 @@ from ECL.plugin_api.contracts import ProtocolError
 
 ### 5.3 检查命令与发行物
 
-按 [项目规范第 6 节](../AGENTS.md) 执行全部适用检查：
+按 [项目规范第 6 节](../../AGENTS.md) 执行全部适用检查：
 
 1. 主仓库执行 `ruff check ECL tests`、`ruff format --check ECL tests`、`ruff check . --format github`，并单独检查迁移涉及的 `main.py` 格式。
 2. 先运行相关 pytest，再执行 `python -m pytest --tb=short -q`。按主仓库 CI 在 `ECL/game` 执行 `ruff check .`，在主仓库执行 `python -m pytest ECL/game/tests --tb=short -q`，验证包入口变更不破坏 Core 集成。

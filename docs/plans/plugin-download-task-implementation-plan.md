@@ -152,7 +152,7 @@ flush、最终文件信息与摘要在提交接受前取得。最终 `context.fi
 | 任务与审计 | 提交前审计失败不发网络或发布；提交后审计失败保留 committed；只有写权限仍可完成但结果 null，后来读取许可不能复活原结果；终态不等于 owner_idle，旧 run 不能恢复控制 |
 | 回归与发行物 | 当前文件/任务/GET/HEAD/实例/设置/命令及桌面用户下载回归，真实 Worker 通过；PyInstaller 和 Nuitka 最终产物分别验证下载、取消、撤销、停止 pending 与原生私有文件发布 |
 
-按 [AGENTS.md 第6节](../AGENTS.md#6-测试与验收) 执行全部适用检查：主仓库 `ruff check ECL tests`、`ruff format --check ECL tests`、`ruff check . --format github`、完整 `python -m pytest --tb=short -q`，以及 CI 要求的 Core Ruff 与集成测试。平台分支覆盖 Windows 与 POSIX 的策略/拒绝测试，真实 Worker/原生 NTFS 发布使用 Windows x64；没有 POSIX 实机证据时明确标注。
+按 [AGENTS.md 第6节](../../AGENTS.md#6-测试与验收) 执行全部适用检查：主仓库 `ruff check ECL tests`、`ruff format --check ECL tests`、`ruff check . --format github`、完整 `python -m pytest --tb=short -q`，以及 CI 要求的 Core Ruff 与集成测试。平台分支覆盖 Windows 与 POSIX 的策略/拒绝测试，真实 Worker/原生 NTFS 发布使用 Windows x64；没有 POSIX 实机证据时明确标注。
 
 下载接线会改变启动器的运行流程，因此功能实施的验收包含先 pnpm check、再 pnpm build，然后实际启动启动器验收原生权限审阅、提交/查询/取消和停止后的清理状态，分别验证两种冻结产物，不能以纯 Worker 单测代替。若实施中实际修改前端界面，再补第6节规定的主题、窗口尺寸和布局验收。方案编写阶段未提前执行这些功能实施门禁；当前实施结果见第12节。
 
@@ -165,7 +165,7 @@ flush、最终文件信息与摘要在提交接受前取得。最终 `context.fi
 - 方案阶段 Windows x64 基线：文件、原生文件句柄、文件 Worker、任务归属/Worker、网络站点/API/日志/Worker/退出测试共 261 passed、4 skipped，耗时 48.73 秒。跳过项保留 pytest 的当前平台与条件要求，不能据此宣称 POSIX 实机或下载已经验收。
 - 本轮改动只含方案文档及总体设计的现行状态/计划入口；提交前核验 Markdown 本地链接、章节和 git diff --check，不执行无关构建或改动生产代码。
 
-功能完成后按 [AGENTS.md 第7节](../AGENTS.md#7-git-提交与本地交付) 提交并安全集成原工作区本地 main，保护无关修改；若没有子模块改动则不改其指针。本方案文档同样独立提交并同步本地。远端 main 的既有分歧保留，不自动合并远端、推送或发布。
+功能完成后按 [AGENTS.md 第7节](../../AGENTS.md#7-git-提交与本地交付) 提交并安全集成原工作区本地 main，保护无关修改；若没有子模块改动则不改其指针。本方案文档同样独立提交并同步本地。远端 main 的既有分歧保留，不自动合并远端、推送或发布。
 
 
 ## 12. 实施与验收记录

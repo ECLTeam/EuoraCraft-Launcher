@@ -157,6 +157,6 @@ InstanceProfileStore继续是资料权威维护者，新增实例资料事务组
 
 拟新增tests/test_plugin_instance_profile_write.py、test_instance_profile_transactions.py、test_plugin_instance_profile_worker.py及真实进程中断辅助程序，更新现有实例读取/资料/授权/IPC/日志/路径和前端用例。修复缺陷必须保留可在修复前失败的回归。
 
-检查命令统一遵循 [AGENTS第6节](../AGENTS.md#6-测试与验收)：主仓库Ruff check、format check、适用全仓Ruff和完整pytest；Core lint及主仓库Core测试；前端先pnpm check再pnpm build及实际启动器。POSIX读取和桌面资料分支需自动覆盖，插件实际写入只承诺本机Windows x64/NTFS；不把本机测试描述成远端CI或其他平台实机验收。
+检查命令统一遵循 [AGENTS第6节](../../AGENTS.md#6-测试与验收)：主仓库Ruff check、format check、适用全仓Ruff和完整pytest；Core lint及主仓库Core测试；前端先pnpm check再pnpm build及实际启动器。POSIX读取和桌面资料分支需自动覆盖，插件实际写入只承诺本机Windows x64/NTFS；不把本机测试描述成远端CI或其他平台实机验收。
 
-本轮交付仅此方案和总设计中的待审阅链接，完成Markdown结构、相对链接及git diff --check后独立docs提交并同步本地main。根据 [AGENTS第0节](../AGENTS.md#0-需求确认与变更工作流)“未获用户确认前，禁止进入实施阶段”，需用户审阅上述路线A及共享资料取舍并明确确认实施，才进入第7节；当前instances.write仍保持未实现。
+本轮交付仅此方案和总设计中的待审阅链接，完成Markdown结构、相对链接及git diff --check后独立docs提交并同步本地main。根据 [AGENTS第0节](../../AGENTS.md#0-需求确认与变更工作流)“未获用户确认前，禁止进入实施阶段”，需用户审阅上述路线A及共享资料取舍并明确确认实施，才进入第7节；当前instances.write仍保持未实现。

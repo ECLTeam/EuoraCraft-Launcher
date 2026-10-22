@@ -2,7 +2,7 @@
 
 日期：2026-10-21（Asia/Shanghai）。状态：方案 A 基础切片已实施并通过本轮本地验收，范围与结果见第 10 节。
 
-基线为主仓库 `c56b45f`、Core `fce6b1018c41f66ec29bb3b61dec6547dedb5588`、前端 `d8d8fc55a71fb081477152e4d53243e219eac6d8`。本轮接续 [实例只读能力](plugin-instance-read-api-implementation-plan.md)，落实 [总体设计](plugin-worker-api-v2-implementation-design.md) 第 15 节和 P08 的任务基础。本轮实施按用户确认的方案 A 推进；既有产物和上一轮测试数字不作为 P08 实施验收。
+基线为主仓库 `c56b45f`、Core `fce6b1018c41f66ec29bb3b61dec6547dedb5588`、前端 `d8d8fc55a71fb081477152e4d53243e219eac6d8`。本轮接续 [实例只读能力](plugin-instance-read-api-implementation-plan.md)，落实 [总体设计](../designs/plugin-worker-api-v2-implementation-design.md) 第 15 节和 P08 的任务基础。本轮实施按用户确认的方案 A 推进；既有产物和上一轮测试数字不作为 P08 实施验收。
 
 ## 1. 目标和推荐路线
 
@@ -154,7 +154,7 @@ TaskView 显式投影总体设计字段：operation_ref、kind、state、percent
 
 ## 8. 测试和交付门槛
 
-完整检查遵循 [AGENTS.md 第 6 节](../AGENTS.md#6-测试与验收)，不能以以下新增用例替代主仓库 Ruff 和全量 pytest。纯方案阶段仅检查文档；功能实施后执行所有适用门禁。
+完整检查遵循 [AGENTS.md 第 6 节](../../AGENTS.md#6-测试与验收)，不能以以下新增用例替代主仓库 Ruff 和全量 pytest。纯方案阶段仅检查文档；功能实施后执行所有适用门禁。
 
 | 场景 | 必须观察到的结果 |
 | --- | --- |
@@ -177,7 +177,7 @@ TaskView 显式投影总体设计字段：operation_ref、kind、state、percent
 
 PyInstaller 与 Nuitka 均重建真实发行物，测试夹具通过同一正式 Broker 接入人工宿主任务，验证 Worker 自身状态查询、取消、跨运行拒绝、禁用/撤销与宿主任务实际结束；夹具只存在于测试，不进入生产方法白名单。正式桌面验证主窗口审阅、启用、设置保存、实例只读以及用户任务取消/退出的关联流程，使用隔离数据和人工资源，不操作个人库。
 
-每类记录明确区分源码单测、平台分支、真实冻结和真实桌面验收。未执行的 POSIX 实机/远端 CI 如实报告。完成后按 [AGENTS.md 第 7 节](../AGENTS.md#7-git-提交与本地交付) 提交中文 Conventional Commit，文档独立提交并安全集成本地 main；远端推送、处理现有远端分叉和发布均不在本轮授权内。
+每类记录明确区分源码单测、平台分支、真实冻结和真实桌面验收。未执行的 POSIX 实机/远端 CI 如实报告。完成后按 [AGENTS.md 第 7 节](../../AGENTS.md#7-git-提交与本地交付) 提交中文 Conventional Commit，文档独立提交并安全集成本地 main；远端推送、处理现有远端分叉和发布均不在本轮授权内。
 
 ## 9. 已确认的决策
 

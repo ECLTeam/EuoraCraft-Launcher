@@ -10,4 +10,4 @@ API v2 独立 Worker 示例。加载插件只注册命令，不自行联网。
 
 提交时自行保留非空 mutation_key；相同请求重用该键取得同一回执。提交 RPC 至多 5 秒，任务总截止 1800 秒。固定预留 8 MiB，空间不足就拒绝；不覆盖、不续传、不解压、不继承代理、账户或 Cookie，不自动重试。提交等待超时应按原 mutation_key 查询 `mutations.get`，不能换新键假设此前没有接纳。
 
-正式边界和验收见 [下载任务方案](../../../docs/plugin-download-task-implementation-plan.md)。
+正式边界和验收见 [下载任务方案](../../../docs/plans/plugin-download-task-implementation-plan.md)。

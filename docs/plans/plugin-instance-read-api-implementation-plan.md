@@ -2,7 +2,7 @@
 
 日期：2026-10-20（Asia/Shanghai）。状态：用户已批准方案 A，实例只读能力已实施；本轮验证记录见第 9 节。
 
-本轮接续 [Worker 管理器接入](plugin-worker-manager-integration-plan.md)，细化 [总体设计](plugin-worker-api-v2-implementation-design.md) 的 P07 第一部分。当前基线：主仓库 `459bd1f`，前端 `f4eb6fb85abee81c88db07423cfc5a27a145fb69`，Core `467b58c602e8e309d3057a63920b09c679802753`。旧阶段验收数字不作为本轮验证结果。
+本轮接续 [Worker 管理器接入](plugin-worker-manager-integration-plan.md)，细化 [总体设计](../designs/plugin-worker-api-v2-implementation-design.md) 的 P07 第一部分。当前基线：主仓库 `459bd1f`，前端 `f4eb6fb85abee81c88db07423cfc5a27a145fb69`，Core `467b58c602e8e309d3057a63920b09c679802753`。旧阶段验收数字不作为本轮验证结果。
 
 ## 1. 目标、路线与边界
 
@@ -138,7 +138,7 @@ running_count: int >= 0
 
 ## 8. 测试、验收与交付
 
-按 [AGENTS.md 第 6 节](../AGENTS.md#6-测试与验收) 执行完整适用门禁；Core 改动同时执行其自身检查与主仓库集成测试。下表为新增行为要求，不替代统一门禁。
+按 [AGENTS.md 第 6 节](../../AGENTS.md#6-测试与验收) 执行完整适用门禁；Core 改动同时执行其自身检查与主仓库集成测试。下表为新增行为要求，不替代统一门禁。
 
 | 场景 | 必须观察到的结果 |
 | --- | --- |
@@ -163,7 +163,7 @@ running_count: int >= 0
 
 ## 9. 实施与验收记录
 
-已按批准的方案 A 接入资源目录、运行引用、有界分页、受控文件读取、Core 纯解析入口、GameService 只读摘要、可信权限候选 IPC、六语资源选择器与 [instance_reader 示例](../examples/plugins/instance_reader/README.md)。资源记录与授权只写宿主数据目录；游戏查询不初始化桌面扫描、统计、监听或外部提供方。
+已按批准的方案 A 接入资源目录、运行引用、有界分页、受控文件读取、Core 纯解析入口、GameService 只读摘要、可信权限候选 IPC、六语资源选择器与 [instance_reader 示例](../../examples/plugins/instance_reader/README.md)。资源记录与授权只写宿主数据目录；游戏查询不初始化桌面扫描、统计、监听或外部提供方。
 
 权限更新仍采用按能力合并的现行语义：未提交的能力保持原决定，空 `decisions` 不代表撤销。撤销必须为需要拒绝的能力显式提交 `decision:"deny"` 和空 `resource_refs`；管理页的“撤销全部授权”覆盖全部声明能力。保存与实际清理分别报告，允许先返回 `pending`，直到运行和宿主在途调用真正结束才返回 `completed`。
 

@@ -114,11 +114,11 @@ class Plugin(BasePlugin):
 
 撤销首先阻止新提交；已接受的设置写入可能继续落盘。宿主在途写入、Worker 和事件资源均结束后才报告清理完成，超时只报告 pending 或失败。事件队列满及可靠事件交付失败会关闭该 Broker 并回收运行；已经提交的设置仍报告真实 revision，不伪造回滚。
 
-完整示例见 [worker_echo](../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](headless-runtime.md)，总体契约与后续能力见 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
+完整示例见 [worker_echo](../../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](../guides/headless-runtime.md)，总体契约与后续能力见 [Worker/API v2 设计](../designs/plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
 
 ### 获准实例读取
 
-清单请求 `{"capability":"instances.read","required":true}`，不能自报本机资源 ID。用户在可信主窗口选择目录全部实例（包含以后新增）或指定实例，未选择不满足必要能力。`host.call("resources.list", {"capability":"instances.read"})` 只返回当前 run 的获准目录/实例引用；目录引用用于 `instances.scan`，实例引用用于 `instances.get`，单实例许可不能扫描父目录。完整运行示例见 [instance_reader](../examples/plugins/instance_reader/README.md)。
+清单请求 `{"capability":"instances.read","required":true}`，不能自报本机资源 ID。用户在可信主窗口选择目录全部实例（包含以后新增）或指定实例，未选择不满足必要能力。`host.call("resources.list", {"capability":"instances.read"})` 只返回当前 run 的获准目录/实例引用；目录引用用于 `instances.scan`，实例引用用于 `instances.get`，单实例许可不能扫描父目录。完整运行示例见 [instance_reader](../../examples/plugins/instance_reader/README.md)。
 
 资源和扫描列表均返回 `{items,next_cursor}`，可提交 `cursor`、`limit`（1—100，默认 50）。扫描另接受 `force`，仅刷新本次只读快照。单个摘要返回 `instance_ref`、`version_id`、`alias`、`loader`、`game_version`、`profile:{description,favorite,tags}`、`profile_etag`、`running_count`；不返回真实路径或完整实例配置。etag 不是递增 revision，也不授权写入。
 
@@ -132,7 +132,7 @@ TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cance
 
 列表 limit 为 1—100、默认 50；每页受 64 KiB 限制，游标最多 16 个快照、120 秒，绑定本 run 和 limit。快照固定引用集合，每页重新查询状态和过滤结果。每 run 最多 128 个引用，宿主同时跟踪至多 1024 个插件任务；容量耗尽明确拒绝，不淘汰活跃任务。关闭 run 后只有实际 future 和审计保存完成才释放记录。
 
-不开放通用 `operations.submit` 或安装任务创建接口。具体业务入口为 files.write_commit、files.delete 与下文 downloads.submit；未提交任务的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](plugin-operation-ownership-implementation-plan.md)。
+不开放通用 `operations.submit` 或安装任务创建接口。具体业务入口为 files.write_commit、files.delete 与下文 downloads.submit；未提交任务的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](../plans/plugin-operation-ownership-implementation-plan.md)。
 
 ## 私有文件与新建事务
 
@@ -148,7 +148,7 @@ commit 返回 `{operation_ref,state:"queued"}`，表示已接纳；实际结果�
 
 files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放配额或允许重新启用。
 
-同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换登记事务按下节恢复。参见 [完整协议与验收](plugin-private-files-implementation-plan.md) 和可安装的 [worker_snapshot 示例](../examples/plugins/worker_snapshot/README.md)。
+同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换登记事务按下节恢复。参见 [完整协议与验收](../plans/plugin-private-files-implementation-plan.md) 和可安装的 [worker_snapshot 示例](../../examples/plugins/worker_snapshot/README.md)。
 
 ### 按版本删除私有文件
 
@@ -160,7 +160,7 @@ RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；�
 
 成功必须确认原对象目录项已消失，最终仅返回 `{deleted:true}`。该无内容确认绑定原删除lease，失权后result为null，effect不改。自身CloseHandle成功不代表实际删除；外部元数据句柄可能延迟移除，超时返回 PLUGIN_FILE_DELETE_PENDING、effect=unknown、cleanup_pending=true。内核删除仍可能晚到完成；后续只观察原对象身份，不重开名称补删，不触及同名新对象。实际清理完成可以清除cleanup_pending，但不把unknown改报成功。
 
-这是直接删除，成功后不可恢复，不进入回收站，不提供跨重启恢复。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 [实施与验收](plugin-private-file-delete-implementation-plan.md) 和 [显式清理示例](../examples/plugins/worker_file_cleanup/README.md)。
+这是直接删除，成功后不可恢复，不进入回收站，不提供跨重启恢复。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 [实施与验收](../plans/plugin-private-file-delete-implementation-plan.md) 和 [显式清理示例](../../examples/plugins/worker_file_cleanup/README.md)。
 
 ### 按版本替换私有文件
 
@@ -176,7 +176,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 `plugin_file_recovery_resolve({recovery_ref,expected_revision,expected_etag,action,saved_name?})` 仅原生注册主WebView可调用，返回应用任务回执。action为restore/save_as/discard，只有save_as可且必须提供saved_name。执行前重新核对记录及实际文件，同一审阅选择返回同一任务；失败后刷新取得新版本才可再次尝试。关闭弹窗不停止已接纳任务，成功提示以实际任务终态为准。Worker和Dev Channel均不能调用恢复管理入口。
 
-示例见 [worker_file_replace](../examples/plugins/worker_file_replace/README.md)，设计及验收见 [替换实施方案](plugin-private-file-replace-implementation-plan.md)。
+示例见 [worker_file_replace](../../examples/plugins/worker_file_replace/README.md)，设计及验收见 [替换实施方案](../plans/plugin-private-file-replace-implementation-plan.md)。
 
 ## 只读网络请求
 
@@ -192,7 +192,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 每 run 同时2个请求，宿主8个请求、4个真实 DNS 工作者；满额立即拒绝。DNS超时或取消不证明实际解析结束，未结束时保留名额和清理 pending，阻止同安装重新启用；迟到结果只清理，不继续连接。解析工作者为有界守护线程，应用不无限 join，实际结束仍如实跟踪。连接/TLS 尚未返回真实流时按有限阶段预算等待，返回后登记并清理；关闭失败保留监管重试。
 
-稳定失败包含 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_RESOURCE_DENIED`、`PLUGIN_NETWORK_TARGET_DENIED`、`PLUGIN_NETWORK_RESOLUTION_FAILED`、`PLUGIN_NETWORK_FAILED`、`PLUGIN_REDIRECT_DENIED`、`PLUGIN_RESPONSE_TOO_LARGE`、`PLUGIN_NETWORK_ENCODING_UNSUPPORTED`、`PLUGIN_DEADLINE_EXCEEDED`、`PLUGIN_RATE_LIMITED`，授权失效沿用原授权错误码。项目文件、控制台和前端日志不记录 URL、头、响应或传输原始异常；其他上下文日志保持原行为。network.write、network.lan 仍未开放；私有空间下载见下节。参见 [实施与验收](plugin-network-read-implementation-plan.md) 和 [worker_network_read](../examples/plugins/worker_network_read/README.md)。
+稳定失败包含 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_RESOURCE_DENIED`、`PLUGIN_NETWORK_TARGET_DENIED`、`PLUGIN_NETWORK_RESOLUTION_FAILED`、`PLUGIN_NETWORK_FAILED`、`PLUGIN_REDIRECT_DENIED`、`PLUGIN_RESPONSE_TOO_LARGE`、`PLUGIN_NETWORK_ENCODING_UNSUPPORTED`、`PLUGIN_DEADLINE_EXCEEDED`、`PLUGIN_RATE_LIMITED`，授权失效沿用原授权错误码。项目文件、控制台和前端日志不记录 URL、头、响应或传输原始异常；其他上下文日志保持原行为。network.write、network.lan 仍未开放；私有空间下载见下节。参见 [实施与验收](../plans/plugin-network-read-implementation-plan.md) 和 [worker_network_read](../../examples/plugins/worker_network_read/README.md)。
 
 ## 私有空间下载任务
 
@@ -206,7 +206,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 成功为 completed、effect committed；最终 result 使用发布前捕获的 FileView，仅有提交时独立 filesystem.read lease 且交付时仍有效才返回，否则为 null。重新允许读取不会恢复旧结果 lease；可以通过当前 files API 重新读取。摘要始终计算并从原生暂存复核，可选期望摘要不符为 PLUGIN_HASH_MISMATCH。未知长度接收阶段不伪造百分比；只有文件发布完成才到100%。
 
-失败、排队取消和审计失败都尝试清理暂存与实际网络工作；系统 DNS 尚未返回、关闭/删除失败或审计未保存时保持 cleanup pending，阻止同安装重新启用。清理重试不会重做 HTTP 或发布，不删除成功文件，不扫描清除崩溃残留，不恢复旧run控制权。其余稳定错误沿用网络、文件和任务接口。参见 [完整下载方案与验收](plugin-download-task-implementation-plan.md) 和 [worker_download](../examples/plugins/worker_download/README.md)。
+失败、排队取消和审计失败都尝试清理暂存与实际网络工作；系统 DNS 尚未返回、关闭/删除失败或审计未保存时保持 cleanup pending，阻止同安装重新启用。清理重试不会重做 HTTP 或发布，不删除成功文件，不扫描清除崩溃残留，不恢复旧run控制权。其余稳定错误沿用网络、文件和任务接口。参见 [完整下载方案与验收](../plans/plugin-download-task-implementation-plan.md) 和 [worker_download](../../examples/plugins/worker_download/README.md)。
 
 ## 产物验证
 

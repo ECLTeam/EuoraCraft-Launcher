@@ -2,7 +2,7 @@
 
 日期：2026-10-22（Asia/Shanghai）。状态：路线B已实现，完成源码、最终发行物验收及原工作区本地main集成。下列第1—10节保留经批准的方案；实际结果见第12节。
 
-调研基线：主仓库与原工作区本地main为 `d03ac01`，前端 `ae37c5f`；实施从方案提交 `5748c12` 开始。接续 [新建事务](plugin-private-files-implementation-plan.md)、[按版本删除](plugin-private-file-delete-implementation-plan.md) 和 [现行协议](eclplugin-package-format.md)。
+调研基线：主仓库与原工作区本地main为 `d03ac01`，前端 `ae37c5f`；实施从方案提交 `5748c12` 开始。接续 [新建事务](plugin-private-files-implementation-plan.md)、[按版本删除](plugin-private-file-delete-implementation-plan.md) 和 [现行协议](../protocols/eclplugin-package-format.md)。
 
 ## 1. 目标、路线和需要确认的取舍
 
@@ -167,7 +167,7 @@ commit返回TaskReceipt，类型plugin_file_replace；从commit接纳起30秒总
 | 退出和门禁 | pending阻止重新启用/丢弃记录；一个活动任务不阻止其他终态收尾；unknown不因最后清理成功改报成功 |
 | 既有与产品 | 新建、上传abort、下载、删除、实例只读、设置及自身任务；真实Worker完整替换和恢复；PyInstaller/Nuitka分别验收 |
 
-代码实施按 [AGENTS第6节](../AGENTS.md#6-测试与验收) 执行Ruff、完整pytest、Core lint和集成测试。前端先pnpm check再pnpm build；真实启动器覆盖Classic/Folia、亮暗、背景/透明度/模糊及默认、960×600、放大窗口，六语言长文案、末项、滚动、键盘焦点和操作反馈。适用主仓库集成及IpcLogPolicy覆盖测试不能由子仓库测试替代。
+代码实施按 [AGENTS第6节](../../AGENTS.md#6-测试与验收) 执行Ruff、完整pytest、Core lint和集成测试。前端先pnpm check再pnpm build；真实启动器覆盖Classic/Folia、亮暗、背景/透明度/模糊及默认、960×600、放大窗口，六语言长文案、末项、滚动、键盘焦点和操作反馈。适用主仓库集成及IpcLogPolicy覆盖测试不能由子仓库测试替代。
 
 本机NTFS结果不能推导POSIX或其他文件系统支持；平台拒绝分支须自动测试，未执行的平台实机和远端CI独立记录。两种最终冻结产物都要验证正常替换、备份恢复冲突、实际主窗口恢复和重启，不能只复用本轮原生探针或既有删除验收。
 

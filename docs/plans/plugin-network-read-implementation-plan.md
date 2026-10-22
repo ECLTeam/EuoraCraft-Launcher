@@ -2,7 +2,7 @@
 
 日期：2026-10-21（Asia/Shanghai）。状态：用户选择 A（GET/HEAD 只读请求）并以“继续”确认实施；功能已实现，验收与交付记录见第12节。
 
-基线：方案调研时主仓库及原工作区本地 main 为 `c553e21`，方案提交 `8f19c46` 后开始实施，前端为 `0ead9f3`。接续 [P09 A 私有文件](plugin-private-files-implementation-plan.md)，细化 [总体设计](plugin-worker-api-v2-implementation-design.md) 的 P10 首个切片。本轮不把完整 P10 或完整文件管理能力标为完成。
+基线：方案调研时主仓库及原工作区本地 main 为 `c553e21`，方案提交 `8f19c46` 后开始实施，前端为 `0ead9f3`。接续 [P09 A 私有文件](plugin-private-files-implementation-plan.md)，细化 [总体设计](../designs/plugin-worker-api-v2-implementation-design.md) 的 P10 首个切片。本轮不把完整 P10 或完整文件管理能力标为完成。
 
 ## 1. 已选路线与交付目标
 
@@ -171,7 +171,7 @@ Core/Florolding及桌面下载服务不改。若必须改它们才能满足本�
 
 使用事件屏障、可控DNS结果、实际本地HTTP/TLS服务器和本次专用测试证书，不能只用MockTransport证明连接边界。测试可注入受信解析/拨号/CA夹具，将逻辑公网目标映射到用例自己的回环服务器；生产清单、RPC、环境变量和发行资源不能选择这些测试能力。网络策略拒绝测试必须证明未调用拨号；真实流测试必须证明SNI/Host/peer/取消行为。额外外网验证只访问已知只读小型测试资源，不能使用个人账号或真实业务凭据。
 
-按 [AGENTS.md 第6节](../AGENTS.md#6-测试与验收) 执行主仓库Ruff、格式、全仓及完整pytest和Core集成门禁；前端pnpm check后pnpm build，再真实主窗口Classic/Folia、亮暗、背景/透明/模糊和三种窗口尺寸。PyInstaller/Nuitka以最终代码构建，真实发行物检查导入边界、网络能力、现有文件/任务/实例/下载回归。区分源码/模拟平台/真实Windows/未执行POSIX实机及远端CI。
+按 [AGENTS.md 第6节](../../AGENTS.md#6-测试与验收) 执行主仓库Ruff、格式、全仓及完整pytest和Core集成门禁；前端pnpm check后pnpm build，再真实主窗口Classic/Folia、亮暗、背景/透明/模糊和三种窗口尺寸。PyInstaller/Nuitka以最终代码构建，真实发行物检查导入边界、网络能力、现有文件/任务/实例/下载回归。区分源码/模拟平台/真实Windows/未执行POSIX实机及远端CI。
 
 任何实际连接、TLS、权限接受顺序、DNS真实结束或日志隔离不能证明成立时，暂停对应接线并说明阻碍；不靠增加外层检查宣称实现。功能完成后按根规范独立提交功能/文档，前端本地main先集成，随后主仓库；本轮无远端推送或发布授权。
 

@@ -2,7 +2,7 @@
 
 日期：2026-10-21（Asia/Shanghai）。状态：用户已确认方案 A 并授权实施；落地与验收见第 11 节。
 
-主仓库基线为 `d21c285`，接续 [P08 任务基础](plugin-operation-ownership-implementation-plan.md)。Core、Florolding、前端指针沿用该提交。本文件细化 [总体设计](plugin-worker-api-v2-implementation-design.md) 的 P09，明确首个真实文件提交任务、现行协议限制及未完成范围。
+主仓库基线为 `d21c285`，接续 [P08 任务基础](plugin-operation-ownership-implementation-plan.md)。Core、Florolding、前端指针沿用该提交。本文件细化 [总体设计](../designs/plugin-worker-api-v2-implementation-design.md) 的 P09，明确首个真实文件提交任务、现行协议限制及未完成范围。
 
 ## 1. 目标和路线选择
 
@@ -153,11 +153,11 @@ Worker 关闭、断连、禁用、必要权限撤销时，先拒绝新请求，�
 
 以 Event/barrier 和真实句柄控制竞争，缺陷用例先证明修复前失败。对原生根/重解析边界须用真实 Windows 用例，纯 mock 不作为成立证据；没有通过就不接线写入。
 
-实施后执行 [AGENTS.md 第 6 节](../AGENTS.md#6-测试与验收) 的主仓库 Ruff、格式、全仓检查和完整 pytest，以及适用 Core 集成门禁。前端完整 pnpm check、随后 pnpm build；权限说明按 Classic/Folia、亮暗主题、默认/最小/放大窗口进行真实主窗口验收，不用 jsdom 代替布局。
+实施后执行 [AGENTS.md 第 6 节](../../AGENTS.md#6-测试与验收) 的主仓库 Ruff、格式、全仓检查和完整 pytest，以及适用 Core 集成门禁。前端完整 pnpm check、随后 pnpm build；权限说明按 Classic/Folia、亮暗主题、默认/最小/放大窗口进行真实主窗口验收，不用 jsdom 代替布局。
 
 PyInstaller 和 Nuitka 以最终代码重建，正式主窗口审阅 read/write 后，真实 Worker 用生产文件方法导出、查询任务并读回同样字节；覆盖只读/只写结果过滤、禁用中上传、提交中撤销、目标竞争和再次启用的旧引用拒绝。源码、平台分支、真实产物、主窗口和未执行的 POSIX 实机/远端 CI 分别记录。
 
-按 [AGENTS.md 第 7 节](../AGENTS.md#7-git-提交与本地交付) 完成功能和独立文档提交，安全集成前端与主仓库本地 main，保留无关修改。远端推送、现有远端分叉处理和发布不在授权范围。
+按 [AGENTS.md 第 7 节](../../AGENTS.md#7-git-提交与本地交付) 完成功能和独立文档提交，安全集成前端与主仓库本地 main，保留无关修改。远端推送、现有远端分叉处理和发布不在授权范围。
 
 ## 10. 已确认的实施边界
 
@@ -177,7 +177,7 @@ NativeFiles 使用 NtCreateFile 的 RootDirectory 相对创建和 NtSetInformati
 
 执行使用原始写 lease，结果投影必须另外提供提交时的读 lease。结果来自发布前捕获的快照；原子发布成功后只关闭源句柄，关闭或审计失败不会删除已发布文件。只写任务 result:null；后续自行取得新许可后可用 stat/read 查询。安全 commit 回执在可选权限变化后仍可查询，旧上传不能换租约继续，abort 不消耗回执容量。
 
-新增可安装示例 [worker_snapshot](../examples/plugins/worker_snapshot/README.md)，通过正式 Host API 分块导出唯一命名的 JSON 运行快照，再通过自身任务查询确认提交。六种语言的能力说明明确私有范围、新建不覆盖及本地 NTFS 限制，复用现行权限界面。
+新增可安装示例 [worker_snapshot](../../examples/plugins/worker_snapshot/README.md)，通过正式 Host API 分块导出唯一命名的 JSON 运行快照，再通过自身任务查询确认提交。六种语言的能力说明明确私有范围、新建不覆盖及本地 NTFS 限制，复用现行权限界面。
 
 功能提交：`65b0017`（feat: 增加插件私有文件读写与事务发布）。前端提交：`0ead9f3`（feat: 增加插件私有文件权限说明）。
 

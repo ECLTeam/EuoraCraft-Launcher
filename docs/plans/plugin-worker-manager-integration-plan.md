@@ -2,9 +2,9 @@
 
 日期：2026-10-20（Asia/Shanghai）。状态：用户已明确确认“开始实施”；本轮管理器接入已实现，验收记录见第 10 节。
 
-本方案细化已批准的 [Worker/API v2 总体设计](plugin-worker-api-v2-implementation-design.md) 中 P06 尚未接线的管理流程，并纳入这一流程必需的安装身份、授权管理入口、短操作提交控制和最小权限界面。既有总体设计的批准不因本文失效；本文用于确定本轮具体交付边界，不代表整体首版完成。
+本方案细化已批准的 [Worker/API v2 总体设计](../designs/plugin-worker-api-v2-implementation-design.md) 中 P06 尚未接线的管理流程，并纳入这一流程必需的安装身份、授权管理入口、短操作提交控制和最小权限界面。既有总体设计的批准不因本文失效；本文用于确定本轮具体交付边界，不代表整体首版完成。
 
-现行入口统一采用 `ECL.bootstrap`、`ECL.plugin_api` 和 `--headless --role plugin`，以 [无头运行说明](headless-runtime.md) 为准。原生自定义前端继续按 [原生隔离增补方案](plugin-native-webview-isolation-design.md) 暂缓。
+现行入口统一采用 `ECL.bootstrap`、`ECL.plugin_api` 和 `--headless --role plugin`，以 [无头运行说明](../guides/headless-runtime.md) 为准。原生自定义前端继续按 [原生隔离增补方案](../designs/plugin-native-webview-isolation-design.md) 暂缓。
 
 ## 1. 目标与范围选择
 
@@ -134,7 +134,7 @@
 | 禁用、崩溃、断连、必要/可选撤销、重载 | 新请求被拒绝；按撤销范围清理；停止结果和回执真实；旧 run 不污染新 run |
 | 系统 QomicEX、启动钩子、插槽、普通启动和退出 | 系统插件既有行为不受第三方运行切换影响 |
 
-检查命令及真实界面门槛统一引用 [AGENTS.md 第 6 节](../AGENTS.md#6-测试与验收)，不在本文另建简化标准。检查范围包含相关插件回归、完整后端 CI、主仓库与子模块集成、前端 check/build 和实际启动器验收；本机无法执行的 POSIX 分支须由对应环境验证并明确报告。
+检查命令及真实界面门槛统一引用 [AGENTS.md 第 6 节](../../AGENTS.md#6-测试与验收)，不在本文另建简化标准。检查范围包含相关插件回归、完整后端 CI、主仓库与子模块集成、前端 check/build 和实际启动器验收；本机无法执行的 POSIX 分支须由对应环境验证并明确报告。
 
 真实 Windows 验收使用专用临时数据目录和本轮测试插件，记录插件 PID 与宿主 PID 不同、进程树回收、命令结果、权限落盘及重启后状态。至少以真实 PyInstaller 与 Nuitka 发行物回归本次改动的管理器接线；先前冻结引导通过不代替本轮结果。不得通过批量终止本机其他启动器或游戏进程清理测试。
 

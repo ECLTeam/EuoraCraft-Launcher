@@ -1,6 +1,6 @@
 # 无头插件子进程整合实施方案 v1
 
-> 目录约定更新：启动引导与插件 API 已按 [下沉实施方案](python-entrypoint-consolidation-plan.md) 归入 `ECL/bootstrap.py` 和 `ECL/plugin_api/`。当前插件使用 `from ECL.plugin_api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](headless-runtime.md) 为准。
+> 目录约定更新：启动引导与插件 API 已按 [下沉实施方案](../plans/python-entrypoint-consolidation-plan.md) 归入 `ECL/bootstrap.py` 和 `ECL/plugin_api/`。当前插件使用 `from ECL.plugin_api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
 
 日期：2026-10-16。状态：用户已确认可改造无头模式并按需导入；本次入口整合已完成验收。
 

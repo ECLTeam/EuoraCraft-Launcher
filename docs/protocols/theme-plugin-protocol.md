@@ -1,6 +1,6 @@
 # ECL 主题与插件外观扩展协议（V1）
 
-日常操作和完整示例请先阅读 [ECL 可视化主题设计使用指南](theme-designer-guide.zh-CN.md)。
+日常操作和完整示例请先阅读 [ECL 可视化主题设计使用指南](../guides/theme-designer-guide.zh-CN.md)。
 
 插件可在 `plugin.json` 的 `contributes` 中声明主题预设、效果、Token、节点和受控独立窗口。所有主题贡献都必须使用插件命名空间，且需要对应的 `theme/read/*` 权限；窗口需要资源粒度的 `ui/write/window:<id>` 权限。
 

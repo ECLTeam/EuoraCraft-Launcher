@@ -1,6 +1,6 @@
 # ECL 可视化主题设计使用指南
 
-本文介绍如何使用 EuoraCraft Launcher 的多窗口主题设计器、预设库、插件插槽可视化和 `.ecltheme` 文件。插件开发者可继续阅读文末的扩展说明；完整数据格式见 [主题与插件外观扩展协议](theme-plugin-protocol.md)。
+本文介绍如何使用 EuoraCraft Launcher 的多窗口主题设计器、预设库、插件插槽可视化和 `.ecltheme` 文件。插件开发者可继续阅读文末的扩展说明；完整数据格式见 [主题与插件外观扩展协议](../protocols/theme-plugin-protocol.md)。
 
 ## 1. 打开主题设计器
 

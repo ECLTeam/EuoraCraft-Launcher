@@ -2,7 +2,7 @@
 
 日期：2026-10-22（Asia/Shanghai）。状态：用户已确认路线A并实施，`files.delete` 已开放；验收与交付见第11节。第2、10节保留方案阶段证据。
 
-基线：主仓库及原工作区本地 main 为 `f209f93`，前端为 `320cc0d`。接续 [P09 A 私有文件](plugin-private-files-implementation-plan.md)、[P10 B 下载任务](plugin-download-task-implementation-plan.md) 和 [总体设计](plugin-worker-api-v2-implementation-design.md)。目标为补齐私有空间文件清理，不同时实施覆盖写入、实例修改或声明式 UI。
+基线：主仓库及原工作区本地 main 为 `f209f93`，前端为 `320cc0d`。接续 [P09 A 私有文件](plugin-private-files-implementation-plan.md)、[P10 B 下载任务](plugin-download-task-implementation-plan.md) 和 [总体设计](../designs/plugin-worker-api-v2-implementation-design.md)。目标为补齐私有空间文件清理，不同时实施覆盖写入、实例修改或声明式 UI。
 
 ## 1. 路线与需要确认的取舍
 
@@ -144,7 +144,7 @@ RuntimeFiles.is_idle、PluginFileStorage.close与Worker停止/重新启用门禁
 | 现有行为 | 文件新建/上传abort/下载清理、GET/HEAD、实例查询、设置和自身任务回归；补当前暂存的元数据持有者延迟确认 |
 | 产品与发行物 | 六语权限允许/拒绝/撤销及明确文案；实际Worker创建文件→取etag→删除→确认缺失/取消/延迟状态；PyInstaller/Nuitka分别验证最终产物及真实主窗口 |
 
-按 [AGENTS.md 第6节](../AGENTS.md#6-测试与验收) 执行主仓库Ruff检查和格式、全仓GitHub格式检查、完整pytest、Core既有lint与集成测试。Ruff旧--format不受当前版本支持时记录实际拒绝及等价--output-format github结果，不修改工具或跳过检查。
+按 [AGENTS.md 第6节](../../AGENTS.md#6-测试与验收) 执行主仓库Ruff检查和格式、全仓GitHub格式检查、完整pytest、Core既有lint与集成测试。Ruff旧--format不受当前版本支持时记录实际拒绝及等价--output-format github结果，不修改工具或跳过检查。
 
 前端先pnpm check，再pnpm build；真实权限弹窗覆盖Classic/Folia、亮暗、相关背景/透明/模糊及默认、960×600最小、放大窗口，六语言长文案、Tab/焦点/末项和保存操作可达。以当前真实约束验收，不把DOM测试当作布局验收。
 
