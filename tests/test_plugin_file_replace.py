@@ -397,6 +397,7 @@ def test_backup_metadata_handle_retains_cleanup_and_reservation_until_real_remov
     assert target_path.read_bytes() == b"new bytes"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows NTFS 事务记录与句柄")
 def test_record_format_rejects_foreign_paths_and_preserves_unknown_file(tmp_path):
     from ECL.plugins.runtime.file_storage import PluginFileStorage
 
