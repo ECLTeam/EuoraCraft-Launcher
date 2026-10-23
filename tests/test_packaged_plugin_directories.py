@@ -46,20 +46,29 @@ async def _connect(data_path: Path, process: subprocess.Popen, log_path: Path):
             await asyncio.sleep(0.1)
 
 
-async def _native_channel(port: int):
-    async with asyncio.timeout(90), httpx.AsyncClient(trust_env=False) as client:
-        while True:
-            try:
-                pages = (await client.get(f"http://127.0.0.1:{port}/json/list")).json()
-                page = next(
-                    (item for item in pages if item.get("type") == "page" and "tauri.localhost" in item.get("url", "")),
-                    None,
-                )
-                if page:
-                    return await connect(page["webSocketDebuggerUrl"])
-            except (httpx.HTTPError, OSError):
-                pass
-            await asyncio.sleep(0.1)
+async def _native_channel(port: int, process: subprocess.Popen, log_path: Path):
+    try:
+        async with asyncio.timeout(90), httpx.AsyncClient(trust_env=False) as client:
+            while True:
+                if process.poll() is not None:
+                    pytest.fail(log_path.read_text(encoding="utf-8", errors="replace"))
+                try:
+                    pages = (await client.get(f"http://127.0.0.1:{port}/json/list")).json()
+                    page = next(
+                        (
+                            item
+                            for item in pages
+                            if item.get("type") == "page" and "tauri.localhost" in item.get("url", "")
+                        ),
+                        None,
+                    )
+                    if page:
+                        return await connect(page["webSocketDebuggerUrl"])
+                except (httpx.HTTPError, OSError):
+                    pass
+                await asyncio.sleep(0.1)
+    except TimeoutError:
+        pytest.fail("等待原生页面调试通道超时：\n" + log_path.read_text(encoding="utf-8", errors="replace"))
 
 
 async def _native_invoke(channel, sequence: int, command: str, params: dict):
@@ -361,7 +370,8 @@ class Plugin(BasePlugin):
         environment = dict(
             os.environ,
             WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=f"--remote-debugging-port={debug_port}",
-            WEBVIEW2_USER_DATA_FOLDER=str(data_path / "webview-profile"),
+            # 每次启动使用独立浏览器进程，避免复用旧进程时仍绑定上一阶段的调试端口。
+            WEBVIEW2_USER_DATA_FOLDER=str(data_path / f"webview-profile-{phase}"),
         )
         with log_path.open("wb") as log_file:
             launcher = (
@@ -381,6 +391,9 @@ class Plugin(BasePlugin):
             try:
                 websocket = await _connect(data_path, process, log_path)
                 info = await _request(websocket, 1, "launcher.info")
+                # 开发者通道先于窗口启动；等待浏览器创建完成后才能安装并结束首阶段，
+                # 否则终止进程时 WebView2 仍可能创建未纳入清理快照的子进程。
+                native = await _native_channel(debug_port, process, log_path)
                 if phase == "install":
                     result = await _request(
                         websocket,
@@ -392,7 +405,6 @@ class Plugin(BasePlugin):
                     entries = await _request(websocket, 3, "plugin.list")
                     assert entries[0]["pendingRestart"] and entries[0]["status"] == "pending_restart", entries
                 else:
-                    native = await _native_channel(debug_port)
                     entries = await _request(websocket, 20, "plugin.list")
                     identity = entries[0]["installationId"]
                     assert entries[0]["reviewRequired"]
