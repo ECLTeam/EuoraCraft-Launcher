@@ -489,7 +489,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `TaskReceipt` | `{operation_ref:string,state:"queued"\|"running"}`；内部 Core taskId/OperationManager ID不作为授权依据 |
 | `TaskView` | `{operation_ref,kind,state,percent:0..100,stage,message,can_cancel,cancellation_requested,cleanup_pending:bool,effect:"none"\|"staged"\|"committing"\|"committed"\|"partial"\|"unknown",result:已登记结果DTO\|null,error_code:string\|null}`；不能返回其他资源路径或完整日志 |
 | `ReleaseResult` | `{released:bool}`；重复释放返回false或已释放，不扩展控制范围 |
-| `InstanceView` | `{instance_ref,version_id,alias,loader,game_version,profile:{description,favorite,tags},profile_etag:string,running_count:int}`；本轮只读实例接口不返回文件路径，etag 为公开资料摘要，不承诺单调递增或写入并发令牌 |
+| `InstanceView` | `{instance_ref,version_id,alias,loader,game_version,profile:{description,favorite,tags},profile_etag:string,running_count:int}`；本轮只读实例接口不返回文件路径，etag 绑定完整本地资料及物理版本，作为 profile_patch 的并发令牌，不是单调递增 revision |
 | `LaunchOptions` | `{memory_mb?:512..65536,width?:320..16384,height?:240..4320,fullscreen?:bool,runtime_ref?:string}`；不接收原始命令、wrapper、pre/post脚本、环境变量或令牌 |
 | `GameRunView` | `{game_run_ref,instance_ref,pid:int,running:bool,exit_code:int\|null}`；所属插件启动结果与共享运行列表分开过滤 |
 | `JavaView` | `{runtime_ref,vendor,major_version,full_version,runtime_kind:"JRE"\|"JDK",architecture,origin:"system"\|"manual"\|"managed",is_enabled,validation_status}`；不返回安装文件清单、全路径或其他实例引用 |
@@ -578,7 +578,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 | `resources.list` | `{capability:"instances.read",cursor?:string,limit?:int}` | `Page<ResourceView>`，仅本运行获准目录/实例的引用 | `instances.read`，至少一个有效用户选择 | `PLUGIN_RESOURCE_UNAVAILABLE`,`PLUGIN_CURSOR_INVALID` | Q5；S |
 | `instances.scan` | `{root_ref,force?:bool,cursor?:string,limit?:int}` | `Page<InstanceView>` | `instances.read`，用户批准的游戏根；单实例授权不能扫描父目录 | `PLUGIN_INSTANCE_SCAN_FAILED`,`PLUGIN_CURSOR_INVALID` | Q30；S |
 | `instances.get` | `{instance_ref}` | `InstanceView` | `instances.read`，该实例 | `PLUGIN_INSTANCE_INVALID` | Q5；S |
-| `instances.profile_patch` | `{instance_ref,patch:{alias?:string,description?:string,favorite?:bool,tags?:string[]},expected_revision:int}` | `{profile,revision:int}` | `instances.write`，实例及上述字段 | `PLUGIN_REVISION_CONFLICT`,`PLUGIN_INSTANCE_UPDATE_FAILED` | W5；S |
+| `instances.profile_patch` | `{instance_ref,expected_profile_etag:string,patch:{alias?:string,description?:string,favorite?:bool,tags?:string[]}}` | `TaskReceipt`；最终公开资料及新 `profile_etag` | 同一物理实例的原始 `instances.read` 与独立 `instances.write`，写只选具体实例 | `PLUGIN_INSTANCE_PROFILE_CONFLICT`,`PLUGIN_INSTANCE_PROFILE_WRITE_FAILED`,`PLUGIN_INSTANCE_PROFILE_RECOVERY_REQUIRED` | T5/30秒；O+S |
 | `game.catalog` | `{type?:"release"\|"snapshot"}` | `Page<{version_id,type,release_time}>` | `game.catalog.read`，宿主固定元数据源 | `PLUGIN_GAME_CATALOG_FAILED` | Q30；S |
 | `game.loaders` | `{game_version,loader:"fabric"\|"forge"\|"neoforge"\|"quilt"}` | `Page<{loader_version,stable:bool}>` | `game.catalog.read`，固定源 | `PLUGIN_LOADER_NOT_SUPPORTED` | Q30；S |
 | `game.install` | `{root_ref,version_id,version_name?,loader?,loader_version?}` | `TaskReceipt`；最终`InstanceView` | `instances.install`，根与实例目标；明确包含宿主固定下载源行为 | `PLUGIN_INSTALL_FAILED`,`PLUGIN_INSTALL_BUSY`,`PLUGIN_LOADER_NOT_SUPPORTED` | T5/1800秒；O+S |
@@ -864,7 +864,7 @@ frame的CSP使用deny-by-default：禁用connect、object、base和form，图片
 | P06：最小v2生命周期与控制，依赖P02/P03/P05 | manager discovery/lifecycle/registry、supervisor；SDK Plugin、命令、设置、事件；Worker状态 | `test_plugin_worker_lifecycle.py`、`test_plugin_worker_commands.py`：sync/async、嵌套反向RPC、超时、断线、disable/reload；现有shutdown/disabled/slots/sdk测试；V06 | 第三方不在宿主执行；注册全有run owner；线程超时不冒充已停止；只有已实现能力进入白名单，required未实现拒绝。死锁、残留handler或降级进程内是阻塞 | 停止本次W并撤销注册；回退时保留第三方禁用状态，不恢复其自动主进程运行 |
 | P07：公共只读服务，依赖P06 | Broker实例/账户/公开配置、Java及游戏catalog查询门面；过滤DTO和资源ref目录 | `test_plugin_host_queries.py`：授权过滤、跨root/runtime/account、输出敏感字段、query timeout；现有accounts/java/scan回归 | 能查询获准资源，没有裸服务输出或隐私字段；断线后无结果交付。需要透传完整配置才工作则拒绝该接口并修订 | 撤下查询方法白名单/资源refs，原可信前端接口保持 |
 | P08：任务来源与提交准入，依赖P05/P06 | `services/operations.py`、`runtime/operation_adapters.py`，注册/短写的提交上下文；先用测试任务验证 | V01—V05/V07/V12；`test_plugin_operation_ownership.py`；完整既有OperationManager测试 | pending/running/committing/terminal可区分；T与提交许可顺序可确定；不在全局锁执行长提交；自己的cancel不影响用户。任何旧服务任务回归失败是阻塞 | 撤回可回滚接口接线，不删除任务日志；已经提交的数据不通过Git回退还原 |
-| P09：受控文件与配置短写，依赖P08 | `runtime/file_api.py`、同卷暂存、root/句柄校验；settings/profile原子revision适配 | V02/V03/V04；`test_plugin_host_files.py`：read分块、etag冲突、write/abort、delete恢复、junction/ADS、并发用户修改；settings/profile回归 | 撤销前后操作符合第15节；不越界、不覆盖冲突；failed清理保留原文件；控制句柄竞态未解决则阻塞相关写API | 仅清理自己的未提交暂存；保留用户目标；已提交效果由任务记录说明，必要恢复经用户操作 |
+| P09：受控文件与配置短写，依赖P08 | `runtime/file_api.py`、同卷暂存、root/句柄校验；settings revision 与实例完整版本任务适配 | V02/V03/V04；`test_plugin_host_files.py`：read分块、etag冲突、write/abort、delete恢复、junction/ADS、并发用户修改；settings/profile回归 | 撤销前后操作符合第15节；不越界、不覆盖冲突；failed清理保留原文件；控制句柄竞态未解决则阻塞相关写API | 仅清理自己的未提交暂存；保留用户目标；已提交效果由任务记录说明，必要恢复经用户操作 |
 | P10 A：只读网络；下载待审阅，依赖P08/P09 | `network_targets.py`、`runtime/network_api.py`、`network_transport.py`；后续下载另行适配 | `test_plugin_network_targets/api/logging/worker/shutdown.py`：准确范围、真实HTTP/TLS、peer、逐跳认证、DNS重绑定、预算/撤销/实际清理；下载保持既有回归 | A仅GET/HEAD、32KiB；固定数字IP、TLS原域身份，无共享凭据。下载任务、hash和提交竞态仍未完成，不把本切片计为完整P10 | 关闭网络门面，收尾所属真实流；DNS未结束保留pending，迟到不继续连接；不影响用户下载 |
 | P11：Java所有者与安装，依赖P08/P10 | `java/manager.py`、`java/installer.py`、Broker计划ref/任务去重 | V03/V04/V07；`test_plugin_host_java.py`：同源/异源目标合并、计划过期、取消解包/commit、租约引用；现有Java测试 | 计划URL/目标不可改，不能取得别人的task，实际安装/登记及回滚正确。来源在合并之后才检查是阻塞 | 保留已经登记的运行时；撤回插件门面，不自动删共享Java；取消未提交自己任务 |
 | P12：Minecraft安装/启动，依赖P08/P10/P11 | `services/game/install.py`插件任务适配；`launch.py`来源租约、提交闸门；Broker最小LaunchOptions | `test_plugin_host_game.py`：增量安装partial、后台真实退出、用户启动并发、自己的cancel、创建前后撤销、已启动游戏保留；现有launch/install回归 | 不调用无owner的全局cancel；安装取消不得报原子回滚；真实线程/下载器结束可观察。需要Core新接口才保证时停止并修订子模块范围 | 不卸载已装合法文件/共享cache；保留已启动Minecraft；撤下插件接口，来源租约有界释放 |
@@ -1041,11 +1041,11 @@ HostClient 为提交产生本运行去重键，明确错误抛出 HostApiError�
 
 按用户批准的 [实例只读实施方案](../plans/plugin-instance-read-api-implementation-plan.md) 开放 `resources.list`、`instances.scan`、`instances.get`。清单仅请求 `instances.read`，可信主界面明确选择整个目录（含以后新增实例）或单个实例；不默认批准任何资源。宿主持久身份与每次运行引用分离，物理目录替换、配置移除、授权变更、内容或 run 变化使旧引用及游标失效。同名重建不继承旧单实例授权。
 
-查询从已验证实际文件句柄有界读取本地实例元数据与资料，调用 Core `InstanceMetadata.from_documents` 纯解析；不复用会写入的桌面扫描链路，不初始化统计或外部提供方，不停止游戏。摘要显式投影，使用 `profile_etag` 表达本地公开资料快照；不返回路径、账户、完整配置或持久资源 ID。`permissions.list` 的实例资源亦转换为运行引用。
+查询从已验证实际文件句柄有界读取本地实例元数据与资料，调用 Core `InstanceMetadata.from_documents` 纯解析；不复用会写入的桌面扫描链路，不初始化统计或外部提供方，不停止游戏。摘要显式投影，使用 `profile_etag` 表达完整本地资料的物理版本（语义在第28节资料修改切片中扩展）；不返回路径、账户、完整配置或持久资源 ID。`permissions.list` 的实例资源亦转换为运行引用。
 
 可信 `plugin_permission_resources` 提供按目录展开的有界候选；保存同时检查内容摘要、授权 revision 与资源目录 revision。所有读取和最终交付均复核许可及物理身份，扫描 30 秒、单项/资源列表 5 秒，分页最多 16 个快照、120 秒、每页 1—100 项且结果受 64 KiB 限制。完成的单页查询立即释放分页容量。
 
-源码、真实冻结与 WebView2 验证见 [本轮验收记录](../plans/plugin-instance-read-api-implementation-plan.md#9-实施与验收记录)。这只完成 P07 的实例读取切片；其他查询、真实业务任务提交、实例写入和自定义前端保持后续推进；自身任务控制基础见第 23 节。
+源码、真实冻结与 WebView2 验证见 [本轮验收记录](../plans/plugin-instance-read-api-implementation-plan.md#9-实施与验收记录)。该阶段只完成 P07 的实例读取切片；后续任务、私有文件、网络、下载及实例资料修改的现状分别见第23—28节，其他业务查询与自定义前端仍待推进。
 
 ## 23. P08 任务归属与提交控制基础（2026-10-21）
 
@@ -1065,7 +1065,7 @@ PluginWorkerService 维护共享存储、上传占用和配额；RuntimeFiles �
 
 files.write_commit 是首个生产任务入口，返回 queued 接纳回执。最终任务状态沿用 P08，执行绑定原始写 lease，结果必须显式配对独立原始读 lease。快照在发布前捕获，发布后只关闭句柄；后续读取使用 expected_etag 复核当前版本。abort 无需新增回执或业务权限，只减少自己的上传；交给任务之后使用自身任务取消，已接受发布不会被撤销改写为取消。
 
-任务资源清理属于准入生命周期，排队取消、审计失败和工作线程结束均执行，失败仅重试清理和保存，不重做发布。成功清理能确认 staged 消失，不能覆盖 committed/unknown。固定配额计入活跃预留、已有文件和崩溃残留，不自动清扫旧文件。覆盖、删除、子目录、共享空间、实例资料写入和跨重启暂存恢复仍待单独审阅。
+任务资源清理属于准入生命周期，排队取消、审计失败和工作线程结束均执行，失败仅重试清理和保存，不重做发布。成功清理能确认 staged 消失，不能覆盖 committed/unknown。固定配额计入活跃预留、已有文件和崩溃残留，不自动清扫旧文件。本阶段未包含的按版本删除、替换恢复及实例资料写入分别见后续第25—28节；子目录、共享空间及通用暂存恢复未开放。
 
 现行调用说明与示例见 [归档文档](../protocols/eclplugin-package-format.md#私有文件与新建事务) 和 [worker_snapshot](../../examples/plugins/worker_snapshot/README.md)。源码、两种冻结发行物、真实 WebView2 权限显示与本地交付结果集中在 [P09 验收记录](../plans/plugin-private-files-implementation-plan.md#11-实施与验收记录)。
 
@@ -1077,7 +1077,7 @@ PluginWorkerService拥有唯一PluginNetworkService，每个Broker持有RuntimeN
 
 HTTPcore公开NetworkBackend/NetworkStream仅向已准入数字IP连接，发送HTTP前核实peer；TLS验证、SNI和Host保留原站点。每跳独立池，HTTP/1、无代理、无复用、无Cookie。租约接受点仅记录有限动作，真实I/O在锁外；总30秒/单阶段5秒，原始收包及完整实体分别限额。最终清理后再次检查原租约与截止，撤销不通过新租约恢复旧请求。
 
-网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](../protocols/eclplugin-package-format.md#只读网络请求)、[worker_network_read](../../examples/plugins/worker_network_read/README.md) 与 [P10验收记录](../plans/plugin-network-read-implementation-plan.md#12-实施与验收记录)。下载任务见第26节；实例写入继续独立审阅。
+网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](../protocols/eclplugin-package-format.md#只读网络请求)、[worker_network_read](../../examples/plugins/worker_network_read/README.md) 与 [P10验收记录](../plans/plugin-network-read-implementation-plan.md#12-实施与验收记录)。下载任务见第26节；实例资料写入见第28节。
 
 
 ## 26. P10 B 私有空间下载任务（2026-10-21）
@@ -1088,7 +1088,7 @@ RuntimeDownloads连接现有网络、文件和唯一OperationManager，不增加
 
 Broker现有mutation回执用于提交去重和超时后查询；权限撤销后回执只返回自身控制引用，不恢复权限。Worker监管同时检查任务、网络取消与暂存清理。排队取消不等于future已完成；任务终态也不等于网络、暂存及审计已经收尾，真实pending继续阻止重新启用。关闭失败只重试清理，不重发HTTP或删除已发布目标。
 
-协议和示例见 [归档文档](../protocols/eclplugin-package-format.md#私有空间下载任务)、[worker_download](../../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 [下载验收记录](../plans/plugin-download-task-implementation-plan.md#12-实施与验收记录)。覆盖/删除、实例写入、安装任务和自定义前端继续分别审阅。
+协议和示例见 [归档文档](../protocols/eclplugin-package-format.md#私有空间下载任务)、[worker_download](../../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 [下载验收记录](../plans/plugin-download-task-implementation-plan.md#12-实施与验收记录)。删除、替换及实例资料修改见相邻切片；安装任务和自定义前端未开放。
 
 ## 27. 私有文件按版本替换与可信恢复（2026-10-22）
 
@@ -1098,8 +1098,10 @@ Broker现有mutation回执用于提交去重和超时后查询；权限撤销后
 
 可信主WebView通过有界恢复查询和带revision/etag的明确选择提交用户任务，允许孤立安装恢复；Worker和Dev Channel无管理资格。前端共享应用任务服务，关闭弹窗不取消已接纳任务，六语言支持恢复、另存和二次确认丢弃原备份。write_begin和downloads.submit继续禁止覆盖。现行协议见 [归档文档](../protocols/eclplugin-package-format.md#按版本替换私有文件)，实施证据见 [替换方案](../plans/plugin-private-file-replace-implementation-plan.md)。
 
-## 28. 实例资料受控修改下一阶段（2026-10-22，待审阅）
+## 28. 实例资料受控修改（2026-10-23）
 
-[实例资料修改草案](../plans/plugin-instance-profile-write-implementation-plan.md)已完成当前调用链调研及三项隔离现状复现，尚未实施或开放instances.write。当前profile_etag只覆盖公开字段，不是完整资料写入令牌；既有资料更新遇到损坏内容可能使用默认值，进程内锁也不能防止外部竞争写入，因此不能直接把桌面patch接口接给Worker。
+按用户确认的方案A开放独立instances.write，只允许在可信主窗口选择具体实例，并同时核对同实例原始读/写许可。资料补丁只有别名、描述、收藏和标签，未提交字段及其他合法资料保持原值。完整profile_etag覆盖存在状态、物理身份、稳定元数据及原始字节；同步revision草案已经替换，不保留旧入口或迁移。
 
-草案推荐独立的单实例写选择、同实例读/写双许可、完整资料快照版本及任务回执，先证明共享实例路径的原生边界，再采用保留原对象和不覆盖发布、持久恢复及可信主窗口处理。原资料名称可能短暂缺失，首轮只修改别名、描述、收藏和标签；需用户审阅范围与取舍后确认实施。第11节profile_patch的同步revision目录行仍属未开放的早期规划，最终以审阅后的本切片契约为准，不据此声称已支持。
+InstanceProfileStore拥有唯一资料锁与InstanceProfileTransactions资源；现行桌面更新、图标、排序及只读快照共同遵守损坏资料和待恢复屏障。原生Windows目录相对句柄工具统一位于ECL/utils/windows_file_handles.py，由实例和私有文件共同使用。真实任务继续由应用唯一OperationManager执行，提交最多5秒，总截止30秒，结果只从已发布快照投影并复核原读许可。
+
+先持久登记，再移动原对象备份，最后不覆盖发布；原资料名称可能短暂缺失。恢复只观察实际对象，保留外部占名文件，不重放旧补丁。可信主窗口新增两条实例资料恢复命令，“文件恢复”弹窗分私有文件和实例资料视图；沿用应用任务服务，关闭不取消接纳任务。成功更新不提供旧版本撤销，仅支持Windows x64、本地NTFS。现行协议及示例见 [归档文档](../protocols/eclplugin-package-format.md#获准实例资料修改)，实施与本机验收证据见 [资料修改方案](../plans/plugin-instance-profile-write-implementation-plan.md)。

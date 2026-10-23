@@ -57,7 +57,7 @@
 - [plugin-dependency-isolation-installation-plan](plans/plugin-dependency-isolation-installation-plan.md)
 - [plugin-download-task-implementation-plan](plans/plugin-download-task-implementation-plan.md)
 - [plugin-install-directory-isolation-plan](plans/plugin-install-directory-isolation-plan.md)
-- [plugin-instance-profile-write-implementation-plan](plans/plugin-instance-profile-write-implementation-plan.md)
+- [plugin-instance-profile-write-implementation-plan](plans/plugin-instance-profile-write-implementation-plan.md)：选定实例的四字段修改、双许可与可信恢复验收
 - [plugin-instance-read-api-implementation-plan](plans/plugin-instance-read-api-implementation-plan.md)
 - [plugin-network-read-implementation-plan](plans/plugin-network-read-implementation-plan.md)
 - [plugin-operation-ownership-implementation-plan](plans/plugin-operation-ownership-implementation-plan.md)
