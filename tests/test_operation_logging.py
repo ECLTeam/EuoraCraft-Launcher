@@ -50,6 +50,20 @@ def test_all_registered_commands_have_explicit_log_policies() -> None:
     )
 
 
+def test_offline_uuid_preview_uses_quiet_logging_without_account_input(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        return success({"uuid": "private-uuid"})
+
+    asyncio.run(guard_ipc_handler(state, "accounts_preview_offline_uuid", handler)({"username": "private-name"}))
+    assert len(logs) == 2 and all(record.levelno == logging.DEBUG for record in logs)
+    assert all(
+        "private-name" not in record.getMessage() and "private-uuid" not in record.getMessage() for record in logs
+    )
+
+
 def test_sidebar_notification_success_uses_debug(records) -> None:
     logger, logs = records
     state = SimpleNamespace(logger=logger, events=EventBus())

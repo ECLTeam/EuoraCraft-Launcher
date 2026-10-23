@@ -1,8 +1,8 @@
 # 插件实例资料受控修改实施方案
 
-日期：2026-10-22（Asia/Shanghai）。状态：完成现状调研和隔离复现，推荐方案A待用户审阅；本轮不修改生产接口或开放权限。
+日期：2026-10-22 制定，2026-10-23 实施（Asia/Shanghai）。状态：用户已确认方案A并授权实施；现行接口已接线，验收与本地交付记录见第9节。
 
-基线：主仓库及原工作区本地main为 `850bf97`，前端 `ffffd04`。接续 [实例只读接口](plugin-instance-read-api-implementation-plan.md)、[任务归属](plugin-operation-ownership-implementation-plan.md) 及 [私有文件替换](plugin-private-file-replace-implementation-plan.md)。私有文件替换已获准的取舍不自动扩展为修改共享实例的授权。
+方案调研基线：主仓库及原工作区本地main为 `850bf97`，前端 `ffffd04`。接续 [实例只读接口](plugin-instance-read-api-implementation-plan.md)、[任务归属](plugin-operation-ownership-implementation-plan.md) 及 [私有文件替换](plugin-private-file-replace-implementation-plan.md)。私有文件替换已获准的取舍不自动扩展为修改共享实例的授权。
 
 ## 1. 目标与可选路线
 
@@ -76,7 +76,7 @@ profile_etag保持不透明64位小写十六进制，改为绑定实例与完整
 
 ### 5.1 原生边界先行
 
-低层Windows目录相对句柄原语从 `plugins/runtime/file_handles.py` 移到主仓库公共工具位置（拟 `utils/windows_file_handles.py`），同步更新全部私有文件调用方和测试，删除旧模块，不保留转发。真实调用方是现有私有文件服务与新增实例资料事务；不建立可插拔文件系统框架。
+低层Windows目录相对句柄原语从 `plugins/runtime/file_handles.py` 移到主仓库公共工具位置（现为 `utils/windows_file_handles.py`），同步更新全部私有文件调用方和测试，删除旧模块，不保留转发。真实调用方是现有私有文件服务与新增实例资料事务；不建立可插拔文件系统框架。
 
 实例写入从宿主批准的根对象逐层相对打开versions、具体实例及`.ecl`，拒绝重解析、ADS、目录伪装、硬链接、只读及无法核实的对象。不得用Path.resolve/check后普通路径replace充当安全提交。目录目录项和文件首次句柄校验前登记资源归属，失败仍有关闭路径。
 
@@ -159,4 +159,56 @@ InstanceProfileStore继续是资料权威维护者，新增实例资料事务组
 
 检查命令统一遵循 [AGENTS第6节](../../AGENTS.md#6-测试与验收)：主仓库Ruff check、format check、适用全仓Ruff和完整pytest；Core lint及主仓库Core测试；前端先pnpm check再pnpm build及实际启动器。POSIX读取和桌面资料分支需自动覆盖，插件实际写入只承诺本机Windows x64/NTFS；不把本机测试描述成远端CI或其他平台实机验收。
 
-本轮交付仅此方案和总设计中的待审阅链接，完成Markdown结构、相对链接及git diff --check后独立docs提交并同步本地main。根据 [AGENTS第0节](../../AGENTS.md#0-需求确认与变更工作流)“未获用户确认前，禁止进入实施阶段”，需用户审阅上述路线A及共享资料取舍并明确确认实施，才进入第7节；当前instances.write仍保持未实现。
+方案提交 `efd82a6` 已独立同步本地main，随后用户明确授权“开始实施”。以下记录本次实现结果，不将前述基线探针或其他切片的旧验收充作本轮验收。
+
+
+## 9. 实施与验收记录
+
+### 9.1 实现和集成
+
+2026-10-23 按已批准方案A实施。共享原生探针通过后，接入完整资料快照、严格四字段增量、原对象备份及不覆盖发布、持久收尾和可信恢复，再开放instances.write。未引入旧revision入口、历史资料迁移、第二个GameService或第二套执行器。
+
+- InstanceProfileStore共用同一资料锁，桌面patch/reset/icon/reorder与插件事务均遵守待恢复屏障；损坏资料保留，图标副作用在严格读取之后执行。完整版本包含物理身份、存在状态及原始字节，合法未知字段保持原值。
+- 受控写入固定批准根、versions、具体实例及.ecl目录；Python目录身份通过同一原生句柄的fstat核实。旧目录相对句柄模块已移到ECL/utils/windows_file_handles.py，现有私有文件调用方全部更新，旧模块删除。
+- 独立读/写范围、原始双lease、任务去重、排队取消/总截止、失权结果隐藏及实际清理占用接入既有应用任务服务。发布确认丢失时根据真实对象确认效果，不能误报none；通知失败只重试通知。
+- 新宿主只恢复或清理登记对象。原位置占名时保留后来资料及原备份，可信主窗口可另存或明确丢弃；陈旧选择拒绝，相同审阅的重复请求返回同一回执，失败后重新审阅才能再次接纳。未登记暂存及损坏记录不扫描删除。
+- 前端六语言分别选择读/写范围；写目录仅供浏览，不能勾选整目录。“文件恢复”新增实例资料视图，旧响应不覆盖新视图，迟到回执保留原任务类型，关闭不取消应用任务。
+
+交付前合入原本地main的27c1c9b，保留既有离线账户UUID预览、Core修复和文档目录调整。集成时发现新增账户查询漏配日志策略，独立修复提交9adc88d并补安静查询及隐私回归。前端最终提交1ac523f包含功能ea7720e、主分支集成bfb924f和恢复类型修复；主仓库功能提交08e25ce。
+
+前端原工作区main先快进到1ac523f，随后主仓库原工作区main快进到08e25ce。Core沿用主分支e6b5c0f，florolding沿用80d037e。原工作区另有packaging/arch/euoracraft-launcher.desktop未提交修改，与本功能无重叠；合并前后SHA-256均为78DE642A34453783FB49996CF8296B617E2739DB49189D1163D681B14C039E5B，未覆盖或提交。文档另行docs提交及本地快进；本轮未推送远端、创建标签或发布。
+
+### 9.2 自动化和真实发行物
+
+环境为本机Windows x64、本地NTFS、CPython 3.11。下列结果来自合入新基线并修复集成缺口后的最终代码；旧基线和早期构建结果不替代这些结果。
+
+| 检查 | 最终结果 |
+| --- | --- |
+| 主仓库ruff check ECL tests、ruff format --check ECL tests、适用全仓ruff | 全部通过，302个Python模块格式符合要求；全仓使用当前Ruff的--output-format github，与CI旧参数含义相同 |
+| 主仓库完整pytest | 2085 passed、23 skipped；日志profile-delivery-full.log |
+| Core自身ruff与主仓库Core测试 | 全部通过，21 passed；日志profile-delivery-core.log |
+| 严格模型、共享路径、资料任务及恢复专项 | 71 passed，包含4个原生路径门禁及13个真实进程中断组合；日志profile-alias-after.log |
+| 既有私有文件/下载等受影响路径回归 | 141 passed；日志profile-private-regression.log，并再次包含于最终完整测试 |
+| 前端pnpm check，随后pnpm build | 全部通过；168个测试文件、941 passed、1 todo；日志profile-integrated-frontend-check.log及profile-integrated-frontend-build.log |
+| 最终PyInstaller发行物关联Worker专项 | 22 passed，包含源码与该冻结产物分支；日志profile-integrated-pyinstaller-workers.log |
+| 最终Nuitka发行物关联Worker专项 | 22 passed，包含源码与该冻结产物分支；日志profile-integrated-nuitka-workers.log |
+| 正式插件打包器 | worker_instance_profile.eclplugin构建并重新校验，明确entry_point为main:Plugin、四项必要声明 |
+
+真实中断覆盖已有原资料和首次创建：prepared记录之前/之后、原对象移动之后、旧对象记录之后、发布确认之前/之后、备份删除之后及外部占名；子进程实际终止，新Store从持久记录恢复，未续跑旧补丁。故障注入另覆盖记录写入失败、原生发布确认丢失、只读/硬链接、外部元数据句柄延迟释放、通知重试、陈旧恢复决定和重复回执。
+
+两份最终单文件可执行文件均实际启动独立Worker及主窗口，关联测试不以编译成功代替运行成功。产物位于Git忽略目录build/worker-manager，SHA-256如下：
+
+- profile-pyinstaller-dist/EuoraCraft Launcher.exe：E12B0B2CC5D93638BF6F39AF8C8A52ACB108B5CCCB012A2ACE8FECB6AAC10467。
+- nuitka/main.exe：141D2234E715ADE5F6A392C2CA80A23AC088ACD1434D494495B44E66481592DF。
+
+### 9.3 真实桌面验收与边界
+
+源码、最终PyInstaller及最终Nuitka分别执行144组权限布局和144组恢复布局，共864组实际WebView2检查。每轮覆盖六语言、Classic/Folia、亮暗、背景透明及模糊开关组合，以及1200×800、960×600、1600×1000原生窗口；核对宽度、标签/操作区、底部按钮可达、滚动及键盘焦点。Playwright CLI实际连接本地WebView2、获取快照并断开，截图经人工查看。
+
+矩阵还按实际innerWidth/innerHeight分组复核：每种语言、皮肤、明暗及背景组合确实包含三档尺寸和最小窗口。Nuitka重验时发现按全局进程名找窗口会受另一启动器干扰，本地辅助程序已限定为测试启动进程及其子进程，并等待原生外框、客户区和WebView实际尺寸一致且稳定；重新执行完整288组后通过，不以尺寸请求成功代替生效确认。
+
+实际操作同时验证：读目录选择不自动选择写实例，写目录无整目录勾选；分别批准具体实例后真实Worker修改资料，完整未修改字段和未授权实例保持原值；结果新etag与重新读取一致；停止并重新启用不自动再写。通过主窗口处理孤立安装的资料冲突，保留外部占名文件，将原资料另存为recovered-profile-original.json，并等待应用任务及记录实际收尾。既有离线wheel安装、原生扩展、私有文件新建/删除/替换、设置及用户任务取消也通过同一实际启动器流程。
+
+本机原始日志、矩阵和截图均位于Git忽略目录：build/worker-manager/profile-integrated-ui-{source,pyinstaller,nuitka}.log及build/worker-manager/output/playwright/profile-ui-{source,pyinstaller,nuitka}。自动化入口为tests/test_packaged_plugin_directories.py，本地矩阵辅助程序为build/worker-manager/profile_ui_acceptance.py。
+
+本轮未作Linux/macOS实机或发行物验收，不新增这些平台的第三方Worker支持。资料原名称可能短暂缺失，成功提交不提供旧版本撤销；外部对象或记录无法核实则保留pending/invalid，不自动覆盖、删除或假报清理完成。SDK调用和恢复协议见[现行归档文档](../protocols/eclplugin-package-format.md#获准实例资料修改)，显式调用示例见[worker_instance_profile](../../examples/plugins/worker_instance_profile/README.md)。

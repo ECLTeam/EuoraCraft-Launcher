@@ -50,15 +50,16 @@
 
 `plans/` 保存每次功能变更的完整过程记录：需求、方案取舍、实施步骤与验收结果。这些文档描述的是**当时**的决策，不保证与当前代码一致；需要确认现行行为时以代码和 `AGENTS.md` 为准。
 
-### 插件体系（14）
+### 插件体系（15）
 
 插件包格式、Worker 隔离、私有文件、权限与 SDK 统一。
 
 - [plugin-dependency-isolation-installation-plan](plans/plugin-dependency-isolation-installation-plan.md)
 - [plugin-download-task-implementation-plan](plans/plugin-download-task-implementation-plan.md)
 - [plugin-install-directory-isolation-plan](plans/plugin-install-directory-isolation-plan.md)
-- [plugin-instance-profile-write-implementation-plan](plans/plugin-instance-profile-write-implementation-plan.md)
+- [plugin-instance-profile-write-implementation-plan](plans/plugin-instance-profile-write-implementation-plan.md)：选定实例的四字段修改、双许可与可信恢复验收
 - [plugin-instance-read-api-implementation-plan](plans/plugin-instance-read-api-implementation-plan.md)
+- [plugin-java-query-implementation-plan](plans/plugin-java-query-implementation-plan.md)：Java 查询与校验第一阶段方案，待审阅
 - [plugin-network-read-implementation-plan](plans/plugin-network-read-implementation-plan.md)
 - [plugin-operation-ownership-implementation-plan](plans/plugin-operation-ownership-implementation-plan.md)
 - [plugin-private-file-delete-implementation-plan](plans/plugin-private-file-delete-implementation-plan.md)

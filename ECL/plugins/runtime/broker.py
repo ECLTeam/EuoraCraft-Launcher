@@ -21,7 +21,7 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread, current_thread
 from time import monotonic
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -35,6 +35,7 @@ from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.download_api import RuntimeDownloads
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage
+from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
 from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
@@ -42,6 +43,9 @@ from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.services.operations import OperationManager
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.instance_reading import InstanceReadError
+
+if TYPE_CHECKING:
+    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
 
 
 @dataclass(slots=True)
@@ -69,6 +73,7 @@ class PluginHostBroker:
             "settings.write",
             "events.subscribe",
             "instances.read",
+            "instances.write",
             "filesystem.read",
             "filesystem.write",
             "filesystem.delete",
@@ -91,6 +96,7 @@ class PluginHostBroker:
             "files.write_commit",
             "files.delete",
             "files.replace_begin",
+            "instances.profile_patch",
             "downloads.submit",
         }
     )
@@ -107,6 +113,7 @@ class PluginHostBroker:
         operations: OperationManager | None = None,
         file_storage: PluginFileStorage | None = None,
         network_service: PluginNetworkService | None = None,
+        instance_profiles: InstanceProfileTransactions | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -119,6 +126,7 @@ class PluginHostBroker:
         :param resources: 当前运行的共享实例资源表；未提供时拒绝共享资源 API
         :param file_storage: 应用拥有的私有文件存储；缺少任务服务时不开放文件 API
         :param network_service: 应用唯一只读网络服务；未提供时不开放网络方法
+        :param instance_profiles: 应用唯一共享实例资料事务，缺失时拒绝资料写接口
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -133,6 +141,11 @@ class PluginHostBroker:
         self.downloads: RuntimeDownloads | None = (
             RuntimeDownloads(session, self.files, self.network, self.operations)
             if self.files is not None and self.network is not None and self.operations is not None
+            else None
+        )
+        self.instance_profiles: RuntimeInstanceProfiles | None = (
+            RuntimeInstanceProfiles(session, resources, instance_profiles, self.operations)
+            if resources is not None and instance_profiles is not None and self.operations is not None
             else None
         )
         self._settings_path = data_path / "plugin_settings_v2" / f"{session.view().installation_id}.json"
@@ -288,6 +301,7 @@ class PluginHostBroker:
             "resources.list",
             "instances.scan",
             "instances.get",
+            "instances.profile_patch",
             "network.request",
             "downloads.submit",
         }:
@@ -322,8 +336,18 @@ class PluginHostBroker:
             return self._subscribe(params)
         raise ProtocolError("此 Host API 尚未接线", "PLUGIN_API_METHOD_NOT_FOUND")
 
+    def _profile_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        资料写入只交给绑定应用唯一存储的适配器，不从请求重新创建领域服务。
+        """
+        if self.instance_profiles is None:
+            raise ProtocolError("当前宿主未提供实例资料修改", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self.instance_profiles.submit(request.params, min(request.deadline, monotonic() + 5))
+
     def _query_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
+        if method == "instances.profile_patch":
+            return self._profile_service(request)
         if method == "downloads.submit":
             if self.downloads is None:
                 raise ProtocolError("当前宿主未提供下载任务", "PLUGIN_API_METHOD_NOT_FOUND")
@@ -377,9 +401,11 @@ class PluginHostBroker:
         view = self.session.view()
         items = [dict(asdict(item), resource_refs=list(item.resource_refs)) for item in view.items]
         for item in items:
-            if item["capability"] == "instances.read":
+            if item["capability"] in {"instances.read", "instances.write"}:
                 item["resource_refs"] = (
-                    self._resources.permission_refs() if self._resources and item["decision"] == "allow" else []
+                    self._resources.permission_refs(item["capability"])
+                    if self._resources and item["decision"] == "allow"
+                    else []
                 )
         return {"items": items, "grant_epoch": view.grant_epoch}
 

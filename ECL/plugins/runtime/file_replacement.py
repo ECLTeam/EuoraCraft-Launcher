@@ -23,9 +23,9 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ECL.plugin_api.contracts import JsonValue
-from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
 from ECL.plugins.runtime.models import FileRef
 from ECL.services.operations import OperationCommitRejectedError, OperationContext, OperationManager
+from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
 
 if TYPE_CHECKING:
     from ECL.plugins.runtime.file_storage import PluginFileStorage, StagedFile

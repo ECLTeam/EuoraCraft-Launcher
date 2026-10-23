@@ -8,6 +8,7 @@
 # 公开接口：
 #   - class InstanceCategorySnapshot — 分类身份与展示字段的类型化快照。
 #   - class ProfileCoordinator — 读取和修改实例资料、图标、置顶顺序和分类。
+#       - instance_profile_transactions — 组合根复用的唯一资料事务资源。
 #       - get_instance_profile(game_path, version_id) -> dict[str, Any] — 读取单个实例已持久化的 ECL 覆盖字段。
 #       - patch_instance_profile(game_path, version_id, patch) -> dict[str, Any] — 合并保存实例资料并立即失效扫描缓存。
 #       - reset_instance_profile(game_path, version_id, fields) -> dict[str, Any] — 删除实例覆盖字段，使其恢复第三方或自动值。
@@ -27,6 +28,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from .base import GameServiceError, _GameState
+from .instance_profile_transactions import InstanceProfileTransactions
 
 
 class InstanceCategorySnapshot(TypedDict):
@@ -46,12 +48,29 @@ class ProfileCoordinator(_GameState):
     读取和修改实例资料、图标、置顶顺序和分类。
     """
 
+    @property
+    def instance_profile_transactions(self) -> InstanceProfileTransactions:
+        """
+        向可信宿主装配提供唯一资料事务，不创建第二份实例状态。
+
+        :return: 现有InstanceProfileStore拥有的资源与恢复服务
+        """
+        return self._instance_profiles.transactions
+
     def _profile_target(self, game_path: Any, version_id: Any) -> tuple[Path, str]:
         path = self._normalize_game_path(game_path)
         name = self._normalize_version_name(version_id)
         if not (path / "versions" / name).is_dir():
             raise GameServiceError("游戏实例不存在", "VERSION_NOT_FOUND")
         return path, name
+
+    def _close_instance_profiles(self) -> None:
+        """
+        关闭时只恢复登记资源并尝试实际收尾，未完成不能丢弃备份或句柄归属。
+        """
+        self._instance_profiles.transactions.refresh()
+        if not self._instance_profiles.transactions.close():
+            self.logger.warning("实例资料资源尚未实际收尾，保留登记记录等待恢复")
 
     def _notify_profile_changed(self, game_path: Path) -> None:
         """

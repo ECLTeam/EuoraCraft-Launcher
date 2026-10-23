@@ -17,6 +17,8 @@ from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCal
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService
+from ECL.services.game.instance_profiles import InstanceProfileStore
+from ECL.services.game.version_stats import VersionStatsStore
 from ECL.utils.instance_reading import InstanceReadError
 
 
@@ -31,10 +33,11 @@ def instance(root: Path, name: str, **profile):
 
 
 @pytest.fixture
-def queries():
+def queries(tmp_path):
     service = GameService.__new__(GameService)
     service._lock = RLock()
     service._running_games = {}
+    service._instance_profiles = InstanceProfileStore(tmp_path / "data", VersionStatsStore())
     return service
 
 

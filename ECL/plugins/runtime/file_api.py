@@ -22,7 +22,6 @@ from uuid import uuid4
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
-from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
 from ECL.plugins.runtime.file_storage import FileDeletion, PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import (
     FileDeleteRequest,
@@ -40,6 +39,7 @@ from ECL.plugins.runtime.models import (
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.services.operations import OperationCommitRejectedError, OperationContext
+from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
 
 
 @dataclass(frozen=True, slots=True)

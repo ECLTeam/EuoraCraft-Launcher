@@ -13,8 +13,8 @@ from pydantic import ValidationError
 
 from ECL.api.plugin_models import PluginFileRecoveryResolve
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.runtime.file_handles import FileBoundaryError, FileHandle
 from ECL.plugins.runtime.models import FileReplaceBeginRequest
+from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
 from tests.test_plugin_file_delete import published
 from tests.test_plugin_host_files import call, chunk, commit, deny, files, finish, root
 

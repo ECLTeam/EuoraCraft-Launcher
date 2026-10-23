@@ -14,8 +14,8 @@ from pydantic import ValidationError
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.runtime.download_api import RuntimeDownloads
-from ECL.plugins.runtime.file_handles import FileBoundaryError, FileHandle
 from ECL.plugins.runtime.models import DownloadSubmitRequest
+from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
 
 
 def directory(tmp_path, broker):

@@ -258,6 +258,8 @@ class OperationManager:
             "plugin_download": "插件私有文件下载",
             "plugin_file_delete": "插件私有文件删除",
             "plugin_file_replace": "插件私有文件替换",
+            "plugin_instance_profile_patch": "修改实例资料",
+            "plugin_instance_profile_recovery": "恢复实例原资料",
             "plugin_file_recovery": "恢复插件私有文件",
         }
     )

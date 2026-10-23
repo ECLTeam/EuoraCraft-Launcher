@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from threading import Event, RLock, Thread
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api._windows import WindowsRuntimeError
@@ -38,6 +38,9 @@ from ECL.plugins.runtime.supervisor import WorkerSupervisor
 from ECL.services.operations import OperationManager
 from ECL.utils import get_logger
 from ECL.utils.instance_reading import InstanceReadError
+
+if TYPE_CHECKING:
+    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
 
 
 @dataclass(slots=True)
@@ -69,6 +72,7 @@ class PluginWorkerService:
         executable: ExecutableLaunchSpec | None = None,
         *,
         instance_queries: InstanceQueries | None = None,
+        instance_profiles: InstanceProfileTransactions | None = None,
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
         operations: OperationManager | None = None,
     ) -> None:
@@ -77,6 +81,7 @@ class PluginWorkerService:
 
         :param data_path: 应用数据根目录
         :param executable: 可选真实发行物验收入口
+        :param instance_profiles: 应用现有的共享实例资料事务资源
         :param instance_queries: 现有应用拥有的只读游戏查询
         :param operations: 应用唯一任务服务，不创建独立执行器
         :param instance_roots: 有效配置的游戏根目录快照
@@ -95,6 +100,7 @@ class PluginWorkerService:
         self._operations = operations
         self._file_storage = PluginFileStorage(data_path)
         self._network_service = PluginNetworkService()
+        self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
         self._catalog = (
             PluginResourceCatalog(data_path, instance_roots, instance_queries.query_instance_names)
@@ -116,22 +122,29 @@ class PluginWorkerService:
             revision = self._catalog.refresh()
         except (OSError, ValueError) as exc:
             if not isinstance(exc, InstanceReadError) or exc.error_code != "PLUGIN_RESOURCE_REVISION_CONFLICT":
-                self.grants.update_resource_scope(frozenset())
+                self.grants.update_resource_scope(frozenset(), frozenset())
             if isinstance(exc, InstanceReadError):
                 raise
             raise InstanceReadError("实例资源目录刷新失败", "PLUGIN_RESOURCE_CATALOG_INVALID") from exc
-        self.grants.update_resource_scope(self._catalog.active_refs())
+        self.grants.update_resource_scope(self._catalog.active_refs(), self._catalog.active_instance_refs())
         return revision
 
     def _refresh_declared_resources(self, session: PluginGrantSession) -> None:
-        if any(item.capability == "instances.read" for item in session.binding.declarations):
+        if any(item.capability in {"instances.read", "instances.write"} for item in session.binding.declarations):
             try:
                 self.refresh_resources()
             except InstanceReadError:
                 get_logger("PluginWorkerService").debug("实例资源当前不可用，保持相关许可拒绝")
 
     def permission_resources(
-        self, name: str, content_digest: str, parent_ref: str | None, search: str, cursor: str | None, limit: int
+        self,
+        name: str,
+        content_digest: str,
+        parent_ref: str | None,
+        search: str,
+        cursor: str | None,
+        limit: int,
+        capability: Literal["instances.read", "instances.write"] = "instances.read",
     ) -> dict[str, JsonValue]:
         """
         为可信权限界面发现配置目录或展开一个目录，不替用户授予许可。
@@ -142,6 +155,7 @@ class PluginWorkerService:
         :param search: 本级名称过滤
         :param cursor: 本次查询的短期游标
         :param limit: 页大小
+        :param capability: 独立审阅的实例读或具体实例写能力
         :return: 候选分页与资源目录版本
         :raises ProtocolError: 内容或已声明能力不匹配时抛出
         """
@@ -154,14 +168,14 @@ class PluginWorkerService:
             raise ProtocolError("插件内容已变化，请重新审阅", "PLUGIN_CONTENT_CHANGED") from exc
         if content_digest != entry.session.binding.content_digest:
             raise ProtocolError("插件内容已变化", "PLUGIN_GRANT_CONTENT_MISMATCH")
-        if not any(item.capability == "instances.read" for item in entry.session.binding.declarations):
-            raise ProtocolError("插件未申请实例读取", "PLUGIN_PERMISSION_DENIED")
+        if not any(item.capability == capability for item in entry.session.binding.declarations):
+            raise ProtocolError("插件未申请此实例能力", "PLUGIN_PERMISSION_DENIED")
         if self._catalog is None:
             raise ProtocolError("当前宿主未提供实例资源", "PLUGIN_API_METHOD_NOT_FOUND")
         revision = self._catalog.refresh(discover=cursor is None, parent_ref=parent_ref)
-        self.grants.update_resource_scope(self._catalog.active_refs())
-        selected = entry.session.selected_resources("instances.read")
-        signature = json.dumps([entry.installation_id, content_digest, parent_ref, search, limit])
+        self.grants.update_resource_scope(self._catalog.active_refs(), self._catalog.active_instance_refs())
+        selected = entry.session.selected_resources(capability)
+        signature = json.dumps([entry.installation_id, content_digest, capability, parent_ref, search, limit])
 
         page = self._resource_pages.page(
             signature,
@@ -333,6 +347,7 @@ class PluginWorkerService:
                     operations=self._operations,
                     file_storage=self._file_storage,
                     network_service=self._network_service,
+                    instance_profiles=self._instance_profiles,
                     resources=RuntimeResources(
                         entry.session, self._catalog, self._instance_queries, self.refresh_resources
                     )
@@ -404,9 +419,53 @@ class PluginWorkerService:
         """
         if sys.platform != "win32":
             return
+        if self._instance_profiles is not None:
+            self._instance_profiles.refresh(installation_id)
+            if self._instance_profiles.has_pending(installation_id=installation_id):
+                raise ProtocolError("实例资料需要完成恢复", "PLUGIN_INSTANCE_PROFILE_RECOVERY_REQUIRED")
         self._file_storage.replacements.refresh(installation_id)
         if self._file_storage.replacements.has_pending(installation_id):
             raise ProtocolError("插件文件需要先完成恢复", "PLUGIN_FILE_RECOVERY_REQUIRED")
+
+    def profile_recoveries(self, cursor: str | None = None, limit: int = 50) -> dict[str, JsonValue]:
+        """
+        向可信管理入口提供实例资料恢复，不依赖旧插件仍然安装或获得授权。
+
+        :param cursor: 当前宿主的有界分页引用
+        :param limit: 返回项上限
+        :return: 不含路径或资料正文的恢复页面
+        :raises ProtocolError: 当前宿主未提供游戏资料领域服务
+        """
+        if self._instance_profiles is None:
+            raise ProtocolError("当前宿主未提供实例资料", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self._instance_profiles.page(cursor, limit)
+
+    def resolve_profile_recovery(
+        self,
+        reference: str,
+        revision: int,
+        etag: str,
+        action: str,
+        suffix: str | None,
+        caller: PermissionManagementCaller,
+    ) -> dict[str, str]:
+        """
+        仅接纳原生主窗口的实例原资料恢复，不赋予旧Worker控制权。
+
+        :param reference: 当前宿主恢复引用
+        :param revision: 用户审阅的记录版本
+        :param etag: 用户审阅的实际对象摘要
+        :param action: 明确恢复选择
+        :param suffix: 另存资料的受限显式后缀
+        :param caller: 宿主确认的真实调用窗口身份
+        :return: 稳定接纳回执，实际结果由应用任务服务确认
+        :raises ProtocolError: 非主窗口或没有游戏资料/应用任务服务
+        """
+        if caller is not PermissionManagementCaller.main_webview:
+            raise ProtocolError("此入口不能恢复实例资料", "PLUGIN_MANAGEMENT_CALLER_DENIED")
+        if self._instance_profiles is None or self._operations is None:
+            raise ProtocolError("当前宿主未提供实例资料任务", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self._instance_profiles.resolve(reference, revision, etag, action, suffix, self._operations)
 
     def file_recoveries(self, cursor: str | None = None, limit: int = 50) -> dict[str, JsonValue]:
         """
@@ -514,9 +573,9 @@ class PluginWorkerService:
         :raises PluginGrantError: 主体、内容、版本或持久化失败时抛出
         """
         entry = self._entry(name)
-        if any(item.capability == "instances.read" and item.decision == "allow" for item in decisions) and (
-            resource_revision is None or resource_revision != self.refresh_resources()
-        ):
+        if any(
+            item.capability in {"instances.read", "instances.write"} and item.decision == "allow" for item in decisions
+        ) and (resource_revision is None or resource_revision != self.refresh_resources()):
             raise ProtocolError("资源候选已经变化，请刷新后重试", "PLUGIN_RESOURCE_REVISION_CONFLICT")
         # 不持有生命周期锁保存授权，运行中的长回调不能延迟拒绝屏障。
         view = self.grants.update(
@@ -605,7 +664,8 @@ class PluginWorkerService:
             with self._lock:
                 entries = tuple(self._entries.items())
             if any(
-                any(item.capability == "instances.read" for item in entry.manifest.permissions) for _, entry in entries
+                any(item.capability in {"instances.read", "instances.write"} for item in entry.manifest.permissions)
+                for _, entry in entries
             ):
                 try:
                     self.refresh_resources()

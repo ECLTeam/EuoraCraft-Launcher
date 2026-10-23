@@ -120,9 +120,33 @@ class Plugin(BasePlugin):
 
 清单请求 `{"capability":"instances.read","required":true}`，不能自报本机资源 ID。用户在可信主窗口选择目录全部实例（包含以后新增）或指定实例，未选择不满足必要能力。`host.call("resources.list", {"capability":"instances.read"})` 只返回当前 run 的获准目录/实例引用；目录引用用于 `instances.scan`，实例引用用于 `instances.get`，单实例许可不能扫描父目录。完整运行示例见 [instance_reader](../../examples/plugins/instance_reader/README.md)。
 
-资源和扫描列表均返回 `{items,next_cursor}`，可提交 `cursor`、`limit`（1—100，默认 50）。扫描另接受 `force`，仅刷新本次只读快照。单个摘要返回 `instance_ref`、`version_id`、`alias`、`loader`、`game_version`、`profile:{description,favorite,tags}`、`profile_etag`、`running_count`；不返回真实路径或完整实例配置。etag 不是递增 revision，也不授权写入。
+资源和扫描列表均返回 `{items,next_cursor}`，可提交 `cursor`、`limit`（1—100，默认 50）。扫描另接受 `force`，仅刷新本次只读快照。单个摘要返回 `instance_ref`、`version_id`、`alias`、`loader`、`game_version`、`profile:{description,favorite,tags}`、`profile_etag`、`running_count`；不返回真实路径或完整实例配置。etag 绑定完整本地资料的存在状态、物理身份、稳定元数据和原始字节摘要，不是递增 revision；其他字段变化或同名同内容重建也会使其失效。令牌本身不授予写权限。
 
 引用不能跨运行保存重用，授权变更、资源退休和内容变化后需重新发现。`permissions.list` 中该能力的资源引用同样是运行引用。查询在读取前及交付前校验许可；符号链接、重解析点、损坏资料和过期游标明确失败。实例读取不修改游戏资料、统计或进程。其他业务接口及 OS 文件/网络沙箱不由该能力提供。
+
+### 获准实例资料修改
+
+清单分别声明 `instances.read` 与 `instances.write`，两者的声明 `resource_refs` 均为空。用户在可信主窗口分别选择范围：读取可以覆盖整个目录，写入只能勾选具体实例，不能覆盖目录及以后新增的实例。持有实例运行引用仍需同时满足原始读、写许可；不能由读目录许可推导写权限。`permissions.list` 的写范围只投影有独立读权限的当前运行引用，不返回持久资源 ID。
+
+```python
+before = host.call("instances.get", {"instance_ref": instance_ref})
+receipt = host.call("instances.profile_patch", {
+    "instance_ref": instance_ref,
+    "expected_profile_etag": before["profile_etag"],
+    "patch": {"description": "朋友服务器", "favorite": True},
+}, mutation_key=saved_key)
+# 仅表示接纳；通过 operations.get 查询 receipt["operation_ref"]。
+```
+
+只允许 `alias`、`description`、`favorite`、`tags`，至少一项，拒绝 null、额外字段和类型转换。别名去空白后 1—120 字符；描述至多 1000 字符，允许空字符串；收藏为严格布尔；标签至多 20 项，每项去空白后 1—40 字符，按大小写去重并保留第一项文本。未提供字段保持原值，false 和空数组会保存。原资料的其他合法字段完整保留，不提供任意 JSON、图标、启动设置或存档写入。原、新资料均至多 64 KiB；损坏 JSON、重复字段、未知显式版本和字段类型异常会明确失败并保留原文件。
+
+提交最多 5 秒；任务 `plugin_instance_profile_patch` 的总截止为 30 秒，包含排队。成功视图为 `{instance_ref,alias,profile:{description,favorite,tags},profile_etag}`，绑定真实提交后的完整版本，交付前再次验证原始读许可和物理实例；失权时 result 为 null，不改写 effect。完整版本冲突返回 `PLUGIN_INSTANCE_PROFILE_CONFLICT`，调用方不得自动读新版本强制覆盖或换键重放。
+
+仅支持 Windows x64、本地 NTFS。宿主固定原目录和文件对象，保留原对象备份后不覆盖发布，原资料名称可能短暂缺失，不承诺一次原子覆盖。实际占用和备份清理完成前保持 cleanup_pending；重启只恢复或清理登记对象，不恢复旧 Worker、旧任务或旧补丁。外部文件占名时保留双方数据，从“文件恢复 → 实例资料”选择原位置恢复、受限后缀另存为 `recovered-profile-{suffix}.json`，或经二次确认丢弃原备份。成功提交不提供旧版本撤销。
+
+仅可信主 WebView 可调用 `plugin_instance_profile_recoveries_list({cursor?,limit?})` 和 `plugin_instance_profile_recovery_resolve({recovery_ref,expected_revision,expected_etag,action,saved_suffix?})`；Worker、其他窗口及 Dev Channel 均被拒绝。action 为 restore/save_as/discard，save_as 必须提供 1—64 位 ASCII 字母、数字、下划线或连字符后缀，其余动作不接受后缀。查询 DTO 为 `{items:[{recovery_ref,name,revision,etag,state,actions}],next_cursor}`，不含主机路径或原始资料；处理返回应用用户任务回执，关闭弹窗不取消已接纳任务。孤立安装和已移出配置的原目录仍可恢复，但实际物理身份必须一致。
+
+示例见 [worker_instance_profile](../../examples/plugins/worker_instance_profile/README.md)，边界及验收见 [实例资料修改方案](../plans/plugin-instance-profile-write-implementation-plan.md)。
 
 ### 自身任务控制
 
@@ -132,7 +156,7 @@ TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cance
 
 列表 limit 为 1—100、默认 50；每页受 64 KiB 限制，游标最多 16 个快照、120 秒，绑定本 run 和 limit。快照固定引用集合，每页重新查询状态和过滤结果。每 run 最多 128 个引用，宿主同时跟踪至多 1024 个插件任务；容量耗尽明确拒绝，不淘汰活跃任务。关闭 run 后只有实际 future 和审计保存完成才释放记录。
 
-不开放通用 `operations.submit` 或安装任务创建接口。具体业务入口为 files.write_commit、files.delete 与下文 downloads.submit；未提交任务的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](../plans/plugin-operation-ownership-implementation-plan.md)。
+不开放通用 `operations.submit` 或安装任务创建接口。具体业务入口为 instances.profile_patch、files.write_commit、files.delete 与下文 downloads.submit；未提交任务的插件列表可以为空。设置短写保持现行同步结果和 mutations.get 回执。任务控制基础见 [任务归属与提交控制方案](../plans/plugin-operation-ownership-implementation-plan.md)。
 
 ## 私有文件与新建事务
 
