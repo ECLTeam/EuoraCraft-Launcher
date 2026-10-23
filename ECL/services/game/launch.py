@@ -45,6 +45,7 @@ from anyio import to_thread
 from ECL.game import LaunchConfig
 from ECL.plugins.launch_hooks import LaunchContext
 from ECL.services.account.authlib import AuthlibError
+from ECL.utils.errors import AccountError
 from ECL.utils.files import atomic_write_text
 from ECL.utils.operation_logging import current_operation, trace_scope
 
@@ -805,7 +806,8 @@ class LaunchCoordinator(_GameState):
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise GameServiceError("实例版本 JSON 无法读取或已经损坏", "VERSION_JSON_INVALID") from exc
         inherited_version = str(version_document.get("inheritsFrom") or "").strip()
-        scanned_versions = self._search_factory(path).search_minecraft()
+        # 扫描会遍历 versions/ 下每个目录并解析版本 JSON，属于阻塞磁盘操作。
+        scanned_versions = await to_thread.run_sync(lambda: self._search_factory(path).search_minecraft())
         version_info = scanned_versions.get(version_name, {}) if isinstance(scanned_versions, dict) else {}
         loader = str(version_info.get("LoaderType") or "Vanilla").strip() or "Vanilla"
         required_java_value = str(version_info.get("RequestJava") or "")
@@ -897,7 +899,8 @@ class LaunchCoordinator(_GameState):
             if self.authlib_injector is not None:
                 self._emit_launch_progress("authlib", "正在准备外置登录组件", 20)
                 try:
-                    if self.authlib_injector.needs_download():
+                    # 校验需读取整个 authlib-injector.jar 计算摘要，放到线程执行。
+                    if await to_thread.run_sync(self.authlib_injector.needs_download):
                         authlib_task_id = f"authlib-{uuid4().hex}"
                         self.events.emit(
                             "game:install_progress",
@@ -1059,7 +1062,8 @@ class LaunchCoordinator(_GameState):
                         "GAME_DOWNLOAD_FAILED",
                     )
 
-            self._apply_fullscreen_option(game_directory, fullscreen_enabled)
+            # options.txt 需要读取并原子写回，避免阻塞事件循环导致进度与取消无响应。
+            await to_thread.run_sync(self._apply_fullscreen_option, game_directory, fullscreen_enabled)
             renderer_agent = await self._ensure_renderer_agent(selected_renderer)
             if cancel_event.is_set():
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
@@ -1114,6 +1118,10 @@ class LaunchCoordinator(_GameState):
                 await to_thread.run_sync(self._run_pre_launch_command, command_before_launch, game_directory)
             if high_performance_gpu:
                 await to_thread.run_sync(self._set_high_performance_gpu_preference, java)
+            # 启动前命令最长可阻塞数十秒且内部不检查取消，此处必须重新确认，
+            # 否则用户取消后进程仍会被创建。
+            if cancel_event.is_set():
+                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
             self._emit_launch_progress("launching", "正在创建游戏进程", 97)
             run_token = uuid4().hex
             run = _RunningGame(
@@ -1180,7 +1188,7 @@ class LaunchCoordinator(_GameState):
                 registered_run = self._running_games.get(run_token)
                 if registered_run is not None:
                     registered_run.instance_id = instance_id
-            self._version_stats.record_launch(path, version_name)
+            await to_thread.run_sync(self._version_stats.record_launch, path, version_name)
             with self._lock:
                 registered_run = self._running_games.get(run_token)
                 if registered_run is not None:
@@ -1220,6 +1228,12 @@ class LaunchCoordinator(_GameState):
             if exc.error_code != "LAUNCH_CANCELLED":
                 self._emit_launch_progress("error", str(exc), 0, exc.error_code)
             raise
+        except AccountError as exc:
+            # 账户缺失、资料不完整、令牌刷新失败都是预期业务错误，保留原错误码
+            # 供前端给出「去登录 / 检查网络」等针对性提示，不记为程序异常。
+            error = GameServiceError(str(exc), exc.error_code)
+            self._emit_launch_progress("error", str(error), 0, error.error_code)
+            raise error from exc
         except Exception as exc:
             self.logger.exception("启动 Minecraft 失败")
             error = GameServiceError(f"启动游戏失败: {exc}", "GAME_LAUNCH_FAILED")

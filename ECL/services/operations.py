@@ -371,9 +371,9 @@ class OperationManager:
             if not is_initial_saved or (operation.origin is not None and not self._persist(operation)):
                 raise GameServiceError("插件任务摘要保存失败", "PLUGIN_OPERATION_PERSIST_FAILED")
             context.check_cancelled()
+            # worker 返回即代表副作用已经落盘；此处若再检查取消，会把已完成的任务
+            # 标成「已取消」，导致用户重复执行同一操作。
             result = worker(context)
-            if operation.can_cancel:
-                context.check_cancelled()
         except Exception as exc:
             with self._lock:
                 is_cancelled = getattr(exc, "error_code", None) == "OPERATION_CANCELLED" and operation.can_cancel

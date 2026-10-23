@@ -28,7 +28,9 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import sys
 import tempfile
 import zipfile
 from contextlib import suppress
@@ -184,12 +186,48 @@ class WorldCoordinator:
         ):
             raise GameServiceError("游戏运行时不能修改存档", "INSTANCE_IS_RUNNING")
         lock_path = world_path / "session.lock"
-        if lock_path.is_file():
+        if lock_path.is_file() and self._is_session_locked(lock_path):
+            raise GameServiceError("存档正在被占用", "WORLD_IS_LOCKED")
+
+    @staticmethod
+    def _is_session_locked(lock_path: Path) -> bool:
+        """
+        尝试对存档锁文件加排他锁，判断是否已被其它进程占用。
+
+        Minecraft 通过 Java ``FileChannel.lock()`` 持有的是字节范围锁，普通
+        ``open("r+b")`` 不会失败，必须实际尝试加锁才能探测。探测成功后立即
+        释放，不修改文件内容；文件为空或平台不支持时按「未占用」处理，
+        避免误判阻止用户操作。
+
+        :param lock_path: 存档目录下的 session.lock
+        :return: 已被其它进程持有时返回 True
+        """
+        try:
+            if lock_path.stat().st_size == 0:
+                return False
+            handle = lock_path.open("r+b")
+        except OSError:
+            return True
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError:
+                    return True
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                return False
+            import fcntl
+
             try:
-                with lock_path.open("r+b"):
-                    pass
-            except OSError as exc:
-                raise GameServiceError("存档正在被占用", "WORLD_IS_LOCKED") from exc
+                fcntl.lockf(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.lockf(handle.fileno(), fcntl.LOCK_UN)
+            return False
+        finally:
+            handle.close()
 
     def patch_world(
         self,
@@ -279,8 +317,19 @@ class WorldCoordinator:
 
         def worker(context: OperationContext) -> dict[str, str]:
             context.progress(10, "正在复制存档")
-            shutil.copytree(source, destination)
             context.check_cancelled()
+            # 先复制到隐藏暂存目录再整体替换：直接写目标目录会在取消或磁盘不足时
+            # 留下残缺存档，且同名重试会被 WORLD_ALREADY_EXISTS 拒绝。
+            staging = root / f".{destination.name}.ecl-copy"
+            if staging.exists():
+                delete_path(staging)
+            try:
+                shutil.copytree(source, staging)
+                context.check_cancelled()
+                staging.replace(destination)
+            finally:
+                if staging.exists():
+                    delete_path(staging)
             context.progress(100, "存档复制完成")
             return {"worldId": destination.name}
 
@@ -388,8 +437,14 @@ class WorldCoordinator:
             if len(candidates) != 1:
                 raise GameServiceError("导入内容必须且只能包含一个有效存档", "INVALID_WORLD_ARCHIVE")
             candidate = candidates[0]
-            self._read_world(candidate)
-            destination = resolve_relative_id(root, candidate.name, must_exist=False)
+            info = self._read_world(candidate)
+            if candidate == temp:
+                # 压缩包把世界内容直接放在根目录时，candidate.name 是临时目录名；
+                # 改用存档自身的世界名称，避免每次导入都生成随机目录名。
+                directory_name = self._safe_world_directory_name(str(info.get("name") or "")) or "world"
+            else:
+                directory_name = candidate.name
+            destination = resolve_relative_id(root, directory_name, must_exist=False)
             if destination.exists():
                 raise GameServiceError("同名存档已存在", "WORLD_ALREADY_EXISTS")
             if context is not None:
@@ -397,8 +452,29 @@ class WorldCoordinator:
             shutil.move(str(candidate), destination)
             return {"worldId": destination.name}
 
+    @staticmethod
+    def _safe_world_directory_name(name: str) -> str:
+        """
+        把世界显示名称转换为可用作目录名的安全片段。
+
+        世界名称来自 level.dat，可能包含路径分隔符或 Windows 保留字符；
+        清理后为空时由调用方回退到固定名称，避免生成非法目录。
+
+        :param name: level.dat 中的世界名称
+        :return: 已去除非法字符的目录名片段
+        """
+        cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
+        return cleaned[:64]
+
     def _backup_root(self, target: Any, world_id: str) -> Path:
-        return target.minecraft_root_path / "ECLBackups" / target.instance_directory_name / world_id
+        """
+        解析存档备份目录，并按相对 ID 规则约束在实例备份根内。
+
+        ``world_id`` 来自 IPC 与插件通道，必须与 ``_world_path`` 采用同样的边界
+        校验，否则 ``..`` 可让备份列表、加锁与删除越过实例目录。
+        """
+        backup_parent = target.minecraft_root_path / "ECLBackups" / target.instance_directory_name
+        return resolve_relative_id(backup_parent, world_id, must_exist=False)
 
     def create_world_backup(
         self,
@@ -512,7 +588,6 @@ class WorldCoordinator:
     ) -> dict[str, str]:
         target = self.resolve_instance(game_path, version_id, version_isolation)
         current = self._world_path(game_path, version_id, world_id, version_isolation)
-        self._assert_world_writable(target, current)
         archive = resolve_relative_id(self._backup_root(target, current.name), f"{backup_id}.zip")
 
         def worker(context: OperationContext) -> dict[str, str]:
@@ -522,6 +597,9 @@ class WorldCoordinator:
                 safe_extract_zip(archive, restored)
                 self._read_world(restored)
                 context.check_cancelled()
+                # 任务可能在队列中等待，提交时的运行状态已过期；替换前必须重新确认，
+                # 否则会把游戏正在使用的世界目录整体换掉。
+                self._assert_world_writable(target, current)
                 old = current.with_name(f".{current.name}.ecl-restore-old")
                 current.replace(old)
                 try:

@@ -203,6 +203,9 @@ def test_seed_path_cannot_follow_external_symlink(tmp_path: Path) -> None:
         settings_file.symlink_to(outside)
     except OSError:
         pytest.skip("系统未授予符号链接权限")
+    if not settings_file.is_symlink():
+        # Windows 在部分配置下不抛错但也不真正创建链接，此时无法验证逃逸防护。
+        pytest.skip("系统未实际创建符号链接")
     assert WorldCoordinator._read_world(world_path)["seed"] == ""
     original = outside.read_bytes()
     with pytest.raises(GameDataError):

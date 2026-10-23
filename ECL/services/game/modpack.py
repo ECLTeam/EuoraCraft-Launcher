@@ -578,6 +578,52 @@ def _extract_minecraft_version(version_id: str) -> str:
     return matches[-1].group(0) if matches else version_id
 
 
+def _resolve_export_dependencies(target: Any) -> dict[str, str]:
+    """
+    从实例版本清单解析 Modrinth 依赖声明。
+
+    实例名由用户或安装参数决定，无法可靠推断 MC 版本与加载器；优先读取版本
+    JSON 的 ``inheritsFrom`` 与依赖库坐标，读取失败时返回空映射，由调用方回退
+    到名称匹配。Forge 的库坐标形如 ``1.20.1-47.2.0``，需要去掉 MC 版本前缀。
+
+    :param target: 已解析的实例目标
+    :return: 形如 ``{"minecraft": "1.20.1", "fabric-loader": "0.17.0"}`` 的依赖映射
+    """
+    manifest_path = target.instance_path / f"{target.instance_directory_name}.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    if not isinstance(manifest, dict):
+        return {}
+
+    dependencies: dict[str, str] = {}
+    minecraft = str(manifest.get("inheritsFrom") or "").strip()
+    if not minecraft:
+        raw_id = str(manifest.get("id") or "").strip()
+        minecraft = _extract_minecraft_version(raw_id) if raw_id else ""
+    if minecraft:
+        dependencies["minecraft"] = minecraft
+
+    loader_prefixes = {
+        "fabric-loader": "net.fabricmc:fabric-loader:",
+        "quilt-loader": "org.quiltmc:quilt-loader:",
+        "neoforge": "net.neoforged:neoforge:",
+        "forge": "net.minecraftforge:forge:",
+    }
+    for library in manifest.get("libraries") or []:
+        coordinate = str((library or {}).get("name") or "")
+        for key, prefix in loader_prefixes.items():
+            if not coordinate.startswith(prefix):
+                continue
+            version = coordinate[len(prefix) :]
+            if key == "forge" and "-" in version:
+                version = version.rsplit("-", 1)[-1]
+            dependencies[key] = version
+            break
+    return dependencies
+
+
 def build_ftb_plan(info: dict[str, Any], manifest: dict[str, Any]) -> ModpackPlan:
     """
     将 FTB 版本清单转换为启动器使用的安装计划。
@@ -999,6 +1045,15 @@ class ModpackCoordinator(_GameState):
         watcher.start()
         try:
             self._run_downloader_blocking(downloader, None)
+            # 下载器不会因单个条目失败而抛错；未声明哈希的条目没有后续校验兜底，
+            # 必须在这里确认，否则缺文件的实例会被当成创建成功。
+            if context.cancel_event.is_set():
+                raise GameServiceError("整合包文件下载已取消", "PACK_DOWNLOAD_CANCELLED")
+            if downloader.failed_entries:
+                raise GameServiceError(
+                    f"有 {len(downloader.failed_entries)} 个整合包文件下载失败，请检查网络后重试",
+                    "PACK_FILE_DOWNLOAD_FAILED",
+                )
         finally:
             finished.set()
             with self._lock:
@@ -1117,6 +1172,9 @@ class ModpackCoordinator(_GameState):
                         archive.write(path, Path("overrides") / relative)
                         if index % 20 == 0 or index == total:
                             context.progress(25 + 70 * index / total, "正在导出整合包")
+                    dependencies = _resolve_export_dependencies(target)
+                    if "minecraft" not in dependencies:
+                        dependencies["minecraft"] = _extract_minecraft_version(target.instance_directory_name)
                     archive.writestr(
                         "modrinth.index.json",
                         json.dumps(
@@ -1127,9 +1185,7 @@ class ModpackCoordinator(_GameState):
                                 "name": target.instance_directory_name,
                                 "summary": "Exported by ECL",
                                 "files": [online_files[key] for key in sorted(online_files)],
-                                "dependencies": {
-                                    "minecraft": _extract_minecraft_version(target.instance_directory_name)
-                                },
+                                "dependencies": dependencies,
                             },
                             ensure_ascii=False,
                         ),

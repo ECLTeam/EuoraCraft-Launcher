@@ -293,6 +293,33 @@ class AccountManager:
             "needs_client_id": not self._microsoft_login_available,
         }
 
+    def _sanitize_offline_accounts(self, entries: dict[Any, Any]) -> dict[str, dict[str, Any]]:
+        """
+        校验并修复离线账户条目，避免单条损坏导致账户服务整体不可用。
+
+        账户文件可能被外部工具改写，或残留缺少 ``id`` 的旧记录；后者会让
+        ``_all_accounts`` 在构造阶段抛 ``KeyError``，连带账户列表、启动和皮肤
+        全部失效。缺少 ``id`` 时按存储键补全并记录警告，非字典条目丢弃，
+        其余可用账户原样保留。
+
+        :param entries: 从账户状态文件读出的离线账户映射
+        :return: 仅包含结构有效条目的新映射
+        """
+        valid: dict[str, dict[str, Any]] = {}
+        for account_id, entry in entries.items():
+            if not isinstance(account_id, str) or not account_id:
+                self.logger.warning("忽略键类型无效的离线账户记录")
+                continue
+            if not isinstance(entry, dict):
+                self.logger.warning("忽略结构无效的离线账户记录：%s", account_id)
+                continue
+            entry_id = entry.get("id")
+            if not isinstance(entry_id, str) or not entry_id:
+                self.logger.warning("离线账户记录缺少 id，已按存储键补全：%s", account_id)
+                entry = {**entry, "id": account_id}
+            valid[account_id] = entry
+        return valid
+
     def _load_state(self) -> None:
         if not self.state_path.exists():
             return
@@ -300,7 +327,7 @@ class AccountManager:
             state = json.loads(self.state_path.read_text(encoding="utf-8"))
             offline_accounts = state.get("offline_accounts", {})
             if isinstance(offline_accounts, dict):
-                self._offline_accounts = offline_accounts
+                self._offline_accounts = self._sanitize_offline_accounts(offline_accounts)
             current_account_id = state.get("current_account_id")
             if isinstance(current_account_id, str) and current_account_id:
                 self._current_account_id = current_account_id

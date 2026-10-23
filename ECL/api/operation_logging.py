@@ -193,6 +193,7 @@ class IpcLogPolicy:
             "accounts_auth_providers": IpcLogSpec("获取插件注册的全部认证提供方定义", "query"),
             "accounts_add_plugin": IpcLogSpec("通过插件认证提供方新增账户", "action"),
             "accounts_add_offline": IpcLogSpec("添加离线账户", "action"),
+            "accounts_preview_offline_uuid": IpcLogSpec("预览离线账户按用户名生成的 UUID", "query"),
             "accounts_default_skins": IpcLogSpec("获取可供离线账户选择的默认皮肤列表", "query"),
             "accounts_set_offline_skin": IpcLogSpec("设置离线账户的默认皮肤", "action"),
             "accounts_add_authlib": IpcLogSpec("添加外置登录账户", "action"),
