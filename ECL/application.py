@@ -49,6 +49,7 @@ from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
 from ECL.services.updates import AnnouncementService, StartupUpdateService
 from ECL.utils import ConfigStore, Environment
+from ECL.utils.download_settings import resolve_mod_source
 from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
@@ -471,7 +472,7 @@ def create_application(
             instances_manager=shared_instances,
             operations=operations,
             java_manager=java,
-            mod_source_provider=lambda: (config.get_config("download") or {}).get("mod_source"),
+            mod_source_provider=lambda: resolve_mod_source(config.get_config()),
         )
         created.append(game)
         logger.info("游戏服务初始化完成")

@@ -30,6 +30,7 @@ from ECL.api.contracts import ApiResponse, success
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.resource_metadata import ResourceMetadataCache, ResourceMetadataError
 from ECL.services.game.resource_search import SearchCriteria, SearchResult
+from ECL.utils.download_settings import resolve_mod_source
 
 from .bridge import _FrontendState, _ipc_handler, _open_folder, _validate_body
 from .models import OnlineResourceSearchRequest
@@ -170,7 +171,7 @@ class ModHandlers(_FrontendState):
             source,
             project_id,
             resource_type,
-            str((configuration.get("download") or {}).get("mod_source") or "official"),
+            resolve_mod_source(configuration),
             str((configuration.get("ui") or {}).get("locale") or "zh-CN"),
         )
         cache = getattr(self.game, "_resource_metadata", None)

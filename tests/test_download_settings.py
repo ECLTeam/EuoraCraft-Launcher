@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.utils.config import ConfigStore
-from ECL.utils.download_settings import DownloadSettingsPatch, resolve_mirror_source
+from ECL.utils.download_settings import DownloadSettingsPatch, resolve_mirror_source, resolve_mod_source
 from ECL.utils.errors import ConfigError
 
 
@@ -130,4 +130,45 @@ def test_resolving_mirror_source_does_not_change_saved_config(tmp_path: Path) ->
 
     assert resolve_mirror_source({**store.get_config(), "ui": {"locale": "en-US"}}) == "official"
     assert store.get_config("download")["mirror_source"] == "bmclapi"
+    assert store.config_path.read_bytes() == before_bytes
+
+
+@pytest.mark.parametrize("locale", ["zh-TW", "en-US", "ja-JP", "ru-RU", "de-DE"])
+def test_mod_source_falls_back_to_official_outside_simplified_chinese(locale: str) -> None:
+    configuration = {"download": {"mod_source": "mcim"}, "ui": {"locale": locale}}
+
+    assert resolve_mod_source(configuration) == "official"
+
+
+def test_mod_source_keeps_saved_choice_in_simplified_chinese() -> None:
+    configuration = {"download": {"mod_source": "mcim"}, "ui": {"locale": "zh-CN"}}
+
+    assert resolve_mod_source(configuration) == "mcim"
+
+
+@pytest.mark.parametrize(
+    ("configuration", "expected"),
+    [
+        ({}, "official"),
+        ({"download": {"mod_source": "mcim"}}, "mcim"),
+        ({"download": {"mod_source": "mcim"}, "ui": {"locale": None}}, "mcim"),
+        ({"download": {"mod_source": "unknown"}, "ui": {"locale": "zh-CN"}}, "official"),
+        ({"download": {"mod_source": "mcim"}, "ui": {"locale": "en-US"}}, "official"),
+        ({"download": None, "ui": {"locale": "zh-CN"}}, "official"),
+    ],
+)
+def test_mod_source_falls_back_to_official_without_valid_saved_value(
+    configuration: dict[str, object], expected: str
+) -> None:
+    # 缺少界面语言时按默认的简体中文处理；非简体中文界面即使保存了镜像源也使用官方源。
+    assert resolve_mod_source(configuration) == expected
+
+
+def test_resolving_mod_source_does_not_change_saved_config(tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path / "data")
+    store.patch_download(DownloadSettingsPatch(mod_source="mcim"))
+    before_bytes = store.config_path.read_bytes()
+
+    assert resolve_mod_source({**store.get_config(), "ui": {"locale": "en-US"}}) == "official"
+    assert store.get_config("download")["mod_source"] == "mcim"
     assert store.config_path.read_bytes() == before_bytes

@@ -48,8 +48,8 @@
 
 ## 后续调整：非简体中文界面不提供下载源切换
 
-- 需求变更：只有简体中文界面展示“游戏下载源”配置项；其他语言隐藏该项，本次运行固定使用官方源。
-- 前端：`LauncherTab.vue` 按当前界面语言控制该项显隐，隐藏时不再提供 `official` / `bmclapi` 选择。
-- 后端：`ECL/utils/download_settings.py` 的 `resolve_mirror_source()` 在界面语言不是 `zh-CN` 时返回 `official`；版本目录、加载器目录、安装、启动补全和实例修复共用该解析，显式指定的 `source` 仍按调用方意图优先。
-- 配置文件的 `download.mirror_source` 保留用户上次保存的值，不迁移、不重置、不因隐藏而改写；切回简体中文后恢复原选择。
+- 需求变更：只有简体中文界面展示“下载设置”分区（含“游戏下载源”与“模组源”）；其他语言隐藏整个分区，本次运行固定使用官方源。
+- 前端：`LauncherTab.vue` 按当前界面语言控制整个分区的显隐，隐藏时不再提供 `official` / `bmclapi` 与 `official` / `mcim` 选择。
+- 后端：`ECL/utils/download_settings.py` 的 `resolve_mirror_source()`、`resolve_mod_source()` 在界面语言不是 `zh-CN` 时返回 `official`。游戏下载源覆盖版本目录、加载器目录、安装、启动补全和实例修复，显式指定的 `source` 仍按调用方意图优先；模组源通过 `ECL/application.py` 下发的 `mod_source_provider` 生效，在线资源元数据缓存键同时改用解析后的模组源。
+- 配置文件的 `download.mirror_source` 与 `download.mod_source` 保留用户上次保存的值，不迁移、不重置、不因隐藏而改写；切回简体中文后恢复原选择。
 - 上述“六种语言均显示优先选项”的验收项以本节为准。
