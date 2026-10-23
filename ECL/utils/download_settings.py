@@ -3,18 +3,23 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：下载配置的局部写入模型，仅校验可更新字段，不承担文件访问授权。
+# 文件作用：下载配置的局部写入模型与本次运行实际使用的下载源解析，不承担文件访问授权。
 #
 # 公开接口：
 #   - class ResourceInstallBinding — 资源类型记忆的实例目标，空字段表示明确不绑定。
 #   - class DownloadSettingsPatch — 下载源和按资源类型合并的配置补丁。
+#   - resolve_mirror_source() — 按界面语言解析游戏下载源，不回写配置。
 # ============================================================
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# 唯一展示下载源切换项的界面语言，其余语言固定使用官方源。
+_download_source_switch_locale = "zh-CN"
 
 
 class ResourceInstallBinding(BaseModel):
@@ -91,3 +96,23 @@ class DownloadSettingsPatch(BaseModel):
         if any(isinstance(entry, str) and (len(entry) > 8192 or "\0" in entry) for entry in value.values()):
             raise ValueError("保存目录格式无效")
         return value
+
+
+def resolve_mirror_source(configuration: Mapping[str, object]) -> str:
+    """
+    解析本次运行实际使用的游戏下载源，不改动配置文件中的保存值。
+
+    非简体中文界面不提供下载源切换，固定返回官方源；简体中文界面沿用用户
+    保存的选择，以便切回简体中文后恢复原设置。配置缺失或取值非法时回退
+    官方源，保证调用方始终拿到可用的源名称。
+
+    :param configuration: 启动器有效配置
+    :return: 实际使用的下载源名称，``official`` 或 ``bmclapi``
+    """
+    download_config = configuration.get("download")
+    configured_source = download_config.get("mirror_source") if isinstance(download_config, Mapping) else None
+    ui_config = configuration.get("ui")
+    locale = ui_config.get("locale") if isinstance(ui_config, Mapping) else None
+    if locale is not None and locale != _download_source_switch_locale:
+        return "official"
+    return "bmclapi" if configured_source == "bmclapi" else "official"

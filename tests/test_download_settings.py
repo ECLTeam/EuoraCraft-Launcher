@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.utils.config import ConfigStore
-from ECL.utils.download_settings import DownloadSettingsPatch
+from ECL.utils.download_settings import DownloadSettingsPatch, resolve_mirror_source
 from ECL.utils.errors import ConfigError
 
 
@@ -91,3 +91,43 @@ def test_empty_binding_clears_only_requested_resource_type(tmp_path: Path) -> No
         "mod": {"gamePath": "", "versionId": ""},
         "resourcepack": {"gamePath": "B", "versionId": "demo"},
     }
+
+
+@pytest.mark.parametrize("locale", ["zh-TW", "en-US", "ja-JP", "ru-RU", "de-DE"])
+def test_mirror_source_falls_back_to_official_outside_simplified_chinese(locale: str) -> None:
+    configuration = {"download": {"mirror_source": "bmclapi"}, "ui": {"locale": locale}}
+
+    assert resolve_mirror_source(configuration) == "official"
+
+
+def test_mirror_source_keeps_saved_choice_in_simplified_chinese() -> None:
+    configuration = {"download": {"mirror_source": "bmclapi"}, "ui": {"locale": "zh-CN"}}
+
+    assert resolve_mirror_source(configuration) == "bmclapi"
+
+
+@pytest.mark.parametrize(
+    ("configuration", "expected"),
+    [
+        ({}, "official"),
+        ({"download": {"mirror_source": "bmclapi"}}, "bmclapi"),
+        ({"download": {"mirror_source": "bmclapi"}, "ui": {"locale": None}}, "bmclapi"),
+        ({"download": {"mirror_source": "unknown"}, "ui": {"locale": "zh-CN"}}, "official"),
+        ({"download": None, "ui": {"locale": "zh-CN"}}, "official"),
+    ],
+)
+def test_mirror_source_falls_back_to_official_without_valid_saved_value(
+    configuration: dict[str, object], expected: str
+) -> None:
+    # 缺少界面语言时按默认的简体中文处理，只校验保存值；非法保存值不传递给下载服务。
+    assert resolve_mirror_source(configuration) == expected
+
+
+def test_resolving_mirror_source_does_not_change_saved_config(tmp_path: Path) -> None:
+    store = ConfigStore(tmp_path / "data")
+    store.patch_download(DownloadSettingsPatch(mirror_source="bmclapi"))
+    before_bytes = store.config_path.read_bytes()
+
+    assert resolve_mirror_source({**store.get_config(), "ui": {"locale": "en-US"}}) == "official"
+    assert store.get_config("download")["mirror_source"] == "bmclapi"
+    assert store.config_path.read_bytes() == before_bytes

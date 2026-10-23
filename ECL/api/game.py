@@ -70,6 +70,7 @@ from ECL.api.models import (
     LoaderCatalogRequest,
 )
 from ECL.services.game.launch_settings import InstanceLaunchOverrides, LaunchSettingsResolver
+from ECL.utils.download_settings import resolve_mirror_source
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body
 
@@ -122,10 +123,10 @@ class GameHandlers(_FrontendState):
         return f"{normalized_path}::{version_id.strip()}"
 
     def _download_source(self, requested_source: str | None) -> str:
-        # 选择请求显式指定的下载源，缺失时使用启动器配置。
+        # 请求显式指定的下载源优先；缺失时按界面语言解析配置，非简体中文固定官方源。
         if requested_source:
             return requested_source
-        return str((self._get_effective_config().get("download") or {}).get("mirror_source") or "official")
+        return resolve_mirror_source(self._get_effective_config())
 
     @_ipc_handler("VERSION_CATALOG_FAILED")
     async def game_versions(self, body: dict[str, Any]) -> ApiResponse:

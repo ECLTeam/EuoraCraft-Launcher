@@ -152,6 +152,45 @@ async def test_instance_repair_uses_configured_preferred_download_source() -> No
 
 
 @pytest.mark.asyncio
+async def test_instance_repair_uses_official_source_outside_simplified_chinese() -> None:
+    handler = object.__new__(WorkspaceHandlers)
+    calls = []
+    handler._get_effective_config = lambda: {
+        "download": {"mirror_source": "bmclapi"},
+        "ui": {"locale": "en-US"},
+    }
+    handler.game = SimpleNamespace(
+        resolve_version_isolation=lambda _game_path, _version_id: False,
+        repair_instance_files=lambda game_path, version_id, source: (
+            calls.append((game_path, version_id, source)) or {"operationId": "repair-1", "status": "running"}
+        ),
+    )
+
+    result = await handler.game_instance_files_repair({"game_path": ".minecraft", "version_id": "1.21.1"})
+
+    assert result["success"] is True
+    assert calls[0][2] == "official"
+
+
+@pytest.mark.asyncio
+async def test_version_catalog_uses_official_source_outside_simplified_chinese() -> None:
+    handler = object.__new__(GameHandlers)
+    calls = []
+    handler._get_effective_config = lambda: {
+        "download": {"mirror_source": "bmclapi"},
+        "ui": {"locale": "en-US"},
+    }
+    handler.game = SimpleNamespace(
+        minecraft_versions=lambda filter_type, source: calls.append((filter_type, source)) or [],
+    )
+
+    response = await handler.game_versions({})
+
+    assert response["success"] is True
+    assert calls[0][1] == "official"
+
+
+@pytest.mark.asyncio
 async def test_schematic_preview_accepts_frontend_payload_without_enabled() -> None:
     handler = object.__new__(WorkspaceHandlers)
     calls = []

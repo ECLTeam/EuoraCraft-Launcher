@@ -117,6 +117,7 @@ from ECL.api.models import (
     WorldRequest,
     WorldTransferRequest,
 )
+from ECL.utils.download_settings import resolve_mirror_source
 from ECL.utils.errors import GameServiceError
 from ECL.utils.instance_shortcuts import InstanceShortcutService, ShortcutIcon
 
@@ -301,7 +302,7 @@ class WorkspaceHandlers(_FrontendState):
             lambda request: self.game.repair_instance_files(
                 request.game_path,
                 request.version_id,
-                source=str((self._get_effective_config().get("download") or {}).get("mirror_source") or "official"),
+                source=resolve_mirror_source(self._get_effective_config()),
             ),
         )
 
