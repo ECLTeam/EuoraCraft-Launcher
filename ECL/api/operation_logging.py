@@ -268,6 +268,8 @@ class IpcLogPolicy:
             "plugin_permission_resources": IpcLogSpec("查询插件可审阅实例资源", "query"),
             "plugin_permissions_update": IpcLogSpec("审阅和更新插件授权", "action"),
             "plugin_file_recoveries_list": IpcLogSpec("查询插件文件恢复", "query"),
+            "plugin_instance_profile_recoveries_list": IpcLogSpec("查询实例资料恢复", "query"),
+            "plugin_instance_profile_recovery_resolve": IpcLogSpec("恢复实例原资料", "action"),
             "plugin_file_recovery_resolve": IpcLogSpec("恢复插件私有文件", "action"),
             "plugin_runtime_info": IpcLogSpec("查询插件运行状态", "query"),
             "plugin_list": IpcLogSpec("获取插件列表", "query"),

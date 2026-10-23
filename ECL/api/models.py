@@ -138,6 +138,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, f
 from ECL.api.plugin_models import (
     PluginFileRecoveriesQuery,
     PluginFileRecoveryResolve,
+    PluginInstanceProfileRecoveryResolve,
     PluginPermissionQuery,
     PluginPermissionResources,
     PluginPermissionUpdate,
@@ -1018,6 +1019,8 @@ class RequestModelRegistry:
         "plugin_permission_resources": PluginPermissionResources,
         "plugin_file_recoveries_list": PluginFileRecoveriesQuery,
         "plugin_file_recovery_resolve": PluginFileRecoveryResolve,
+        "plugin_instance_profile_recoveries_list": PluginFileRecoveriesQuery,
+        "plugin_instance_profile_recovery_resolve": PluginInstanceProfileRecoveryResolve,
         "plugin_permissions_update": PluginPermissionUpdate,
         "plugin_runtime_info": PluginPermissionQuery,
         "search_mods": OnlineResourceSearchRequest,

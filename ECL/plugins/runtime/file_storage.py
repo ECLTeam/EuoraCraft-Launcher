@@ -26,10 +26,10 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity
 from ECL.plugins.runtime.file_replacement import FileReplacementStore
 from ECL.plugins.runtime.models import FileRef
 from ECL.utils import get_logger
+from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity
 
 
 class _SpaceRecord(BaseModel):

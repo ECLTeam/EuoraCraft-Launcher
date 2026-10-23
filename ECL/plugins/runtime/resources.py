@@ -32,6 +32,7 @@ from ECL.plugins.runtime.models import InstanceGetRequest, InstanceScanRequest, 
 from ECL.utils.instance_reading import InstanceReadBoundary, InstanceReadError
 
 if TYPE_CHECKING:
+    from ECL.services.game.instance_profile_transactions import InstanceProfileTarget
     from ECL.services.game.instance_queries import InstanceSummary
 
 
@@ -219,12 +220,39 @@ class RuntimeResources:
         lease = self._session.authorize("instances.read", permission.resource_refs if permission else ())
         return lease, f"{lease.grant_epoch}:{revision}"
 
-    def permission_refs(self) -> list[str]:
+    def permission_refs(self, capability: str = "instances.read") -> list[str]:
         """
         将本运行获准的持久 ID 转换为运行引用，不暴露持久目录标识。
 
-        :return: 本运行有效的引用列表
+        :param capability: 读取范围或可读取的具体实例写范围
+        :return: 本运行有效的引用列表，绝不交付持久资源ID
         """
+        if capability == "instances.write":
+            view = self._session.view()
+            read_permission = next((item for item in view.items if item.capability == "instances.read"), None)
+            if read_permission is None or read_permission.decision != "allow":
+                return []
+            read, _ = self._prepare()
+            permission = next((item for item in view.items if item.capability == capability), None)
+            write = self._session.authorize(capability, permission.resource_refs if permission else ())
+            references = []
+            for key in write.resource_refs:
+                resource = self._catalog.resolve(key)
+                parent = next(
+                    (
+                        grant_ref
+                        for grant_ref in read.resource_refs
+                        if self._catalog.resolve(grant_ref).root_path == resource.root_path
+                        and (
+                            self._catalog.resolve(grant_ref).version_id is None
+                            or self._catalog.resolve(grant_ref).identity == resource.identity
+                        )
+                    ),
+                    None,
+                )
+                if parent is not None:
+                    references.append(self._reference(resource, parent))
+            return references
         lease, _ = self._prepare()
         return [self._reference(self._catalog.resolve(ref), ref) for ref in lease.resource_refs]
 
@@ -311,6 +339,78 @@ class RuntimeResources:
         self._check_scan_page(reference.resource, result, deadline)
         self._check(lease, reference.resource, deadline=deadline)
         return result
+
+    def profile_target(
+        self, instance_ref: str, deadline: float
+    ) -> tuple[InstanceProfileTarget, GrantLease, GrantLease]:
+        """
+        由现行读取引用解析同一具体实例的独立写授权，不由读目录推导写范围。
+
+        :param instance_ref: 当前运行只读发现取得的实例引用
+        :param deadline: 本次提交截止
+        :return: 宿主目标及原始读取、写入准入
+        :raises ProtocolError: 没有任一独立能力或物理资源已变化
+        """
+        from ECL.services.game.instance_profile_transactions import InstanceProfileTarget
+
+        self._prepare()
+        reference = self._resolve(instance_ref, is_root=False)
+        resource = reference.resource
+        self._check(self._session.authorize("instances.read", (reference.grant_ref,)), resource, deadline=deadline)
+        selected = next(
+            (
+                item
+                for item in self._catalog.resources()
+                if item.is_active
+                and item.version_id == resource.version_id
+                and item.root_path == resource.root_path
+                and item.root_identity == resource.root_identity
+                and item.identity == resource.identity
+            ),
+            None,
+        )
+        if selected is None:
+            raise ProtocolError("此具体实例尚未批准写入", "PLUGIN_RESOURCE_DENIED")
+        read = self._session.authorize("instances.read", (reference.grant_ref,))
+        write = self._session.authorize("instances.write", (selected.resource_id,))
+        target = InstanceProfileTarget(
+            Path(resource.root_path), resource.version_id, resource.root_identity, resource.identity
+        )
+        self.verify_profile_target(target, read, write, deadline)
+        return target, read, write
+
+    def verify_profile_target(
+        self, target: InstanceProfileTarget, read: GrantLease, write: GrantLease, deadline: float
+    ) -> None:
+        """
+        执行及结果交付时核对原始双准入与同一目录对象，不为旧任务重新获取许可。
+
+        :param target: 提交时已确认的目标
+        :param read: 创建时独立读取准入
+        :param write: 创建时具体实例写准入
+        :param deadline: 本阶段截止
+        :raises ProtocolError: 资源、原准入或截止失效
+        """
+        self.verify_profile_read(target, read, deadline)
+        self._session.check(write)
+
+    def verify_profile_read(self, target: InstanceProfileTarget, read: GrantLease, deadline: float) -> None:
+        """
+        只为已提交视图复核原始读取范围及物理实例，不重新要求写权限。
+
+        :param target: 提交时确定的物理目标
+        :param read: 当时的独立读取准入
+        :param deadline: 本次结果核验截止
+        :raises ProtocolError: 原读取准入或实际对象已失效
+        """
+        self._refresh()
+        self._session.check(read)
+        reader = InstanceReadBoundary(target.root_path, deadline)
+        if (
+            reader.identity != target.root_identity
+            or reader.directory(Path("versions") / target.version_id) != target.instance_identity
+        ):
+            raise InstanceReadError("实例物理身份已变化")
 
     def _check_scan_page(self, root: PluginResource, page: dict[str, JsonValue], deadline: float) -> None:
         """

@@ -11,7 +11,7 @@ from time import monotonic
 
 import pytest
 
-from ECL.plugins.runtime.file_handles import FileBoundaryError, FileDirectory
+from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows NTFS")
@@ -21,7 +21,7 @@ def test_process_exit_preserves_unmarked_or_finishes_marked_original(tmp_path, i
     target_path.write_bytes(b"original")
     script = """from pathlib import Path
 import sys
-from ECL.plugins.runtime.file_handles import FileDirectory
+from ECL.utils.windows_file_handles import FileDirectory
 root = FileDirectory.open(Path(sys.argv[1]))
 owned = []
 stream = root.delete_target('target.bin', owned.append)

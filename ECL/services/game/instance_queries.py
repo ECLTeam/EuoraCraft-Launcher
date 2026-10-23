@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -147,9 +145,9 @@ class InstanceQueryCoordinator(_GameState):
                 raise InstanceReadError("实例父声明无效", "PLUGIN_INSTANCE_METADATA_INVALID")
             current = parent or ""
         metadata = InstanceMetadata.from_documents(tuple(documents))
-        raw_profile = reader.read_json(Path("versions") / name / ".ecl" / "instance.json", 65536, optional=True)
+        snapshot = self._instance_profiles.snapshot(root_path, name, deadline)
         try:
-            fields = InstanceProfileStore.parse_local_fields(raw_profile or {})
+            fields = InstanceProfileStore.parse_local_fields(snapshot.document)
         except ValueError as exc:
             raise InstanceReadError("实例资料格式无效", "PLUGIN_INSTANCE_METADATA_INVALID") from exc
         profile = {
@@ -158,7 +156,7 @@ class InstanceQueryCoordinator(_GameState):
             "favorite": fields.get("favorite", False),
             "tags": fields.get("tags", []),
         }
-        etag = hashlib.sha256(json.dumps(profile, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+        etag = snapshot.etag
         with self._lock:
             running_count = sum(
                 1

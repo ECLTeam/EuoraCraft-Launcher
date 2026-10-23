@@ -229,6 +229,17 @@ class PluginResourceCatalog:
         with self._lock:
             return frozenset(item.resource_id for item in self._record.resources if item.is_active)
 
+    def active_instance_refs(self) -> frozenset[str]:
+        """
+        返回有效具体实例身份，供写授权校验，目录许可不能扩大为写范围。
+
+        :return: 不包含目录的宿主资源ID集合
+        """
+        with self._lock:
+            return frozenset(
+                item.resource_id for item in self._record.resources if item.is_active and item.version_id is not None
+            )
+
     def resources(self) -> tuple[PluginResource, ...]:
         """
         返回不可变资源快照供可信审阅和运行映射使用。

@@ -23,10 +23,10 @@ from ECL.plugins.grant_models import (
 )
 from ECL.plugins.grant_store import PluginGrantStore
 from ECL.plugins.runtime.broker import PluginHostBroker
-from ECL.plugins.runtime.file_handles import FileBoundaryError, FileHandle
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import FileRef, FileWriteBeginRequest
 from ECL.services.operations import OperationManager
+from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
 
 
 @pytest.mark.parametrize(

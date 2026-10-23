@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 
 from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.runtime.file_handles import FileHandle
 from ECL.plugins.runtime.file_storage import PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import FileRef
+from ECL.utils.windows_file_handles import FileHandle
 
 
 def prepare_case(data_path: Path) -> tuple[PluginFileStorage, StagedFile, FileHandle]:

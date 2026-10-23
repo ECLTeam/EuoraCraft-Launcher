@@ -23,6 +23,8 @@
 #   - test_composition_skips_single_instance_when_disabled(monkeypatch, tmp_path) -> None
 # ============================================================
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -86,6 +88,7 @@ class _FakeGame:
         self.instance_compatibility = SimpleNamespace()
         self.launch_hooks = SimpleNamespace()
         self.crash_extensions = SimpleNamespace()
+        self.instance_profile_transactions = SimpleNamespace()
 
     def close(self) -> None:
         pass

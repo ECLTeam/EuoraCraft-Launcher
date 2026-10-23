@@ -74,7 +74,15 @@ async def test_resource_candidates_require_native_registered_main(api, label):
     assert response["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
 
 
-@pytest.mark.parametrize("method", ["plugin_file_recoveries_list", "plugin_file_recovery_resolve"])
+@pytest.mark.parametrize(
+    "method",
+    [
+        "plugin_file_recoveries_list",
+        "plugin_file_recovery_resolve",
+        "plugin_instance_profile_recoveries_list",
+        "plugin_instance_profile_recovery_resolve",
+    ],
+)
 @pytest.mark.parametrize("window", [None, SimpleNamespace(label=lambda: "plugin-v2-forged")])
 async def test_file_recovery_requires_native_registered_main_even_for_queries(api, method, window):
     response = await getattr(api, method)({"caller": "main", "window_label": "main"}, window)

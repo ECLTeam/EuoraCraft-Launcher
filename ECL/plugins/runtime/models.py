@@ -13,6 +13,7 @@
 #   - class CommandDefinition — 命令注册契约。
 #   - class SettingDefinition — 非执行式设置定义。
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
+#   - class InstanceProfilePatchRequest — 绑定完整资料版本的四字段任务请求。
 #   - class OperationGetRequest / OperationListRequest — 自身任务控制输入契约。
 #   - validate_fields — 校验命令输入输出的基础字段。
 #   - class DownloadSubmitRequest — 私有空间新文件下载任务请求。
@@ -26,6 +27,7 @@ import re
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
+from pydantic import JsonValue as PydanticJsonValue
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.network_targets import NetworkOrigin
@@ -223,6 +225,15 @@ class InstanceGetRequest(RequestModel):
     """
 
     instance_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class InstanceProfilePatchRequest(InstanceGetRequest):
+    """
+    仅接收当前运行引用、完整资料版本与JSON增量，领域模型继续严格校验四字段。
+    """
+
+    expected_profile_etag: str = Field(pattern=r"^[0-9a-f]{64}$")
+    patch: dict[str, PydanticJsonValue] = Field(min_length=1, max_length=4)
 
 
 class OperationGetRequest(RequestModel):

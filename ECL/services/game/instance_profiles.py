@@ -8,7 +8,8 @@
 # 公开接口：
 #   - class InstanceProfilePolicy — 保存实例资料字段与内置分类规则。
 #   - class InstanceProfileStore — 管理 ECL 自有实例资料、分类和第三方只读元数据的解析结果。
-#       - read_profile(game_path, version_id) -> dict[str, Any] — 读取实例自有资料并过滤未知或损坏字段。
+#       - read_profile(game_path, version_id) — 严格读取完整资料，损坏或待恢复时明确失败。
+#       - snapshot(game_path, version_id, deadline) — 读取绑定完整原始字节的物理版本。
 #       - parse_local_fields(document) — 纯解析公开本地资料字段，不读取外部来源或同步统计。
 #       - patch_profile(game_path, version_id, patch) -> dict[str, Any] — 合并实例资料覆盖字段，显式 ``False`` 会按原值保存。
 #       - reset_profile_fields(game_path, version_id, fields) -> dict[str, Any] — 删除指定覆盖字段，使它们重新跟随第三方或自动扫描值。
@@ -27,14 +28,20 @@ from __future__ import annotations
 import json
 import re
 import struct
+from collections.abc import Callable
 from pathlib import Path
 from threading import RLock
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
+from ECL.plugin_api.contracts import JsonValue
 from ECL.utils import atomic_write_bytes, atomic_write_text, get_logger
+from ECL.utils.instance_reading import InstanceReadBoundary, InstanceReadError
 
 from .instance_compat import ExternalInstanceMetadata, InstanceCompatibilityReader
+from .instance_profile_models import InstanceProfileSnapshot, read_profile_snapshot, validate_profile
+from .instance_profile_transactions import InstanceProfileTransactions
 from .version_stats import VersionStatsStore
 
 
@@ -160,17 +167,18 @@ class InstanceProfileStore:
     都经过原子替换，并由同一进程锁避免并发 patch 丢失字段。
     """
 
-    _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"})
-    _BUILTIN_ICON_IDS = frozenset({"grass", "chest", "command", "coal", "iron", "quartz"})
-    _LOADER_ICON_IDS = frozenset({"vanilla", "forge", "neoforge", "fabric", "quilt", "optifine"})
-    _MAX_IMAGE_BYTES = 10 * 1024 * 1024
-    _MAX_IMAGE_DIMENSION = 4096
+    _image_extensions = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"})
+    _builtin_icon_ids = frozenset({"grass", "chest", "command", "coal", "iron", "quartz"})
+    _loader_icon_ids = frozenset({"vanilla", "forge", "neoforge", "fabric", "quilt", "optifine"})
+    _max_image_bytes = 10 * 1024 * 1024
+    _max_image_dimension = 4096
 
     def __init__(
         self,
         data_path: Path,
         stats_store: VersionStatsStore,
         compatibility_reader: InstanceCompatibilityReader | None = None,
+        on_changed: Callable[[Path], None] | None = None,
     ) -> None:
         self._data_path = data_path
         self._stats = stats_store
@@ -178,6 +186,7 @@ class InstanceProfileStore:
         self._categories_path = data_path / "instance-categories.json"
         self._logger = get_logger("InstanceProfileStore")
         self._lock = RLock()
+        self.transactions: InstanceProfileTransactions = InstanceProfileTransactions(data_path, self._lock, on_changed)
 
     @staticmethod
     def _instance_path(game_path: Path, version_id: str) -> Path:
@@ -211,48 +220,43 @@ class InstanceProfileStore:
             result["tags"] = _normalize_tags(document["tags"])
         return result
 
-    def read_profile(self, game_path: Path, version_id: str) -> dict[str, Any]:
+    def snapshot(self, game_path: Path, version_id: str, deadline: float) -> InstanceProfileSnapshot:
         """
-        读取实例自有资料并过滤未知或损坏字段。
+        在资料唯一锁内读取完整版本；待恢复不能被解释为首次缺少文件。
 
-        :param game_path: Minecraft 游戏根目录
-        :param version_id: 已校验的版本目录名称
-        :return: 包含模式版本和已设置覆盖字段的资料
+        :param game_path: 宿主已确定的游戏根目录
+        :param version_id: 具体实例目录名
+        :param deadline: 本次读取的有限截止
+        :return: 完整原始资料及物理版本
+        :raises InstanceReadError: 资料损坏、超限、变化或存在待恢复事务
         """
-        profile_path = self._profile_path(game_path, version_id)
-        if not profile_path.is_file():
-            return _default_profile()
-        try:
-            data = json.loads(profile_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError) as exc:
-            self._logger.warning("读取实例资料失败 %s: %s", profile_path, exc)
-            return _default_profile()
-        if not isinstance(data, dict):
-            return _default_profile()
-        profile = _default_profile()
-        for key in InstanceProfilePolicy.profile_fields:
-            if key in data:
-                profile[key] = data[key]
-        try:
-            profile["preferredExternalSource"] = _normalize_external_source(data.get("preferredExternalSource"))
-        except ValueError:
-            profile["preferredExternalSource"] = "auto"
-        try:
-            if "tags" in profile:
-                profile["tags"] = _normalize_tags(profile["tags"])
-        except ValueError:
-            profile.pop("tags", None)
-        try:
-            if "icon" in profile:
-                profile["icon"] = self._normalize_patch_value("icon", profile["icon"])
-        except ValueError:
-            profile.pop("icon", None)
-        return profile
+        with self._lock:
+            if self.transactions.has_pending(game_path, version_id):
+                raise InstanceReadError("实例资料等待实际收尾或恢复", "PLUGIN_INSTANCE_PROFILE_RECOVERY_REQUIRED")
+            return read_profile_snapshot(InstanceReadBoundary(game_path, deadline), version_id)
+
+    def read_profile(self, game_path: Path, version_id: str) -> dict[str, JsonValue]:
+        """
+        严格读取完整本地资料，只有确实缺失才补齐首次默认值。
+
+        损坏或不支持的内容保留原文件并失败，不能以默认资料进入后续更新。
+
+        :param game_path: Minecraft游戏根目录
+        :param version_id: 指定实例目录名
+        :return: 包含当前默认值及全部已持久化字段的资料
+        :raises InstanceReadError: 内容或事务状态不允许读取
+        """
+        snapshot = self.snapshot(game_path, version_id, monotonic() + 5)
+        return {**_default_profile(), **snapshot.document}
 
     def _write_profile(self, game_path: Path, version_id: str, profile: dict[str, Any]) -> None:
         profile_path = self._profile_path(game_path, version_id)
+        validate_profile(profile)
+        content = json.dumps(profile, ensure_ascii=False, indent=2)
+        if len(content.encode()) > 65536:
+            raise InstanceReadError("实例资料超过写入上限", "PLUGIN_MESSAGE_TOO_LARGE")
         profile_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(profile_path, json.dumps(profile, ensure_ascii=False, indent=2))
+        atomic_write_text(profile_path, content)
 
     @classmethod
     def _normalize_icon(cls, value: Any) -> dict[str, str]:
@@ -260,14 +264,14 @@ class InstanceProfileStore:
             raise ValueError("图标配置无效")
         icon_type = str(value.get("type") or "").strip().casefold()
         icon_value = str(value.get("value") or "").strip().casefold()
-        known_icon = (icon_type == "builtin" and icon_value in cls._BUILTIN_ICON_IDS) or (
-            icon_type == "loader" and icon_value in cls._LOADER_ICON_IDS
+        known_icon = (icon_type == "builtin" and icon_value in cls._builtin_icon_ids) or (
+            icon_type == "loader" and icon_value in cls._loader_icon_ids
         )
         local_icon = (
             icon_type == "local"
             and Path(icon_value).name == icon_value
             and icon_value.startswith("icon.")
-            and Path(icon_value).suffix in cls._IMAGE_EXTENSIONS
+            and Path(icon_value).suffix in cls._image_extensions
         )
         if not known_icon and not local_icon:
             raise ValueError("图标配置无效或不受支持")
@@ -347,16 +351,16 @@ class InstanceProfileStore:
     @classmethod
     def _validate_image(cls, source_path: Path) -> tuple[bytes, str]:
         extension = source_path.suffix.casefold()
-        if extension not in cls._IMAGE_EXTENSIONS:
+        if extension not in cls._image_extensions:
             raise ValueError("实例图标仅支持 PNG、JPEG、WebP、GIF 或 BMP")
         data = source_path.read_bytes()
-        if not data or len(data) > cls._MAX_IMAGE_BYTES:
+        if not data or len(data) > cls._max_image_bytes:
             raise ValueError("实例图标为空或超过 10 MiB")
         dimensions = _image_dimensions(data, extension)
         if dimensions is None:
             raise ValueError("无法识别实例图标内容")
         width, height = dimensions
-        if width <= 0 or height <= 0 or width > cls._MAX_IMAGE_DIMENSION or height > cls._MAX_IMAGE_DIMENSION:
+        if width <= 0 or height <= 0 or width > cls._max_image_dimension or height > cls._max_image_dimension:
             raise ValueError("实例图标尺寸必须在 1 到 4096 像素之间")
         return data, extension
 
@@ -384,7 +388,7 @@ class InstanceProfileStore:
             profile = self.read_profile(game_path, version_id)
             if normalized_type == "auto":
                 profile.pop("icon", None)
-                for extension in self._IMAGE_EXTENSIONS:
+                for extension in self._image_extensions:
                     local_path = ecl_directory / f"icon{extension}"
                     if local_path.is_file():
                         local_path.unlink()
@@ -403,7 +407,7 @@ class InstanceProfileStore:
                 ecl_directory.mkdir(parents=True, exist_ok=True)
                 target = ecl_directory / f"icon{extension}"
                 atomic_write_bytes(target, data)
-                for old_extension in self._IMAGE_EXTENSIONS - {extension}:
+                for old_extension in self._image_extensions - {extension}:
                     old_path = ecl_directory / f"icon{old_extension}"
                     if old_path.is_file():
                         old_path.unlink()
@@ -420,8 +424,8 @@ class InstanceProfileStore:
         :param entries: ``(游戏根目录, 版本目录名)`` 顺序列表
         """
         with self._lock:
-            for order, (game_path, version_id) in enumerate(entries):
-                profile = self.read_profile(game_path, version_id)
+            profiles = [self.read_profile(game_path, version_id) for game_path, version_id in entries]
+            for order, ((game_path, version_id), profile) in enumerate(zip(entries, profiles, strict=True)):
                 profile.update({"pinned": True, "pinOrder": order})
                 self._write_profile(game_path, version_id, profile)
 

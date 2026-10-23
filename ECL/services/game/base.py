@@ -183,6 +183,7 @@ class _GameState(ModSourceAware):
             self._data_path,
             self._version_stats,
             compatibility_reader=InstanceCompatibilityReader(self.instance_compatibility),
+            on_changed=self._notify_profile_changed,
         )
         self._owns_operations = operations is None
         self._application_operations = operations or OperationManager(self._data_path, self.events)
@@ -457,6 +458,7 @@ class _GameState(ModSourceAware):
         self._crash_executor.shutdown(wait=True, cancel_futures=True)
         if self._owns_operations:
             self._application_operations.close()
+        self._close_instance_profiles()
         self._crash_analyzer.close()
         if self.authlib_injector is not None:
             self.authlib_injector.close()

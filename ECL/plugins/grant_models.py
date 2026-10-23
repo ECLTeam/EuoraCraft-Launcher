@@ -83,7 +83,7 @@ class PermissionDeclaration(_PermissionScope):
     @field_validator("resource_refs")
     @classmethod
     def _host_selected_instances(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
-        if info.data.get("capability") == "instances.read" and value:
+        if info.data.get("capability") in {"instances.read", "instances.write"} and value:
             raise ValueError("实例资源由宿主用户选择，清单不能指定本机资源")
         if (
             info.data.get("capability")

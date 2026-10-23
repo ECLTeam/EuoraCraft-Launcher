@@ -19,6 +19,7 @@ import json
 import os
 import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
 
@@ -155,13 +156,21 @@ class InstanceReadBoundary:
             return Path(os.fsdecode(buffer.value))
         raise InstanceReadError("当前平台不能核实实例读取边界", "PLUGIN_RUNTIME_UNSUPPORTED")
 
-    def read_json(self, relative_path: Path, max_bytes: int, *, optional: bool = False) -> dict[str, JsonValue] | None:
+    def read_json(
+        self,
+        relative_path: Path,
+        max_bytes: int,
+        *,
+        optional: bool = False,
+        capture: Callable[[bytes, os.stat_result], None] | None = None,
+    ) -> dict[str, JsonValue] | None:
         """
         在实际句柄校验后有界读取 JSON，缺少可选文件才返回 None。
 
         :param relative_path: 根内已经确定的元数据位置
         :param max_bytes: 单文件字节上限
         :param optional: 首次缺少文件是否表示未设置
+        :param capture: 可选的同一文件内容与稳定元数据接收方，不接受调用方路径
         :return: 校验后的 JSON 对象或缺少的可选文件
         :raises InstanceReadError: 身份、大小、格式或读取失败时抛出
         """
@@ -195,14 +204,37 @@ class InstanceReadBoundary:
                     raise InstanceReadError("实例元数据超过读取上限", "PLUGIN_MESSAGE_TOO_LARGE")
                 self.directory(relative_path.parent)
                 current = target_path.lstat()
-                if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
-                    raise InstanceReadError("实例文件身份已经变化")
-            value = _json_value(json.loads(content.decode("utf-8-sig")))
+                final = os.fstat(stream.fileno())
+                self._check_version(current, opened, final)
+            value = _json_value(json.loads(content.decode("utf-8-sig"), object_pairs_hook=self._unique_fields))
             if not isinstance(value, dict):
                 raise ValueError("元数据不是对象")
             self.check()
+            if capture is not None:
+                capture(content, opened)
             return value
         except InstanceReadError:
             raise
         except (OSError, ValueError, RecursionError, ProtocolError) as exc:
             raise InstanceReadError("实例元数据无法读取或格式无效", "PLUGIN_INSTANCE_METADATA_INVALID") from exc
+
+    @staticmethod
+    def _check_version(current: os.stat_result, opened: os.stat_result, final: os.stat_result) -> None:
+        """
+        文件内容读完后核对同一对象及其稳定版本，拒绝原地修改与同名替换。
+        """
+        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino) or (
+            final.st_size,
+            final.st_mtime_ns,
+            final.st_ctime_ns,
+        ) != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns):
+            raise InstanceReadError("实例文件身份已经变化")
+
+    @staticmethod
+    def _unique_fields(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValue]:
+        result: dict[str, JsonValue] = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError("资料字段重复")
+            result[name] = value
+        return result

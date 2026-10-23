@@ -207,6 +207,20 @@ class Plugin(BasePlugin):
             network_checked = True
         resources = self.host.call('resources.list', {'capability':'instances.read'})['items']
         value = self.host.call('instances.get', {'instance_ref':resources[0]['instance_ref']})
+        profile_receipt = self.host.call('instances.profile_patch', {
+            'instance_ref':value['instance_ref'], 'expected_profile_etag':value['profile_etag'],
+            'patch':{'alias':'Worker profile','favorite':False,'tags':[]}}, mutation_key='profile-update')
+        deadline = time.monotonic() + 10
+        while True:
+            profile_task = self.host.call('operations.get', {'operation_ref':profile_receipt['operation_ref']})
+            if profile_task['state'] in ('completed','failed','cancelled') and not profile_task['cleanup_pending']:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert profile_task['state'] == 'completed' and profile_task['effect'] == 'committed', profile_task
+        current = self.host.call('instances.get', {'instance_ref':value['instance_ref']})
+        assert current['alias'] == 'Worker profile'
+        assert current['profile_etag'] == profile_task['result']['profile_etag'] != value['profile_etag']
         exported = export_snapshot(self.host)
         deadline = time.monotonic() + 10
         while True:
@@ -311,6 +325,7 @@ class Plugin(BasePlugin):
             {"capability": "commands.register", "required": True},
             {"capability": "commands.execute", "required": True},
             {"capability": "instances.read", "required": True},
+            {"capability": "instances.write", "required": True},
             {"capability": "settings.write", "required": True},
             {"capability": "settings.read", "required": True},
             {"capability": "filesystem.read", "required": True},
@@ -334,6 +349,10 @@ class Plugin(BasePlugin):
         directory = game_path / "versions" / name
         directory.mkdir(parents=True)
         (directory / f"{name}.json").write_text(json.dumps({"id": name}), encoding="utf-8")
+        (directory / ".ecl").mkdir()
+        (directory / ".ecl/instance.json").write_text(
+            json.dumps({"schemaVersion": 1, "pinned": True, "custom": {"preserved": name}}), encoding="utf-8"
+        )
     for phase in ("install", "restart"):
         log_path = tmp_path / f"{phase}.log"
         with socket.socket() as listener:
@@ -428,7 +447,7 @@ class Plugin(BasePlugin):
                                     "capability": item["capability"],
                                     "decision": "allow",
                                     "resource_refs": [selected]
-                                    if item["capability"] == "instances.read"
+                                    if item["capability"] in {"instances.read", "instances.write"}
                                     else item["requested_resource_refs"],
                                 }
                                 for item in view["items"]
@@ -447,11 +466,21 @@ class Plugin(BasePlugin):
                     assert probe["count"] == 1 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
                     assert (
-                        probe["tasks"] == (6 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 4)
+                        probe["tasks"] == (7 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 5)
                         and probe["exported"]
                     )
                     assert probe["download_checked"] == bool(os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD"))
                     assert probe["network_checked"] == bool(os.environ.get("ECL_PLUGIN_SMOKE_LIVE_NETWORK"))
+                    profile = json.loads((game_path / "versions/permitted/.ecl/instance.json").read_bytes())
+                    assert profile == {
+                        "schemaVersion": 1,
+                        "pinned": True,
+                        "custom": {"preserved": "permitted"},
+                        "alias": "Worker profile",
+                        "favorite": False,
+                        "tags": [],
+                    }
+                    assert "alias" not in json.loads((game_path / "versions/private/.ecl/instance.json").read_bytes())
                     files_path = data_path / "plugin_data" / identity / "files"
                     exports = tuple(files_path.glob("snapshot-*.json"))
                     assert len(exports) == 1

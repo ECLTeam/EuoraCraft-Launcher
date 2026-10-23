@@ -256,6 +256,8 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "plugin_permission_resources",
         "plugin_file_recoveries_list",
         "plugin_file_recovery_resolve",
+        "plugin_instance_profile_recoveries_list",
+        "plugin_instance_profile_recovery_resolve",
         "plugin_permissions_update",
         "plugin_runtime_info",
         "search_mods",

@@ -38,6 +38,7 @@ from .install_transaction import recover_plugin_install_transactions
 
 if TYPE_CHECKING:
     from ECL.plugins.package_activation import PluginPackageActivationStore
+    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
 
 
 class _PluginState:
@@ -58,6 +59,7 @@ class _PluginState:
         auth_providers: AuthProviderRegistry | None = None,
         crash_extensions: CrashAnalysisExtensionRegistry | None = None,
         instance_queries: InstanceQueries | None = None,
+        instance_profiles: InstanceProfileTransactions | None = None,
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
         operations: OperationManager | None = None,
     ):
@@ -72,6 +74,7 @@ class _PluginState:
         :param http_client: 应用共享 HTTP 客户端，供插件的受控网络请求使用
         :param auth_providers: 与账户服务共享的自定义认证提供方注册表
         :param crash_extensions: 与游戏服务共用的插件崩溃分析回调列表
+        :param instance_profiles: 应用现有的共享实例资料事务资源
         :param instance_queries: 应用现有的无写入实例查询接口
         :param operations: 应用共用的后台任务执行与取消服务
         :param instance_roots: 当前配置中的游戏根目录快照
@@ -84,6 +87,7 @@ class _PluginState:
         self.launch_hooks = launch_hooks or LaunchHookRegistry()
         self.http_client = http_client
         self._operations = operations
+        self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
         self._instance_roots = instance_roots
         self.auth_providers = auth_providers or AuthProviderRegistry()
@@ -150,6 +154,7 @@ class _PluginState:
         self.worker_service = PluginWorkerService(
             self._data_path,
             instance_queries=self._instance_queries,
+            instance_profiles=self._instance_profiles,
             instance_roots=self._instance_roots,
             operations=self._operations,
         )

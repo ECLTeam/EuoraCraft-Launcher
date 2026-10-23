@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：以 Windows 本地 NTFS 目录和文件句柄定位私有文件，禁止跟随重解析及覆盖发布。
+# 文件作用：以Windows本地NTFS目录和文件句柄执行有限操作，供私有文件及实例资料共同使用。
 #
 # 公开接口：
 #   - class FileBoundaryError — 不包含路径的文件边界错误。
@@ -16,6 +16,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import json
+import os
 import sys
 from collections.abc import Callable
 from ctypes import wintypes
@@ -294,6 +295,42 @@ class _NativeFiles:
         )
 
 
+def _stat_information(native: _NativeFiles, handle: int) -> os.stat_result:
+    """
+    复制原生句柄交由当前Python的fstat解析，描述符与复制句柄只有一个关闭所有者。
+    """
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    process = kernel.GetCurrentProcess
+    process.restype = wintypes.HANDLE
+    duplicate = kernel.DuplicateHandle
+    duplicate.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.DWORD,
+    ]
+    duplicate.restype = wintypes.BOOL
+    copied = wintypes.HANDLE()
+    if not duplicate(process(), handle, process(), ctypes.byref(copied), 0, False, 2):
+        raise FileBoundaryError("不能复制目录身份句柄", "PLUGIN_FILE_IO_FAILED")
+    descriptor = None
+    try:
+        descriptor = msvcrt.open_osfhandle(copied.value, os.O_RDONLY | os.O_BINARY)
+        return os.fstat(descriptor)
+    except OSError as exc:
+        raise FileBoundaryError("不能读取目录物理身份", "PLUGIN_FILE_IO_FAILED") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        else:
+            native.close(copied.value)
+
+
 class FileDirectory:
     """
     持有禁止外部重命名的目录句柄，子对象操作相对于该对象并拒绝重解析。
@@ -351,6 +388,18 @@ class FileDirectory:
         if not value.attributes & 0x10 or value.attributes & 0x400:
             raise FileBoundaryError("插件目录身份不可用", "PLUGIN_FILE_INVALID")
         return value
+
+    def stat_information(self) -> os.stat_result:
+        """
+        从同一目录对象的复制句柄取得Python物理身份，不猜测两种API的标识对应关系。
+
+        复制句柄交给CRT后仅关闭描述符，原目录句柄继续固定对象及生命周期。
+
+        :return: 当前Python通过fstat实际返回的目录元数据
+        :raises FileBoundaryError: 复制或读取失败，原目录仍由调用方持有
+        """
+        self.information()
+        return _stat_information(self._native, self._handle)
 
     def child(self, name: str, *, create: bool = False) -> FileDirectory:
         """
@@ -590,6 +639,15 @@ class FileHandle:
         ):
             raise FileBoundaryError("插件文件不是单链接普通文件", "PLUGIN_FILE_INVALID")
         return value
+
+    def stat_information(self) -> os.stat_result:
+        """
+        通过同一文件对象的复制句柄取得Python元数据，供完整资料版本使用。
+
+        :return: 和Python路径读取使用同一模型的文件快照
+        """
+        self.information()
+        return _stat_information(self._native, self._handle)
 
     def read(self, offset: int, count: int) -> bytes:
         """
