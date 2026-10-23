@@ -47,6 +47,7 @@ from ECL.host.app_update import AppUpdateError, UpdateApplier
 from ECL.host.maintenance import schedule_debug_maintenance
 from ECL.services.custom_downloads import CustomDownloadRequest
 from ECL.services.updates import UpdateChecker
+from ECL.utils.ui_locale import is_simplified_chinese
 
 from .bridge import _FrontendState, _ipc_handler
 
@@ -217,7 +218,11 @@ class SystemHandlers(_FrontendState):
         请求后端在后台预先读取节点列表，供旧版调用方继续使用。
 
         主窗口首次就绪时会自动读取；重复请求或前端重载不会再次发起网络任务，
-        此命令只确认是否已开始读取，不等待网络返回。
+        此命令只确认是否已开始读取，不等待网络返回。联机只面向简体中文用户，
+        其他语言直接返回成功但不发起读取。
+
+        :param body: 必须为空的请求对象
+        :return: 标准 IPC 响应
         """
         if body:
             return {
@@ -225,7 +230,8 @@ class SystemHandlers(_FrontendState):
                 "message": "launcher_preload_connector 不接受参数",
                 "errorCode": "INVALID_REQUEST",
             }
-        self.connector.start_node_preload()
+        if is_simplified_chinese(self._get_effective_config()):
+            self.connector.start_node_preload()
         return success()
 
     async def launcher_announcements_get(self, body: dict[str, Any]) -> dict[str, Any]:

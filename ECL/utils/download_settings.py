@@ -19,8 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# 唯一展示下载源切换项的界面语言，其余语言固定使用官方源。
-_download_source_switch_locale = "zh-CN"
+from ECL.utils.ui_locale import is_simplified_chinese
 
 
 class ResourceInstallBinding(BaseModel):
@@ -99,20 +98,6 @@ class DownloadSettingsPatch(BaseModel):
         return value
 
 
-def _uses_download_source_switch(configuration: Mapping[str, object]) -> bool:
-    """
-    判断当前界面语言是否提供下载源切换。
-
-    缺少界面语言配置时按默认的简体中文处理，避免旧配置丢失切换能力。
-
-    :param configuration: 启动器有效配置
-    :return: 是否按用户保存的下载源与模组源运行
-    """
-    ui_config = configuration.get("ui")
-    locale = ui_config.get("locale") if isinstance(ui_config, Mapping) else None
-    return locale is None or locale == _download_source_switch_locale
-
-
 def _configured_download_source(configuration: Mapping[str, object], key: str) -> object:
     """
     读取下载配置中的保存值，不校验取值。
@@ -136,7 +121,7 @@ def resolve_mirror_source(configuration: Mapping[str, object]) -> str:
     :param configuration: 启动器有效配置
     :return: 实际使用的下载源名称，``official`` 或 ``bmclapi``
     """
-    if not _uses_download_source_switch(configuration):
+    if not is_simplified_chinese(configuration):
         return "official"
     return "bmclapi" if _configured_download_source(configuration, "mirror_source") == "bmclapi" else "official"
 
@@ -151,6 +136,6 @@ def resolve_mod_source(configuration: Mapping[str, object]) -> str:
     :param configuration: 启动器有效配置
     :return: 实际使用的模组源名称，``official`` 或 ``mcim``
     """
-    if not _uses_download_source_switch(configuration):
+    if not is_simplified_chinese(configuration):
         return "official"
     return "mcim" if _configured_download_source(configuration, "mod_source") == "mcim" else "official"

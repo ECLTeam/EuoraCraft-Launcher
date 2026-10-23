@@ -53,6 +53,7 @@ from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.logging import get_frontend_log_history
 from ECL.utils.network import download_proxy_url
 from ECL.utils.operation_logging import operation_scope
+from ECL.utils.ui_locale import is_simplified_chinese
 
 
 class ImagePolicy:
@@ -940,7 +941,9 @@ class _FrontendState:
             if startup_update_result is not None:
                 self.emit_to_frontend("update:check_completed", startup_update_result)
         if window_type == "main":
-            self.connector.start_node_preload()
+            # 联机只面向简体中文用户，其他语言不在后台预热联机节点列表。
+            if is_simplified_chinese(self._get_effective_config()):
+                self.connector.start_node_preload()
             self._cli_event_loop = asyncio.get_running_loop()
             if not self._cli_launch_dispatched:
                 self._cli_launch_dispatched = True

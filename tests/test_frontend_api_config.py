@@ -1472,6 +1472,29 @@ def test_startup_preload_warms_connector_nodes_without_arguments(tmp_path) -> No
     assert invalid["errorCode"] == "INVALID_REQUEST"
 
 
+def test_connector_preload_is_skipped_outside_simplified_chinese(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api._get_effective_config = lambda: {"ui": {"locale": "en-US"}}
+    calls: list[str] = []
+    api.connector.start_node_preload = lambda: calls.append("scheduled")
+
+    result = asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
+
+    assert result["success"] is True
+    assert calls == []
+
+
+def test_main_ready_skips_node_preload_outside_simplified_chinese(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api._get_effective_config = lambda: {"ui": {"locale": "ja-JP"}}
+    calls: list[str] = []
+    api.connector.start_node_preload = lambda: calls.append("scheduled")
+
+    asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
+
+    assert calls == []
+
+
 def test_main_ready_owns_backend_node_preload_across_frontend_reload(tmp_path) -> None:
     from ECL.services.connector import ConnectorService
 

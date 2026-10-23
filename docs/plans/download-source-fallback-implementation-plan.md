@@ -46,10 +46,11 @@
 - 使用隔离数据目录实际启动桌面版：两个优先选项和说明正常显示，选择“优先 BMCLAPI”后配置保存为 `bmclapi`，随后正常退出。
 - 完整后端回归最初发现 `ECL/services/dev_channel.py` 已有两处单行 docstring 不满足架构检查；仅调整了这两处文档格式，复测后全套通过。该整理单独提交。
 
-## 后续调整：非简体中文界面不提供下载源切换
+## 后续调整：非简体中文界面不提供下载源切换与联机功能
 
-- 需求变更：只有简体中文界面展示“下载设置”分区（含“游戏下载源”与“模组源”）；其他语言隐藏整个分区，本次运行固定使用官方源。
-- 前端：`LauncherTab.vue` 按当前界面语言控制整个分区的显隐，隐藏时不再提供 `official` / `bmclapi` 与 `official` / `mcim` 选择。
-- 后端：`ECL/utils/download_settings.py` 的 `resolve_mirror_source()`、`resolve_mod_source()` 在界面语言不是 `zh-CN` 时返回 `official`。游戏下载源覆盖版本目录、加载器目录、安装、启动补全和实例修复，显式指定的 `source` 仍按调用方意图优先；模组源通过 `ECL/application.py` 下发的 `mod_source_provider` 生效，在线资源元数据缓存键同时改用解析后的模组源。
+- 需求变更：只有简体中文界面展示“下载设置”分区（含“游戏下载源”与“模组源”）；其他语言隐藏整个分区，本次运行固定使用官方源。联机功能同样只面向简体中文用户。
+- 前端：`LauncherTab.vue` 按当前界面语言控制整个分区的显隐，隐藏时不再提供 `official` / `bmclapi` 与 `official` / `mcim` 选择；语言判定统一由 `isSimplifiedChinese()` 提供。
+- 后端：`ECL/utils/ui_locale.py` 的 `is_simplified_chinese()` 是界面语言判定的唯一入口；`ECL/utils/download_settings.py` 的 `resolve_mirror_source()`、`resolve_mod_source()` 在界面语言不是 `zh-CN` 时返回 `official`。游戏下载源覆盖版本目录、加载器目录、安装、启动补全和实例修复，显式指定的 `source` 仍按调用方意图优先；模组源通过 `ECL/application.py` 下发的 `mod_source_provider` 生效，在线资源元数据缓存键同时改用解析后的模组源。
+- 联机入口：非简体中文时隐藏更多页“联机”子页与设置页“联机”分区，`/more` 默认落到插件页，直达 `/more/room` 会被重定向；`ECL/api/bridge.py` 的主窗口就绪与 `ECL/api/system.py` 的旧版预热命令都不再启动节点预热，前端运行时也不注册联机会话与错误处理。
 - 配置文件的 `download.mirror_source` 与 `download.mod_source` 保留用户上次保存的值，不迁移、不重置、不因隐藏而改写；切回简体中文后恢复原选择。
 - 上述“六种语言均显示优先选项”的验收项以本节为准。
