@@ -1,0 +1,103 @@
+name: 缺陷报告
+description: 报告启动器中的异常行为，提供复现步骤或代码证据。
+title: "[问题] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索[已有 Issue](https://github.com/ECLTeam/EuoraCraft-Launcher/issues?q=is%3Aissue)，同一问题请补充到原 Issue。
+        每份报告只描述一个可独立跟踪的问题；可使用中文或英文填写，详见[贡献指南](https://github.com/ECLTeam/EuoraCraft-Launcher/blob/main/CONTRIBUTING.md)。
+        标题请说明具体行为，例如「切换实例后仍显示上一个实例的下载结果」。不要在公开报告中提交凭据或敏感漏洞细节。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索已有 Issue，没有发现相同问题；如已有相同问题，我会到原 Issue 补充信息。
+          required: true
+        - label: 我已检查正文和附件，不含令牌、密码、账户凭据或未经脱敏的个人信息。
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 说明触发条件、影响及涉及模块，例如前端、后端、Core 或联机组件。
+      placeholder: 在什么情况下遇到了什么问题？影响了哪项操作？
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 启动器版本或提交
+      description: 发布版填写完整版本；源码运行填写提交 SHA。涉及子模块时补充其 SHA；无法获取时说明原因。
+      placeholder: 完整版本号，或主仓库与相关子模块的提交 SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - 跨平台
+        - 尚未确认
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境补充
+      description: 按需填写系统版本、架构、运行方式及 Minecraft、Java、加载器或插件信息，无需提供完整私人路径。
+      placeholder: 与本问题有关的环境信息
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 复现步骤或代码证据
+      description: 用户填写操作步骤；开发者可填写代码位置、调用路径与错误依据。暂不能复现时说明已尝试的步骤和已观察到的证据。
+      placeholder: |
+        1. 打开哪个页面或执行什么命令？
+        2. 执行什么操作后出现问题？
+        或提供代码位置、调用路径及其为何会导致该问题的依据。
+    validations:
+      required: true
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: 预期结果
+      placeholder: 正常情况下应该发生什么？
+    validations:
+      required: true
+  - type: textarea
+    id: actual-result
+    attributes:
+      label: 实际结果
+      description: 说明实际发生的行为、是否可重复以及影响范围。
+      placeholder: 实际发生了什么？每次都会出现还是偶尔出现？
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 只提供与问题有关且已脱敏的片段；此字段自动使用代码格式，无需添加代码围栏。
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图或录屏
+      description: 可在此粘贴或上传已脱敏的截图、录屏；日志请放在上一个字段。
+    validations:
+      required: false
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: 补充信息
+      description: 可填写临时绕行方式、关联 Issue 或其他定位线索。
+    validations:
+      required: false

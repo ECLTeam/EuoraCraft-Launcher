@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 阅读贡献指南
+    url: https://github.com/ECLTeam/EuoraCraft-Launcher/blob/main/CONTRIBUTING.md
+    about: 查看 Issue 填写要求、修复跟踪与关闭条件。
+  - name: 查阅使用文档
+    url: https://docs.euora.cn
+    about: 提交使用问题前，先查看操作说明与常见问题。
