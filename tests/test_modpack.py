@@ -440,8 +440,8 @@ def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -
     created = []
 
     class FakeGames:
-        def build_fabric_download_list(self, version_id, loader_version, save_name, fabric_api):
-            created.append((save_name, loader_version, fabric_api))
+        def build_fabric_download_list(self, version_id, loader_version, save_name):
+            created.append((save_name, loader_version))
             directory = game_path / "versions" / save_name
             directory.mkdir(parents=True, exist_ok=True)
             (directory / f"{save_name}.json").write_text("{}", encoding="utf-8")
@@ -449,6 +449,7 @@ def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -
 
     service = _build_pack_service(_pack_downloader_factory({}))
     monkeypatch.setattr(service, "_context", lambda *_args: SimpleNamespace(games=FakeGames()))
+    monkeypatch.setattr(service, "_resolve_fabric_api", lambda *_args: pytest.fail("整合包基础安装不应下载 Fabric API"))
     index = {
         "name": "Fabric Demo",
         "dependencies": {"minecraft": "1.21.1", "fabric-loader": "0.16.14"},
@@ -466,8 +467,7 @@ def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -
     state = _run_pack_operation(service, game_path=game_path, source_path=pack, new_version_id="FabricPack")
 
     assert state["status"] == "completed", state
-    # 整合包基础安装不附带 Fabric API（fabric_api 为 None），避免与包内模组重复
-    assert created == [("fabric-0.16.14-1.21.1", "0.16.14", None)]
+    assert created == [("fabric-0.16.14-1.21.1", "0.16.14")]
     result = state["result"]
     assert result["baseVersion"] == "fabric-0.16.14-1.21.1"
     version_json = json.loads((game_path / "versions" / "FabricPack" / "FabricPack.json").read_text(encoding="utf-8"))

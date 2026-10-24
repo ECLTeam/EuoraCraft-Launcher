@@ -1564,7 +1564,7 @@ class ResourceCoordinator(ModSourceAware):
         source: str,
         project_id: str,
         version_id_str: str,
-        version_isolation: Any = False,
+        version_isolation: bool | None = None,
         task_id: str | None = None,
         world_id: str | None = None,
     ) -> dict[str, Any]:
@@ -1577,16 +1577,17 @@ class ResourceCoordinator(ModSourceAware):
         :param source: 数据来源（modrinth）
         :param project_id: Modrinth 项目 ID
         :param version_id_str: Modrinth 版本 ID
-        :param version_isolation: 是否启用版本隔离
+        :param version_isolation: 可选的版本隔离覆盖；省略时在开始安装前读取实例有效设置，整个安装使用同一结果
         :param task_id: 任务队列 ID，非空时上报字节进度与实时速度事件
         :param world_id: 目标存档 ID（仅数据包安装到指定世界，其他类型忽略）
         :return: 安装结果（文件名、来源、是否跳过）
         """
+        isolated = self.resolve_version_isolation(game_path, version_id, version_isolation)
         if resource_type == "world":
             if source != "curseforge":
                 raise GameServiceError("存档在线下载仅支持 CurseForge", "INVALID_RESOURCE_SOURCE")
             selected = self._select_online_file(source, project_id, version_id_str)
-            root = self._world_root(game_path, version_id, version_isolation)
+            root = self._world_root(game_path, version_id, isolated)
             root.mkdir(parents=True, exist_ok=True)
             filename = str(selected["filename"])
             with tempfile.TemporaryDirectory(prefix="ecl-world-download-", dir=root.parent) as temp_dir:
@@ -1596,7 +1597,7 @@ class ResourceCoordinator(ModSourceAware):
             if task_id:
                 self._emit_install_progress(task_id, "done", f"{filename} 已导入", done=1, total=1)
             return {"filename": imported["worldId"], "source": source, "skipped": False}
-        root = self._resource_root(game_path, version_id, resource_type, version_isolation, world_id)
+        root = self._resource_root(game_path, version_id, resource_type, isolated, world_id)
         root.mkdir(parents=True, exist_ok=True)
         selected = self._select_online_file(source, project_id, version_id_str)
         destination = resolve_relative_id(root, str(selected["filename"]), must_exist=False)

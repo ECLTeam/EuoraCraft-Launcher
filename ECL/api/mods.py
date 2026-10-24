@@ -33,7 +33,7 @@ from ECL.services.game.resource_search import SearchCriteria, SearchResult
 from ECL.utils.download_settings import resolve_mod_source
 
 from .bridge import _FrontendState, _ipc_handler, _open_folder, _validate_body
-from .models import OnlineResourceSearchRequest
+from .models import InstanceTarget, OnlineResourceSearchRequest
 
 
 class ModHandlers(_FrontendState):
@@ -210,27 +210,37 @@ class ModHandlers(_FrontendState):
     @_ipc_handler("MOD_DOWNLOAD_FAILED")
     async def download_mod(self, body: dict[str, Any]) -> ApiResponse:
         """
-        下载在线模组到目标实例的 ``mods`` 目录。
+        根据目标实例的有效隔离设置下载在线资源并记录安装结果。
+
+        请求开始时固定隔离状态；查询下载信息和提交文件使用同一目标，
+        不因下载过程中的配置变化改写其他实例或共享目录。
 
         :param body: 在线模组版本和安装目标
         :return: 安装结果
         """
+        request, invalid = _validate_body(
+            InstanceTarget, {"game_path": body.get("game_path"), "version_id": body.get("instance_id")}
+        )
+        if invalid is not None:
+            return invalid
+        isolated = await to_thread.run_sync(self.game.resolve_version_isolation, request.game_path, request.version_id)
+        target = await to_thread.run_sync(self.game.resolve_instance, request.game_path, request.version_id, isolated)
         result = await to_thread.run_sync(
             self.game.install_online_resource,
-            body.get("game_path"),
-            body.get("instance_id"),
+            request.game_path,
+            request.version_id,
             body.get("resource_type", "mod"),
             body.get("source", "modrinth"),
             body.get("mod_id"),
             body.get("file_id"),
-            False,
+            isolated,
             body.get("task_id"),
             body.get("world_id"),
         )
         return success(
             {
                 "installed": [result],
-                "modsPath": str(self.game.mods_path(body.get("game_path"))),
+                "modsPath": str(target.game_data_path / "mods"),
             }
         )
 

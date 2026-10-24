@@ -662,7 +662,7 @@ class ScanCoordinator(_GameState):
         """
         从扫描缓存或本地扫描结果中读取隔离策略所需的最小版本元数据。
 
-        优先使用缓存副本；缓存未命中时进行本地扫描。读取失败仅记录警告并返回
+        优先使用目标实例的缓存副本；目标未命中时进行本地扫描。读取失败仅记录警告并返回
         空结果，让调用方按稳定回退规则处理。
         """
         path = self._normalize_game_path(game_path)
@@ -670,13 +670,15 @@ class ScanCoordinator(_GameState):
         key = self._version_path_key(path)
         with self._lock:
             cached = deepcopy(self._version_scan_cache.get(key, []))
-        versions = cached
-        if not versions:
-            try:
-                versions = self._scan_game_path(path)
-            except (OSError, TypeError, ValueError, VersionScanError) as exc:
-                self.logger.warning("读取实例隔离元数据失败 %s/%s: %s", path, name, exc)
-                return {}
+        for version in cached:
+            if str(version.get("versionId") or version.get("id") or "") == name:
+                return version
+        # 安装新实例后，其他实例的旧缓存仍可能存在；目标未命中时必须读取新元数据。
+        try:
+            versions = self._scan_game_path(path)
+        except (OSError, TypeError, ValueError, VersionScanError) as exc:
+            self.logger.warning("读取实例隔离元数据失败 %s/%s: %s", path, name, exc)
+            return {}
         for version in versions:
             if str(version.get("versionId") or version.get("id") or "") == name:
                 return version

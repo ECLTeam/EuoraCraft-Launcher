@@ -410,6 +410,97 @@ def _build_api(tmp_path) -> FrontendApi:
     return FrontendApi(context)
 
 
+@pytest.mark.parametrize("source", ["modrinth", "curseforge"])
+@pytest.mark.parametrize("resource_type", ["mod", "resourcepack", "shaderpack", "datapack", "world"])
+@pytest.mark.parametrize(
+    ("policy", "mode", "isolated"),
+    [
+        ("all", "inherit", True),
+        ("disabled", "inherit", False),
+        ("disabled", "enabled", True),
+        ("all", "disabled", False),
+        ("modded_only", "inherit", True),
+    ],
+)
+def test_online_download_uses_instance_isolation(tmp_path, monkeypatch, source, resource_type, policy, mode, isolated):
+    from ECL.services.game import GameService
+
+    if resource_type == "world" and source != "curseforge":
+        pytest.skip("在线世界仅支持 CurseForge")
+    api = _build_api(tmp_path)
+    game_path = tmp_path / ".minecraft"
+    service = GameService(api.accounts, isolation_policy_provider=lambda: policy)
+    api.game = service
+    service.write_version_settings(game_path, "Fabric", {"isolationMode": mode})
+    instance_path = game_path / "versions/Fabric"
+    (instance_path / "Fabric.json").write_text(
+        '{"id":"Fabric","mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}', encoding="utf-8"
+    )
+    (instance_path / "VersionInfo.json").write_text(
+        '{"LoaderType":"Fabric","VanillaVersion":"26.3","VanillaType":"release"}', encoding="utf-8"
+    )
+    data_path = game_path / "versions" / "Fabric" if isolated else game_path / "versions"
+    other_path = game_path / "versions" if isolated else game_path / "versions" / "Fabric"
+    directories = {"mod": "mods", "resourcepack": "resourcepacks", "shaderpack": "shaderpacks"}
+    if resource_type == "datapack":
+        (data_path / "saves" / "World").mkdir(parents=True)
+        # 错误隔离目标中也存在同名世界，确保测试检查真实写入而非仅检查世界缺失错误。
+        (other_path / "saves" / "World").mkdir(parents=True, exist_ok=True)
+        relative = Path("saves/World/datapacks/online.zip")
+    elif resource_type == "world":
+        relative = Path("saves/Imported/level.dat")
+    else:
+        relative = Path(directories[resource_type]) / "online.zip"
+    monkeypatch.setattr(
+        service,
+        "_select_online_file",
+        lambda *_: {"filename": "online.zip", "url": "https://example.test/online.zip", "hashes": {}},
+    )
+    monkeypatch.setattr(
+        service, "_download_online_file", lambda _url, destination, *_: destination.write_bytes(b"resource")
+    )
+
+    def import_world(root, archive):
+        destination = root / "Imported"
+        destination.mkdir()
+        (destination / "level.dat").write_bytes(archive.read_bytes())
+        return {"worldId": "Imported"}
+
+    monkeypatch.setattr(service, "_import_world_source", import_world)
+    try:
+        response = asyncio.run(
+            api.download_mod(
+                {
+                    "game_path": str(game_path),
+                    "instance_id": "Fabric",
+                    "source": source,
+                    "resource_type": resource_type,
+                    "mod_id": "project",
+                    "file_id": "file",
+                    "world_id": "World",
+                }
+            )
+        )
+        assert response["success"], response
+        assert (data_path / relative).read_bytes() == b"resource"
+        assert not (other_path / relative).exists()
+        assert Path(response["data"]["modsPath"]) == data_path / "mods"
+        assert not (game_path / "mods").exists()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("instance_id", ["../escape", "..\\escape", "", ".", ".."])
+def test_online_download_rejects_invalid_instance_before_writing(tmp_path, monkeypatch, instance_id):
+    api = _build_api(tmp_path)
+    downloaded = []
+    monkeypatch.setattr(api.game, "install_online_resource", lambda *_: downloaded.append(True), raising=False)
+    response = asyncio.run(api.download_mod({"game_path": str(tmp_path), "instance_id": instance_id}))
+    assert response["success"] is False
+    assert response["errorCode"] == "INVALID_REQUEST"
+    assert downloaded == []
+
+
 def test_dual_source_search_uses_real_game_service_and_typed_ipc(tmp_path, monkeypatch) -> None:
     from ECL.services.game import GameService
 

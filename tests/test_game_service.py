@@ -82,7 +82,7 @@ from unittest.mock import Mock
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.game import LaunchConfig, build_minecraft_cmd
+from ECL.game import GetGames, LaunchConfig, SearchMinecraft, build_minecraft_cmd
 from ECL.services.game import GameService, GameServiceError
 
 
@@ -199,6 +199,142 @@ def _build_service(**options) -> GameService:
         downloader_factory=options.pop("downloader_factory", FakeDownloader),
         **options,
     )
+
+
+@pytest.mark.parametrize(
+    ("policy", "mode", "isolated"),
+    [
+        ("all", "inherit", True),
+        ("disabled", "inherit", False),
+        ("modded_only", "inherit", True),
+        ("disabled", "enabled", True),
+        ("all", "disabled", False),
+    ],
+)
+def test_fabric_api_download_follows_effective_isolation(tmp_path, monkeypatch, policy, mode, isolated):
+    game_path = tmp_path / ".minecraft"
+    save_name = "26.3-fabric"
+    api_url = "https://example.test/fabric-api.jar"
+
+    class WritingDownloader(FakeDownloader):
+        async def run(self):
+            for _url, filename in self.download_list:
+                target = Path(filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"api")
+            await super().run()
+
+    client = SimpleNamespace(
+        get_minecraft_manifest=lambda: {"latest": {}, "versions": [{"id": "26.3", "type": "release", "sha1": "hash"}]},
+        get_minecraft_json=lambda *_: {"id": "26.3"},
+        get_fabric_profile=lambda **_: {
+            "id": save_name,
+            "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+        },
+    )
+    checker = SimpleNamespace(config=None, api_client=client, check_files=lambda *_: [])
+    games = GetGames(checker, None, game_path)
+    service = _build_service(
+        search_factory=SearchMinecraft,
+        downloader_factory=WritingDownloader,
+        isolation_policy_provider=lambda: policy,
+    )
+    service.write_version_settings(game_path, save_name, {"isolationMode": mode})
+    # 新版本尚未在已有扫描缓存内，不能因其他版本的缓存非空而误判成原版。
+    service._version_scan_cache[service._version_path_key(game_path)] = [
+        {"versionId": "Other", "primaryLoader": "Vanilla"}
+    ]
+    monkeypatch.setattr(service, "_context", lambda *_: SimpleNamespace(games=games))
+    monkeypatch.setattr(service, "_resolve_fabric_api", lambda *_: (api_url, "fabric-api.jar"))
+    events = []
+    try:
+        service.install_blocking(
+            "fabric-test",
+            "26.3",
+            save_name,
+            "fabric",
+            "0.16",
+            None,
+            game_path,
+            "official",
+            None,
+            lambda phase, message, **details: events.append({"phase": phase, **details}),
+        )
+        data_path = game_path / "versions" / save_name if isolated else game_path / "versions"
+        assert (data_path / "mods/fabric-api.jar").read_bytes() == b"api"
+        assert not (game_path / "mods").exists()
+        other_path = game_path / "versions" if isolated else game_path / "versions" / save_name
+        assert not (other_path / "mods/fabric-api.jar").exists()
+        assert events[-1]["phase"] == "done"
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("filename", ["../escape.jar", "..\\escape.jar", "/escape.jar"])
+def test_fabric_api_rejects_unsafe_filename(tmp_path, monkeypatch, filename):
+    service = _build_service(isolation_policy_provider=lambda: "all")
+    monkeypatch.setattr(
+        service, "_context", lambda *_: SimpleNamespace(games=SimpleNamespace(build_fabric_download_list=lambda *_: []))
+    )
+    monkeypatch.setattr(service, "_resolve_fabric_api", lambda *_: ("https://example.test/api.jar", filename))
+    with pytest.raises(GameServiceError, match="资源"):
+        service.install_blocking(
+            "unsafe", "26.3", "Fabric", "fabric", "0.16", None, tmp_path, "official", None, lambda *_a, **_k: None
+        )
+
+
+@pytest.mark.parametrize(("override", "isolated"), [(None, True), (False, False)])
+def test_online_service_uses_saved_isolation_and_keeps_download_target(tmp_path, monkeypatch, override, isolated):
+    service = _build_service(isolation_policy_provider=lambda: "all")
+    downloaded = []
+
+    def select_file(*_args):
+        # 目标在安装开始时确定；远端查询期间用户改变设置不会改写本次下载的目标。
+        service.write_version_settings(tmp_path, "Fabric", {"isolationMode": "disabled"})
+        return {"filename": "mod.jar", "url": "https://example.test/mod.jar", "hashes": {}}
+
+    def download(_url, target, *_args):
+        downloaded.append(target)
+        target.write_bytes(b"mod")
+
+    monkeypatch.setattr(service, "_select_online_file", select_file)
+    monkeypatch.setattr(service, "_download_online_file", download)
+    try:
+        result = service.install_online_resource(tmp_path, "Fabric", "mod", "modrinth", "project", "file", override)
+        data_path = tmp_path / "versions/Fabric" if isolated else tmp_path / "versions"
+        assert (data_path / "mods/mod.jar").read_bytes() == b"mod"
+        assert downloaded == [data_path / "mods/.mod.jar.ecl-download"]
+        assert result["filename"] == "mod.jar"
+    finally:
+        service.close()
+
+
+def test_online_hash_failure_preserves_existing_files_and_reports_failure(tmp_path, monkeypatch):
+    service = _build_service(isolation_policy_provider=lambda: "all")
+    root = tmp_path / "versions/Fabric/mods"
+    root.mkdir(parents=True)
+    (root / "keep.jar").write_bytes(b"keep")
+    monkeypatch.setattr(
+        service,
+        "_select_online_file",
+        lambda *_: {"filename": "new.jar", "url": "https://example.test/new.jar", "hashes": {"sha512": "wrong"}},
+    )
+    monkeypatch.setattr(service, "_download_online_file", lambda _url, target, *_: target.write_bytes(b"bad"))
+    events = []
+    service.events.subscribe("game:install_progress", events.append)
+    try:
+        with pytest.raises(GameServiceError) as error:
+            service.install_online_resource(
+                tmp_path, "Fabric", "mod", "modrinth", "project", "file", task_id="hash-test"
+            )
+        assert error.value.error_code == "RESOURCE_HASH_MISMATCH"
+        assert (root / "keep.jar").read_bytes() == b"keep"
+        assert not (root / "new.jar").exists()
+        assert not (root / ".new.jar.ecl-download").exists()
+        assert events[-1]["phase"] == "error"
+        assert not any(event["phase"] == "done" for event in events)
+    finally:
+        service.close()
 
 
 def _launch_lifecycle_fixture(tmp_path, monkeypatch, clock):

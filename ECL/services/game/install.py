@@ -28,8 +28,11 @@ from uuid import uuid4
 import httpx
 from anyio import to_thread
 
+from ECL.game import GetGames
+
 from .base import Downloader, GameServiceError, _GameState
 from .mod_sources import mod_api_base, mod_user_agent, rewrite_mod_file_url
+from .workspace import resolve_relative_id
 
 # install_blocking 的进度上报回调：签名与 _emit_install_progress 去掉 task_id 后一致。
 InstallProgressReporter = Callable[..., None]
@@ -284,6 +287,35 @@ class InstallCoordinator(_GameState):
         if cancel_event is not None and cancel_event.is_set():
             raise GameServiceError("安装已取消", "INSTALL_CANCELLED")
 
+    def _build_fabric_install_download_list(
+        self,
+        games: GetGames,
+        game_path: Path,
+        version_id: str,
+        save_name: str,
+        loader_version: str | None,
+        fabric_api_version: object,
+        include_fabric_api: bool,
+        cancel_event: Event | None,
+    ) -> list[tuple[str, str]]:
+        """
+        生成 Fabric 版本清单，并按实例有效隔离设置追加可选的 Fabric API。
+
+        Core 先写入加载器元数据，随后才能判断新实例是否属于模组实例。
+        整合包禁用附带 API 时不查询模组来源，也不添加额外文件。
+        """
+        download_list = games.build_fabric_download_list(version_id, loader_version, save_name)
+        if not include_fabric_api:
+            return download_list
+        self._ensure_install_not_cancelled(cancel_event)
+        api_url, filename = self._resolve_fabric_api(
+            version_id, fabric_api_version if isinstance(fabric_api_version, str) else None
+        )
+        isolated = self.resolve_version_isolation(game_path, save_name)
+        target = self.resolve_instance(game_path, save_name, isolated)
+        api_path = resolve_relative_id(target.game_data_path / "mods", filename, must_exist=False)
+        return [*download_list, (api_url, str(api_path))]
+
     def install_blocking(
         self,
         task_id: str,
@@ -328,14 +360,16 @@ class InstallCoordinator(_GameState):
         if loader == "vanilla":
             download_list = games.build_minecraft_download_list(version_id, save_name)
         elif loader == "fabric":
-            fabric_api = (
-                self._resolve_fabric_api(
-                    version_id, fabric_api_version if isinstance(fabric_api_version, str) else None
-                )
-                if include_fabric_api
-                else None
+            download_list = self._build_fabric_install_download_list(
+                games,
+                game_path,
+                version_id,
+                save_name,
+                loader_version,
+                fabric_api_version,
+                include_fabric_api,
+                cancel_event,
             )
-            download_list = games.build_fabric_download_list(version_id, loader_version, save_name, fabric_api)
         elif loader == "quilt":
             download_list = games.build_quilt_download_list(version_id, loader_version, save_name)
         elif loader == "forge":
