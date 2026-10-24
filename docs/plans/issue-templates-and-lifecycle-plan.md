@@ -2,7 +2,7 @@
 
 日期：2026-10-24（Asia/Shanghai）。
 
-状态：用户已选择方案 B「Issue Forms + 提交规范 + 缺陷处理流程」；本文件供审阅，尚未批准模板与正式规范的实施。
+状态：用户已选择方案 B「Issue Forms + 提交规范 + 缺陷处理流程」，并于 2026-10-24 确认「开始实施」；实施与验收记录见第 10 节。
 
 ## 1. 目标与调研结论
 
@@ -136,11 +136,36 @@ README 增加贡献指南和 `issues/new/choose` 入口，保留现有文档站�
 以下官方文档在 2026-10-24 核对，实施时以其现行 schema 和仓库实际设置为准：
 
 - [Issue Forms 语法](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-forms)
+- [表单字段 schema](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-githubs-form-schema)
 - [配置 Issue 模板与选择器](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository)
 - [关联 PR 与 Issue、默认分支及关闭关键字](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)
 
 ## 10. 实施与验收记录
 
-当前仅完成实施方案编写，等待用户审阅和实施批准。模板、正式规范、贡献指南和 PR 模板尚未修改；未创建、评论或关闭远端 Issue，未推送远端。
+用户于 2026-10-24 确认「开始实施」，本地实施与定向检查已完成。
 
-方案文档的章节结构、空白格式、链接地址及现行 AGENTS 章节引用检查通过，`git diff --check` 通过。本阶段只有方案文档，不运行应用功能测试或构建；方案文档独立提交至原工作区本地 `main`，具体提交以 Git 记录为准。线上表单检查留待获准实施与推送后执行。
+实际改动：
+
+- 新增缺陷报告、功能建议两份表单，以及关闭普通用户空白入口的选择器配置。标题、必填项、复现与代码证据入口、可选环境信息、日志和截图分别按本方案实现，不依赖标签、指定处理人或组织 Issue 类型。
+- 新增贡献指南与四部分 PR 模板，更新 README 贡献入口。
+- 在 AGENTS 第 0 节增加问题登记与跟踪，第 7 节补充修复关联、子模块集成、远端验收后关闭和重新打开规则；其余工程规范保持原义。
+
+实际验证：
+
+| 检查 | 执行与结果 |
+| --- | --- |
+| YAML 解析与字段结构 | 一次性 Python 检查脚本使用临时目录中的 PyYAML 6.0.3，三份配置全部通过。按官方文档核对顶层字段、字段类型、唯一 ID、必填项、复选框和选择器布尔值，不宣称运行了 GitHub 服务端校验。 |
+| 检查脚本负向验证 | 重复 YAML 键、重复字段 ID、缺少校验配置、下拉选项类型错误均被拒绝。 |
+| 模板与新增指南格式 | 使用现有前端工具执行 `node frontend/node_modules/prettier/bin/prettier.cjs --check .github/ISSUE_TEMPLATE/01-bug-report.yml .github/ISSUE_TEMPLATE/02-feature-request.yml .github/ISSUE_TEMPLATE/config.yml .github/pull_request_template.md CONTRIBUTING.md`，通过。 |
+| 文档结构与链接 | 一次性脚本检查涉及 Markdown 的标题、代码围栏、现行章节编号、本地目标及 GitHub 默认分支文件链接对应的本地文件；通过。没有对未推送的远端贡献指南谎报线上链接可用。 |
+| 处理流程核对 | 人工核对普通用户填写、开发者代码证据、子模块修复、仅本地交付和重复关闭五类流程；表单、贡献指南、PR 模板及 AGENTS 的要求一致。PR 模板没有预填有效的自动关闭引用。 |
+| 差异与工作区保护 | `git diff --check` 和相应提交前的 `git diff --cached --check` 通过；无关 desktop 文件与前端 `zh-CN.json` 的 SHA-256 保持一致，全部 gitlink 与实施前一致。 |
+
+检查脚本和 PyYAML 仅置于系统临时目录，没有加入项目依赖、仓库脚本或 CI。此次为协作模板配置及文档调整，未改应用运行行为，不运行全量 pytest、前端类型检查、构建或启动器验收。
+
+交付记录：
+
+- 方案文档预先提交为 `b19ad7d`。
+- 模板与 PR 配置提交为 `60402d9`（`chore: 添加缺陷报告和功能建议表单`）。规范、贡献指南及本记录独立以 `docs` 提交，最终 SHA 以 Git 记录和交付总结为准。
+- 直接在 `git worktree list` 确认的原工作区本地 `main` 完成提交，无需额外合并，不包含无关改动或子模块指针调整。
+- 未创建、评论或关闭远端 Issue，未推送远端。线上模板尚未生效，GitHub 选择器、表单渲染、服务端必填校验及只读身份入口仍待针对本次变更获准推送后验收。

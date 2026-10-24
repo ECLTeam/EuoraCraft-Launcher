@@ -63,7 +63,7 @@
 
 ## 参与贡献
 
-欢迎通过 [Issues](https://github.com/ECLTeam/EuoraCraft-Launcher/issues) 提交问题、功能建议或安全反馈，也欢迎提交 Pull Request。涉及使用与功能的问题，请优先查阅[文档站](https://docs.euora.cn)。
+欢迎通过 [Issue 表单](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/new/choose)报告问题或提出功能建议，也欢迎提交 Pull Request。提交前请查阅[贡献指南](CONTRIBUTING.md)，搜索已有 Issue，并对日志与附件脱敏；不要在公开 Issue 中提交凭据或敏感漏洞细节。涉及使用与功能的问题，请优先查阅[文档站](https://docs.euora.cn)。
 
 ## 贡献者们
 
