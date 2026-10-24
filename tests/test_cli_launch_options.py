@@ -410,34 +410,53 @@ def test_result_path_rejects_existing_or_invalid_targets(tmp_path, monkeypatch, 
     assert Path("existing").read_text(encoding="utf-8") == "keep"
 
 
-def test_parse_webview_debug_port_accepts_auto_and_explicit_port() -> None:
-    """调试端口 0 表示由浏览器分配，其余合法端口原样保留。"""
+def test_parse_webview_debug_port_accepts_auto_and_explicit_port(monkeypatch) -> None:
+    """
+    在 Windows 分支校验自动端口及合法边界，不依赖测试宿主的平台。
+    """
+    monkeypatch.setattr("ECL.cli.sys", SimpleNamespace(platform="win32"))
+
     assert parse_launch_options(["--dev-channel", "--webview-debug-port", "0"]).webview_debug_port == 0
     assert parse_launch_options(["--dev-channel", "--webview-debug-port=1024"]).webview_debug_port == 1024
+    assert parse_launch_options(["--dev-channel", "--webview-debug-port=65535"]).webview_debug_port == 65535
 
 
 @pytest.mark.parametrize("port", ["1", "1023", "65536", "-1"])
-def test_parse_webview_debug_port_rejects_out_of_range(port: str) -> None:
-    """调试端口只接受 0 或非特权端口范围。"""
+def test_parse_webview_debug_port_rejects_out_of_range(monkeypatch, capsys, port: str) -> None:
+    """
+    在 Windows 分支确认端口范围错误，避免被平台拒绝掩盖。
+    """
+    monkeypatch.setattr("ECL.cli.sys", SimpleNamespace(platform="win32"))
+
     with pytest.raises(SystemExit) as error:
         parse_launch_options(["--dev-channel", f"--webview-debug-port={port}"])
 
     assert error.value.code == 2
+    assert "--webview-debug-port 必须为 0 或 1024—65535 之间的端口" in capsys.readouterr().err
 
 
-def test_parse_webview_debug_port_requires_dev_channel() -> None:
-    """远程调试会暴露完整的页面脚本能力，必须与开发者通道同时开启。"""
+def test_parse_webview_debug_port_requires_dev_channel(monkeypatch, capsys) -> None:
+    """
+    在 Windows 分支确认远程调试必须同时开启开发者通道。
+    """
+    monkeypatch.setattr("ECL.cli.sys", SimpleNamespace(platform="win32"))
+
     with pytest.raises(SystemExit) as error:
         parse_launch_options(["--webview-debug-port=0"])
 
     assert error.value.code == 2
+    assert "--webview-debug-port 需要与 --dev-channel 同时使用" in capsys.readouterr().err
 
 
-def test_parse_webview_debug_port_rejects_other_platforms(monkeypatch) -> None:
-    """非 Windows 平台明确拒绝，不用空实现掩盖。"""
-    monkeypatch.setattr("ECL.cli.sys", SimpleNamespace(platform="linux"))
+@pytest.mark.parametrize("platform_name", ["linux", "darwin"])
+def test_parse_webview_debug_port_rejects_other_platforms(monkeypatch, capsys, platform_name: str) -> None:
+    """
+    Linux 与 macOS 明确拒绝 Windows 专属的远程调试参数。
+    """
+    monkeypatch.setattr("ECL.cli.sys", SimpleNamespace(platform=platform_name))
 
     with pytest.raises(SystemExit) as error:
         parse_launch_options(["--dev-channel", "--webview-debug-port=0"])
 
     assert error.value.code == 2
+    assert "--webview-debug-port 仅支持 Windows" in capsys.readouterr().err
