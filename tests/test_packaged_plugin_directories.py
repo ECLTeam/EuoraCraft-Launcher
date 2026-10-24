@@ -4,10 +4,10 @@ import asyncio
 import json
 import os
 import platform
-import socket
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import psutil
@@ -46,14 +46,23 @@ async def _connect(data_path: Path, process: subprocess.Popen, log_path: Path):
             await asyncio.sleep(0.1)
 
 
-async def _native_channel(port: int, process: subprocess.Popen, log_path: Path):
+async def _native_channel(profile_path: Path, process: subprocess.Popen, log_path: Path):
+    port_file = profile_path / "EBWebView" / "DevToolsActivePort"
+    page_origins: list[str] = []
     try:
         async with asyncio.timeout(90), httpx.AsyncClient(trust_env=False) as client:
             while True:
                 if process.poll() is not None:
                     pytest.fail(log_path.read_text(encoding="utf-8", errors="replace"))
                 try:
+                    lines = port_file.read_text(encoding="ascii").splitlines()
+                    if not lines:
+                        await asyncio.sleep(0.1)
+                        continue
+                    port = int(lines[0])
+                    assert 1 <= port <= 65535, "浏览器调试端口文件中的端口无效"
                     pages = (await client.get(f"http://127.0.0.1:{port}/json/list")).json()
+                    page_origins = [urlsplit(item.get("url", "")).netloc for item in pages]
                     page = next(
                         (
                             item
@@ -68,7 +77,31 @@ async def _native_channel(port: int, process: subprocess.Popen, log_path: Path):
                     pass
                 await asyncio.sleep(0.1)
     except TimeoutError:
-        pytest.fail("等待原生页面调试通道超时：\n" + log_path.read_text(encoding="utf-8", errors="replace"))
+        diagnostics = [f"端口发现文件存在：{port_file.is_file()}", f"页面来源：{page_origins}"]
+        try:
+            children = psutil.Process(process.pid).children(recursive=True)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            children = []
+        for child in children:
+            try:
+                if child.name().casefold() != "msedgewebview2.exe":
+                    continue
+                # 只报告调试参数与本地监听端口，不打印含用户目录的完整命令行。
+                flags = [arg for arg in child.cmdline() if arg.startswith("--remote-debugging-")]
+                ports = [
+                    connection.laddr.port
+                    for connection in child.net_connections(kind="tcp")
+                    if connection.status == psutil.CONN_LISTEN and connection.laddr.ip in {"127.0.0.1", "::1"}
+                ]
+                diagnostics.append(f"浏览器调试参数：{flags}；本地监听端口：{ports}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as error:
+                diagnostics.append(f"浏览器诊断不可用：{type(error).__name__}")
+        pytest.fail(
+            "等待原生页面调试通道超时：\n"
+            + "\n".join(diagnostics)
+            + "\n"
+            + log_path.read_text(encoding="utf-8", errors="replace")
+        )
 
 
 async def _native_invoke(channel, sequence: int, command: str, params: dict):
@@ -364,14 +397,13 @@ class Plugin(BasePlugin):
         )
     for phase in ("install", "restart"):
         log_path = tmp_path / f"{phase}.log"
-        with socket.socket() as listener:
-            listener.bind(("127.0.0.1", 0))
-            debug_port = listener.getsockname()[1]
+        profile_path = data_path / f"webview-profile-{phase}"
         environment = dict(
             os.environ,
-            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=f"--remote-debugging-port={debug_port}",
+            # 由浏览器原子分配端口；预选空闲端口后再释放，会与启动器自身的本地服务竞争。
+            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=0",
             # 每次启动使用独立浏览器进程，避免复用旧进程时仍绑定上一阶段的调试端口。
-            WEBVIEW2_USER_DATA_FOLDER=str(data_path / f"webview-profile-{phase}"),
+            WEBVIEW2_USER_DATA_FOLDER=str(profile_path),
         )
         with log_path.open("wb") as log_file:
             launcher = (
@@ -393,7 +425,7 @@ class Plugin(BasePlugin):
                 info = await _request(websocket, 1, "launcher.info")
                 # 开发者通道先于窗口启动；等待浏览器创建完成后才能安装并结束首阶段，
                 # 否则终止进程时 WebView2 仍可能创建未纳入清理快照的子进程。
-                native = await _native_channel(debug_port, process, log_path)
+                native = await _native_channel(profile_path, process, log_path)
                 if phase == "install":
                     result = await _request(
                         websocket,
