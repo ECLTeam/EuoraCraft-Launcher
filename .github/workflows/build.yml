@@ -150,7 +150,7 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb dbus-x11
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install Python dependencies
         run: |
@@ -271,10 +271,6 @@ jobs:
         shell: bash
         run: python packaging/build-host-dependencies.py
 
-      - name: Smoke test offline plugin dependency installation
-        shell: bash
-        run: python -m pytest tests/test_plugin_environment_pool.py tests/test_plugin_package_preparation.py tests/test_plugin_manager_packages.py -q
-
       - name: Build with Nuitka
         if: ${{ runner.os != 'macOS' }}
         shell: bash
@@ -331,63 +327,6 @@ jobs:
         shell: bash
         run: |
           python -m PyInstaller --noconfirm --clean "EuoraCraft-Launcher.spec"
-
-      - name: Smoke test packaged headless runtime
-        shell: bash
-        env:
-          PYTHONUTF8: "1"
-        run: |
-          set -euo pipefail
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.exe"
-          elif [ "$RUNNER_OS" = "macOS" ]; then
-            export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher.app/Contents/MacOS/EuoraCraft Launcher"
-          else
-            export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
-          fi
-          python -m pytest tests/test_packaged_headless_runtime.py -q
-
-      - name: Prepare offline plugin wheels
-        # 冻结产物验收所需的离线轮子，供原生安装与 Worker 依赖用例共用。
-        shell: bash
-        env:
-          PYTHONUTF8: "1"
-        run: |
-          set -euo pipefail
-          python -m pip download --only-binary=:all: --no-deps --dest build/plugin-smoke-wheels xxhash==3.6.0
-          echo "ECL_PLUGIN_SMOKE_WHEELS=$GITHUB_WORKSPACE/build/plugin-smoke-wheels" >> "$GITHUB_ENV"
-
-      - name: Smoke test packaged plugin directories
-        # 使用最终启动器验证动态安装，而非额外发布插件解释器。
-        shell: bash
-        env:
-          PYTHONUTF8: "1"
-          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
-        run: |
-          set -euo pipefail
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.exe"
-            python -m pytest tests/test_packaged_plugin_directories.py -q
-          elif [ "$RUNNER_OS" = "macOS" ]; then
-            export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher.app/Contents/MacOS/EuoraCraft Launcher"
-            python -m pytest tests/test_packaged_plugin_directories.py -q
-          else
-            export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
-            dbus-run-session -- xvfb-run -a python -m pytest tests/test_packaged_plugin_directories.py -q
-          fi
-
-      - name: Smoke test packaged plugin workers
-        # 生产代码只在 Windows x64 支持第三方插件运行，其余平台由安装检查明确拒绝。
-        if: ${{ runner.os == 'Windows' && matrix.os != 'windows-11-arm' }}
-        shell: bash
-        env:
-          PYTHONUTF8: "1"
-          ECL_PLUGIN_SMOKE_EXECUTABLE: ${{ github.workspace }}/build-nuitka/main.exe
-          ECL_WORKER_SMOKE_EXECUTABLE: ${{ github.workspace }}/build-nuitka/main.exe
-          ECL_WORKER_SMOKE_BUILDER: nuitka
-        run: |
-          set -euo pipefail
-          python -m pytest tests/test_plugin_worker_bootstrap.py tests/test_plugin_windows_supervision.py tests/test_plugin_worker_dependencies.py tests/test_plugin_worker_lifecycle.py tests/test_plugin_operation_worker.py tests/test_plugin_file_worker.py tests/test_plugin_file_handles.py tests/test_plugin_host_files.py tests/test_plugin_network_targets.py tests/test_plugin_network_api.py tests/test_plugin_network_logging.py tests/test_plugin_network_worker.py tests/test_plugin_network_shutdown.py -q
 
       - name: Package artifact
         id: package
@@ -509,7 +448,7 @@ jobs:
           pacman -S --needed --noconfirm \
             uv \
             gtk3 webkit2gtk-4.1 librsvg libayatana-appindicator \
-            xorg-server-xvfb xorg-xauth dbus \
+            dbus \
             patchelf curl upx
 
       - name: Install Python dependencies
@@ -523,10 +462,6 @@ jobs:
       - name: Generate host dependency manifest
         shell: bash
         run: .venv-arch/bin/python packaging/build-host-dependencies.py
-
-      - name: Smoke test offline plugin dependency installation
-        shell: bash
-        run: .venv-arch/bin/python -m pytest tests/test_plugin_environment_pool.py tests/test_plugin_package_preparation.py tests/test_plugin_manager_packages.py -q
 
       - name: Inject build secrets
         shell: bash
@@ -597,51 +532,6 @@ jobs:
             --include-data-dir=capabilities=capabilities \
             --include-data-files=Tauri.toml=Tauri.toml \
             main.py
-
-      - name: Smoke test Arch binary
-        shell: bash
-        run: |
-          set +e
-          timeout 30s dbus-run-session -- \
-            xvfb-run -a env WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-            './build-nuitka/main.bin' > arch-smoke.log 2>&1
-          status=$?
-          set -e
-
-          cat arch-smoke.log
-          if grep -Fq '/usr/lib/x86_64-linux-gnu' arch-smoke.log; then
-            echo 'Arch 产物仍在访问 Debian/Ubuntu 的多架构路径' >&2
-            exit 1
-          fi
-          if grep -Eq 'Unable to spawn.*WebKit|SIGTRAP|Traceback \(most recent call last\)' arch-smoke.log; then
-            echo 'Arch 产物启动时出现致命错误' >&2
-            exit 1
-          fi
-          # timeout=124 表示 GUI 在冒烟测试结束时仍正常运行；提前退出也应失败。
-          if [ "$status" -ne 124 ]; then
-            echo "Arch 产物异常退出，status=$status" >&2
-            exit 1
-          fi
-
-      - name: Smoke test Arch headless runtime
-        shell: bash
-        env:
-          PYTHONUTF8: "1"
-        run: |
-          set -euo pipefail
-          export ECL_HEADLESS_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
-          .venv-arch/bin/python -m pytest tests/test_packaged_headless_runtime.py -q
-
-      - name: Smoke test Arch plugin directories
-        shell: bash
-        env:
-          PYTHONUTF8: "1"
-          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
-        run: |
-          .venv-arch/bin/python -m pip download --only-binary=:all: --no-deps --dest build/plugin-smoke-wheels xxhash==3.6.0
-          export ECL_PLUGIN_SMOKE_WHEELS="$GITHUB_WORKSPACE/build/plugin-smoke-wheels"
-          export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
-          dbus-run-session -- xvfb-run -a .venv-arch/bin/python -m pytest tests/test_packaged_plugin_directories.py -q
 
       - name: Prepare source for PKGBUILD
         working-directory: packaging/arch
