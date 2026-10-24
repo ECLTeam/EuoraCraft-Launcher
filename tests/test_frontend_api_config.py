@@ -1346,6 +1346,30 @@ def test_adapter_main_window_is_visible_without_native_shadow() -> None:
     assert window_config["minHeight"] == 600
 
 
+def test_adapter_window_config_injects_webview_debug_port() -> None:
+    """命令行要求远程调试时，主窗口配置应携带浏览器标志。"""
+    adapter = object.__new__(Adapter)
+    adapter.config = {"tauri": {}}
+    adapter.launcher_version = "0.0.1-alpha"
+    adapter.webview_debug_port = 0
+    adapter.logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+
+    window_config = adapter._build_config()["app"]["windows"][0]
+
+    assert window_config["additionalBrowserArgs"] == "--remote-debugging-port=0"
+
+
+def test_adapter_window_config_omits_webview_debug_port_by_default() -> None:
+    """未要求远程调试时不写浏览器标志，发布运行的窗口配置保持不变。"""
+    adapter = object.__new__(Adapter)
+    adapter.config = {"tauri": {}}
+    adapter.launcher_version = "0.0.1-alpha"
+
+    window_config = adapter._build_config()["app"]["windows"][0]
+
+    assert "additionalBrowserArgs" not in window_config
+
+
 @pytest.mark.parametrize(
     ("platform", "expected_mode", "is_transparent", "has_shadow"),
     [

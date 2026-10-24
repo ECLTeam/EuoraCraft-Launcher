@@ -52,6 +52,8 @@ class LaunchOptions:
     disable_plugins: bool = False  # --disable-plugins 是否跳过插件的加载与启用
     frontend_dist: str | None = None  # --frontend-dist 指定的前端资源来源
     enable_dev_channel: bool = False  # --dev-channel 是否开启开发者通道
+    # --webview-debug-port 指定的 WebView2 远程调试端口，None 表示未开启；仅 Windows、仅本次运行生效
+    webview_debug_port: int | None = None
     launch_target: str | None = None  # --launch 指向的实例（版本名或实例目录）
     server_target: str | None = None  # --server 指定的快捷进入服务器地址
     world_target: str | None = None  # --world 指定的快捷进入世界 ID
@@ -162,6 +164,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--dev-channel",
         action="store_true",
         help="开启开发者通道（供插件开发工具箱连接）",
+    )
+    parser.add_argument(
+        "--webview-debug-port",
+        type=int,
+        metavar="端口",
+        help="开启 WebView2 远程调试，0 表示由浏览器分配端口；仅 Windows，且需与 --dev-channel 同时使用",
     )
     parser.add_argument(
         "--launch",
@@ -311,6 +319,26 @@ def _validate_run_mode(parser: argparse.ArgumentParser, args: argparse.Namespace
                 parser.error(f"{canonical} 不支持无头模式")
 
 
+def _validate_webview_debug_port(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """
+    校验 WebView2 调试端口的可用条件。
+
+    远程调试会向本机暴露完整的页面脚本能力，因此要求同时开启开发者通道，
+    并限定在 Windows 桌面模式；其他平台的等价能力不由本参数承担，不做空实现。
+
+    :param parser: 用于报告用法错误的解析器
+    :param args: 已解析的命令行参数
+    """
+    if args.webview_debug_port is None:
+        return
+    if sys.platform != "win32":
+        parser.error("--webview-debug-port 仅支持 Windows")
+    if not args.dev_channel:
+        parser.error("--webview-debug-port 需要与 --dev-channel 同时使用")
+    if args.webview_debug_port != 0 and not 1024 <= args.webview_debug_port <= 65535:
+        parser.error("--webview-debug-port 必须为 0 或 1024—65535 之间的端口")
+
+
 def _resolve_result_file(parser: argparse.ArgumentParser, raw: str | None) -> Path | None:
     """
     校验调用者指定的输出文件，保留既有文件和目录。
@@ -348,6 +376,7 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         parser.error("插件角色必须通过 main.py 的统一进程入口启动")
     args = parser.parse_args(list(argv))
     _validate_run_mode(parser, args, argv)
+    _validate_webview_debug_port(parser, args)
     if (args.server or args.world) and not args.launch:
         parser.error("--server/--world 需要与 --launch 同时使用")
     if args.server and args.world:
@@ -365,6 +394,7 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         disable_plugins=bool(args.disable_plugins),
         frontend_dist=_resolve_frontend_dist(parser, args.frontend_dist),
         enable_dev_channel=bool(args.dev_channel),
+        webview_debug_port=args.webview_debug_port,
         launch_target=args.launch.strip() if args.launch else None,
         server_target=_validate_quick_target(parser, "--server", args.server),
         world_target=_validate_quick_target(parser, "--world", args.world),

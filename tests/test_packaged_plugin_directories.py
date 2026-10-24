@@ -400,8 +400,6 @@ class Plugin(BasePlugin):
         profile_path = data_path / f"webview-profile-{phase}"
         environment = dict(
             os.environ,
-            # 由浏览器原子分配端口；预选空闲端口后再释放，会与启动器自身的本地服务竞争。
-            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=0",
             # 每次启动使用独立浏览器进程，避免复用旧进程时仍绑定上一阶段的调试端口。
             WEBVIEW2_USER_DATA_FOLDER=str(profile_path),
         )
@@ -412,7 +410,9 @@ class Plugin(BasePlugin):
                 else [str(executable_path)]
             )
             process = subprocess.Popen(
-                [*launcher, "--data-dir", str(data_path), "--dev-channel"],
+                # 调试端口由启动器经窗口配置下发给浏览器：提升权限的宿主会忽略
+                # WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS，环境变量方式在 CI 不生效。
+                [*launcher, "--data-dir", str(data_path), "--dev-channel", "--webview-debug-port", "0"],
                 env=environment,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,

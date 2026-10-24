@@ -34,7 +34,7 @@
 import builtins
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -389,6 +389,7 @@ def test_invalid_mode_exits_before_runtime_import(argv, monkeypatch) -> None:
         "--launcher-visibility=none",
         "--front=missing",
         "--no-lock-mem",
+        "--webview-debug-port=0",
     ],
 )
 def test_headless_rejects_every_desktop_option(desktop_option) -> None:
@@ -407,3 +408,36 @@ def test_result_path_rejects_existing_or_invalid_targets(tmp_path, monkeypatch, 
         parse_launch_options(["--headless", "--task=runtime-check", "--result-file", target])
     assert error.value.code == 2
     assert Path("existing").read_text(encoding="utf-8") == "keep"
+
+
+def test_parse_webview_debug_port_accepts_auto_and_explicit_port() -> None:
+    """调试端口 0 表示由浏览器分配，其余合法端口原样保留。"""
+    assert parse_launch_options(["--dev-channel", "--webview-debug-port", "0"]).webview_debug_port == 0
+    assert parse_launch_options(["--dev-channel", "--webview-debug-port=1024"]).webview_debug_port == 1024
+
+
+@pytest.mark.parametrize("port", ["1", "1023", "65536", "-1"])
+def test_parse_webview_debug_port_rejects_out_of_range(port: str) -> None:
+    """调试端口只接受 0 或非特权端口范围。"""
+    with pytest.raises(SystemExit) as error:
+        parse_launch_options(["--dev-channel", f"--webview-debug-port={port}"])
+
+    assert error.value.code == 2
+
+
+def test_parse_webview_debug_port_requires_dev_channel() -> None:
+    """远程调试会暴露完整的页面脚本能力，必须与开发者通道同时开启。"""
+    with pytest.raises(SystemExit) as error:
+        parse_launch_options(["--webview-debug-port=0"])
+
+    assert error.value.code == 2
+
+
+def test_parse_webview_debug_port_rejects_other_platforms(monkeypatch) -> None:
+    """非 Windows 平台明确拒绝，不用空实现掩盖。"""
+    monkeypatch.setattr("ECL.cli.sys", SimpleNamespace(platform="linux"))
+
+    with pytest.raises(SystemExit) as error:
+        parse_launch_options(["--dev-channel", "--webview-debug-port=0"])
+
+    assert error.value.code == 2

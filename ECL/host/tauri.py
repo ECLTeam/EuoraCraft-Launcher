@@ -37,6 +37,9 @@ class Adapter:
     桥接后端事件总线与前端通道，将后端状态变更持久转发到 Tauri 前端。
     """
 
+    # 类级默认：允许测试经 object.__new__ 构造实例时按“未开启远程调试”处理。
+    webview_debug_port: int | None = None  # --webview-debug-port 指定的调试端口，None 表示未开启
+
     def __init__(self, context: ApplicationContext) -> None:
         launcher = context.state
         self.context = context
@@ -48,6 +51,8 @@ class Adapter:
         self._active_window_chrome = "custom"
         self.launcher_version: str = launcher.launcher_version  # 启动器版本
         self.frontend_api_instance = FrontendApi(context)
+        options = context.state.launch_options
+        self.webview_debug_port = options.webview_debug_port if options is not None else None
 
     def run(self) -> None:
         """
@@ -101,7 +106,8 @@ class Adapter:
         根据启动配置生成主窗口参数，并记录本次运行的有效窗口模式。
 
         系统边缘模式仅在 Windows 生效；其他平台按纯自绘创建窗口，避免改变
-        原有的插件窗口及跨平台外观。
+        原有的插件窗口及跨平台外观。命令行要求开启 WebView2 远程调试时，
+        额外为主窗口写入浏览器标志，其余字段与发布运行保持一致。
 
         :return: 传给 Tauri 的应用配置
         """
@@ -117,25 +123,38 @@ class Adapter:
             self._active_window_chrome = "custom"
         is_native_chrome = self._active_window_chrome == "native"
         has_system_edge = self._active_window_chrome in {"system_shadow", "native"}
+        window_config: dict[str, Any] = {
+            "decorations": is_native_chrome,
+            "transparent": not has_system_edge,
+            "shadow": has_system_edge,
+            "title": tauri_config.get("title", "EuoraCraft Launcher"),
+            "width": tauri_config.get("width", 900),
+            "height": tauri_config.get("height", 600),
+            "minWidth": 960,  # 真神奇，这玩意会在启用窗口边缘阴影的情况下多出几个px
+            "minHeight": 600,
+            "visible": True,
+        }
+        self._apply_webview_debug_options(window_config)
         return {
             "version": self.launcher_version,
             "build": {"frontendDist": tauri_config.get("frontenddist", "frontend/dist")},
-            "app": {
-                "windows": [
-                    {
-                        "decorations": is_native_chrome,
-                        "transparent": not has_system_edge,
-                        "shadow": has_system_edge,
-                        "title": tauri_config.get("title", "EuoraCraft Launcher"),
-                        "width": tauri_config.get("width", 900),
-                        "height": tauri_config.get("height", 600),
-                        "minWidth": 960,  # 真神奇，这玩意会在启用窗口边缘阴影的情况下多出几个px
-                        "minHeight": 600,
-                        "visible": True,
-                    }
-                ]
-            },
+            "app": {"windows": [window_config]},
         }
+
+    def _apply_webview_debug_options(self, window_config: dict[str, Any]) -> None:
+        """
+        按 --webview-debug-port 为主窗口开启 WebView2 远程调试。
+
+        浏览器标志只能经窗口配置下发：提升权限的宿主应用会忽略
+        ``WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`` 环境变量，而代码设置的标志
+        不受此限制。未指定端口时不修改窗口配置，保证发布运行与既有行为一致。
+
+        :param window_config: 待提交给 Tauri 的主窗口配置
+        """
+        if self.webview_debug_port is None:
+            return
+        window_config["additionalBrowserArgs"] = f"--remote-debugging-port={self.webview_debug_port}"
+        self.logger.warning("已开启 WebView2 远程调试：端口：%s；仅供开发期调试使用", self.webview_debug_port)
 
     def _register_commands(self) -> None:
         # 将后端命令处理器注册为 Tauri 的 IPC 命令。

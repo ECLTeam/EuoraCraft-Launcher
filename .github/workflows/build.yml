@@ -347,6 +347,16 @@ jobs:
           fi
           python -m pytest tests/test_packaged_headless_runtime.py -q
 
+      - name: Prepare offline plugin wheels
+        # 冻结产物验收所需的离线轮子，供原生安装与 Worker 依赖用例共用。
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          set -euo pipefail
+          python -m pip download --only-binary=:all: --no-deps --dest build/plugin-smoke-wheels xxhash==3.6.0
+          echo "ECL_PLUGIN_SMOKE_WHEELS=$GITHUB_WORKSPACE/build/plugin-smoke-wheels" >> "$GITHUB_ENV"
+
       - name: Smoke test packaged plugin directories
         # 使用最终启动器验证动态安装，而非额外发布插件解释器。
         shell: bash
@@ -355,16 +365,9 @@ jobs:
           WEBKIT_DISABLE_COMPOSITING_MODE: "1"
         run: |
           set -euo pipefail
-          python -m pip download --only-binary=:all: --no-deps --dest build/plugin-smoke-wheels xxhash==3.6.0
-          export ECL_PLUGIN_SMOKE_WHEELS="$GITHUB_WORKSPACE/build/plugin-smoke-wheels"
           if [ "$RUNNER_OS" = "Windows" ]; then
             export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.exe"
             python -m pytest tests/test_packaged_plugin_directories.py -q
-            if [ "${{ matrix.os }}" != "windows-11-arm" ]; then
-              export ECL_WORKER_SMOKE_EXECUTABLE="$ECL_PLUGIN_SMOKE_EXECUTABLE"
-              export ECL_WORKER_SMOKE_BUILDER="nuitka"
-                python -m pytest tests/test_plugin_worker_bootstrap.py tests/test_plugin_windows_supervision.py tests/test_plugin_worker_dependencies.py tests/test_plugin_worker_lifecycle.py tests/test_plugin_operation_worker.py tests/test_plugin_file_worker.py tests/test_plugin_file_handles.py tests/test_plugin_host_files.py tests/test_plugin_network_targets.py tests/test_plugin_network_api.py tests/test_plugin_network_logging.py tests/test_plugin_network_worker.py tests/test_plugin_network_shutdown.py -q
-            fi
           elif [ "$RUNNER_OS" = "macOS" ]; then
             export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/dist/EuoraCraft Launcher.app/Contents/MacOS/EuoraCraft Launcher"
             python -m pytest tests/test_packaged_plugin_directories.py -q
@@ -372,6 +375,19 @@ jobs:
             export ECL_PLUGIN_SMOKE_EXECUTABLE="$GITHUB_WORKSPACE/build-nuitka/main.bin"
             dbus-run-session -- xvfb-run -a python -m pytest tests/test_packaged_plugin_directories.py -q
           fi
+
+      - name: Smoke test packaged plugin workers
+        # 生产代码只在 Windows x64 支持第三方插件运行，其余平台由安装检查明确拒绝。
+        if: ${{ runner.os == 'Windows' && matrix.os != 'windows-11-arm' }}
+        shell: bash
+        env:
+          PYTHONUTF8: "1"
+          ECL_PLUGIN_SMOKE_EXECUTABLE: ${{ github.workspace }}/build-nuitka/main.exe
+          ECL_WORKER_SMOKE_EXECUTABLE: ${{ github.workspace }}/build-nuitka/main.exe
+          ECL_WORKER_SMOKE_BUILDER: nuitka
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_plugin_worker_bootstrap.py tests/test_plugin_windows_supervision.py tests/test_plugin_worker_dependencies.py tests/test_plugin_worker_lifecycle.py tests/test_plugin_operation_worker.py tests/test_plugin_file_worker.py tests/test_plugin_file_handles.py tests/test_plugin_host_files.py tests/test_plugin_network_targets.py tests/test_plugin_network_api.py tests/test_plugin_network_logging.py tests/test_plugin_network_worker.py tests/test_plugin_network_shutdown.py -q
 
       - name: Package artifact
         id: package
