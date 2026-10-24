@@ -22,6 +22,7 @@
 | [发布流程](guides/release-process.md) | Beta 标签、产物验收与失败处理；`AGENTS.md` 第 9 节的完整版本 |
 | [无头运行说明](guides/headless-runtime.md) | `--headless` 任务协议、输出格式与插件子进程边界 |
 | [启动器命令行](guides/launcher-cli.md) | 启动参数、实例快捷启动与设置生效顺序 |
+| [整合包安装与可选文件](guides/modpack-installation.md) | 安装预览、文件选择、后台任务和准备接口 |
 | [可视化主题设计指南](guides/theme-designer-guide.zh-CN.md) | 主题设计器、预设库与 `.ecltheme` 文件 |
 
 ## 协议与格式
