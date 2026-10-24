@@ -2,7 +2,7 @@
 
 > 状态：待用户确认（AGENTS.md 工作流第 5 步）
 > 日期：2026-09-27
-> 来源：[docs/feature-comparison-and-optimization-plan.md](feature-comparison-and-optimization-plan.md) P1-10（对标 HMCL `LaunchOptions` / PCL 实例设置同类项）
+> 来源：功能对比与优化方案（已移除）P1-10（对标 HMCL `LaunchOptions` / PCL 实例设置同类项）
 > 已确认决策：**全局 + 实例覆盖**；可见性**不动作/启动后最小化/启动后退出**三档；窗口标题**模板占位符**；wrapper **占位符 + 前缀兼容**。
 
 ## 1. 功能定义与语义

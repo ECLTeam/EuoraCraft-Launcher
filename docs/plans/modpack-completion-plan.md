@@ -2,7 +2,7 @@
 
 > 状态：待用户确认（AGENTS.md 工作流第 5 步）
 > 日期：2026-09-26
-> 来源：[docs/feature-comparison-and-optimization-plan.md](feature-comparison-and-optimization-plan.md) P0-3
+> 来源：功能对比与优化方案（已移除）P0-3
 > 用户已确认的决策：**方案 A（完整对标）**；导入/在线安装时**自动安装基础版本与加载器**；导出做 **Modrinth + CurseForge 双指纹反查**。
 
 ## 1. 背景与目标

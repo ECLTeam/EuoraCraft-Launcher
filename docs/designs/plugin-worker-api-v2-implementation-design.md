@@ -1,6 +1,6 @@
 # ECL 插件子进程隔离与用户权限管理实施设计 v1.2
 
-> 目录约定更新：启动引导与插件 API 已按 [下沉实施方案](../plans/python-entrypoint-consolidation-plan.md) 归入 `ECL/bootstrap.py` 和 `ECL/plugin_api/`。当前插件使用 `from ECL.plugin_api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
+> 目录约定更新：启动引导与插件 API 已按 下沉实施方案 归入 `ECL/bootstrap.py` 和 `ECL/plugin_api/`。当前插件使用 `from ECL.plugin_api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
 
 状态：用户已明确批准 v1.1 及管理器接入方案开始实施。Worker 基础运行层、v2 授权存储、第三方管理器分流及最小可信管理界面已实现，当前结果见第 21 节。真实 WebView2 网络门未通过，原生增补已获批准，但用户随后要求先越过该部分；自定义前端继续关闭。
 
@@ -547,7 +547,7 @@ O类任务的可见性限定当前 run；重启后的旧任务由可信插件管
 
 ### 13.6 文件、网络与下载
 
-文件方法仅限 Windows x64 本地 NTFS。filesystem.read/write/delete/replace 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；四种权限彼此独立，写不隐含读。基础读取和新建见 [P09 A](../plans/plugin-private-files-implementation-plan.md)，按版本删除见 [删除路线A](../plans/plugin-private-file-delete-implementation-plan.md)，按版本替换和可信恢复见 [替换路线B](../plans/plugin-private-file-replace-implementation-plan.md)。删除只提供不含内容的自身控制确认。network.request 已按 [P10 A](../plans/plugin-network-read-implementation-plan.md) 开放 GET/HEAD；downloads.submit 已按 [P10 B 方案](../plans/plugin-download-task-implementation-plan.md) 开放私有空间新文件下载。
+文件方法仅限 Windows x64 本地 NTFS。filesystem.read/write/delete/replace 的声明和决定 resource_refs 必须为空，只控制当前安装固定私有空间；四种权限彼此独立，写不隐含读。基础读取和新建见 P09 A，按版本删除见 删除路线A，按版本替换和可信恢复见 替换路线B。删除只提供不含内容的自身控制确认。network.request 已按 P10 A 开放 GET/HEAD；downloads.submit 已按 P10 B 方案 开放私有空间新文件下载。
 
 | 方法 | 请求params | 成功data | 必须能力/资源 | 额外错误 | 时限；owner |
 |---|---|---|---|---|---|
@@ -1027,7 +1027,7 @@ HostClient 为提交产生本运行去重键，明确错误抛出 HostApiError�
 
 ## 21. 第三方管理器与最小 Host API（2026-10-20）
 
-按 [管理器接入实施方案](../plans/plugin-worker-manager-integration-plan.md) 落地持久化安装身份、严格 API v2 清单、目录及归档安装只登记、内容绑定审阅、独立 Worker 生命周期和运行清理。系统插件继续使用可信发行来源；用户目录不能借同名清单获得系统身份。旧第三方 SDK 不适配、不回退宿主执行、不迁移旧授权和设置。未支持平台明确拒绝第三方运行。
+按 管理器接入实施方案 落地持久化安装身份、严格 API v2 清单、目录及归档安装只登记、内容绑定审阅、独立 Worker 生命周期和运行清理。系统插件继续使用可信发行来源；用户目录不能借同名清单获得系统身份。旧第三方 SDK 不适配、不回退宿主执行、不迁移旧授权和设置。未支持平台明确拒绝第三方运行。
 
 `PluginWorkerService` 维护唯一运行状态、授权会话及监管对象，监控实际 Worker 句柄、断连、超时和到期。必要授权撤销停止运行，可选授权撤销清理对应注册；授权先阻止下一次提交，已接受的宿主写入仍按实际结果完成。进程停止与宿主在途提交分别收敛，未结束时报告 cleanup pending，不能提前报告清理完成。
 
@@ -1035,31 +1035,31 @@ HostClient 为提交产生本运行去重键，明确错误抛出 HostApiError�
 
 授权管理 IPC 从原生注入的已登记主 WebView 识别调用主体，拒绝 Worker、其他窗口、Dev Channel、未知入口及请求体伪造。第三方脚本、Vue、HTML、CSS 注入仍关闭。前端提供六语权限审阅、永久/会话选择、撤销、实际清理状态与失败重试；保存审阅与启用分开操作。
 
-源码、真实冻结与桌面验证记录集中在 [本轮验收记录](../plans/plugin-worker-manager-integration-plan.md#10-实施与验收记录)，不复用第 18—20 节的历史数字作为当前证据。OS 文件/网络沙箱、账户/实例等业务 API、声明式页面和自定义前端均不由本切片完成。
+源码、真实冻结与桌面验证记录集中在 本轮验收记录，不复用第 18—20 节的历史数字作为当前证据。OS 文件/网络沙箱、账户/实例等业务 API、声明式页面和自定义前端均不由本切片完成。
 
 ## 22. P07 实例只读能力（2026-10-20）
 
-按用户批准的 [实例只读实施方案](../plans/plugin-instance-read-api-implementation-plan.md) 开放 `resources.list`、`instances.scan`、`instances.get`。清单仅请求 `instances.read`，可信主界面明确选择整个目录（含以后新增实例）或单个实例；不默认批准任何资源。宿主持久身份与每次运行引用分离，物理目录替换、配置移除、授权变更、内容或 run 变化使旧引用及游标失效。同名重建不继承旧单实例授权。
+按用户批准的 实例只读实施方案 开放 `resources.list`、`instances.scan`、`instances.get`。清单仅请求 `instances.read`，可信主界面明确选择整个目录（含以后新增实例）或单个实例；不默认批准任何资源。宿主持久身份与每次运行引用分离，物理目录替换、配置移除、授权变更、内容或 run 变化使旧引用及游标失效。同名重建不继承旧单实例授权。
 
 查询从已验证实际文件句柄有界读取本地实例元数据与资料，调用 Core `InstanceMetadata.from_documents` 纯解析；不复用会写入的桌面扫描链路，不初始化统计或外部提供方，不停止游戏。摘要显式投影，使用 `profile_etag` 表达完整本地资料的物理版本（语义在第28节资料修改切片中扩展）；不返回路径、账户、完整配置或持久资源 ID。`permissions.list` 的实例资源亦转换为运行引用。
 
 可信 `plugin_permission_resources` 提供按目录展开的有界候选；保存同时检查内容摘要、授权 revision 与资源目录 revision。所有读取和最终交付均复核许可及物理身份，扫描 30 秒、单项/资源列表 5 秒，分页最多 16 个快照、120 秒、每页 1—100 项且结果受 64 KiB 限制。完成的单页查询立即释放分页容量。
 
-源码、真实冻结与 WebView2 验证见 [本轮验收记录](../plans/plugin-instance-read-api-implementation-plan.md#9-实施与验收记录)。该阶段只完成 P07 的实例读取切片；后续任务、私有文件、网络、下载及实例资料修改的现状分别见第23—28节，其他业务查询与自定义前端仍待推进。
+源码、真实冻结与 WebView2 验证见 本轮验收记录。该阶段只完成 P07 的实例读取切片；后续任务、私有文件、网络、下载及实例资料修改的现状分别见第23—28节，其他业务查询与自定义前端仍待推进。
 
 ## 23. P08 任务归属与提交控制基础（2026-10-21）
 
-按用户确认的 [实施方案](../plans/plugin-operation-ownership-implementation-plan.md)，复用 ApplicationContext 的唯一 OperationManager，以不可变安装/内容/run 来源隔离任务。插件层只维护运行引用和结果投影，开放 operations.get/list/cancel；首个生产任务为第 24 节的私有文件新建，下载、Java、Minecraft 等实际适配仍待后续切片。控制没有新业务权限，敏感结果逐次核验显式的原始读取准入，旧 run 不从审计文件恢复控制权。
+按用户确认的 实施方案，复用 ApplicationContext 的唯一 OperationManager，以不可变安装/内容/run 来源隔离任务。插件层只维护运行引用和结果投影，开放 operations.get/list/cancel；首个生产任务为第 24 节的私有文件新建，下载、Java、Minecraft 等实际适配仍待后续切片。控制没有新业务权限，敏感结果逐次核验显式的原始读取准入，旧 run 不从审计文件恢复控制权。
 
 执行阶段和副作用由任务服务统一维护，桌面五态保持现行投影。取消请求不会掩盖真实异常；提交接受排序在短授权锁和任务锁内完成，业务动作与落盘均在全局锁外执行。设置短写与命令、定义、订阅注册使用同一授权接受边界，保持原同步结果及去重回执；W5 全部业务统一 TaskReceipt 不由本切片完成。
 
 插件任务摘要存入 operations/plugin，按每任务写锁获取最新 revision 后原子保存，不包含完整参数、路径和结果。提交前保存失败不执行动作；动作完成后的保存失败保持真实结果、收尾 pending，只重试摘要。Worker 停止后等待本 run 的实际 future 与审计保存，pending 时拒绝重新启用，完成后释放引用和记录。不会自动重放、迁移或删除用户资源。
 
-源码、真实 Worker、冻结产物与主窗口验证结果集中在 [本轮验收记录](../plans/plugin-operation-ownership-implementation-plan.md#10-实施与验收记录)。
+源码、真实 Worker、冻结产物与主窗口验证结果集中在 本轮验收记录。
 
 ## 24. P09 A 私有文件与新建事务（2026-10-21）
 
-按已确认的 [实施方案](../plans/plugin-private-files-implementation-plan.md)，开放当前安装固定私有空间中的 stat/list/read 和新文件分块事务。原始块 32 KiB、单文件 8 MiB、时间为 modified_ms；FileRef 只支持平铺 ASCII 名称。读写声明及决定的资源范围必须为空，实际根和精确目标由宿主绑定。首次只读不创建空间；首次授权写入使用独立 preparing/ready 记录，损坏和失踪空间明确拒绝，不自动接纳或迁移。
+按已确认的 实施方案，开放当前安装固定私有空间中的 stat/list/read 和新文件分块事务。原始块 32 KiB、单文件 8 MiB、时间为 modified_ms；FileRef 只支持平铺 ASCII 名称。读写声明及决定的资源范围必须为空，实际根和精确目标由宿主绑定。首次只读不创建空间；首次授权写入使用独立 preparing/ready 记录，损坏和失踪空间明确拒绝，不自动接纳或迁移。
 
 PluginWorkerService 维护共享存储、上传占用和配额；RuntimeFiles 维护本 run 的代次引用和严格请求。Windows x64 本地 NTFS 通过目录句柄相对创建和原生不覆盖重命名，拒绝重解析和硬链接，无 Path.replace 备用路径。新暂存先登记句柄所有者再校验元数据，校验或清理失败仍由同一上传记录负责，实际释放之前不提前归还配额。
 
@@ -1067,36 +1067,36 @@ files.write_commit 是首个生产任务入口，返回 queued 接纳回执。�
 
 任务资源清理属于准入生命周期，排队取消、审计失败和工作线程结束均执行，失败仅重试清理和保存，不重做发布。成功清理能确认 staged 消失，不能覆盖 committed/unknown。固定配额计入活跃预留、已有文件和崩溃残留，不自动清扫旧文件。本阶段未包含的按版本删除、替换恢复及实例资料写入分别见后续第25—28节；子目录、共享空间及通用暂存恢复未开放。
 
-现行调用说明与示例见 [归档文档](../protocols/eclplugin-package-format.md#私有文件与新建事务) 和 [worker_snapshot](../../examples/plugins/worker_snapshot/README.md)。源码、两种冻结发行物、真实 WebView2 权限显示与本地交付结果集中在 [P09 验收记录](../plans/plugin-private-files-implementation-plan.md#11-实施与验收记录)。
+现行调用说明与示例见 [归档文档](../protocols/eclplugin-package-format.md#私有文件与新建事务) 和 [worker_snapshot](../../examples/plugins/worker_snapshot/README.md)。源码、两种冻结发行物、真实 WebView2 权限显示与本地交付结果集中在 P09 验收记录。
 
 ## 25. P10 A 受控只读网络（2026-10-21）
 
-按用户选择并确认的 [实施方案](../plans/plugin-network-read-implementation-plan.md)，开放精确站点的 GET/HEAD。NetworkOrigin统一声明、决定和URL；可信管理PermissionItem新增requested_resource_refs，弹窗显示最多16个站点，整组允许覆盖全部路径。selected与effective范围保留各自语义，不增加旧字段适配。六语言同步。
+按用户选择并确认的 实施方案，开放精确站点的 GET/HEAD。NetworkOrigin统一声明、决定和URL；可信管理PermissionItem新增requested_resource_refs，弹窗显示最多16个站点，整组允许覆盖全部路径。selected与effective范围保留各自语义，不增加旧字段适配。六语言同步。
 
 PluginWorkerService拥有唯一PluginNetworkService，每个Broker持有RuntimeNetwork。每run同时2个请求，宿主8个请求、4个真实DNS工作者；不创建OperationManager任务、请求缓存或重试。解析在有界守护工作者中执行，超时不释放实际DNS名额，不无限join；原请求实际返回、DNS结束和全部流关闭后才释放请求。Broker空闲、停止pending及重新启用门禁纳入网络资源。
 
 HTTPcore公开NetworkBackend/NetworkStream仅向已准入数字IP连接，发送HTTP前核实peer；TLS验证、SNI和Host保留原站点。每跳独立池，HTTP/1、无代理、无复用、无Cookie。租约接受点仅记录有限动作，真实I/O在锁外；总30秒/单阶段5秒，原始收包及完整实体分别限额。最终清理后再次检查原租约与截止，撤销不通过新租约恢复旧请求。
 
-网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](../protocols/eclplugin-package-format.md#只读网络请求)、[worker_network_read](../../examples/plugins/worker_network_read/README.md) 与 [P10验收记录](../plans/plugin-network-read-implementation-plan.md#12-实施与验收记录)。下载任务见第26节；实例资料写入见第28节。
+网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](../protocols/eclplugin-package-format.md#只读网络请求)、[worker_network_read](../../examples/plugins/worker_network_read/README.md) 与 P10验收记录。下载任务见第26节；实例资料写入见第28节。
 
 
 ## 26. P10 B 私有空间下载任务（2026-10-21）
 
-按已确认的 [实施方案](../plans/plugin-download-task-implementation-plan.md) 开放 downloads.submit，只新建当前安装私有文件，实体至多8 MiB，固定预留8 MiB。双原始网络/写lease在同一短授权接受点控制准备、网络有限I/O和最终发布；结果仍依赖独立原始读lease，不通过写权限返回敏感文件视图。
+按已确认的 实施方案 开放 downloads.submit，只新建当前安装私有文件，实体至多8 MiB，固定预留8 MiB。双原始网络/写lease在同一短授权接受点控制准备、网络有限I/O和最终发布；结果仍依赖独立原始读lease，不通过写权限返回敏感文件视图。
 
 RuntimeDownloads连接现有网络、文件和唯一OperationManager，不增加下载执行器、任务状态或恢复协议。查询与下载共享逐跳HTTP/1传输及真实请求/DNS配额；下载总1800秒、每阶段5秒、每跳原始收包9 MiB，查询原预算不变。只接收完整200实体，流式写入、完整摘要复核、实际关闭网络后再执行原生不覆盖发布。StagedFile将共享配额预留与期望/实际长度分开，不保留旧内存类型别名。
 
 Broker现有mutation回执用于提交去重和超时后查询；权限撤销后回执只返回自身控制引用，不恢复权限。Worker监管同时检查任务、网络取消与暂存清理。排队取消不等于future已完成；任务终态也不等于网络、暂存及审计已经收尾，真实pending继续阻止重新启用。关闭失败只重试清理，不重发HTTP或删除已发布目标。
 
-协议和示例见 [归档文档](../protocols/eclplugin-package-format.md#私有空间下载任务)、[worker_download](../../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 [下载验收记录](../plans/plugin-download-task-implementation-plan.md#12-实施与验收记录)。删除、替换及实例资料修改见相邻切片；安装任务和自定义前端未开放。
+协议和示例见 [归档文档](../protocols/eclplugin-package-format.md#私有空间下载任务)、[worker_download](../../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 下载验收记录。删除、替换及实例资料修改见相邻切片；安装任务和自定义前端未开放。
 
 ## 27. 私有文件按版本替换与可信恢复（2026-10-22）
 
-按用户确认的路线B接入独立filesystem.replace、replace_begin和既有上传管线。FileReplacementStore维护唯一事务资源与严格持久记录，OperationManager继续拥有执行状态及effect，不恢复旧run控制权或重放旧上传。按版本删除仍采用原直接删除契约，见 [删除验收记录](../plans/plugin-private-file-delete-implementation-plan.md#11-实施与本地验收)。
+按用户确认的路线B接入独立filesystem.replace、replace_begin和既有上传管线。FileReplacementStore维护唯一事务资源与严格持久记录，OperationManager继续拥有执行状态及effect，不恢复旧run控制权或重放旧上传。按版本删除仍采用原直接删除契约，见 删除验收记录。
 
 原对象完整版本核对后先保存记录，再按原句柄移至备份，最后不覆盖发布。目标名称可能短暂缺失，不承诺一次原子覆盖。跨重启只处理登记事务，冲突保留后来文件和原备份；新文件已发布后的旧备份及记录实际清理结束前保留pending和配额。NTFS创建时间过渡只在替换恢复内识别，公开FileRef的版本判断保持严格。
 
-可信主WebView通过有界恢复查询和带revision/etag的明确选择提交用户任务，允许孤立安装恢复；Worker和Dev Channel无管理资格。前端共享应用任务服务，关闭弹窗不取消已接纳任务，六语言支持恢复、另存和二次确认丢弃原备份。write_begin和downloads.submit继续禁止覆盖。现行协议见 [归档文档](../protocols/eclplugin-package-format.md#按版本替换私有文件)，实施证据见 [替换方案](../plans/plugin-private-file-replace-implementation-plan.md)。
+可信主WebView通过有界恢复查询和带revision/etag的明确选择提交用户任务，允许孤立安装恢复；Worker和Dev Channel无管理资格。前端共享应用任务服务，关闭弹窗不取消已接纳任务，六语言支持恢复、另存和二次确认丢弃原备份。write_begin和downloads.submit继续禁止覆盖。现行协议见 [归档文档](../protocols/eclplugin-package-format.md#按版本替换私有文件)，实施证据见 替换方案。
 
 ## 28. 实例资料受控修改（2026-10-23）
 
@@ -1104,4 +1104,4 @@ Broker现有mutation回执用于提交去重和超时后查询；权限撤销后
 
 InstanceProfileStore拥有唯一资料锁与InstanceProfileTransactions资源；现行桌面更新、图标、排序及只读快照共同遵守损坏资料和待恢复屏障。原生Windows目录相对句柄工具统一位于ECL/utils/windows_file_handles.py，由实例和私有文件共同使用。真实任务继续由应用唯一OperationManager执行，提交最多5秒，总截止30秒，结果只从已发布快照投影并复核原读许可。
 
-先持久登记，再移动原对象备份，最后不覆盖发布；原资料名称可能短暂缺失。恢复只观察实际对象，保留外部占名文件，不重放旧补丁。可信主窗口新增两条实例资料恢复命令，“文件恢复”弹窗分私有文件和实例资料视图；沿用应用任务服务，关闭不取消接纳任务。成功更新不提供旧版本撤销，仅支持Windows x64、本地NTFS。现行协议及示例见 [归档文档](../protocols/eclplugin-package-format.md#获准实例资料修改)，实施与本机验收证据见 [资料修改方案](../plans/plugin-instance-profile-write-implementation-plan.md)。
+先持久登记，再移动原对象备份，最后不覆盖发布；原资料名称可能短暂缺失。恢复只观察实际对象，保留外部占名文件，不重放旧补丁。可信主窗口新增两条实例资料恢复命令，“文件恢复”弹窗分私有文件和实例资料视图；沿用应用任务服务，关闭不取消接纳任务。成功更新不提供旧版本撤销，仅支持Windows x64、本地NTFS。现行协议及示例见 [归档文档](../protocols/eclplugin-package-format.md#获准实例资料修改)，实施与本机验收证据见 资料修改方案。

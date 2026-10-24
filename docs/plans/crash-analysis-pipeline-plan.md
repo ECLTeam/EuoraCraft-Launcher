@@ -2,7 +2,7 @@
 
 > 状态：待用户确认（AGENTS.md 工作流第 5 步）
 > 日期：2026-09-27
-> 来源：[docs/feature-comparison-and-optimization-plan.md](feature-comparison-and-optimization-plan.md) P1-9 / 4.4-13；连带纳入 4.2-7 中 crash_capture 拆分
+> 来源：功能对比与优化方案（已移除）P1-9 / 4.4-13；连带纳入 4.2-7 中 crash_capture 拆分
 > 已确认决策：规则**精选扩充**（30 → 约 55-60 条，含 HMCL 移植）；代码组织为 **`crash/` 子包**；结果结构**增量兼容**（不 breaking）；**一并拆分** launch.py 崩溃检测/调度。
 
 ## 1. 现状与差距
