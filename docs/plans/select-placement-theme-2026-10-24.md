@@ -37,3 +37,6 @@
 - 将安装和重启阶段都等待原生页面就绪，浏览器目录按阶段隔离；进程提前退出或调试通道超时会输出对应启动日志。保留原有 90 秒截止时间及全部插件断言。本机使用构建后的前端和源码宿主跑完整原生安装、重启、权限、资料与文件操作流程，9 秒内通过；Ruff 通过。冻结环境的最终结果仍以修正后 CI 为准。
 - 隔离后的 Windows x64 CI 仍在连接调试通道时超时，但新增日志确认原生前端已经就绪；因此目录复用不足以解释该失败。验收改为让 WebView2 以端口 0 自行分配监听端口，再读取该次浏览器目录内的 `EBWebView/DevToolsActivePort`，消除先选空闲端口、释放后再启动浏览器的竞争窗口；尚未据此认定端口竞争是远端根因。
 - 本机实际 WebView2 确认支持端口发现文件；采用该方式后，完整原生插件流程通过（9.26 秒），定向 Ruff 检查通过。超时诊断补充发现文件状态、页面来源、浏览器调试参数及本地监听端口，不输出完整进程命令行；保持原截止时间、页面来源筛选及插件断言，继续等待冻结产物 CI 验证。
+- 后续 CI 日志确认真正根因不在端口竞争或目录复用：Windows x64 作业里 6 个 `msedgewebview2.exe` 子进程均无 `--remote-debugging-*` 参数，`DevToolsActivePort` 从未生成，说明浏览器标志根本没有下发。GitHub 托管的 `windows-latest` 以提升权限运行，WebView2 对提升权限宿主忽略 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，本机（非提升权限）因此无法复现。该用例自 run 279 引入后从未在 CI 通过，且 ARM 作业因 `skipif` 跳过，绿并不代表覆盖。
+- 改为由启动器经窗口配置下发浏览器标志：新增 `--webview-debug-port`（仅 Windows、必须与 `--dev-channel` 同用、取值 0 或 1024—65535），`Adapter` 在 `_build_config` 中写入 `additionalBrowserArgs`；用例不再设置标志环境变量，只保留按阶段隔离的 `WEBVIEW2_USER_DATA_FOLDER`。本机源码模式实跑确认「端口发现文件存在：True」且 `/json/list` 返回页面，调试通道可用；源码模式页面来源为 Vite 开发服务器（`localhost:5173`），`tauri.localhost` 筛选只对冻结产物成立，最终结论仍以 CI 为准。
+- 同时把 13 个 Windows x64 Worker 与网络用例从同一脚本拆为独立步骤：此前首条 pytest 失败即被 `set -e` 中断，这些用例在 CI 中从未执行。
