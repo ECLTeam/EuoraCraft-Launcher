@@ -10,8 +10,9 @@
 #   - class ModpackPlan — 统一格式的整合包安装计划（版本、加载器、文件清单、overrides）。
 #   - class ModpackFormatPolicy — 整合包格式解析策略：特征标记与加载器命名映射的唯一归属点。
 #   - class ModpackCoordinator — 读取整合包、安装基础版本、下载并校验文件，最后创建实例。
-#       - import_instance_pack(game_path, source_path, new_version_id) -> dict[str, str] — 本地整合包导入长任务。
-#       - install_modpack_online(source, project_id, file_id, game_path, new_version_id) -> dict[str, str] — 下载在线整合包并创建新实例（Modrinth/CurseForge/FTB）。
+#       - prepare_modpack(source, ...) — 准备安装预览与私有快照。
+#       - get_modpack_preparation(preparation_id) / release_modpack_preparation(preparation_id) — 查询和释放预览。
+#       - install_prepared_modpack(preparation_id, game_path, new_version_id, excluded_file_ids) — 按已确认的选择安装。
 #       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
 #   - detect_pack_format(root) -> str — 按内容特征识别整合包格式标签。
 #   - build_pack_plan(root) -> ModpackPlan — 解析指定格式并输出统一安装计划。
@@ -23,13 +24,13 @@ import hashlib
 import json
 import re
 import shutil
-import tempfile
 import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from threading import Event, Thread
 from types import MappingProxyType
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -38,6 +39,7 @@ from ECL.utils import atomic_write_text
 
 from .base import GameServiceError, _GameState
 from .mod_sources import mod_api_base, mod_user_agent, rewrite_mod_file_url
+from .modpack_preparation import PreparedModpackFile
 from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
 
@@ -398,7 +400,8 @@ def _parse_mcbbs_plan(root: Path) -> ModpackPlan:
         entries.append(
             PackFileEntry(
                 target_relative="mods/",
-                env_client="optional" if raw.get("force") is False else "required",
+                # force 控制更新时是否覆盖用户修改，不表示安装可选性。
+                env_client="required",
                 project_id=str(project_id),
                 file_id=str(file_id),
             )
@@ -709,115 +712,175 @@ class ModpackCoordinator(_GameState):
     导入整合包：解压文件、安装基础版本、下载文件并创建实例。
     """
 
-    def import_instance_pack(self, game_path: Any, source_path: Any, new_version_id: Any) -> dict[str, str]:
-        """
-        检查并导入整合包，创建新实例。
-
-        支持 Modrinth mrpack、CurseForge manifest 包与 ECL 旧格式包：解压识别后
-        自动安装缺失的基础版本与加载器，下载清单声明的模组与文件，经哈希校验
-        最后创建继承基础版本的新实例。整个过程在 staging 目录进行，失败时清理。
-
-        :param game_path: Minecraft 游戏根目录
-        :param source_path: 整合包压缩包路径
-        :param new_version_id: 新实例的版本目录名
-        :return: 长任务句柄（operationId 与初始状态）
-        :raises GameServiceError: 目标实例已存在或压缩包不可读时抛出
-        """
-        target = self.resolve_instance(game_path, new_version_id)
-        source = Path(str(source_path)).expanduser().resolve(strict=True)
-        if target.instance_path.exists():
-            raise GameServiceError("目标实例已存在", "INSTANCE_ALREADY_EXISTS")
-        # 解压临时目录与 staging 都落在 versions 目录下，先确保其存在。
-        target.instance_path.parent.mkdir(parents=True, exist_ok=True)
-
-        def worker(context: OperationContext) -> dict[str, Any]:
-            return self._import_archive_worker(source, target, context)
-
-        return self._application_operations.submit("instance_import", worker)
-
-    def _import_archive_worker(
-        self, archive_path: Path, target: ResolvedInstanceTarget, context: OperationContext
-    ) -> dict[str, Any]:
-        """
-        解压整合包并创建实例，本地导入和在线安装都使用此方法。
-
-        :raises GameServiceError: 格式无法识别或解析失败时抛出
-        """
-        with tempfile.TemporaryDirectory(prefix="ecl-pack-import-", dir=target.instance_path.parent) as temp_dir:
-            extracted = Path(temp_dir)
-            safe_extract_zip(archive_path, extracted)
-            layout_root, detected = _detect_pack_layout(extracted)
-            if detected == "ecl-legacy":
-                return self._import_legacy_ecl_pack(layout_root, target, context)
-            if detected == "unknown":
-                raise GameServiceError("无法识别整合包格式", "INVALID_PACK_ARCHIVE")
-            plan = build_pack_plan(extracted)
-            context.progress(8, f"已识别整合包：{plan.pack_name}（{plan.format_name}）")
-            result = self._install_plan_into_instance(plan, target, context)
-            context.progress(98, "整合包导入完成")
-            return result
-
-    def install_modpack_online(
-        self,
-        source: Any,
-        project_id: Any,
-        file_id: Any,
-        game_path: Any,
-        new_version_id: Any,
+    def prepare_modpack(
+        self, source: str, source_path: Path | None = None, project_id: str = "", file_id: str = ""
     ) -> dict[str, str]:
         """
-        下载在线整合包及其文件，然后创建新实例。
+        创建进程内整合包快照并提交可取消的预览准备任务，不安装游戏或模组。
 
-        Modrinth 按 ``file_id``（版本 ID）获取主文件；CurseForge 按
-        ``project_id/file_id`` 经文件详情接口解析直链；FTB 直接拉取版本
-        按清单逐个下载文件。下载和创建实例在同一个任务中完成，进度与取消规则
-        与本地导入一致。
-
-        :param source: 在线来源（modrinth/curseforge/ftb）
-        :param project_id: 整合包项目 ID
-        :param file_id: 整合包文件或版本 ID
-        :param game_path: Minecraft 游戏根目录
-        :param new_version_id: 新实例的版本目录名
-        :return: 长任务句柄（operationId 与初始状态）
-        :raises GameServiceError: 来源不支持、ID 缺失或目标实例已存在时抛出
+        :param source: local、modrinth、curseforge 或 ftb
+        :param source_path: 本地压缩包，仅 local 使用
+        :param project_id: 在线项目标识
+        :param file_id: 在线包版本或文件标识
+        :return: preparationId 与后台 operationId
+        :raises GameServiceError: 来源、文件或在线标识无效
         """
-        normalized_source = str(source or "").strip().casefold()
-        if normalized_source not in _online_pack_sources:
-            raise GameServiceError("不支持的在线整合包来源", "INVALID_RESOURCE_SOURCE")
+        if source not in {"local", *_online_pack_sources}:
+            raise GameServiceError("不支持的整合包来源", "INVALID_RESOURCE_SOURCE")
+        if source == "local":
+            if source_path is None or not source_path.is_file():
+                raise GameServiceError("请选择可读取的整合包文件", "INVALID_PACK_ARCHIVE")
+        elif not project_id or not file_id:
+            raise GameServiceError("整合包项目或文件标识缺失", "PACK_ONLINE_FILE_INVALID")
+        record = self._modpack_preparations.create(source)
+
+        def worker(context: OperationContext) -> dict[str, str]:
+            prepared = False
+            try:
+                self._modpack_preparations.begin(record, context.cancel_event)
+                context.check_cancelled()
+                context.progress(2, "正在读取整合包")
+                legacy_root = None
+                if source == "ftb":
+                    plan = self._fetch_ftb_plan(project_id, file_id)
+                else:
+                    archive = record.directory / "source.zip"
+                    if source == "local":
+                        assert source_path is not None
+                        # 分块复制私有快照，取消后不再读取用户的来源文件。
+                        with source_path.open("rb") as reader, archive.open("wb") as writer:
+                            while chunk := reader.read(1024 * 1024):
+                                context.check_cancelled()
+                                writer.write(chunk)
+                    else:
+                        selected = self._select_online_file(source, project_id, file_id)
+                        entry = PackFileEntry(target_relative="source.zip", url=str(selected["url"]))
+                        self._download_pack_files([entry], record.directory, context, 3, 45)
+                    context.check_cancelled()
+                    extracted = record.directory / "contents"
+                    safe_extract_zip(archive, extracted)
+                    context.check_cancelled()
+                    layout_root, detected = _detect_pack_layout(extracted)
+                    if detected == "ecl-legacy":
+                        legacy_root = layout_root
+                        plan = ModpackPlan(format_name=detected, pack_name=source_path.stem if source_path else "ECL")
+                    else:
+                        plan = build_pack_plan(extracted)
+                # 在确认前解析引用，只读取文件详情，不下载清单中的文件内容。
+                active_plan = replace(
+                    plan, files=tuple(item for item in plan.files if item.env_client != "unsupported")
+                )
+                resolved, _ = self._resolve_pack_entries(active_plan, context)
+                active_entries = iter(resolved)
+                entries = tuple(
+                    entry if entry.env_client == "unsupported" else next(active_entries) for entry in plan.files
+                )
+                context.check_cancelled()
+                plan = replace(plan, files=entries)
+                files = self._prepared_file_entries(entries)
+                self._modpack_preparations.complete(record, plan, files, legacy_root)
+                prepared = True
+                context.progress(100, "整合包安装信息已就绪")
+                return {"preparationId": record.preparation_id}
+            finally:
+                self._modpack_preparations.finish_worker(record, prepared=prepared)
+
+        try:
+            operation = self._application_operations.submit("modpack_prepare", worker)
+        except Exception:
+            self._modpack_preparations.release(record.preparation_id)
+            raise
+        return {**operation, "preparationId": record.preparation_id}
+
+    @staticmethod
+    def _prepared_file_entries(entries: tuple[PackFileEntry, ...]) -> tuple[PreparedModpackFile, ...]:
+        """
+        确认文件目标在所有平台下均无冲突，并生成当前预览固定身份。
+
+        路径与父目录冲突在准备时拒绝，避免安装到一半才发现文件覆盖目录。
+        """
+        paths: set[str] = set()
+        for entry in entries:
+            relative = _safe_pack_relative_path(entry.target_relative, [])
+            key = relative.as_posix().casefold() if relative is not None else ""
+            parents = set(PurePosixPath(key).parents)
+            if not key or key in paths or any(PurePosixPath(path) in parents for path in paths):
+                raise GameServiceError("整合包清单存在无效或重复目标路径", "PACK_FILE_PATH_CONFLICT")
+            if any(PurePosixPath(key) in PurePosixPath(path).parents for path in paths):
+                raise GameServiceError("整合包文件与目录冲突", "PACK_FILE_PATH_CONFLICT")
+            paths.add(key)
+        return tuple(PreparedModpackFile(uuid4().hex, entry) for entry in entries)
+
+    def get_modpack_preparation(self, preparation_id: str) -> dict[str, object]:
+        """
+        查询当前进程的安全安装预览。
+
+        :param preparation_id: 准备任务返回的标识
+        :return: 状态与预览
+        :raises GameServiceError: 预览失效
+        """
+        return self._modpack_preparations.get(preparation_id)
+
+    def release_modpack_preparation(self, preparation_id: str) -> bool:
+        """
+        释放界面持有的预览，不取消已经提交的安装。
+
+        :param preparation_id: 要释放的标识
+        :return: 是否接受释放
+        """
+        return self._modpack_preparations.release(preparation_id)
+
+    def install_prepared_modpack(
+        self, preparation_id: str, game_path: Path, new_version_id: str, excluded_file_ids: list[str]
+    ) -> dict[str, str]:
+        """
+        根据已经展示的快照和可选文件选择创建新实例。
+
+        :param preparation_id: 已准备的快照标识
+        :param game_path: 目标游戏根目录
+        :param new_version_id: 新实例名，不允许覆盖
+        :param excluded_file_ids: 明确排除的 optional 文件标识
+        :return: 安装操作句柄
+        :raises GameServiceError: 快照、选择或目标无效
+        """
         target = self.resolve_instance(game_path, new_version_id)
-        if target.instance_path.exists():
-            raise GameServiceError("目标实例已存在", "INSTANCE_ALREADY_EXISTS")
-        target.instance_path.parent.mkdir(parents=True, exist_ok=True)
-        pack_project_id = str(project_id or "").strip()
-        pack_file_id = str(file_id or "").strip()
-        if not pack_project_id or not pack_file_id:
-            raise GameServiceError("整合包项目或文件 ID 缺失", "PACK_ONLINE_FILE_INVALID")
+        record = self._modpack_preparations.claim(preparation_id, excluded_file_ids, target.instance_path)
+        excluded = set(excluded_file_ids)
 
         def worker(context: OperationContext) -> dict[str, Any]:
-            if normalized_source == "ftb":
-                # FTB 清单列出每个文件的下载地址，无需压缩包，可直接按安装计划创建实例。
-                plan = self._fetch_ftb_plan(pack_project_id, pack_file_id)
-                context.progress(8, f"已识别整合包：{plan.pack_name}（FTB）")
-                result = self._install_plan_into_instance(plan, target, context)
-                context.progress(98, "整合包导入完成")
-                return result
-            context.progress(2, "正在获取整合包文件信息")
-            # _select_online_file 来自 ResourceCoordinator：Modrinth 取版本主文件，
-            # CurseForge 经文件详情接口解析直链与哈希。
-            selected = self._select_online_file(normalized_source, pack_project_id, pack_file_id)
-            filename = str(selected.get("filename") or "")
-            pure = PurePosixPath(filename.replace("\\", "/")) if filename else None
-            if pure is None or len(pure.parts) != 1 or pure.parts[0] in {".", ".."}:
-                raise GameServiceError(f"整合包文件名不安全: {filename}", "PACK_ONLINE_FILE_INVALID")
-            with tempfile.TemporaryDirectory(prefix="ecl-pack-online-", dir=target.instance_path.parent) as temp_dir:
-                archive = Path(temp_dir) / pure.parts[0]
-                context.progress(5, f"正在下载整合包 {filename}")
-                self._download_online_file(str(selected["url"]), archive, filename, task_id=None)
+            try:
+                self._modpack_preparations.begin(record, context.cancel_event)
                 context.check_cancelled()
-                context.progress(8, "整合包下载完成，正在识别")
-                return self._import_archive_worker(archive, target, context)
+                target.instance_path.parent.mkdir(parents=True, exist_ok=True)
+                if record.legacy_root is not None:
+                    return self._import_legacy_ecl_pack(record.legacy_root, target, context)
+                assert record.plan is not None
+                ignored_paths = frozenset(
+                    item.entry.target_relative.casefold()
+                    for item in record.files
+                    if item.file_id in excluded or item.entry.env_client == "unsupported"
+                )
+                plan = replace(
+                    record.plan,
+                    files=tuple(
+                        item.entry
+                        for item in record.files
+                        if item.file_id not in excluded and item.entry.env_client != "unsupported"
+                    ),
+                )
+                result = self._install_plan_into_instance(plan, target, context, ignored_paths)
+                result["excludedOptionalFiles"] = len(excluded)
+                result["unsupportedFiles"] = sum(item.entry.env_client == "unsupported" for item in record.files)
+                return result
+            finally:
+                self._modpack_preparations.finish_worker(record)
 
-        return self._application_operations.submit("modpack_online_install", worker)
+        kind = "instance_import" if record.source == "local" else "modpack_online_install"
+        try:
+            return self._application_operations.submit(kind, worker)
+        except Exception:
+            self._modpack_preparations.rollback_claim(record)
+            raise
 
     def _fetch_ftb_plan(self, project_id: str, version_id: str) -> ModpackPlan:
         """
@@ -859,7 +922,7 @@ class ModpackCoordinator(_GameState):
             if original and original.name != f"{target.instance_directory_name}.json":
                 original.rename(staging / f"{target.instance_directory_name}.json")
             context.check_cancelled()
-            staging.replace(target.instance_path)
+            context.finalize(lambda: staging.replace(target.instance_path))
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -868,14 +931,19 @@ class ModpackCoordinator(_GameState):
             "path": str(target.instance_path),
             "format": "ecl-legacy",
             "downloadedFiles": 0,
-            "skippedFiles": 0,
+            "unsupportedFiles": 0,
+            "excludedOptionalFiles": 0,
             "overridesFiles": 0,
             "baseVersion": None,
             "warnings": [],
         }
 
     def _install_plan_into_instance(
-        self, plan: ModpackPlan, target: ResolvedInstanceTarget, context: OperationContext
+        self,
+        plan: ModpackPlan,
+        target: ResolvedInstanceTarget,
+        context: OperationContext,
+        ignored_paths: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         """
         按安装计划创建实例：读取文件清单、安装基础版本、下载并校验文件，最后一次性保存。
@@ -893,16 +961,17 @@ class ModpackCoordinator(_GameState):
             context.progress(74, "正在校验下载文件")
             self._verify_pack_files(entries, staging, context)
             context.progress(78, "正在复制整合包实例内容")
-            overrides_count = self._copy_pack_overrides(plan, staging, context)
+            overrides_count = self._copy_pack_overrides(plan, staging, context, ignored_paths)
             self._write_pack_version_json(base_name, target, staging)
             context.check_cancelled()
-            staging.replace(target.instance_path)
+            context.finalize(lambda: staging.replace(target.instance_path))
             return {
                 "versionId": target.instance_directory_name,
                 "path": str(target.instance_path),
                 "format": plan.format_name,
                 "downloadedFiles": len(entries),
-                "skippedFiles": skipped,
+                "unsupportedFiles": skipped,
+                "excludedOptionalFiles": 0,
                 "overridesFiles": overrides_count,
                 "baseVersion": base_name,
                 "warnings": list(plan.warnings),
@@ -929,7 +998,7 @@ class ModpackCoordinator(_GameState):
                 skipped += 1
                 continue
             resolved = entry
-            if plan.format_name == "curseforge":
+            if entry.project_id is not None and entry.file_id is not None and not entry.url:
                 # _fetch_curseforge_file 来自 ResourceCoordinator，经 GameService 聚合后可用。
                 details = self._fetch_curseforge_file(str(entry.project_id), str(entry.file_id))
                 relative = _safe_pack_relative_path(f"mods/{details['filename']}", [])
@@ -944,6 +1013,7 @@ class ModpackCoordinator(_GameState):
                     target_relative=relative.as_posix(),
                     sha1=hashes.get("sha1"),
                     sha512=hashes.get("sha512"),
+                    size=details.get("size") if isinstance(details.get("size"), int) else entry.size,
                 )
                 context.progress(8 + 10 * index / max(total, 1), f"正在解析整合包文件 {index}/{total}")
             elif not entry.url:
@@ -1098,14 +1168,24 @@ class ModpackCoordinator(_GameState):
                 failed.append(entry.target_relative)
         return failed
 
-    def _copy_pack_overrides(self, plan: ModpackPlan, staging: Path, context: OperationContext) -> int:
+    def _copy_pack_overrides(
+        self,
+        plan: ModpackPlan,
+        staging: Path,
+        context: OperationContext,
+        ignored_paths: frozenset[str] = frozenset(),
+    ) -> int:
         """
         把 overrides 内容复制进 staging，返回复制的文件数；无 overrides 返回 0。
         """
         overrides = plan.overrides_dir
         if overrides is None or not overrides.is_dir():
             return 0
-        files = [path for path in overrides.rglob("*") if path.is_file()]
+        files = [
+            path
+            for path in overrides.rglob("*")
+            if path.is_file() and path.relative_to(overrides).as_posix().casefold() not in ignored_paths
+        ]
         for index, source in enumerate(files, 1):
             context.check_cancelled()
             relative = source.relative_to(overrides)
@@ -1118,10 +1198,29 @@ class ModpackCoordinator(_GameState):
 
     @staticmethod
     def _write_pack_version_json(base_name: str, target: ResolvedInstanceTarget, staging: Path) -> None:
-        # 写入继承基础版本的实例描述，包内自带同名描述时统一覆盖为新实例名。
+        """
+        保留基础版本的完整启动描述与本地父版本文件，使导入实例符合 Core 文件布局。
+
+        Core 不把父描述的 mainClass 合并到子描述，且加载器目录可能内嵌原版
+        JSON/JAR；只写 inheritsFrom 会得到无法启动的实例。复制仅限顶层启动
+        元数据与客户端 JAR，不复制基础目录中的模组、配置或用户文件。
+        """
+        base_directory = target.instance_path.parent / base_name
+        metadata = _read_json_file(base_directory / f"{base_name}.json")
+        if not isinstance(metadata.get("mainClass"), str) or not metadata["mainClass"].strip():
+            raise GameServiceError("基础版本缺少有效的启动描述，请重新安装基础版本", "PACK_BASE_VERSION_INVALID")
+        staging.mkdir(parents=True, exist_ok=True)
+        for source in base_directory.iterdir():
+            if not source.is_file() or source.suffix not in {".json", ".jar"}:
+                continue
+            if source.name == f"{base_name}.json":
+                continue
+            name = f"{target.instance_directory_name}.jar" if source.name == f"{base_name}.jar" else source.name
+            shutil.copy2(source, staging / name)
+        metadata["id"] = target.instance_directory_name
         atomic_write_text(
             staging / f"{target.instance_directory_name}.json",
-            json.dumps({"id": target.instance_directory_name, "inheritsFrom": base_name}, ensure_ascii=False, indent=2),
+            json.dumps(metadata, ensure_ascii=False, indent=2),
         )
 
     # 导出时排除的隐私目录与文件；与导入时的过滤规则一致，避免把存档和截图打包导出。

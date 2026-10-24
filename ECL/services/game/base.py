@@ -47,6 +47,7 @@ from .instance_compat import InstanceCompatibilityReader
 from .instance_profiles import InstanceProfileStore
 from .mcmod import McmodTranslator
 from .mod_sources import ModSourceAware, ModSourceRequestPolicy
+from .modpack_preparation import ModpackPreparationService
 from .resource_metadata import ResourceMetadataCache
 from .resource_search import ResourceSearchService
 from .version_stats import VersionStatsStore
@@ -187,6 +188,7 @@ class _GameState(ModSourceAware):
         )
         self._owns_operations = operations is None
         self._application_operations = operations or OperationManager(self._data_path, self.events)
+        self._modpack_preparations = ModpackPreparationService()
         self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._server_status_lock = RLock()
         self._schematic_sessions: dict[str, SchematicSession] = {}
@@ -408,6 +410,7 @@ class _GameState(ModSourceAware):
         with self._lock:
             self._closing = True
         self._crash_capture.close()
+        self._modpack_preparations.close()
         self._resource_search.close()
         self._resource_metadata.close()
         with self._lock:
