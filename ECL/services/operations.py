@@ -244,6 +244,7 @@ class OperationManager:
             "java_cleanup": "清理 Java 遗留文件",
             "instance_import": "导入实例",
             "instance_export": "导出实例",
+            "modpack_prepare": "读取整合包安装信息",
             "modpack_online_install": "在线安装整合包",
             "resource_install": "安装资源",
             "resource_update": "更新资源",

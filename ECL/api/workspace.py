@@ -14,9 +14,11 @@
 #       - game_instance_mod_remove(body) -> ApiResponse
 #       - game_instance_mods_folder_open(body) -> ApiResponse
 #       - game_instance_clone(body) -> ApiResponse
-#       - game_instance_import(body) -> ApiResponse
+#       - game_modpack_prepare(body) -> ApiResponse
+#       - game_modpack_preparation_get(body) -> ApiResponse
+#       - game_modpack_preparation_release(body) -> ApiResponse
+#       - game_modpack_install(body) -> ApiResponse
 #       - game_instance_export(body) -> ApiResponse
-#       - game_modpack_online_install(body) -> ApiResponse
 #       - game_instance_files_check(body) -> ApiResponse
 #       - game_instance_files_repair(body) -> ApiResponse
 #       - game_instance_delete(body) -> ApiResponse
@@ -83,9 +85,10 @@ from ECL.api.models import (
     InstanceModAddRequest,
     InstanceModFileRequest,
     InstancePackExportRequest,
-    InstancePackImportRequest,
     InstanceTarget,
-    ModpackOnlineInstallRequest,
+    ModpackInstallRequest,
+    ModpackPreparationRequest,
+    ModpackPrepareRequest,
     OperationRequest,
     OptionsPatchRequest,
     ResourceDeleteRequest,
@@ -252,13 +255,61 @@ class WorkspaceHandlers(_FrontendState):
             ),
         )
 
-    @_ipc_handler("INSTANCE_IMPORT_FAILED")
-    async def game_instance_import(self, body: dict[str, Any]) -> ApiResponse:
+    @_ipc_handler("MODPACK_PREPARE_FAILED")
+    async def game_modpack_prepare(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        校验来源并提交预览准备，解析与下载在后台执行。
+
+        :param body: 按来源区分的准备参数
+        :return: 预览标识与操作句柄
+        """
         return await self._validated_call(
-            InstancePackImportRequest,
+            ModpackPrepareRequest,
             body,
-            lambda request: self.game.import_instance_pack(
-                request.game_path, request.source_path, request.new_version_id
+            lambda request: self.game.prepare_modpack(**request.root.model_dump()),
+        )
+
+    @_ipc_handler("MODPACK_PREPARATION_QUERY_FAILED")
+    async def game_modpack_preparation_get(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        查询不含下载地址和临时目录的整合包预览。
+
+        :param body: 准备标识
+        :return: 准备状态和预览
+        """
+        return await self._validated_call(
+            ModpackPreparationRequest,
+            body,
+            lambda request: self.game.get_modpack_preparation(request.preparation_id),
+        )
+
+    @_ipc_handler("MODPACK_PREPARATION_RELEASE_FAILED")
+    async def game_modpack_preparation_release(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        释放预览；已开始的安装继续由实际操作持有资源。
+
+        :param body: 准备标识
+        :return: 是否接受释放
+        """
+        return await self._validated_call(
+            ModpackPreparationRequest,
+            body,
+            lambda request: self.game.release_modpack_preparation(request.preparation_id),
+        )
+
+    @_ipc_handler("MODPACK_INSTALL_FAILED")
+    async def game_modpack_install(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        按已展示的预览与排除选择创建实例。
+
+        :param body: 准备标识、安装目标和排除文件
+        :return: 后台安装操作句柄
+        """
+        return await self._validated_call(
+            ModpackInstallRequest,
+            body,
+            lambda request: self.game.install_prepared_modpack(
+                request.preparation_id, request.game_path, request.new_version_id, request.excluded_file_ids
             ),
         )
 
@@ -269,20 +320,6 @@ class WorkspaceHandlers(_FrontendState):
             body,
             lambda request: self.game.export_instance_pack(
                 request.game_path, request.version_id, request.output_path, request.pack_format
-            ),
-        )
-
-    @_ipc_handler("MODPACK_ONLINE_INSTALL_FAILED")
-    async def game_modpack_online_install(self, body: dict[str, Any]) -> ApiResponse:
-        return await self._validated_call(
-            ModpackOnlineInstallRequest,
-            body,
-            lambda request: self.game.install_modpack_online(
-                request.source,
-                request.project_id,
-                request.file_id,
-                request.game_path,
-                request.new_version_id,
             ),
         )
 

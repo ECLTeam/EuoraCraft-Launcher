@@ -367,7 +367,25 @@ def _await_operation(service: GameService, submitted: dict) -> dict:
 
 
 def _run_pack_operation(service: GameService, **kwargs) -> dict:
-    return _await_operation(service, service.import_instance_pack(**kwargs))
+    prepared = service.prepare_modpack("local", source_path=Path(kwargs["source_path"]))
+    state = _await_operation(service, prepared)
+    if state["status"] != "completed":
+        return state
+    return _await_operation(
+        service,
+        service.install_prepared_modpack(prepared["preparationId"], kwargs["game_path"], kwargs["new_version_id"], []),
+    )
+
+
+def _run_online_pack_operation(service, source, project_id, file_id, game_path, new_version_id):
+    prepared = service.prepare_modpack(source, project_id=project_id, file_id=file_id)
+    state = _await_operation(service, prepared)
+    if state["status"] != "completed":
+        return state
+    return _await_operation(
+        service,
+        service.install_prepared_modpack(prepared["preparationId"], game_path, new_version_id, []),
+    )
 
 
 def _make_pack_zip(path: Path, files: dict[str, bytes]) -> None:
@@ -379,7 +397,9 @@ def _make_pack_zip(path: Path, files: dict[str, bytes]) -> None:
 def _make_base_version(game_path: Path, version: str) -> None:
     base = game_path / "versions" / version
     base.mkdir(parents=True, exist_ok=True)
-    (base / f"{version}.json").write_text("{}", encoding="utf-8")
+    (base / f"{version}.json").write_text(
+        json.dumps({"id": version, "mainClass": "net.minecraft.client.main.Main"}), encoding="utf-8"
+    )
 
 
 def test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None:
@@ -423,13 +443,13 @@ def test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None:
     result = state["result"]
     assert result["format"] == "mrpack"
     assert result["downloadedFiles"] == 1
-    assert result["skippedFiles"] == 1
+    assert result["unsupportedFiles"] == 1
     assert result["baseVersion"] == "1.21.1"
     instance = game_path / "versions" / "Demo Pack"
     assert (instance / "mods" / "a.jar").read_bytes() == mod_bytes
     assert (instance / "config" / "opts.txt").read_bytes() == b"fov=1\n"
     version_json = json.loads((instance / "Demo Pack.json").read_text(encoding="utf-8"))
-    assert version_json == {"id": "Demo Pack", "inheritsFrom": "1.21.1"}
+    assert version_json == {"id": "Demo Pack", "mainClass": "net.minecraft.client.main.Main"}
     assert not (game_path / "versions" / ".Demo Pack.ecl-import").exists()
 
 
@@ -444,7 +464,10 @@ def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -
             created.append((save_name, loader_version))
             directory = game_path / "versions" / save_name
             directory.mkdir(parents=True, exist_ok=True)
-            (directory / f"{save_name}.json").write_text("{}", encoding="utf-8")
+            (directory / f"{save_name}.json").write_text(
+                json.dumps({"id": save_name, "inheritsFrom": version_id, "mainClass": "test.LoaderMain"}),
+                encoding="utf-8",
+            )
             return []
 
     service = _build_pack_service(_pack_downloader_factory({}))
@@ -471,7 +494,8 @@ def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -
     result = state["result"]
     assert result["baseVersion"] == "fabric-0.16.14-1.21.1"
     version_json = json.loads((game_path / "versions" / "FabricPack" / "FabricPack.json").read_text(encoding="utf-8"))
-    assert version_json["inheritsFrom"] == "fabric-0.16.14-1.21.1"
+    assert version_json["inheritsFrom"] == "1.21.1"
+    assert version_json["mainClass"] == "test.LoaderMain"
 
 
 def test_import_pack_reports_missing_loader_versions(tmp_path, monkeypatch) -> None:
@@ -553,7 +577,7 @@ def test_modpack_online_install_rejects_invalid_source(tmp_path) -> None:
     """不支持的在线来源应同步拒绝。"""
     service = _build_pack_service(_pack_downloader_factory({}))
     with pytest.raises(GameServiceError) as error:
-        service.install_modpack_online("unknown", "1", "2", tmp_path / ".minecraft", "Y")
+        service.prepare_modpack("unknown", project_id="1", file_id="2")
     assert error.value.error_code == "INVALID_RESOURCE_SOURCE"
 
 
@@ -584,21 +608,16 @@ def test_modpack_online_install_downloads_and_imports(tmp_path, monkeypatch) -> 
         lambda *_args: {"filename": "demo.mrpack", "url": "https://example.com/pack.mrpack"},
     )
 
-    captured = {}
-
-    def fake_download(url, temp, filename, task_id=None):
-        captured["url"] = url
-        Path(temp).write_bytes(pack_bytes)
-
-    monkeypatch.setattr(service, "_download_online_file", fake_download)
-
-    state = _await_operation(
-        service,
-        service.install_modpack_online("modrinth", "proj-1", "ver-1", game_path, "Online"),
+    service._downloader_factory = _pack_downloader_factory(
+        {
+            "https://example.com/pack.mrpack": pack_bytes,
+            "https://example.com/online.jar": mod_bytes,
+        }
     )
 
+    state = _run_online_pack_operation(service, "modrinth", "proj-1", "ver-1", game_path, "Online")
+
     assert state["status"] == "completed", state
-    assert captured["url"] == "https://example.com/pack.mrpack"
     result = state["result"]
     assert result["format"] == "mrpack"
     assert result["baseVersion"] == "1.21.1"
@@ -673,7 +692,7 @@ def test_parse_mcbbs_plan(tmp_path) -> None:
     assert plan.pack_name == "MCBBS Pack"
     assert plan.minecraft_version == "1.20.1"
     assert (plan.loader_type, plan.loader_version) == ("forge", "47.3.0")
-    assert [(entry.project_id, entry.env_client) for entry in plan.files] == [("1", "required"), ("2", "optional")]
+    assert [(entry.project_id, entry.env_client) for entry in plan.files] == [("1", "required"), ("2", "required")]
     assert plan.overrides_dir == root / "overrides"
     assert any("custom.ui" in warning for warning in plan.warnings)
     assert len(plan.warnings) == 2
@@ -806,7 +825,10 @@ def test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None:
             created.append((save_name, loader_version))
             directory = game_path / "versions" / save_name
             directory.mkdir(parents=True, exist_ok=True)
-            (directory / f"{save_name}.json").write_text("{}", encoding="utf-8")
+            (directory / f"{save_name}.json").write_text(
+                json.dumps({"id": save_name, "inheritsFrom": version_id, "mainClass": "test.LoaderMain"}),
+                encoding="utf-8",
+            )
             return []
 
     service = _build_pack_service(
@@ -844,16 +866,13 @@ def test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(modpack_module, "_proxied_get", fake_get)
 
-    state = _await_operation(
-        service,
-        service.install_modpack_online("ftb", "p1", "v1", game_path, "FtbPack"),
-    )
+    state = _run_online_pack_operation(service, "ftb", "p1", "v1", game_path, "FtbPack")
 
     assert state["status"] == "completed", state
     result = state["result"]
     assert result["format"] == "ftb"
     assert result["downloadedFiles"] == 2
-    assert result["skippedFiles"] == 1
+    assert result["unsupportedFiles"] == 1
     assert result["baseVersion"] == "neoforge-21.1.51-1.21.1"
     assert created == [("neoforge-21.1.51-1.21.1", "21.1.51")]
     instance = game_path / "versions" / "FtbPack"
@@ -861,7 +880,8 @@ def test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None:
     assert (instance / "config" / "c.cfg").read_bytes() == b"key=1"
     assert not (instance / "mods" / "server.jar").exists()
     version_json = json.loads((instance / "FtbPack.json").read_text(encoding="utf-8"))
-    assert version_json["inheritsFrom"] == "neoforge-21.1.51-1.21.1"
+    assert version_json["inheritsFrom"] == "1.21.1"
+    assert version_json["mainClass"] == "test.LoaderMain"
 
 
 def test_search_online_resources_ftb(tmp_path, monkeypatch) -> None:

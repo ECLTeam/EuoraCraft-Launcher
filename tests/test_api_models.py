@@ -291,6 +291,10 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
     schemas = request_schemas()
 
     assert set(schemas) == {
+        "game_modpack_prepare",
+        "game_modpack_preparation_get",
+        "game_modpack_preparation_release",
+        "game_modpack_install",
         "plugin_permissions_get",
         "plugin_permission_resources",
         "plugin_file_recoveries_list",

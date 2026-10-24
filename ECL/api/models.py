@@ -69,9 +69,12 @@
 #       - validate_version_id(value) -> str
 #   - class InstanceFolderRequest
 #   - class InstanceCloneRequest
-#   - class InstancePackImportRequest
+#   - class ModpackLocalPrepareRequest
+#   - class ModpackOnlinePrepareRequest
+#   - class ModpackPrepareRequest
+#   - class ModpackPreparationRequest
+#   - class ModpackInstallRequest
 #   - class InstancePackExportRequest
-#   - class ModpackOnlineInstallRequest
 #   - class OperationRequest
 #   - class WorldRequest
 #   - class WorldPatchData
@@ -133,7 +136,16 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    JsonValue,
+    RootModel,
+    field_validator,
+    model_validator,
+)
 
 from ECL.api.plugin_models import (
     PluginFileRecoveriesQuery,
@@ -604,23 +616,40 @@ class InstanceCloneRequest(InstanceTarget):
     new_version_id: str = Field(min_length=1, max_length=255)
 
 
-class InstancePackImportRequest(RequestModel):
-    game_path: Path
-    source_path: Path
+class ModpackLocalPrepareRequest(RequestModel):
+    source: Literal["local"]
+    source_path: SafePath
+
+
+class ModpackOnlinePrepareRequest(RequestModel):
+    source: Literal["modrinth", "curseforge", "ftb"]
+    project_id: str = Field(min_length=1, max_length=64)
+    file_id: str = Field(min_length=1, max_length=64)
+
+
+class ModpackPrepareRequest(
+    RootModel[Annotated[ModpackLocalPrepareRequest | ModpackOnlinePrepareRequest, Field(discriminator="source")]]
+):
+    """
+    按来源区分本地文件与在线标识，拒绝两种来源的混合参数。
+    """
+
+    model_config = ConfigDict(json_schema_extra={"type": "object"})
+
+
+class ModpackPreparationRequest(RequestModel):
+    preparation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class ModpackInstallRequest(ModpackPreparationRequest):
+    game_path: SafePath
     new_version_id: str = Field(min_length=1, max_length=255)
+    excluded_file_ids: list[Annotated[str, Field(pattern=r"^[a-f0-9]{32}$")]] = Field(max_length=20000)
 
 
 class InstancePackExportRequest(InstanceTarget):
     output_path: Path
     pack_format: Literal["modrinth"]
-
-
-class ModpackOnlineInstallRequest(RequestModel):
-    source: Literal["modrinth", "curseforge", "ftb"]
-    project_id: str = Field(min_length=1, max_length=64)
-    file_id: str = Field(min_length=1, max_length=64)
-    game_path: Path
-    new_version_id: str = Field(min_length=1, max_length=255)
 
 
 class OperationRequest(RequestModel):
@@ -1015,6 +1044,10 @@ class RequestModelRegistry:
     """
 
     models: dict[str, type[BaseModel]] = {
+        "game_modpack_prepare": ModpackPrepareRequest,
+        "game_modpack_preparation_get": ModpackPreparationRequest,
+        "game_modpack_preparation_release": ModpackPreparationRequest,
+        "game_modpack_install": ModpackInstallRequest,
         "plugin_permissions_get": PluginPermissionQuery,
         "plugin_permission_resources": PluginPermissionResources,
         "plugin_file_recoveries_list": PluginFileRecoveriesQuery,
