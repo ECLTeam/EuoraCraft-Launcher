@@ -40,6 +40,11 @@
 #   - test_build_ftb_plan(tmp_path) -> None
 #   - test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None
 #   - test_search_online_resources_ftb(tmp_path, monkeypatch) -> None
+#   - test_commit_staged_instance_renames_directory(tmp_path) -> None
+#   - test_commit_staged_instance_retries_transient_lock(tmp_path, monkeypatch) -> None
+#   - test_commit_staged_instance_copies_when_rename_stays_locked(tmp_path, monkeypatch) -> None
+#   - test_commit_staged_instance_reports_locked_target(tmp_path, monkeypatch) -> None
+#   - test_commit_staged_instance_rejects_existing_target(tmp_path) -> None
 # ============================================================
 
 import hashlib
@@ -1177,3 +1182,101 @@ def test_export_pack_degrades_without_curseforge_key(tmp_path, monkeypatch) -> N
         index = json.loads(archive.read("modrinth.index.json"))
     assert "overrides/mods/b.jar" in names
     assert [item["path"] for item in index["files"]] == ["mods/a.jar"]
+
+
+def _staged_directory(parent: Path, name: str = ".Demo.ecl-import") -> Path:
+    """构造带版本描述与模组的暂存目录，模拟落位前的完整实例内容。"""
+    staging = parent / name
+    (staging / "mods").mkdir(parents=True)
+    (staging / "Demo.json").write_text("{}", encoding="utf-8")
+    (staging / "mods" / "a.jar").write_bytes(b"jar")
+    return staging
+
+
+def test_commit_staged_instance_renames_directory(tmp_path) -> None:
+    """目录改名可用时应原子落位并清空暂存目录。"""
+    staging = _staged_directory(tmp_path)
+    instance = tmp_path / "Demo"
+
+    modpack_module._commit_staged_instance(staging, instance)
+
+    assert (instance / "mods" / "a.jar").read_bytes() == b"jar"
+    assert not staging.exists()
+
+
+def test_commit_staged_instance_retries_transient_lock(tmp_path, monkeypatch) -> None:
+    """改名首次被占用时应重试成功，且不走复制兜底。"""
+    staging = _staged_directory(tmp_path)
+    instance = tmp_path / "Demo"
+    attempts: list[str] = []
+    original_replace = Path.replace
+
+    def flaky_replace(self: Path, target: Path) -> Path:
+        attempts.append(self.name)
+        if len(attempts) == 1:
+            raise PermissionError(13, "拒绝访问")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    monkeypatch.setattr(modpack_module.InstanceCommitPolicy, "replace_retry_delays", (0.0,))
+
+    modpack_module._commit_staged_instance(staging, instance)
+
+    assert len(attempts) == 2
+    assert (instance / "mods" / "a.jar").read_bytes() == b"jar"
+    assert not staging.exists()
+
+
+def test_commit_staged_instance_copies_when_rename_stays_locked(tmp_path, monkeypatch) -> None:
+    """改名持续被占用时应退化为复制落位，仍得到完整实例目录。"""
+    staging = _staged_directory(tmp_path)
+    instance = tmp_path / "Demo"
+
+    def locked_replace(self: Path, target: Path) -> Path:
+        raise PermissionError(13, "拒绝访问")
+
+    monkeypatch.setattr(Path, "replace", locked_replace)
+    monkeypatch.setattr(modpack_module.InstanceCommitPolicy, "replace_retry_delays", (0.0,))
+
+    modpack_module._commit_staged_instance(staging, instance)
+
+    assert (instance / "mods" / "a.jar").read_bytes() == b"jar"
+    assert not staging.exists()
+
+
+def test_commit_staged_instance_reports_locked_target(tmp_path, monkeypatch) -> None:
+    """改名与复制都失败时应报稳定错误码，且不留半成品目录。"""
+    staging = _staged_directory(tmp_path)
+    instance = tmp_path / "Demo"
+
+    def locked_replace(self: Path, target: Path) -> Path:
+        raise PermissionError(13, "拒绝访问")
+
+    def failing_copytree(source: Path, destination: Path, **kwargs) -> None:
+        raise PermissionError(13, "拒绝访问")
+
+    monkeypatch.setattr(Path, "replace", locked_replace)
+    monkeypatch.setattr(modpack_module.shutil, "copytree", failing_copytree)
+    monkeypatch.setattr(modpack_module.InstanceCommitPolicy, "replace_retry_delays", (0.0,))
+
+    with pytest.raises(GameServiceError) as excinfo:
+        modpack_module._commit_staged_instance(staging, instance)
+
+    assert excinfo.value.error_code == "INSTANCE_TARGET_LOCKED"
+    assert not instance.exists()
+    assert staging.exists()
+
+
+def test_commit_staged_instance_rejects_existing_target(tmp_path) -> None:
+    """目标目录已存在时应拒绝落位，不覆盖也不删除既有内容。"""
+    staging = _staged_directory(tmp_path)
+    instance = tmp_path / "Demo"
+    instance.mkdir()
+    (instance / "keep.txt").write_text("keep", encoding="utf-8")
+
+    with pytest.raises(GameServiceError) as excinfo:
+        modpack_module._commit_staged_instance(staging, instance)
+
+    assert excinfo.value.error_code == "INSTANCE_ALREADY_EXISTS"
+    assert (instance / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert staging.exists()

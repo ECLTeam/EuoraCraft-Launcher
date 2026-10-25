@@ -9,6 +9,7 @@
 #   - class PackFileEntry — 整合包内单个待下载文件条目（路径/直链/哈希/环境适用性）。
 #   - class ModpackPlan — 统一格式的整合包安装计划（版本、加载器、文件清单、overrides）。
 #   - class ModpackFormatPolicy — 整合包格式解析策略：特征标记与加载器命名映射的唯一归属点。
+#   - class InstanceCommitPolicy — 实例目录落位的 Windows 占用重试策略。
 #   - class ModpackCoordinator — 读取整合包、安装基础版本、下载并校验文件，最后创建实例。
 #       - prepare_modpack(source, ...) — 准备安装预览与私有快照。
 #       - get_modpack_preparation(preparation_id) / release_modpack_preparation(preparation_id) — 查询和释放预览。
@@ -32,6 +33,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from threading import Event, Thread
+from time import sleep
 from types import MappingProxyType
 from typing import Any, BinaryIO
 from uuid import uuid4
@@ -200,6 +202,28 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise GameServiceError(f"整合包描述文件读取失败: {path.name}", "INVALID_PACK_ARCHIVE") from exc
     return value if isinstance(value, dict) else {}
+
+
+def _is_instance_manifest_ready(manifest_path: Path) -> bool:
+    """
+    判断版本目录里的启动描述是否已完整写入。
+
+    加载器安装与版本安装都可能中途失败，空文件或缺少 mainClass 的描述只能说明
+    目录被创建过，不能当作「已安装」，否则后续安装会直接复用残缺的基础版本。
+
+    :param manifest_path: 版本目录下的 ``<版本名>.json``
+    :return: 文件存在、可解析且声明了启动主类时为 True
+    """
+    try:
+        if not manifest_path.is_file() or manifest_path.stat().st_size == 0:
+            return False
+        metadata = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(metadata, dict):
+        return False
+    main_class = metadata.get("mainClass")
+    return isinstance(main_class, str) and bool(main_class.strip())
 
 
 def _loader_from_modrinth_dependencies(dependencies: dict[str, Any], warnings: list[str]) -> tuple[str, str | None]:
@@ -739,6 +763,74 @@ def _ftb_file_entry(raw: dict[str, Any], warnings: list[str]) -> PackFileEntry |
     )
 
 
+class InstanceCommitPolicy:
+    """
+    实例目录落位的 Windows 占用重试策略。
+
+    目录改名要求独占源目录，而整合包刚写入的大批文件常被杀毒软件、索引器或
+    资源管理器预览短暂持有句柄。这里按递增延迟重试改名，重试窗口结束后由
+    复制落位兜底，避免整次安装在最后一步失败。
+    """
+
+    # 与单文件原子写同一思路（ECL.foundation.files），但整合包写入量更大，
+    # 扫描和索引的占用窗口更长，因此延迟序列更长。
+    replace_retry_delays: tuple[float, ...] = (0.05, 0.15, 0.4, 1.0, 2.0)
+
+
+def _commit_staged_instance(staging: Path, instance_path: Path) -> None:
+    """
+    把已写满的暂存目录落位为正式实例目录。
+
+    先确认目标不存在，再按 :class:`InstanceCommitPolicy` 重试原子改名；重试耗尽
+    后改为复制落位，使目录改名被长期占用时仍能完成安装。两个阶段都不覆盖已存在
+    的目录：目标已存在时直接失败，不删除任何用户数据。
+
+    :param staging: 已完整写入的暂存目录（``.<实例名>.ecl-import``）
+    :param instance_path: 目标实例目录，正常情况下不应存在
+    :raises GameServiceError: 目标已存在（INSTANCE_ALREADY_EXISTS）或目录持续被占用（INSTANCE_TARGET_LOCKED）
+    """
+    if instance_path.exists():
+        raise GameServiceError(f"目标实例已存在：{instance_path.name}", "INSTANCE_ALREADY_EXISTS")
+    for delay in (*InstanceCommitPolicy.replace_retry_delays, None):
+        try:
+            staging.replace(instance_path)
+            return
+        except PermissionError as exc:
+            if instance_path.exists():
+                raise GameServiceError(f"目标实例已存在：{instance_path.name}", "INSTANCE_ALREADY_EXISTS") from exc
+            if delay is None:
+                break
+            # 刚下载的大批文件可能仍在被扫描或建立索引，短暂等待后重试改名。
+            sleep(delay)
+    _copy_staged_instance(staging, instance_path)
+
+
+def _copy_staged_instance(staging: Path, instance_path: Path) -> None:
+    """
+    复制暂存目录到目标目录，作为改名被长期占用时的兜底落位。
+
+    目标目录由本次调用新建，复制失败时整体删除，避免留下无法启动的半成品；
+    复制成功后尽力删除暂存目录，删除失败只会留下扫描会忽略的点开头目录。
+
+    :param staging: 已完整写入的暂存目录
+    :param instance_path: 目标实例目录，调用前必须不存在
+    :raises GameServiceError: 目标已存在或复制过程中仍有文件被占用、权限不足
+    """
+    if instance_path.exists():
+        raise GameServiceError(f"目标实例已存在：{instance_path.name}", "INSTANCE_ALREADY_EXISTS")
+    try:
+        shutil.copytree(staging, instance_path)
+    except FileExistsError as exc:
+        raise GameServiceError(f"目标实例已存在：{instance_path.name}", "INSTANCE_ALREADY_EXISTS") from exc
+    except OSError as exc:
+        shutil.rmtree(instance_path, ignore_errors=True)
+        raise GameServiceError(
+            f"实例目录被占用，无法完成安装：{instance_path.name}。请关闭杀毒软件实时扫描或占用该目录的程序后重试",
+            "INSTANCE_TARGET_LOCKED",
+        ) from exc
+    shutil.rmtree(staging, ignore_errors=True)
+
+
 class ModpackCoordinator(_GameState):
     """
     导入整合包：解压文件、安装基础版本、下载文件并创建实例。
@@ -954,7 +1046,7 @@ class ModpackCoordinator(_GameState):
             if original and original.name != f"{target.instance_directory_name}.json":
                 original.rename(staging / f"{target.instance_directory_name}.json")
             context.check_cancelled()
-            context.finalize(lambda: staging.replace(target.instance_path))
+            context.finalize(lambda: _commit_staged_instance(staging, target.instance_path))
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -980,7 +1072,8 @@ class ModpackCoordinator(_GameState):
         """
         按安装计划创建实例：读取文件清单、安装基础版本、下载并校验文件，最后一次性保存。
 
-        全程在 staging 目录进行，任何失败都会清理 staging，不影响既有实例。
+        全程在 staging 目录进行，任何失败都会清理 staging，不影响既有实例；
+        落位时先尝试原子改名，被占用而失败时退化为复制落位。
         """
         if not plan.minecraft_version:
             raise GameServiceError("整合包缺少 Minecraft 版本声明", "INVALID_PACK_ARCHIVE")
@@ -996,7 +1089,7 @@ class ModpackCoordinator(_GameState):
             overrides_count = self._copy_pack_overrides(plan, staging, context, ignored_paths)
             self._write_pack_version_json(base_name, target, staging)
             context.check_cancelled()
-            context.finalize(lambda: staging.replace(target.instance_path))
+            context.finalize(lambda: _commit_staged_instance(staging, target.instance_path))
             return {
                 "versionId": target.instance_directory_name,
                 "path": str(target.instance_path),
@@ -1073,7 +1166,7 @@ class ModpackCoordinator(_GameState):
         if plan.loader_type != "vanilla":
             base_name = f"{plan.loader_type}-{loader_version}-{mc_version}"
         base_json = target.instance_path.parent / base_name / f"{base_name}.json"
-        if base_json.is_file():
+        if _is_instance_manifest_ready(base_json):
             context.progress(30, f"基础版本 {base_name} 已就绪")
             return base_name
         context.progress(20, f"正在自动安装基础版本 {base_name}")
@@ -1096,7 +1189,7 @@ class ModpackCoordinator(_GameState):
             cancel_event=context.cancel_event,
             include_fabric_api=False,
         )
-        if not base_json.is_file():
+        if not _is_instance_manifest_ready(base_json):
             raise GameServiceError(f"基础版本 {base_name} 安装失败", "PACK_BASE_VERSION_MISSING")
         context.progress(30, f"基础版本 {base_name} 安装完成", installation=None)
         return base_name

@@ -14,7 +14,8 @@
 #   - test_version_service_rejects_invalid_path_payload() -> None
 #   - test_loader_versions_returns_plain_version_strings(tmp_path, monkeypatch) -> None
 #   - test_loader_versions_handles_plain_list_and_empty_result(tmp_path, monkeypatch) -> None
-#   - test_forge_version_parser_accepts_bytes_html(monkeypatch) -> None
+#   - test_bmcl_forge_versions_use_same_newest_first_order() -> None
+#   - test_forge_versions_read_from_maven_index() -> None
 # ============================================================
 
 import json
@@ -175,24 +176,42 @@ def test_loader_versions_handles_plain_list_and_empty_result(tmp_path, monkeypat
     assert service.loader_versions("quilt", "1.20.1") == []
 
 
-def test_forge_version_parser_accepts_bytes_html(monkeypatch) -> None:
-    from ECL.game.Core.NetLibs import BaseApiClient, _ForgeVersionParser
-
-    html = (
-        '<table class="download-list"><tr>'
-        '<td class="download-version">47.4.22</td>'
-        '<td class="download-version"><span>47.4.21</span></td>'
-        "</tr></table>"
-    )
-    parser = _ForgeVersionParser()
-    parser.feed(html)
-
-    assert parser.versions == ["47.4.22"]
+def test_bmcl_forge_versions_use_same_newest_first_order() -> None:
+    """BMCLAPI 源应和官方源一样按版本降序返回，不受镜像原始顺序影响。"""
+    from ECL.game.Core.NetLibs import BaseApiClient, BmclApiUrl
 
     client = BaseApiClient.__new__(BaseApiClient)
+    client.config = BmclApiUrl()
+    requested = []
+    client._get_json_with_retry = lambda url: (
+        requested.append(url),
+        [{"version": "47.4.27"}, {"version": "47.4.28"}, {"version": "47.4.9"}],
+    )[1]
+
+    assert [item["LoaderVersion"] for item in client.get_forge_versions("1.20.1")] == [
+        "47.4.28",
+        "47.4.27",
+        "47.4.9",
+    ]
+    assert requested == ["https://bmclapi2.bangbang93.com/forge/minecraft/1.20.1"]
+
+
+def test_forge_versions_read_from_maven_index() -> None:
+    """官方源应读 maven-metadata.json，剥掉 "{mc}-" 前缀并按最新在前返回。"""
+    from ECL.game.Core.NetLibs import BaseApiClient
+
+    payload = {
+        "1.20.1": ["1.20.1-47.4.21", "1.20.1-47.4.22"],
+        "1.21.1": ["1.21.1-52.1.20"],
+    }
+    client = BaseApiClient.__new__(BaseApiClient)
     client.config = SimpleNamespace()
-    client._download_with_retry = lambda url: html.encode("utf-8")
+    requested = []
+    client._get_json_with_retry = lambda url: (requested.append(url), payload)[1]
 
-    versions = client.get_forge_versions("1.20.1")
-
-    assert versions == [{"LoaderVersion": "47.4.22", "GameVersion": "1.20.1"}]
+    assert client.get_forge_versions("1.20.1") == [
+        {"LoaderVersion": "47.4.22", "GameVersion": "1.20.1"},
+        {"LoaderVersion": "47.4.21", "GameVersion": "1.20.1"},
+    ]
+    assert requested == ["https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json"]
+    assert client.get_forge_versions("1.21.9") == []
