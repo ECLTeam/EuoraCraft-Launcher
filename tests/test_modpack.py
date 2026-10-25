@@ -460,7 +460,7 @@ def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -
     created = []
 
     class FakeGames:
-        def build_fabric_download_list(self, version_id, loader_version, save_name):
+        def build_fabric_download_list(self, version_id, loader_version, save_name, *, observer=None):
             created.append((save_name, loader_version))
             directory = game_path / "versions" / save_name
             directory.mkdir(parents=True, exist_ok=True)
@@ -526,7 +526,7 @@ def test_import_pack_default_loader_uses_shared_latest_selection(tmp_path, monke
         queried.append(args)
         return ["0.16.9", "0.16.14", "0.16.2"]
 
-    def build(version_id, loader_version, save_name):
+    def build(version_id, loader_version, save_name, *, observer=None):
         selected_versions.append((loader_version, save_name))
         _write_json(
             game_path / "versions" / save_name / f"{save_name}.json",
@@ -863,7 +863,7 @@ def test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None:
     created = []
 
     class FakeGames:
-        def build_neoforged_download_list(self, version_id, loader_version, java_path, save_name):
+        def build_neoforged_download_list(self, version_id, loader_version, java_path, save_name, *, observer=None):
             created.append((save_name, loader_version))
             directory = game_path / "versions" / save_name
             directory.mkdir(parents=True, exist_ok=True)

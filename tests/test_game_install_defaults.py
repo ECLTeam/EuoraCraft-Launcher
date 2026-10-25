@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from threading import Event, get_ident
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import httpx
 import pytest
@@ -123,7 +123,7 @@ def test_default_loader_selects_semantic_latest_before_building(
         if loader in {"forge", "neoforge"}
         else ("1.20.1", latest, "Chosen Name")
     )
-    core_builders[builder_name].assert_called_once_with(*expected)
+    core_builders[builder_name].assert_called_once_with(*expected, observer=ANY)
 
 
 @pytest.mark.parametrize("loader", ["fabric", "forge", "neoforge", "quilt"])
@@ -248,7 +248,7 @@ def test_install_request_accepts_defaults_and_queries_on_worker(
 
     asyncio.run(install())
     assert query_threads and query_threads[0] != request_thread
-    assert events[-1]["phase"] == "done", events
+    assert events[-1]["installation"]["status"] == "completed", events
     assert not install_service._install_tasks
     assert not install_service._active_downloads
     builder_name = "build_neoforged_download_list" if loader == "neoforge" else f"build_{loader}_download_list"
@@ -270,8 +270,8 @@ def test_async_default_query_failure_emits_error(install_service, core_builders,
         await install_service._install_tasks[result["taskId"]]
 
     asyncio.run(install())
-    assert events[-1]["phase"] == "error"
-    assert events[-1]["errorCode"] == "LOADER_VERSION_NOT_FOUND"
+    assert events[-1]["installation"]["status"] == "error"
+    assert events[-1]["installation"]["errorCode"] == "LOADER_VERSION_NOT_FOUND"
     assert all(not builder.called for builder in core_builders.values())
     assert not list((tmp_path / "versions").iterdir())
 
@@ -280,7 +280,7 @@ def test_vanilla_skips_loader_query(install_service, core_builders, tmp_path, mo
     query = Mock(side_effect=AssertionError("原版不得查询加载器"))
     monkeypatch.setattr(install_service, "loader_versions", query)
     _install_blocking(install_service, tmp_path, "vanilla", None)
-    core_builders["build_minecraft_download_list"].assert_called_once_with("1.20.1", "Chosen Name")
+    core_builders["build_minecraft_download_list"].assert_called_once_with("1.20.1", "Chosen Name", observer=ANY)
     query.assert_not_called()
 
 

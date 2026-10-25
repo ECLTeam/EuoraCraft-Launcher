@@ -22,27 +22,22 @@ from collections.abc import Callable, Mapping
 from contextvars import copy_context
 from pathlib import Path
 from threading import Event, Thread
-from typing import Any, TypedDict
+from typing import Any
 from uuid import uuid4
 
 import httpx
 from anyio import to_thread
 from packaging.version import InvalidVersion, Version
 
-from ECL.game import GetGames
+from ECL.game import GetGames, InstallEvent, InstallObserver
 
 from .base import Downloader, GameServiceError, _GameState
+from .install_progress import InstallationProgress, InstallationSnapshot
 from .mod_sources import mod_api_base, mod_user_agent, rewrite_mod_file_url
 from .workspace import resolve_relative_id
 
 # install_blocking 的进度上报回调：签名与 _emit_install_progress 去掉 task_id 后一致。
 InstallProgressReporter = Callable[..., None]
-
-
-class _InstallDownloadState(TypedDict):
-    downloader: Downloader | None
-    speed_bytes_per_second: int
-    base_completed: int | None
 
 
 class InstallCoordinator(_GameState):
@@ -54,51 +49,6 @@ class InstallCoordinator(_GameState):
 
     fabric_api_project: str = "fabric-api"
     fabric_api_timeout_seconds: int = 10
-
-    def _retry_install_downloads_blocking(
-        self,
-        task_id: str,
-        game_path: Path,
-        save_name: str,
-        source: str,
-        failed_entries: set[tuple[str, str]],
-        primary_downloader: Downloader,
-        progress_state: _InstallDownloadState,
-        report: InstallProgressReporter,
-        emit_progress: Callable[[int | None], None],
-        loop: asyncio.AbstractEventLoop | None = None,
-    ) -> set[tuple[str, str]]:
-        """
-        只将首选源失败的文件交给备用源，保留已下载文件和任务标识。
-
-        备用源没有不同地址时返回原始失败集合，由安装流程统一报告。
-        必须在无事件循环的工作线程中调用（下载协程经 ``_run_downloader_blocking`` 驱动）。
-        """
-        if not failed_entries:
-            return failed_entries
-        fallback_entries = self._fallback_download_entries(
-            game_path,
-            save_name,
-            source,
-            failed_entries,
-            getattr(primary_downloader, "local_failed_paths", set()),
-        )
-        if not fallback_entries:
-            return failed_entries
-        progress_state["base_completed"] = len(primary_downloader.completed_entries)
-        report("download", "首选下载源失败，正在尝试备用源", subtask="download_files")
-        fallback_downloader = self._downloader_factory(
-            fallback_entries,
-            progress_callback=lambda done, total: emit_progress(None),
-            speed_callback=lambda speed_mib_per_second: emit_progress(int(speed_mib_per_second * 1024 * 1024)),
-        )
-        progress_state["downloader"] = fallback_downloader
-        with self._lock:
-            self._active_downloads[task_id] = fallback_downloader
-        self._run_downloader_blocking(fallback_downloader, loop)
-        fallback_failed_paths = {file_path for _, file_path in fallback_downloader.failed_entries}
-        recovered_paths = {file_path for _, file_path in fallback_entries} - fallback_failed_paths
-        return {(url, file_path) for url, file_path in failed_entries if file_path not in recovered_paths}
 
     def _emit_install_progress(
         self,
@@ -114,7 +64,13 @@ class InstallCoordinator(_GameState):
         speed: int | None = None,
         subtask: str | None = None,
         error_code: str | None = None,
+        installation: InstallationSnapshot | None = None,
     ) -> None:
+        if installation is not None:
+            self.events.emit(
+                "game:install_progress", {"kind": "installation", "task_id": task_id, "installation": installation}
+            )
+            return
         payload: dict[str, Any] = {
             "phase": phase,
             "task_id": task_id,
@@ -224,59 +180,50 @@ class InstallCoordinator(_GameState):
         source: str,
         java_path: str | None,
     ) -> None:
-        self._emit_install_progress(task_id, "install", "正在读取实例信息", done=0, total=1)
         report = functools.partial(self._emit_install_progress, task_id)
-        # 任务取消无法直接中断工作线程，用取消事件让 install_blocking 的
-        # 守护线程在取消后立刻停止下载器。
         cancel_event = Event()
+        progress_record = InstallationProgress(loader, True, report)
+        worker = asyncio.create_task(
+            to_thread.run_sync(
+                functools.partial(
+                    self.install_blocking,
+                    task_id,
+                    version_id,
+                    save_name,
+                    loader,
+                    loader_version,
+                    fabric_api_version,
+                    game_path,
+                    source,
+                    java_path,
+                    report,
+                    cancel_event,
+                    asyncio.get_running_loop(),
+                    progress_record=progress_record,
+                )
+            )
+        )
         try:
-            await to_thread.run_sync(
-                self.install_blocking,
-                task_id,
-                version_id,
-                save_name,
-                loader,
-                loader_version,
-                fabric_api_version,
-                game_path,
-                source,
-                java_path,
-                report,
-                cancel_event,
-                asyncio.get_running_loop(),
-                abandon_on_cancel=True,
-            )
-        except asyncio.CancelledError:
-            self.logger.info("已请求取消安装，后台下载线程仍等待清理；实例名称：%s", save_name)
-            cancel_event.set()
-            with self._lock:
-                downloader = self._active_downloads.get(task_id)
-            if downloader is not None:
-                try:
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancel_event.set()
+                progress_record.request_cancel()
+                with self._lock:
+                    downloader = self._active_downloads.get(task_id)
+                if downloader is not None:
                     downloader.stop()
-                except Exception:
-                    self.logger.exception("停止已取消安装的下载器失败")
-            self._emit_install_progress(task_id, "error", "安装已取消", error_code="INSTALL_CANCELLED")
+                # 取消等待方不能提前结束安装；等待工作线程实际退出。
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                worker.result()
         except GameServiceError as exc:
-            self.logger.error("版本安装失败 [%s]: %s", exc.error_code, exc)
-            self._emit_install_progress(
-                task_id,
-                "error",
-                str(exc),
-                done=0,
-                total=1,
-                error_code=exc.error_code,
-            )
-        except Exception as exc:
-            self.logger.exception("Core 安装版本失败: %s", save_name)
-            self._emit_install_progress(
-                task_id,
-                "error",
-                f"安装 {save_name} 失败: {exc}",
-                done=0,
-                total=1,
-                error_code="VERSION_INSTALL_FAILED",
-            )
+            self.logger.info("版本安装结束；错误码：%s", exc.error_code)
+        except Exception:
+            self.logger.exception("版本安装执行失败")
         finally:
             with self._lock:
                 self._active_downloads.pop(task_id, None)
@@ -352,24 +299,26 @@ class InstallCoordinator(_GameState):
         fabric_api_version: object,
         include_fabric_api: bool,
         cancel_event: Event | None,
-    ) -> list[tuple[str, str]]:
+        observer: InstallObserver,
+    ) -> tuple[list[tuple[str, str]], frozenset[Path]]:
         """
         生成 Fabric 版本清单，并按实例有效隔离设置追加可选的 Fabric API。
 
         Core 先写入加载器元数据，随后才能判断新实例是否属于模组实例。
         整合包禁用附带 API 时不查询模组来源，也不添加额外文件。
         """
-        download_list = games.build_fabric_download_list(version_id, loader_version, save_name)
+        download_list = games.build_fabric_download_list(version_id, loader_version, save_name, observer=observer)
         if not include_fabric_api:
-            return download_list
+            return download_list, frozenset()
         self._ensure_install_not_cancelled(cancel_event)
+        observer.emit("resolve_fabric_api")
         api_url, filename = self._resolve_fabric_api(
             version_id, fabric_api_version if isinstance(fabric_api_version, str) else None
         )
         isolated = self.resolve_version_isolation(game_path, save_name)
         target = self.resolve_instance(game_path, save_name, isolated)
         api_path = resolve_relative_id(target.game_data_path / "mods", filename, must_exist=False)
-        return [*download_list, (api_url, str(api_path))]
+        return [*download_list, (api_url, str(api_path))], frozenset({api_path.resolve(strict=False)})
 
     def install_blocking(
         self,
@@ -386,6 +335,8 @@ class InstallCoordinator(_GameState):
         cancel_event: Event | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         include_fabric_api: bool = True,
+        *,
+        progress_record: InstallationProgress | None = None,
     ) -> None:
         """
         同步执行一次完整的版本安装：构建下载清单、并发下载、备用源补全。
@@ -407,130 +358,189 @@ class InstallCoordinator(_GameState):
         :param report: 进度上报回调，签名与 ``_emit_install_progress`` 去掉 task_id 一致
         :param cancel_event: 取消信号；为 None 时不检查取消
         :param loop: 可选的既有事件循环，下载协程将在其上执行
+        :param progress_record: 异步入口持有的本次安装记录，用于在线程退出前报告取消请求
         :param include_fabric_api: fabric 安装是否附带 Fabric API；整合包导入的
             基础安装应传 False，避免与包内自带的 API 模组重复
         :raises GameServiceError: 加载器版本查询或数据错误、下载失败或安装取消时抛出
         """
-        loader_version = self._resolve_install_loader_version(loader, version_id, loader_version, source, cancel_event)
-        self._ensure_install_not_cancelled(cancel_event)
-        games = self._context(game_path, source).games
-        if loader == "vanilla":
-            download_list = games.build_minecraft_download_list(version_id, save_name)
-        elif loader == "fabric":
-            download_list = self._build_fabric_install_download_list(
-                games,
-                game_path,
-                version_id,
-                save_name,
-                loader_version,
-                fabric_api_version,
-                include_fabric_api,
-                cancel_event,
+        record = progress_record or InstallationProgress(loader, include_fabric_api, report)
+        observer = InstallObserver(record.accept, functools.partial(self._ensure_install_not_cancelled, cancel_event))
+        try:
+            observer.emit("resolve_metadata")
+            loader_version = self._resolve_install_loader_version(
+                loader, version_id, loader_version, source, cancel_event
             )
-        elif loader == "quilt":
-            download_list = games.build_quilt_download_list(version_id, loader_version, save_name)
-        elif loader == "forge":
-            download_list = games.build_forge_download_list(version_id, loader_version, java_path, save_name)
-        else:
-            download_list = games.build_neoforged_download_list(version_id, loader_version, java_path, save_name)
+            observer.check_cancelled()
+            games = self._context(game_path, source).games
+            additional_paths: frozenset[Path] = frozenset()
+            if loader == "vanilla":
+                download_list = games.build_minecraft_download_list(version_id, save_name, observer=observer)
+            elif loader == "fabric":
+                download_list, additional_paths = self._build_fabric_install_download_list(
+                    games,
+                    game_path,
+                    version_id,
+                    save_name,
+                    loader_version,
+                    fabric_api_version,
+                    include_fabric_api,
+                    cancel_event,
+                    observer,
+                )
+            elif loader == "quilt":
+                download_list = games.build_quilt_download_list(
+                    version_id, loader_version, save_name, observer=observer
+                )
+            elif loader == "forge":
+                download_list = games.build_forge_download_list(
+                    version_id, loader_version, java_path, save_name, observer=observer
+                )
+            else:
+                download_list = games.build_neoforged_download_list(
+                    version_id, loader_version, java_path, save_name, observer=observer
+                )
+            observer.check_cancelled()
+            if download_list:
+                self._download_install_files(
+                    task_id, game_path, save_name, source, download_list, observer, cancel_event, loop, additional_paths
+                )
+            else:
+                observer.emit("download_game_files", status="skipped")
+            observer.emit("finalize_install")
+            observer.check_cancelled()
+            record.finish("completed", f"{save_name} 已安装完成")
+            self.logger.info("版本安装完成；实例名称：%s", save_name)
+        except GameServiceError as exc:
+            record.finish("canceled" if exc.error_code == "INSTALL_CANCELLED" else "error", str(exc), exc.error_code)
+            raise
+        except Exception:
+            record.finish("error", "安装失败，请查看错误详情", "VERSION_INSTALL_FAILED")
+            raise
 
-        if not download_list:
-            report("done", f"{save_name} 已安装完成", done=1, total=1)
-            return
+    def _download_install_files(
+        self,
+        task_id: str,
+        game_path: Path,
+        save_name: str,
+        source: str,
+        download_list: list[tuple[str, str]],
+        observer: InstallObserver,
+        cancel_event: Event | None,
+        loop: asyncio.AbstractEventLoop | None,
+        additional_paths: frozenset[Path],
+    ) -> None:
+        """
+        执行资源下载及同一步骤内的备用源补全，完成数按唯一目标路径计算。
 
-        self._ensure_install_not_cancelled(cancel_event)
+        下载器实际退出后才解除取消监听；备用源沿用同一安装记录和取消信号。
+        """
+        observer.emit("download_game_files", action="preflight")
+        downloader = self._downloader_factory(download_list, observer=observer)
+        self._run_install_downloader(task_id, downloader, cancel_event, loop)
+        observer.check_cancelled()
+        failed = set(downloader.failed_entries)
+        if failed:
+            failed = self._verify_failed_install_files(game_path, save_name, source, failed, additional_paths, observer)
+        if failed:
+            entries = self._fallback_download_entries(
+                game_path,
+                save_name,
+                source,
+                failed,
+                downloader.local_failed_paths,
+            )
+            if entries:
+                all_paths = {Path(file_path).resolve(strict=False) for _, file_path in download_list}
+                failed_paths = {Path(file_path).resolve(strict=False) for _, file_path in failed}
+                completed_paths = all_paths - failed_paths
+                transferred = downloader.bytes_downloaded_for_speed
+                total_files = len(all_paths)
 
-        # 进度事件闭包：同时上报字节/文件进度、文件计数与实时速度。
-        # 通过可变容器持有 downloader 引用，避免闭包在赋值前被调用。
-        progress_state: _InstallDownloadState = {
-            "downloader": None,
-            "speed_bytes_per_second": 0,
-            "base_completed": None,
+                def report_fallback(event: InstallEvent) -> None:
+                    observer.callback(
+                        InstallEvent(
+                            stage="download_game_files",
+                            status=event.status,
+                            action="fallback" if event.action == "downloading" else event.action,
+                            unit="files",
+                            completed=len(completed_paths) + event.completed_files,
+                            total=total_files,
+                            completed_files=len(completed_paths) + event.completed_files,
+                            total_files=total_files,
+                            transferred_bytes=transferred + event.transferred_bytes,
+                            speed=event.speed,
+                        )
+                    )
+
+                fallback_observer = InstallObserver(report_fallback, observer.check_cancelled)
+                fallback_observer.emit("download_game_files", action="fallback")
+                fallback = self._downloader_factory(list(entries), observer=fallback_observer)
+                self._run_install_downloader(task_id, fallback, cancel_event, loop)
+                observer.check_cancelled()
+                recovered = {file_path for _, file_path in fallback.completed_entries}
+                failed = {(url, file_path) for url, file_path in failed if file_path not in recovered}
+        if failed:
+            failed = self._verify_failed_install_files(game_path, save_name, source, failed, additional_paths, observer)
+        if failed:
+            raise GameServiceError(f"有 {len(failed)} 个游戏文件下载失败，请重试", "GAME_DOWNLOAD_FAILED")
+        observer.emit("download_game_files", status="completed")
+
+    def _verify_failed_install_files(
+        self,
+        game_path: Path,
+        save_name: str,
+        source: str,
+        failed_entries: set[tuple[str, str]],
+        additional_paths: frozenset[Path],
+        observer: InstallObserver,
+    ) -> set[tuple[str, str]]:
+        """
+        按当前元数据校验失败文件，识别已被并发安装补齐的共享缓存。
+
+        Core 校验负责哈希与版本规则；额外 Fabric API 不属于游戏清单，仍保留
+        下载器确认的失败，避免仅凭目标文件存在误报成功。
+        """
+        observer.emit("download_game_files", action="checking")
+        checker = self._context(game_path, source).files_checker
+        checking_observer = InstallObserver(check_cancelled=observer.check_cancelled)
+        missing = checker.check_files(game_path, save_name, observer=checking_observer)
+        missing_paths = {Path(file_path).resolve(strict=False) for _, file_path in missing}
+        observer.check_cancelled()
+        return {
+            (url, file_path)
+            for url, file_path in failed_entries
+            if Path(file_path).resolve(strict=False) in missing_paths | additional_paths
         }
 
-        def _emit_download_progress(speed_bytes_per_second: int | None = None) -> None:
-            if speed_bytes_per_second is not None:
-                progress_state["speed_bytes_per_second"] = speed_bytes_per_second
-            downloader = progress_state["downloader"]
-            assert downloader is not None, "下载器开始执行后才允许上报进度"
-            base_completed = progress_state["base_completed"]
-            is_fallback = base_completed is not None
-            report(
-                "download",
-                f"正在下载 {save_name}",
-                done=base_completed + len(downloader.completed_entries) if is_fallback else downloader.downloaded_bytes,
-                total=len(download_list) if is_fallback else downloader.total_bytes,
-                progress_type="files" if is_fallback or not downloader.use_byte_progress else "bytes",
-                total_files=len(download_list),
-                downloaded_files=(base_completed or 0) + len(downloader.completed_entries),
-                speed=progress_state["speed_bytes_per_second"],
-                subtask="download_files",
-            )
-
-        downloader = self._downloader_factory(
-            download_list,
-            progress_callback=lambda done, total: _emit_download_progress(),
-            speed_callback=lambda speed_mib_per_second: _emit_download_progress(
-                int(speed_mib_per_second * 1024 * 1024)
-            ),
-        )
-        progress_state["downloader"] = downloader
-        with self._lock:
-            self._active_downloads[task_id] = downloader
-
-        report(
-            "download",
-            f"准备下载 {len(download_list)} 个文件",
-            done=0,
-            total=len(download_list),
-            progress_type="files",
-            total_files=len(download_list),
-            downloaded_files=0,
-            subtask="download_files",
-        )
+    def _run_install_downloader(
+        self,
+        task_id: str,
+        downloader: Downloader,
+        cancel_event: Event | None,
+        loop: asyncio.AbstractEventLoop | None,
+    ) -> None:
+        """
+        登记当前下载器并在其实际退出时释放取消监听，首选源与备用源共用。
+        """
         finished = Event()
         watcher: Thread | None = None
+        with self._lock:
+            self._active_downloads[task_id] = downloader
         if cancel_event is not None:
             watcher = Thread(
                 target=copy_context().run,
                 args=(self._watch_downloader_cancel, cancel_event, finished, downloader),
-                name=f"ECLInstallCancel-{task_id}",
                 daemon=True,
             )
             watcher.start()
         try:
-            # 下载协程的执行循环由 _run_downloader_blocking 决定；
-            # 取消请求由守护线程调用 Downloader.stop() 间接生效。
             self._run_downloader_blocking(downloader, loop)
         finally:
             finished.set()
             with self._lock:
-                if self._active_downloads.get(task_id) is downloader:
-                    self._active_downloads.pop(task_id, None)
+                self._active_downloads.pop(task_id, None)
             if watcher is not None:
                 watcher.join(timeout=2)
-        self._ensure_install_not_cancelled(cancel_event)
-        failed_entries = set(downloader.failed_entries)
-        failed_entries = self._retry_install_downloads_blocking(
-            task_id,
-            game_path,
-            save_name,
-            source,
-            failed_entries,
-            downloader,
-            progress_state,
-            report,
-            _emit_download_progress,
-            loop,
-        )
-        if failed_entries:
-            failed_url, failed_path = next(iter(failed_entries))
-            raise GameServiceError(
-                f"有 {len(failed_entries)} 个文件下载失败，例如 {failed_path}（{failed_url}）",
-                "GAME_DOWNLOAD_FAILED",
-            )
-        self.logger.info("版本安装完成: %s", save_name)
-        report("done", f"{save_name} 已安装完成", done=1, total=1)
 
     def _resolve_fabric_api(self, game_version: str, fabric_api_version: str | None) -> tuple[str, str]:
         """

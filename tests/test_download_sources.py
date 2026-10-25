@@ -11,13 +11,13 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import httpx
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.game import ApiUrlConfig, BmclApiUrl
+from ECL.game import ApiUrlConfig, BmclApiUrl, InstallEvent, InstallObserver
 from ECL.services.game import GameService
 from ECL.services.game.download_sources import PreferredApiClient
 
@@ -91,10 +91,29 @@ def test_direct_installer_download_retries_with_other_client(tmp_path: Path) -> 
     alternate.download_forge_installer.return_value = expected_path
 
     assert client.download_forge_installer("1.21", "54.0.0", tmp_path) == expected_path
-    alternate.download_forge_installer.assert_called_once_with("1.21", "54.0.0", tmp_path)
+    alternate.download_forge_installer.assert_called_once_with("1.21", "54.0.0", tmp_path, observer=ANY)
     client.close()
     preferred.close.assert_called_once_with()
     alternate.close.assert_called_once_with()
+
+
+def test_direct_download_reports_source_switch_and_retains_actual_transfer(tmp_path):
+    client, preferred, alternate = _clients("official")
+    events = []
+
+    def first(_sha1, _path, *, observer):
+        observer.callback(InstallEvent("download_client", transferred_bytes=40))
+        raise httpx.ConnectError("disconnected")
+
+    def second(_sha1, _path, *, observer):
+        observer.callback(InstallEvent("download_client", transferred_bytes=60))
+
+    preferred.download_client_jar.side_effect = first
+    alternate.download_client_jar.side_effect = second
+    client.download_client_jar("hash", tmp_path / "file.jar", observer=InstallObserver(events.append))
+    assert any(event.action == "fallback" for event in events)
+    assert events[-1].transferred_bytes == 100
+    client.close()
 
 
 def test_catalog_uses_preferred_context_and_falls_back_to_other_client(tmp_path: Path) -> None:
@@ -186,6 +205,8 @@ def test_install_retries_only_failed_file_with_alternate_source(
             self.total_bytes = len(download_list)
             self.total_files = len(download_list)
             self.use_byte_progress = False
+            self.local_failed_paths = set()
+            self.bytes_downloaded_for_speed = 0
             download_lists.append(download_list)
 
         async def run(self):
@@ -207,7 +228,10 @@ def test_install_retries_only_failed_file_with_alternate_source(
 
     def context(_game_path, source):
         if source == preferred_source:
-            return SimpleNamespace(games=SimpleNamespace(build_minecraft_download_list=lambda *_: primary_files))
+            return SimpleNamespace(
+                games=SimpleNamespace(build_minecraft_download_list=lambda *_, **_kwargs: primary_files),
+                files_checker=SimpleNamespace(check_files=lambda *_, **_kwargs: primary_files),
+            )
         return SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_: alternate_files))
 
     service._context = Mock(side_effect=context)
@@ -221,9 +245,9 @@ def test_install_retries_only_failed_file_with_alternate_source(
     asyncio.run(install())
 
     assert download_lists == [primary_files, [alternate_files[1]]]
-    assert events[-1]["phase"] == ("error" if alternate_fails else "done")
+    assert events[-1]["installation"]["status"] == ("error" if alternate_fails else "completed")
     if alternate_fails:
-        assert events[-1]["errorCode"] == "GAME_DOWNLOAD_FAILED"
+        assert events[-1]["installation"]["errorCode"] == "GAME_DOWNLOAD_FAILED"
     service.close()
 
 

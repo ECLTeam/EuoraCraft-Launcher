@@ -176,6 +176,8 @@ class FakeDownloader:
         self.downloaded_bytes = 0
         self.total_bytes = len(download_list)
         self.use_byte_progress = False
+        self.local_failed_paths = set()
+        self.bytes_downloaded_for_speed = 0
         self.total_files = len(download_list)
         self.completed_entries: set[tuple[str, str]] = set()
 
@@ -230,7 +232,7 @@ def test_fabric_api_download_follows_effective_isolation(tmp_path, monkeypatch, 
             "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
         },
     )
-    checker = SimpleNamespace(config=None, api_client=client, check_files=lambda *_: [])
+    checker = SimpleNamespace(config=None, api_client=client, check_files=lambda *_, **_kwargs: [])
     games = GetGames(checker, None, game_path)
     service = _build_service(
         search_factory=SearchMinecraft,
@@ -272,7 +274,9 @@ def test_fabric_api_download_follows_effective_isolation(tmp_path, monkeypatch, 
 def test_fabric_api_rejects_unsafe_filename(tmp_path, monkeypatch, filename):
     service = _build_service(isolation_policy_provider=lambda: "all")
     monkeypatch.setattr(
-        service, "_context", lambda *_: SimpleNamespace(games=SimpleNamespace(build_fabric_download_list=lambda *_: []))
+        service,
+        "_context",
+        lambda *_: SimpleNamespace(games=SimpleNamespace(build_fabric_download_list=lambda *_, **_kwargs: [])),
     )
     monkeypatch.setattr(service, "_resolve_fabric_api", lambda *_: ("https://example.test/api.jar", filename))
     with pytest.raises(GameServiceError, match="资源"):
@@ -351,7 +355,7 @@ def _launch_lifecycle_fixture(tmp_path, monkeypatch, clock):
     monkeypatch.setattr(
         service,
         "_context",
-        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: [])),
     )
     result = asyncio.run(
         service.launch_instance(
@@ -495,7 +499,7 @@ def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatc
     built = []
 
     class FakeGames:
-        def build_minecraft_download_list(self, version_id, save_name):
+        def build_minecraft_download_list(self, version_id, save_name, *, observer=None):
             built.append((version_id, save_name))
             return [("https://example.com/client.jar", str(tmp_path / "client.jar"))]
 
@@ -527,7 +531,8 @@ def test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatc
         "versionName": "My 1.21.8",
     }
     assert built == [("1.21.8", "My 1.21.8")]
-    assert [event["phase"] for event in events] == ["install", "download", "download", "done"]
+    assert events[-1]["installation"]["status"] == "completed"
+    assert any(event["installation"]["currentStageId"] == "download_game_files" for event in events)
     assert events[-1]["task_id"] == "install-task"
     log_messages = [call.args[0] for call in service.logger.info.call_args_list]
     assert any("开始安装" in message for message in log_messages)
@@ -548,11 +553,14 @@ def test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> N
         service,
         "_context",
         lambda *_args: SimpleNamespace(
+            files_checker=SimpleNamespace(
+                check_files=lambda *a, **k: [("https://example.com/client.jar", "client.jar")]
+            ),
             games=SimpleNamespace(
-                build_minecraft_download_list=lambda *_args: [
+                build_minecraft_download_list=lambda *_args, **_kwargs: [
                     ("https://example.com/client.jar", str(tmp_path / "client.jar"))
                 ]
-            )
+            ),
         ),
     )
 
@@ -565,9 +573,9 @@ def test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> N
 
     asyncio.run(install())
 
-    assert events[-1]["phase"] == "error"
-    assert events[-1]["errorCode"] == "GAME_DOWNLOAD_FAILED"
-    assert "client.jar" in events[-1]["message"]
+    assert events[-1]["installation"]["status"] == "error"
+    assert events[-1]["installation"]["errorCode"] == "GAME_DOWNLOAD_FAILED"
+    assert "下载失败" in events[-1]["installation"]["message"]
 
 
 def test_install_version_returns_immediately_and_rejects_duplicate_task(tmp_path, monkeypatch) -> None:
@@ -587,7 +595,7 @@ def test_install_version_returns_immediately_and_rejects_duplicate_task(tmp_path
         "_context",
         lambda *_args: SimpleNamespace(
             games=SimpleNamespace(
-                build_minecraft_download_list=lambda *_args: [
+                build_minecraft_download_list=lambda *_args, **_kwargs: [
                     ("https://example.com/client.jar", str(tmp_path / "client.jar"))
                 ]
             )
@@ -650,7 +658,7 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
         service,
         "_context",
         lambda *_args: SimpleNamespace(
-            files_checker=SimpleNamespace(check_files=lambda *_args: []),
+            files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: []),
         ),
     )
 
@@ -733,7 +741,7 @@ def _fullscreen_launch_fixture(tmp_path, monkeypatch):
     monkeypatch.setattr(
         service,
         "_context",
-        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: [])),
     )
     return service, game_path, java_path
 
@@ -1297,7 +1305,7 @@ def test_launch_handles_process_that_exits_before_instance_registration_finishes
     monkeypatch.setattr(
         service,
         "_context",
-        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: [])),
     )
     monkeypatch.setattr(
         service._crash_analyzer,
@@ -1490,7 +1498,7 @@ def test_launch_downloads_missing_inherited_version_metadata_before_file_check(t
     calls = []
 
     class FakeGames:
-        def build_minecraft_download_list(self, version_id, save_name, save_version_info):
+        def build_minecraft_download_list(self, version_id, save_name, save_version_info, *, observer=None):
             calls.append((version_id, save_name, save_version_info))
             (version_path / "26.2.json").write_text('{"id":"26.2"}', encoding="utf-8")
             return "release", {"id": "26.2"}
@@ -1614,7 +1622,7 @@ def test_authlib_launch_passes_injector_to_game_backend(tmp_path, monkeypatch) -
     monkeypatch.setattr(
         service,
         "_context",
-        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: [])),
     )
 
     asyncio.run(
@@ -1671,7 +1679,7 @@ def test_microsoft_launch_reports_token_refresh_progress(tmp_path, monkeypatch) 
     monkeypatch.setattr(
         service,
         "_context",
-        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: [])),
     )
 
     asyncio.run(
@@ -1714,7 +1722,7 @@ def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
         "_context",
         lambda *_args: SimpleNamespace(
             files_checker=SimpleNamespace(
-                check_files=lambda *_args: [("https://example.com/client.jar", str(tmp_path / "client.jar"))]
+                check_files=lambda *_args, **_kwargs: [("https://example.com/client.jar", str(tmp_path / "client.jar"))]
             ),
         ),
     )
@@ -1785,7 +1793,7 @@ def test_launch_retries_only_failed_game_file_from_alternate_source(tmp_path, mo
         "_context",
         lambda _path, source: SimpleNamespace(
             files_checker=SimpleNamespace(
-                check_files=lambda *_: primary_files if source == "bmclapi" else alternate_files
+                check_files=lambda *_, **_kwargs: primary_files if source == "bmclapi" else alternate_files
             )
         ),
     )
@@ -1817,7 +1825,7 @@ def test_launch_instance_reports_core_error_details(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(
         service,
         "_context",
-        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args: [])),
+        lambda *_args: SimpleNamespace(files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: [])),
     )
 
     with pytest.raises(GameServiceError) as error:

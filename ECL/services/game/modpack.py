@@ -1078,8 +1078,8 @@ class ModpackCoordinator(_GameState):
             return base_name
         context.progress(20, f"正在自动安装基础版本 {base_name}")
 
-        def report(phase: str, message: str, **_details: Any) -> None:
-            context.progress(26, f"安装基础版本：{message}")
+        def report(phase: str, message: str, **details: object) -> None:
+            context.progress(20, "正在安装基础版本", installation=details["installation"])
 
         java_path = self._resolve_java_path(None) if plan.loader_type in {"forge", "neoforge"} else None
         self.install_blocking(
@@ -1098,7 +1098,7 @@ class ModpackCoordinator(_GameState):
         )
         if not base_json.is_file():
             raise GameServiceError(f"基础版本 {base_name} 安装失败", "PACK_BASE_VERSION_MISSING")
-        context.progress(30, f"基础版本 {base_name} 安装完成")
+        context.progress(30, f"基础版本 {base_name} 安装完成", installation=None)
         return base_name
 
     def _download_pack_files(

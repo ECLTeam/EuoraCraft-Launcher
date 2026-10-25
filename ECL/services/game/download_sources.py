@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from logging import Logger
 from pathlib import Path
 from typing import TypeVar
 
 import httpx
 
-from ECL.game import BaseApiClient
+from ECL.game import BaseApiClient, InstallEvent, InstallObserver
 
 result_type = TypeVar("result_type")
 
@@ -65,6 +66,7 @@ class PreferredApiClient(BaseApiClient):
         *,
         can_fallback: bool = True,
         is_valid: Callable[[result_type], bool] | None = None,
+        on_fallback: Callable[[], None] | None = None,
     ) -> result_type:
         """
         仅在远端请求或远端响应解析失败时换源，不重复本地安装步骤。
@@ -93,10 +95,43 @@ class PreferredApiClient(BaseApiClient):
             if not can_fallback:
                 raise
             self._logger.warning("%s 从 %s 获取失败，尝试 %s", name, self._source, alternate_source(self._source))
+            if on_fallback is not None:
+                on_fallback()
             try:
                 return checked(self._alternate)
             except retryable_errors as alternate_error:
                 raise alternate_error from primary_error
+
+    def _download_file_request(
+        self,
+        name: str,
+        stage: str,
+        observer: InstallObserver | None,
+        download: Callable[[BaseApiClient, InstallObserver], result_type],
+    ) -> result_type:
+        """
+        为三类直接文件下载保留跨来源的实际传输量，并显式报告切换来源。
+
+        回调、来源偏移和取消检查均只属于本次调用，不写入共享客户端。
+        """
+        current_observer = observer or InstallObserver()
+        transferred_offset = 0
+        last_transferred = 0
+
+        def report(event: InstallEvent) -> None:
+            nonlocal last_transferred
+            last_transferred = event.transferred_bytes
+            current_observer.callback(replace(event, transferred_bytes=transferred_offset + last_transferred))
+
+        forwarded_observer = InstallObserver(report, current_observer.check_cancelled)
+
+        def switch_source() -> None:
+            nonlocal transferred_offset, last_transferred
+            transferred_offset += last_transferred
+            last_transferred = 0
+            forwarded_observer.emit(stage, action="fallback")
+
+        return self._request(name, lambda client: download(client, forwarded_observer), on_fallback=switch_source)
 
     def get_minecraft_manifest(self) -> dict:
         """
@@ -151,14 +186,20 @@ class PreferredApiClient(BaseApiClient):
         """
         return self._preferred.get_client_jar_url(sha1)
 
-    def download_client_jar(self, sha1: str, save_path: Path | str) -> None:
+    def download_client_jar(self, sha1: str, save_path: Path | str, *, observer: InstallObserver | None = None) -> None:
         """
         下载客户端文件，首选源请求失败时改用备用源。
 
         :param sha1: 客户端文件校验值
         :param save_path: 目标文件路径
+        :param observer: 本次调用的进度与取消检查；缺省时仅执行下载
         """
-        self._request("客户端文件", lambda client: client.download_client_jar(sha1, save_path))
+        self._download_file_request(
+            "客户端文件",
+            "download_client",
+            observer,
+            lambda client, reporter: client.download_client_jar(sha1, save_path, observer=reporter),
+        )
 
     def get_fabric_versions(self, game_version_id: str) -> list[dict]:
         """
@@ -200,18 +241,30 @@ class PreferredApiClient(BaseApiClient):
             is_valid=lambda payload: isinstance(payload, dict),
         )
 
-    def download_neoforged_installer(self, game_version_id: str, loader_version: str, save_path: Path | str) -> Path:
+    def download_neoforged_installer(
+        self,
+        game_version_id: str,
+        loader_version: str,
+        save_path: Path | str,
+        *,
+        observer: InstallObserver | None = None,
+    ) -> Path:
         """
         下载 NeoForged 安装器，首选源请求失败时改用备用源。
 
         :param game_version_id: Minecraft 版本标识
         :param loader_version: 加载器版本
         :param save_path: 安装器缓存目录
+        :param observer: 本次调用的进度与取消检查；缺省时仅执行下载
         :return: 下载后的安装器路径
         """
-        return self._request(
+        return self._download_file_request(
             "NeoForged 安装器",
-            lambda client: client.download_neoforged_installer(game_version_id, loader_version, save_path),
+            "download_loader",
+            observer,
+            lambda client, reporter: client.download_neoforged_installer(
+                game_version_id, loader_version, save_path, observer=reporter
+            ),
         )
 
     def get_forge_versions(self, game_version_id: str) -> list[dict[str, str]]:
@@ -227,18 +280,30 @@ class PreferredApiClient(BaseApiClient):
             is_valid=lambda payload: isinstance(payload, list),
         )
 
-    def download_forge_installer(self, game_version_id: str, loader_version: str, save_path: Path | str) -> Path:
+    def download_forge_installer(
+        self,
+        game_version_id: str,
+        loader_version: str,
+        save_path: Path | str,
+        *,
+        observer: InstallObserver | None = None,
+    ) -> Path:
         """
         下载 Forge 安装器，首选源请求失败时改用备用源。
 
         :param game_version_id: Minecraft 版本标识
         :param loader_version: 加载器版本
         :param save_path: 安装器缓存目录
+        :param observer: 本次调用的进度与取消检查；缺省时仅执行下载
         :return: 下载后的安装器路径
         """
-        return self._request(
+        return self._download_file_request(
             "Forge 安装器",
-            lambda client: client.download_forge_installer(game_version_id, loader_version, save_path),
+            "download_loader",
+            observer,
+            lambda client, reporter: client.download_forge_installer(
+                game_version_id, loader_version, save_path, observer=reporter
+            ),
         )
 
     def get_quilt_support(self) -> list[dict]:
