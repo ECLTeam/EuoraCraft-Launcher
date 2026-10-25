@@ -9,8 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.services.game import GameServiceError
-from ECL.services.game import modpack_export
+from ECL.services.game import GameServiceError, modpack_export
 from ECL.services.game.modpack_export import ExportContentPolicy, scan_export_files
 from ECL.services.game.workspace import resolve_instance_target
 from ECL.services.operations import OperationContext

@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from threading import Event, Thread
@@ -1347,49 +1348,14 @@ class ModpackCoordinator(_GameState):
                 files = snapshot.selection(source_revision, selected_ids)
                 if any(entry.source_path == output for entry in files):
                     raise GameServiceError("不能用导出结果覆盖已选源文件", "INVALID_EXPORT_OUTPUT")
-                online_files: dict[str, OnlineExportFile] = {}
-                warnings: list[str] = []
-                if resource_mode == "references":
-                    context.progress(15, "正在收集已选模组指纹")
-                    hashed_mods = self._collect_export_mods(files, snapshot.root, context)
-                    context.progress(22, "正在查询已选模组在线来源")
-                    online_files, warnings = self._resolve_online_mod_files(hashed_mods, context)
-                    unmatched = len(hashed_mods) - len(online_files)
-                    if unmatched:
-                        warnings.append(f"{unmatched} 个模组未识别在线来源，已直接打包")
+                online_files, warnings = self._resolve_export_online_files(files, snapshot, resource_mode, context)
                 context.report_effect("staged")
                 output.parent.mkdir(parents=True, exist_ok=True)
-                packed_count = 0
-                total_bytes = sum(entry.size for entry in files)
-                completed_bytes = 0
                 with (
                     temporary_file.open("xb") as output_stream,
                     zipfile.ZipFile(output_stream, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as archive,
                 ):
-                    for entry in files:
-                        context.check_cancelled()
-                        entry.validate(snapshot.root)
-                        if entry.relative in online_files:
-                            completed_bytes += entry.size
-                            continue
-                        with entry.source_path.open("rb") as source:
-                            if not entry.matches(os.fstat(source.fileno())):
-                                raise GameServiceError("导出文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
-                            with archive.open(f"overrides/{entry.relative}", "w", force_zip64=True) as destination:
-                                while chunk := source.read(1024 * 1024):
-                                    context.check_cancelled()
-                                    destination.write(chunk)
-                                    completed_bytes += len(chunk)
-                                    context.progress(
-                                        25 + 70 * completed_bytes / max(total_bytes, 1),
-                                        "正在打包已选文件",
-                                        done=completed_bytes,
-                                        total=total_bytes,
-                                        progressType="bytes",
-                                    )
-                            if not entry.matches(os.fstat(source.fileno())):
-                                raise GameServiceError("导出期间文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
-                        packed_count += 1
+                    packed_count = self._pack_export_files(archive, files, online_files, snapshot, context)
                     archive.writestr(
                         "modrinth.index.json",
                         json.dumps(
@@ -1415,7 +1381,7 @@ class ModpackCoordinator(_GameState):
                     "format": "modrinth",
                     "onlineFiles": len(online_files),
                     "packedFiles": packed_count,
-                    "selectedBytes": total_bytes,
+                    "selectedBytes": sum(entry.size for entry in files),
                     "warnings": list(warnings),
                 }
             finally:
@@ -1426,6 +1392,87 @@ class ModpackCoordinator(_GameState):
                         self._export_output_paths.discard(output)
 
         return self._application_operations.submit("instance_export", worker)
+
+    def _resolve_export_online_files(
+        self,
+        files: tuple[ExportFile, ...],
+        snapshot: ExportSnapshot,
+        resource_mode: str,
+        context: OperationContext,
+    ) -> tuple[dict[str, OnlineExportFile], list[str]]:
+        """
+        按资源模式为已选模组反查在线来源。
+
+        仅 references 模式读取模组指纹并联网查询；bundled 模式全部直接打包。
+        未识别来源的模组保留在 overrides 内并追加提示，不阻止导出。
+
+        :param files: 预览确认后的文件选择
+        :param snapshot: 当前导出快照，提供扫描根目录
+        :param resource_mode: references 优先反查，bundled 直接打包
+        :param context: 所属后台操作的取消与进度上下文
+        :return: 在线文件条目与需要随结果返回的提示
+        """
+        if resource_mode != "references":
+            return {}, []
+        context.progress(15, "正在收集已选模组指纹")
+        hashed_mods = self._collect_export_mods(files, snapshot.root, context)
+        context.progress(22, "正在查询已选模组在线来源")
+        online_files, warnings = self._resolve_online_mod_files(hashed_mods, context)
+        unmatched = len(hashed_mods) - len(online_files)
+        if unmatched:
+            warnings.append(f"{unmatched} 个模组未识别在线来源，已直接打包")
+        return online_files, warnings
+
+    def _pack_export_files(
+        self,
+        archive: zipfile.ZipFile,
+        files: tuple[ExportFile, ...],
+        online_files: Mapping[str, OnlineExportFile],
+        snapshot: ExportSnapshot,
+        context: OperationContext,
+    ) -> int:
+        """
+        把未反查为在线来源的文件写入 overrides，返回实际打包数量。
+
+        每个文件写入前后各校验一次扫描属性；文件在打包期间被修改时按
+        EXPORT_PREVIEW_STALE 失败，避免产出与实际内容不符的整合包。
+
+        :param archive: 已打开的目标 mrpack 归档
+        :param files: 预览确认后的文件选择
+        :param online_files: 已确认的在线条目，对应文件不写入 overrides
+        :param snapshot: 当前导出快照，提供扫描根目录
+        :param context: 所属后台操作的取消与进度上下文
+        :return: 实际写入 overrides 的文件数量
+        :raises GameServiceError: 文件在打包期间发生变化时抛出
+        """
+        total_bytes = sum(entry.size for entry in files)
+        completed_bytes = 0
+        packed_count = 0
+        for entry in files:
+            context.check_cancelled()
+            entry.validate(snapshot.root)
+            if entry.relative in online_files:
+                completed_bytes += entry.size
+                continue
+            with entry.source_path.open("rb") as source:
+                if not entry.matches(os.fstat(source.fileno())):
+                    raise GameServiceError("导出文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
+                with archive.open(f"overrides/{entry.relative}", "w", force_zip64=True) as destination:
+                    while chunk := source.read(1024 * 1024):
+                        context.check_cancelled()
+                        destination.write(chunk)
+                        completed_bytes += len(chunk)
+                        context.progress(
+                            25 + 70 * completed_bytes / max(total_bytes, 1),
+                            "正在打包已选文件",
+                            done=completed_bytes,
+                            total=total_bytes,
+                            progressType="bytes",
+                        )
+                if not entry.matches(os.fstat(source.fileno())):
+                    raise GameServiceError("导出期间文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
+            packed_count += 1
+        return packed_count
 
     def _collect_export_mods(
         self, files: tuple[ExportFile, ...], root: Path, context: OperationContext

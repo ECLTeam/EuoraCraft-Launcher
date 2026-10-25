@@ -353,6 +353,84 @@ def export_source_revision(target: ResolvedInstanceTarget, dependencies: Mapping
     return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
+def _is_sibling_instance(directory: Path, target: ResolvedInstanceTarget, depth: int) -> bool:
+    """
+    判断游戏根下的一级子目录是否属于同一游戏根的另一个实例。
+
+    非隔离实例共用游戏根，其他实例目录及其启动描述不能进入导出清单，
+    否则会把其他实例的存档与配置打进整合包。只在游戏根的直接子目录上判断，
+    隔离实例各自拥有独立数据目录，不存在同级实例。
+
+    :param directory: 当前遍历到的子目录
+    :param target: 按有效隔离策略解析的实例目标
+    :param depth: 该目录相对游戏根的层级，0 表示游戏根的直接子目录
+    :return: 属于其他实例目录时为 True
+    """
+    if target.version_isolation or depth != 0:
+        return False
+    return directory == target.instance_path or (directory / f"{directory.name}.json").is_file()
+
+
+def _is_exportable_file(attributes: stat_result, relative: PurePosixPath, instance_directory_name: str) -> bool:
+    """
+    判断扫描到的普通文件是否属于允许导出的内容。
+
+    链接与目录在此之前已被排除；这里只放行普通文件，并交给统一的分类规则
+    判定路径是否落在禁止导出的范围外。
+
+    :param attributes: 该文件不跟随链接的 lstat 结果
+    :param relative: 相对游戏数据目录的 POSIX 路径
+    :param instance_directory_name: 所属实例目录名，用于排除实例自身元信息
+    :return: 可以进入导出清单时为 True
+    """
+    if not stat.S_ISREG(attributes.st_mode):
+        return False
+    return ExportContentPolicy.allows(relative, instance_directory_name)
+
+
+def _build_export_file(
+    child: Path,
+    relative: PurePosixPath,
+    attributes: stat_result,
+    revision: str,
+    existing_count: int,
+) -> ExportFile:
+    """
+    为允许导出的文件生成条目，并校验清单数量上限。
+
+    文件身份由来源修订与扫描属性共同决定，执行阶段据此确认文件未被替换。
+
+    :param child: 文件的绝对路径
+    :param relative: 相对游戏数据目录的 POSIX 路径
+    :param attributes: 该文件不跟随链接的 lstat 结果
+    :param revision: 本次预览的来源修订
+    :param existing_count: 已收集的条目数量
+    :return: 带服务器文件身份的导出条目
+    :raises GameServiceError: 条目数量超过上限时抛出
+    """
+    if existing_count >= ExportContentPolicy.max_files:
+        raise GameServiceError("可导出文件超过 50000 个，请缩小内容范围", "EXPORT_SCAN_LIMIT")
+    file_identity = [
+        revision,
+        str(relative),
+        attributes.st_size,
+        attributes.st_mtime_ns,
+        attributes.st_dev,
+        attributes.st_ino,
+    ]
+    file_id = hashlib.sha256(json.dumps(file_identity).encode()).hexdigest()
+    return ExportFile(
+        file_id,
+        child,
+        str(relative),
+        attributes.st_size,
+        attributes.st_mtime_ns,
+        attributes.st_dev,
+        attributes.st_ino,
+        ExportContentPolicy.category(relative),
+    )
+
+
 def scan_export_files(
     target: ResolvedInstanceTarget, dependencies: Mapping[str, str], context: OperationContext
 ) -> ExportSnapshot:
@@ -390,44 +468,17 @@ def scan_export_files(
                     continue
                 relative = PurePosixPath(child.relative_to(root).as_posix())
                 if stat.S_ISDIR(attributes.st_mode):
-                    is_sibling_instance = (
-                        not target.version_isolation
-                        and depth == 0
-                        and (child == target.instance_path or (child / f"{child.name}.json").is_file())
-                    )
-                    if child.name.casefold() in ExportContentPolicy.blocked_directories or is_sibling_instance:
+                    if child.name.casefold() in ExportContentPolicy.blocked_directories or _is_sibling_instance(
+                        child, target, depth
+                    ):
                         excluded += 1
                         continue
                     pending.append((child, depth + 1))
                     continue
-                if not stat.S_ISREG(attributes.st_mode) or not ExportContentPolicy.allows(
-                    relative, target.instance_directory_name
-                ):
+                if not _is_exportable_file(attributes, relative, target.instance_directory_name):
                     excluded += 1
                     continue
-                if len(entries) >= ExportContentPolicy.max_files:
-                    raise GameServiceError("可导出文件超过 50000 个，请缩小内容范围", "EXPORT_SCAN_LIMIT")
-                file_identity = [
-                    revision,
-                    str(relative),
-                    attributes.st_size,
-                    attributes.st_mtime_ns,
-                    attributes.st_dev,
-                    attributes.st_ino,
-                ]
-                file_id = hashlib.sha256(json.dumps(file_identity).encode()).hexdigest()
-                entries.append(
-                    ExportFile(
-                        file_id,
-                        child,
-                        str(relative),
-                        attributes.st_size,
-                        attributes.st_mtime_ns,
-                        attributes.st_dev,
-                        attributes.st_ino,
-                        ExportContentPolicy.category(relative),
-                    )
-                )
+                entries.append(_build_export_file(child, relative, attributes, revision, len(entries)))
                 if visited % 200 == 0:
                     context.progress(10, "正在扫描可导出文件", done=len(entries), progressType="files")
     except OSError as exc:
