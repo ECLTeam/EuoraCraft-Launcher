@@ -30,8 +30,6 @@
 #   - test_install_version_builds_and_downloads_with_progress(tmp_path, monkeypatch) -> None
 #   - test_install_version_reports_downloader_failures(tmp_path, monkeypatch) -> None
 #   - test_install_version_returns_immediately_and_rejects_duplicate_task(tmp_path, monkeypatch) -> None
-#   - test_install_version_rejects_incomplete_loader_options(tmp_path) -> None
-#   - test_install_version_fabric_allows_empty_loader_version(tmp_path, monkeypatch) -> None
 #   - test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path, monkeypatch) -> None
 #   - test_launch_fullscreen_rewrites_existing_key_and_keeps_other_options(tmp_path, monkeypatch) -> None
 #   - test_launch_fullscreen_off_creates_options_file_when_missing(tmp_path, monkeypatch) -> None
@@ -626,46 +624,6 @@ def test_install_version_returns_immediately_and_rejects_duplicate_task(tmp_path
         assert task_id not in service._install_tasks
 
     asyncio.run(scenario())
-
-
-def test_install_version_rejects_incomplete_loader_options(tmp_path) -> None:
-    service = _build_service()
-
-    with pytest.raises(GameServiceError) as error:
-        service.install_version(
-            {"version_id": "1.21.8", "loader_type": "forge"},
-            game_path=tmp_path,
-        )
-
-    assert error.value.error_code == "LOADER_VERSION_REQUIRED"
-    assert service._install_tasks == {}
-
-
-def test_install_version_fabric_allows_empty_loader_version(tmp_path, monkeypatch) -> None:
-    service = _build_service()
-    service.logger = Mock()
-    monkeypatch.setattr(
-        service,
-        "_context",
-        lambda *_args: SimpleNamespace(
-            games=SimpleNamespace(
-                build_fabric_download_list=lambda *_args: [
-                    ("https://example.com/client.jar", str(tmp_path / "client.jar"))
-                ]
-            )
-        ),
-    )
-
-    async def install():
-        result = service.install_version(
-            {"version_id": "1.21.8", "loader_type": "fabric", "task_id": "fabric-empty"},
-            game_path=tmp_path,
-        )
-        await service._install_tasks[result["taskId"]]
-
-    asyncio.run(install())
-
-    assert service._install_tasks == {}
 
 
 def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path, monkeypatch) -> None:

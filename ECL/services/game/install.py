@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：安装或卸载游戏版本，并报告进度和错误。
+# 文件作用：协调版本安装与卸载，在工作线程统一选择加载器版本并报告安装进度。
 #
 # 公开接口：
 #   - class InstallCoordinator
@@ -27,6 +27,7 @@ from uuid import uuid4
 
 import httpx
 from anyio import to_thread
+from packaging.version import InvalidVersion, Version
 
 from ECL.game import GetGames
 
@@ -45,8 +46,14 @@ class _InstallDownloadState(TypedDict):
 
 
 class InstallCoordinator(_GameState):
-    fabric_api_project = "fabric-api"
-    fabric_api_timeout_seconds = 10
+    """
+    维护版本安装任务，在工作线程中解析加载器并执行清单生成与下载。
+
+    普通安装和整合包基础安装共用版本选择及取消检查，界面受理阶段不查询网络。
+    """
+
+    fabric_api_project: str = "fabric-api"
+    fabric_api_timeout_seconds: int = 10
 
     def _retry_install_downloads_blocking(
         self,
@@ -142,10 +149,12 @@ class InstallCoordinator(_GameState):
         """
         开始安装版本，返回任务 ID 和最终保存的版本名称。
 
-        :param body: 前端传入的 IPC 请求参数
+        :param body: 已经 API 校验的请求参数；加载器版本缺省或空白时自动选择最新版
         :param game_path: Minecraft 游戏根目录
         :param source: 下载源名称，如 ``official`` 或 ``bmclapi``
         :param java_path: Java 可执行文件路径
+        :return: 已提交的任务标识、游戏版本与最终实例名称
+        :raises GameServiceError: 请求参数、Java 配置无效或同一任务仍在运行时抛出
         """
         path = self._normalize_game_path(game_path)
         normalized_source = self._normalize_source(source)
@@ -169,15 +178,7 @@ class InstallCoordinator(_GameState):
         loader_version = None
         if loader != "vanilla":
             field_name = f"{loader}_version"
-            value = body.get(field_name)
-            if not isinstance(value, str) or not value.strip():
-                if loader == "fabric":
-                    # Fabric 未指定加载器版本时由 Core 解析最新版本
-                    loader_version = None
-                else:
-                    raise GameServiceError("未选择加载器版本", "LOADER_VERSION_REQUIRED")
-            else:
-                loader_version = value.strip()
+            loader_version = self._normalize_loader_version(body.get(field_name))
         if loader in {"forge", "neoforge"}:
             java_path = self._resolve_java_path(java_path)
 
@@ -282,6 +283,60 @@ class InstallCoordinator(_GameState):
                 self._install_tasks.pop(task_id, None)
 
     @staticmethod
+    def _normalize_loader_version(value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise GameServiceError("加载器版本必须是字符串", "INVALID_LOADER_VERSION")
+        return value.strip() or None
+
+    def _resolve_install_loader_version(
+        self,
+        loader: str,
+        version_id: str,
+        loader_version: str | None,
+        source: str,
+        cancel_event: Event | None,
+    ) -> str | None:
+        """
+        在安装工作线程中为缺省版本选择当前游戏兼容的最高加载器版本。
+
+        手选版本直接保留，不依赖远端列表的顺序或稳定版分类。查询沿用扫描协调器的
+        来源与网络策略；空列表、查询失败或无法比较的版本数据均明确失败。取消后不
+        继续生成清单，避免远端查询返回时又开始写入实例文件。
+        """
+        self._ensure_install_not_cancelled(cancel_event)
+        if loader == "vanilla":
+            return None
+        selected_version = self._normalize_loader_version(loader_version)
+        if selected_version is not None:
+            return selected_version
+        try:
+            versions = self.loader_versions(loader, version_id, source)
+        except Exception as exc:
+            self._ensure_install_not_cancelled(cancel_event)
+            self.logger.exception("查询安装所需的加载器版本失败；加载器：%s；游戏版本：%s", loader, version_id)
+            raise GameServiceError("查询加载器版本失败，请重试", "LOADER_VERSION_QUERY_FAILED") from exc
+        self._ensure_install_not_cancelled(cancel_event)
+        if not versions:
+            raise GameServiceError(f"未找到 {loader} 在 {version_id} 下的可用版本", "LOADER_VERSION_NOT_FOUND")
+
+        def version_key(candidate: str) -> Version:
+            # NeoForge 的 1.20.1 Maven 坐标包含游戏前缀；比较时移除，安装时保留原值。
+            if loader == "neoforge" and version_id == "1.20.1":
+                candidate = candidate.removeprefix("1.20.1-")
+            return Version(candidate)
+
+        try:
+            selected_version = max(versions, key=version_key)
+        except InvalidVersion as exc:
+            raise GameServiceError("加载器版本数据无法比较，请重试", "INVALID_LOADER_VERSION_DATA") from exc
+        self.logger.info(
+            "已选择加载器最新版；加载器：%s；游戏版本：%s；加载器版本：%s", loader, version_id, selected_version
+        )
+        return selected_version
+
+    @staticmethod
     def _ensure_install_not_cancelled(cancel_event: Event | None) -> None:
         # 工作线程不能随时中止，因此在每个安装阶段开始前检查取消请求。
         if cancel_event is not None and cancel_event.is_set():
@@ -344,7 +399,7 @@ class InstallCoordinator(_GameState):
         :param version_id: Minecraft 版本 ID
         :param save_name: 实际保存的版本目录名
         :param loader: 加载器类型（vanilla/fabric/forge/neoforge/quilt）
-        :param loader_version: 加载器版本；fabric 传 None 时由 Core 解析最新版
+        :param loader_version: 加载器版本；缺省或空白时按版本号选择兼容的最新版
         :param fabric_api_version: 可选的 Fabric API 版本号
         :param game_path: Minecraft 游戏根目录
         :param source: 下载源名称（official/bmclapi）
@@ -354,8 +409,10 @@ class InstallCoordinator(_GameState):
         :param loop: 可选的既有事件循环，下载协程将在其上执行
         :param include_fabric_api: fabric 安装是否附带 Fabric API；整合包导入的
             基础安装应传 False，避免与包内自带的 API 模组重复
-        :raises GameServiceError: 下载失败（GAME_DOWNLOAD_FAILED）或取消（INSTALL_CANCELLED）时抛出
+        :raises GameServiceError: 加载器版本查询或数据错误、下载失败或安装取消时抛出
         """
+        loader_version = self._resolve_install_loader_version(loader, version_id, loader_version, source, cancel_event)
+        self._ensure_install_not_cancelled(cancel_event)
         games = self._context(game_path, source).games
         if loader == "vanilla":
             download_list = games.build_minecraft_download_list(version_id, save_name)

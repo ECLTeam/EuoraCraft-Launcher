@@ -1027,7 +1027,7 @@ class ModpackCoordinator(_GameState):
         """
         保障整合包依赖的基础版本与加载器就绪，返回实例应继承的基础版本名。
 
-        缺失时经同步安装核心自动安装；fabric/quilt 未声明加载器版本时解析
+        缺失时经同步安装核心自动安装；未声明加载器版本时使用安装协调器解析
         当前游戏版本下的最新版本。安装不附带 Fabric API，避免与整合包自带
         的 API 模组重复。
 
@@ -1035,16 +1035,10 @@ class ModpackCoordinator(_GameState):
         """
         mc_version = plan.minecraft_version
         base_name = mc_version
-        loader_version = plan.loader_version
+        loader_version = self._resolve_install_loader_version(
+            plan.loader_type, mc_version, plan.loader_version, "official", context.cancel_event
+        )
         if plan.loader_type != "vanilla":
-            if not loader_version:
-                versions = self.loader_versions(plan.loader_type, mc_version)
-                if not versions:
-                    raise GameServiceError(
-                        f"未找到 {plan.loader_type} 在 {mc_version} 下的可用版本",
-                        "PACK_LOADER_VERSION_REQUIRED",
-                    )
-                loader_version = versions[0]
             base_name = f"{plan.loader_type}-{loader_version}-{mc_version}"
         base_json = target.instance_path.parent / base_name / f"{base_name}.json"
         if base_json.is_file():

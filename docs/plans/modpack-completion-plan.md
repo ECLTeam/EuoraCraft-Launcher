@@ -92,7 +92,7 @@ class ModpackPlan:
 
 1. `safe_extract_zip` 解压到 `versions/` 同级临时目录（沿用现有模式，5%）。
 2. 识别格式 → `ModpackPlan`（10%）。
-3. **基础版本保障**：`versions/<mc>/<mc>.json` 缺失时调用 `install_blocking(vanilla)`；加载器非 vanilla 时继续 `install_blocking(loader)`（10-35%，`subtask="base_install"`；已存在则跳过）。加载器版本缺失时：fabric/quilt 取最新（`loader_versions`），forge/neoforge 由包声明提供，未提供时报 `PACK_LOADER_VERSION_REQUIRED`。
+3. **基础版本保障**：`versions/<mc>/<mc>.json` 缺失时调用 `install_blocking(vanilla)`；加载器非 vanilla 时继续 `install_blocking(loader)`（10-35%，`subtask="base_install"`；已存在则跳过）。加载器版本由包声明时保持不变；缺省时统一由安装协调器按版本号选择兼容的最新版，规则见[版本与整合包安装](../guides/modpack-installation.md)。
 4. 生成下载清单：CF 条目先经 `_fetch_curseforge_file` 解析直链与哈希（无 Key 报 `CURSEFORGE_KEY_REQUIRED`）→ 交 `Downloader` 并发下载（35-80%，文件计数进度）。
 5. 统一校验：SHA1/SHA512（Downloader 条目无校验字段，校验在下载后执行）；失败文件单独重试一次，仍失败抛 `PACK_FILE_HASH_MISMATCH` 并列出文件（80-85%）。
 6. 复制 overrides 到 staging 版本目录，写 `{version_id}.json`（`inheritsFrom` 基础版本）（85-95%）。
@@ -141,7 +141,7 @@ class ModpackPlan:
 
 ### 3.10 错误码
 
-新增：`PACK_FILE_HASH_MISMATCH`、`PACK_LOADER_VERSION_REQUIRED`、`PACK_ONLINE_FILE_INVALID`。保留：`INVALID_PACK_ARCHIVE`、`PACK_BASE_VERSION_MISSING`（自动安装失败时兜底提示）、`CURSEFORGE_KEY_REQUIRED`。
+新增：`PACK_FILE_HASH_MISMATCH`、`PACK_ONLINE_FILE_INVALID`。加载器解析复用安装错误码：`LOADER_VERSION_NOT_FOUND`、`LOADER_VERSION_QUERY_FAILED`、`INVALID_LOADER_VERSION_DATA`。保留：`INVALID_PACK_ARCHIVE`、`PACK_BASE_VERSION_MISSING`（自动安装失败时兜底提示）、`CURSEFORGE_KEY_REQUIRED`。
 
 ## 4. 实施步骤（每步独立提交，遵循 Conventional Commits + 测试通过后提交）
 

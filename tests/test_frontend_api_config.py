@@ -714,6 +714,45 @@ def test_install_version_delegates_to_game_service_with_runtime_options(tmp_path
     assert api.game.install_call[1]["source"] == "official"
 
 
+@pytest.mark.parametrize("loader", ["fabric", "forge", "neoforge", "quilt"])
+@pytest.mark.parametrize("loader_version", ["omitted", None, "", "  ", "47.4.9"])
+def test_install_api_keeps_default_and_explicit_loader_version(tmp_path, loader, loader_version):
+    api = _build_api(tmp_path)
+    api.game = FakeGame()
+    request = {"version_id": "1.20.1", "game_path": str(tmp_path), "loader_type": loader}
+    if loader_version != "omitted":
+        request["loader_version"] = loader_version
+
+    result = asyncio.run(api.game_install(request))
+
+    assert result["success"] is True
+    payload = api.game.install_call[0]
+    if loader_version in {None, "omitted"}:
+        assert f"{loader}_version" not in payload
+    else:
+        assert payload[f"{loader}_version"] == loader_version.strip()
+
+
+@pytest.mark.parametrize("loader_version", [0, False, [], {}])
+def test_install_api_rejects_non_string_loader_version(tmp_path, loader_version):
+    api = _build_api(tmp_path)
+    api.game = FakeGame()
+
+    result = asyncio.run(
+        api.game_install(
+            {
+                "version_id": "1.20.1",
+                "game_path": str(tmp_path),
+                "loader_type": "forge",
+                "loader_version": loader_version,
+            }
+        )
+    )
+
+    assert result["success"] is False
+    assert api.game.install_call is None
+
+
 def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> None:
     api = _build_api(tmp_path)
     api.game = FakeGame()

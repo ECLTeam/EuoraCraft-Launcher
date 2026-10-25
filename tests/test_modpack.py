@@ -499,7 +499,9 @@ def test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -
 
 
 def test_import_pack_reports_missing_loader_versions(tmp_path, monkeypatch) -> None:
-    """加载器版本无法解析时应报 PACK_LOADER_VERSION_REQUIRED。"""
+    """
+    加载器版本无法解析时应报告共享安装解析错误。
+    """
     service = _build_pack_service(_pack_downloader_factory({}))
     monkeypatch.setattr(service, "loader_versions", lambda *_args: [])
     index = {"dependencies": {"minecraft": "1.21.1", "quilt-loader": ""}, "files": []}
@@ -509,8 +511,48 @@ def test_import_pack_reports_missing_loader_versions(tmp_path, monkeypatch) -> N
     state = _run_pack_operation(service, game_path=tmp_path / ".minecraft", source_path=pack, new_version_id="Q")
 
     assert state["status"] == "failed"
-    assert state["errorCode"] == "PACK_LOADER_VERSION_REQUIRED"
+    assert state["errorCode"] == "LOADER_VERSION_NOT_FOUND"
     assert not (tmp_path / ".minecraft" / "versions" / "Q").exists()
+
+
+@pytest.mark.parametrize("loader", ["fabric", "quilt"])
+def test_import_pack_default_loader_uses_shared_latest_selection(tmp_path, monkeypatch, loader) -> None:
+    game_path = tmp_path / ".minecraft"
+    service = _build_pack_service(_pack_downloader_factory({}))
+    selected_versions = []
+    queried = []
+
+    def versions(*args):
+        queried.append(args)
+        return ["0.16.9", "0.16.14", "0.16.2"]
+
+    def build(version_id, loader_version, save_name):
+        selected_versions.append((loader_version, save_name))
+        _write_json(
+            game_path / "versions" / save_name / f"{save_name}.json",
+            {"id": save_name, "inheritsFrom": version_id, "mainClass": "test.LoaderMain"},
+        )
+        return []
+
+    monkeypatch.setattr(service, "loader_versions", versions)
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_: SimpleNamespace(games=SimpleNamespace(**{f"build_{loader}_download_list": build})),
+    )
+    monkeypatch.setattr(service, "_resolve_fabric_api", lambda *_: pytest.fail("基础安装不得添加 API"))
+    pack = tmp_path / "default.mrpack"
+    index = {"dependencies": {"minecraft": "1.21.1", f"{loader}-loader": ""}, "files": []}
+    _make_pack_zip(pack, {"modrinth.index.json": json.dumps(index).encode()})
+
+    try:
+        state = _run_pack_operation(service, game_path=game_path, source_path=pack, new_version_id="Default Pack")
+        assert state["status"] == "completed", state
+        assert selected_versions == [("0.16.14", f"{loader}-0.16.14-1.21.1")]
+        assert queried == [(loader, "1.21.1", "official")]
+        assert state["result"]["baseVersion"] == f"{loader}-0.16.14-1.21.1"
+    finally:
+        service.close()
 
 
 def test_import_pack_hash_mismatch_rolls_back(tmp_path) -> None:

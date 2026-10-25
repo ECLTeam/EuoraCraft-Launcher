@@ -22,7 +22,7 @@
 | [发布流程](guides/release-process.md) | 四种发布类型、日常检查、构建触发与产物验收；`AGENTS.md` 第 9 节的完整版本 |
 | [无头运行说明](guides/headless-runtime.md) | `--headless` 任务协议、输出格式与插件子进程边界 |
 | [启动器命令行](guides/launcher-cli.md) | 启动参数、实例快捷启动与设置生效顺序 |
-| [整合包安装与可选文件](guides/modpack-installation.md) | 安装预览、文件选择、后台任务和准备接口 |
+| [版本与整合包安装](guides/modpack-installation.md) | 默认加载器版本、安装预览、文件选择和后台任务 |
 | [可视化主题设计指南](guides/theme-designer-guide.zh-CN.md) | 主题设计器、预设库与 `.ecltheme` 文件 |
 
 ## 协议与格式
