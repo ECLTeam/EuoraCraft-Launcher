@@ -28,7 +28,7 @@
 #       - game_instance_categories_get(body) -> ApiResponse — 返回内置与用户自定义实例分类。
 #       - game_instance_categories_upsert(body) -> ApiResponse — 新建或更新用户自定义实例分类。
 #       - game_instance_categories_delete(body) -> ApiResponse — 删除用户自定义实例分类。
-#       - game_launch(body) -> ApiResponse — 校验启动参数、补全文件并创建 Minecraft 进程。
+#       - game_launch(body) -> ApiResponse — 校验启动参数、补全文件，并使用当前界面语言初始化未配置的游戏语言。
 #       - game_launch_cancel(body) -> ApiResponse — 取消当前仍处于准备或文件补全阶段的启动任务。
 #       - game_instance_stop(body) -> ApiResponse — 通知指定的运行中 Minecraft 实例退出，超时后才强制结束。
 #       - game_crash_list(body) -> ApiResponse — 列出指定实例文件夹内可分析的候选日志文件。
@@ -40,6 +40,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -509,6 +510,8 @@ class GameHandlers(_FrontendState):
         """
         校验启动参数、补全文件并创建 Minecraft 进程。
 
+        使用本次有效配置中的界面语言初始化尚未配置的游戏语言，保留已有游戏选择。
+
         :param body: 符合 ``LaunchRequest`` 的请求数据
         :return: 新游戏实例的标识、版本和目录
         """
@@ -520,9 +523,12 @@ class GameHandlers(_FrontendState):
         source = request.source
         quick_target = request.quick_target.model_dump() if request.quick_target else None
         settings = await self._read_launch_settings(game_path, version_id)
+        configuration = self._get_effective_config()
+        ui_config = configuration.get("ui")
+        launcher_locale = ui_config.get("locale") if isinstance(ui_config, Mapping) else None
         effective = await to_thread.run_sync(
             LaunchSettingsResolver.resolve,
-            self._get_effective_config().get("game") or {},
+            configuration.get("game") or {},
             InstanceLaunchOverrides.model_validate(settings),
             request.model_dump(exclude_unset=True),
         )
@@ -551,6 +557,7 @@ class GameHandlers(_FrontendState):
             game_path=game_path,
             source=self._download_source(source.value if source else None),
             java_path=str(java_path) if java_path else None,
+            launcher_locale=launcher_locale,
             **values,
         )
         return success(result)

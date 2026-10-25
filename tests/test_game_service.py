@@ -765,7 +765,7 @@ def _fullscreen_launch_fixture(tmp_path, monkeypatch):
     game_path = tmp_path / ".minecraft"
     version_path = game_path / "versions" / "1.21.8"
     version_path.mkdir(parents=True)
-    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    (version_path / "1.21.8.json").write_text('{"id":"1.21.8"}', encoding="utf-8")
     java_path = tmp_path / "java.exe"
     java_path.write_bytes(b"")
     service = _build_service(
@@ -977,7 +977,7 @@ def test_launch_fullscreen_off_creates_options_file_when_missing(tmp_path, monke
     )
 
     options_path = game_path / "versions" / "options.txt"
-    assert options_path.read_text(encoding="utf-8") == "fullscreen:false\n"
+    assert options_path.read_text(encoding="utf-8") == "fullscreen:false\nlang:zh_cn\n"
     service.close()
 
 
@@ -994,9 +994,278 @@ def test_launch_fullscreen_uses_versions_directory_when_isolated(tmp_path, monke
         )
     )
 
-    assert (game_path / "versions" / "1.21.8" / "options.txt").read_text(encoding="utf-8") == "fullscreen:true\n"
+    assert (game_path / "versions" / "1.21.8" / "options.txt").read_text(
+        encoding="utf-8"
+    ) == "fullscreen:true\nlang:zh_cn\n"
     assert not (game_path / "versions" / "options.txt").exists()
     service.close()
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+@pytest.mark.parametrize("initial", [None, "renderDistance:12\n", "lang:  \nrenderDistance:12\n"])
+@pytest.mark.parametrize(
+    ("locale", "expected"),
+    [
+        ("zh-CN", "zh_cn"),
+        ("zh-TW", "zh_tw"),
+        ("en-US", "en_us"),
+        ("ja-JP", "ja_jp"),
+        ("ru-RU", "ru_ru"),
+        ("de-DE", "de_de"),
+    ],
+)
+def test_launch_initializes_only_unconfigured_language(tmp_path, monkeypatch, platform, initial, locale, expected):
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr("ECL.services.game.launch.sys.platform", platform)
+    service._search_factory = lambda _: SimpleNamespace(
+        search_minecraft=lambda: {"1.21.8": {"VanillaVersion": "1.21.8"}}
+    )
+    monkeypatch.setattr(service, "_probe_java_runtime", lambda _: {"version": "21", "architecture": "amd64"})
+    options_path = game_path / "versions" / "1.21.8" / "options.txt"
+    if initial is not None:
+        options_path.write_text(initial, encoding="utf-8")
+    try:
+        asyncio.run(
+            service.launch_instance(
+                {"version_id": "1.21.8"},
+                game_path=game_path,
+                java_path=java_path,
+                launcher_locale=locale,
+                fullscreen=True,
+                version_isolation=True,
+            )
+        )
+        lines = options_path.read_text(encoding="utf-8").splitlines()
+        assert f"lang:{expected}" in lines
+        assert "fullscreen:true" in lines
+        if initial is not None:
+            assert "renderDistance:12" in lines
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("existing", ["en_us", "zh_CN", "custom_value", "none"])
+@pytest.mark.parametrize("has_saves", [False, True])
+def test_launch_preserves_language_across_launcher_language_changes(tmp_path, monkeypatch, existing, has_saves):
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    options_path = game_path / "versions" / "1.21.8" / "options.txt"
+    original = f"# settings\r\nlang:{existing}\r\ncustom:keep\r\nfullscreen:false\r\n"
+    options_path.write_bytes(original.encode())
+    if has_saves:
+        (options_path.parent / "saves").mkdir()
+    try:
+        for locale in ("ja-JP", "de-DE"):
+            asyncio.run(
+                service.launch_instance(
+                    {"version_id": "1.21.8"},
+                    game_path=game_path,
+                    java_path=java_path,
+                    launcher_locale=locale,
+                    version_isolation=True,
+                )
+            )
+            assert options_path.read_bytes() == original.encode()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+def test_launch_language_uses_final_directory_and_version_metadata(tmp_path, monkeypatch, isolated):
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    version_dir = game_path / "versions" / "1.21.8"
+    renamed_dir = version_dir.with_name("My instance")
+    version_dir.rename(renamed_dir)
+    (renamed_dir / "1.21.8.json").rename(renamed_dir / "My instance.json")
+    (renamed_dir / "My instance.json").write_text('{"id":"1.10.2"}', encoding="utf-8")
+    other_dir = game_path / "versions" if isolated else renamed_dir
+    (other_dir / "options.txt").write_text("lang:de_DE\n", encoding="utf-8")
+    try:
+        asyncio.run(
+            service.launch_instance(
+                {"version_id": "My instance"},
+                game_path=game_path,
+                java_path=java_path,
+                launcher_locale="zh-TW",
+                version_isolation=isolated,
+            )
+        )
+        target_dir = renamed_dir if isolated else game_path / "versions"
+        assert "lang:zh_TW" in (target_dir / "options.txt").read_text(encoding="utf-8")
+        assert (other_dir / "options.txt").read_text(encoding="utf-8") == "lang:de_DE\n"
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("1.0", None),
+        ("2.0", None),
+        ("1.1", "zh_CN"),
+        ("1.5.2", "zh_CN"),
+        ("1.10.2", "zh_CN"),
+        ("1.11", "zh_cn"),
+        ("1.21.8", "zh_cn"),
+        ("1.11-pre1", "zh_cn"),
+        ("26.3", "zh_cn"),
+        ("26.4-snapshot-5", "zh_cn"),
+        ("26.1-pre-1", "zh_cn"),
+        ("26.1-rc-1", "zh_cn"),
+        ("11w48a", None),
+        ("11w49a", "zh_CN"),
+        ("16w29b", "zh_CN"),
+        ("16w32a", "zh_cn"),
+        ("25w14craftmine", None),
+        ("unrecognized", None),
+        ("16w99a", None),
+    ],
+)
+def test_launch_language_handles_actual_vanilla_versions(tmp_path, version, expected):
+    service = _build_service()
+    try:
+        service._apply_launch_options(tmp_path, False, "zh-CN", {"VanillaVersion": version}, {})
+        text = (tmp_path / "options.txt").read_text(encoding="utf-8")
+        if expected is None:
+            assert "lang:" not in text
+        else:
+            assert f"lang:{expected}\n" in text
+        assert "fullscreen:false\n" in text
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("locale", ["", "invalid\nfullscreen:true", 123, ["zh-CN"]])
+def test_launch_skips_invalid_language_configuration_without_writing_input(tmp_path, locale):
+    service = _build_service()
+    service.logger = Mock()
+    try:
+        service._apply_launch_options(tmp_path, False, locale, {"VanillaVersion": "1.21.8"}, {})
+        assert (tmp_path / "options.txt").read_text(encoding="utf-8") == "fullscreen:false\n"
+        assert service.logger.warning.call_count == 1
+        assert "配置无效" in service.logger.warning.call_args.args[0]
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("info", "document", "expected"),
+    [
+        ({"VanillaVersion": "1.10.2"}, {"id": "1.21.8"}, "zh_CN"),
+        ({"VanillaVersion": "Unknown"}, {"id": "renamed", "inheritsFrom": "1.11"}, "zh_cn"),
+        ({}, {"id": "1.5.2"}, "zh_CN"),
+    ],
+)
+def test_launch_language_respects_base_version_identity(tmp_path, info, document, expected):
+    service = _build_service()
+    try:
+        service._apply_launch_options(tmp_path, False, None, info, document)
+        assert f"lang:{expected}\n" in (tmp_path / "options.txt").read_text(encoding="utf-8")
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+@pytest.mark.parametrize("failure", ["read", "encoding", "replace"])
+def test_launch_options_failure_preserves_file_and_continues_launch(tmp_path, monkeypatch, platform, failure):
+    from ECL.services.game import launch as launch_module
+
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    service.logger = Mock()
+    monkeypatch.setattr(launch_module.sys, "platform", platform)
+    options_path = game_path / "versions" / "1.21.8" / "options.txt"
+    original = b"custom:keep\nfullscreen:false\n" if failure != "encoding" else b"custom:\xff\n"
+    options_path.write_bytes(original)
+    read_bytes = Path.read_bytes
+    replace = Path.replace
+    writes = Mock(wraps=launch_module.atomic_write_text)
+    monkeypatch.setattr(launch_module, "atomic_write_text", writes)
+
+    def failing_read(target):
+        if target == options_path:
+            raise PermissionError(f"private-path:{options_path}")
+        return read_bytes(target)
+
+    def failing_replace(source, target):
+        if target == options_path:
+            raise PermissionError(f"private-path:{options_path}")
+        return replace(source, target)
+
+    try:
+        with monkeypatch.context() as patch:
+            if failure == "read":
+                patch.setattr(Path, "read_bytes", failing_read)
+            if failure == "replace":
+                patch.setattr(Path, "replace", failing_replace)
+                patch.setattr("ECL.foundation.files.sleep", lambda _: None)
+            result = asyncio.run(
+                service.launch_instance(
+                    {"version_id": "1.21.8"},
+                    game_path=game_path,
+                    java_path=java_path,
+                    launcher_locale="ja-JP",
+                    fullscreen=True,
+                    version_isolation=True,
+                )
+            )
+        assert result["instanceId"] == "minecraft-instance"
+        assert options_path.read_bytes() == original
+        assert writes.call_count == (1 if failure == "replace" else 0)
+        assert not list(options_path.parent.glob(".options.txt.*.tmp"))
+        assert service.logger.warning.called
+        assert str(options_path) not in str(service.logger.warning.call_args_list)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    "initial",
+    [
+        b"\xef\xbb\xbflang: \r\n# comment\r\nunknown:a:b",
+        b"lang:\nunknown:a:b\nlang: \nfullscreen:false\nfullscreen:false\n",
+    ],
+)
+def test_launch_options_preserves_bom_lines_and_avoids_repeated_writes(tmp_path, monkeypatch, initial):
+    from ECL.services.game import launch as launch_module
+
+    service = _build_service()
+    options_path = tmp_path / "options.txt"
+    options_path.write_bytes(initial)
+    writes = Mock(wraps=launch_module.atomic_write_text)
+    monkeypatch.setattr(launch_module, "atomic_write_text", writes)
+    try:
+        service._apply_launch_options(tmp_path, True, "zh-CN", {}, {"id": "1.21.8"})
+        content = options_path.read_bytes()
+        assert b"lang:zh_cn" in content
+        assert b"unknown:a:b" in content
+        assert content.startswith(b"\xef\xbb\xbf") == initial.startswith(b"\xef\xbb\xbf")
+        assert b"fullscreen:false" not in content
+        if b"\r\n" in initial:
+            assert b"# comment\r\nunknown:a:b\r\n" in content
+        service._apply_launch_options(tmp_path, True, "de-DE", {}, {"id": "1.21.8"})
+        assert options_path.read_bytes() == content
+        assert writes.call_count == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("document", [[], None, 123, "invalid"])
+def test_launch_rejects_non_object_version_metadata(tmp_path, monkeypatch, document):
+    service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
+    version_dir = game_path / "versions" / "1.21.8"
+    (version_dir / "1.21.8.json").write_text(json.dumps(document), encoding="utf-8")
+    try:
+        with pytest.raises(GameServiceError) as raised:
+            asyncio.run(
+                service.launch_instance(
+                    {"version_id": "1.21.8"},
+                    game_path=game_path,
+                    java_path=java_path,
+                )
+            )
+        assert raised.value.error_code == "VERSION_JSON_INVALID"
+        assert not (version_dir / "options.txt").exists()
+    finally:
+        service.close()
 
 
 def test_close_keeps_running_game_instances_alive_and_settles_observed_duration(tmp_path, monkeypatch) -> None:

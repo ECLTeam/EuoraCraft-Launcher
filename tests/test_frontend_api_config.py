@@ -748,6 +748,25 @@ def test_launch_instance_delegates_to_game_service_with_settings(tmp_path) -> No
     assert api.game.launch_call[1]["version_isolation"] is True
 
 
+@pytest.mark.parametrize("locale", ["zh-CN", "zh-TW", "en-US", "ja-JP", "ru-RU", "de-DE"])
+def test_launch_passes_current_effective_ui_language(tmp_path, locale) -> None:
+    api = _build_api(tmp_path)
+    api.game = FakeGame()
+    ui_config = api.config.get_config("ui")
+    ui_config["locale"] = locale
+    api.config.save_config("ui", ui_config)
+    result = asyncio.run(
+        api.game_launch(
+            {
+                "version_id": "1.21.8",
+                "game_path": str(tmp_path / ".minecraft"),
+            }
+        )
+    )
+    assert result["success"] is True
+    assert api.game.launch_call[1]["launcher_locale"] == locale
+
+
 def test_launch_instance_uses_global_window_settings_when_request_omits_them(tmp_path) -> None:
     api = _build_api(tmp_path)
     api.game = FakeGame()

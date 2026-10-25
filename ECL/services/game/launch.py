@@ -3,11 +3,11 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：启动协调器：启动流程、进程监视、崩溃报告查询、快捷启动目标解析与导出入口。
+# 文件作用：协调启动选项初始化、游戏启动与进程监视，提供崩溃查询和快捷启动目标解析。
 #
 # 公开接口：
 #   - class LaunchCoordinator
-#       - launch_instance(body, game_path, source, java_path, memory, width, height, fullscreen, jvm_args, game_args, version_isolation, lock_memory, process_priority) -> dict[str, str] — 检查游戏文件并启动实例。
+#       - launch_instance(body, game_path, launcher_locale=…, …) -> dict[str, str] — 初始化未配置的游戏语言、检查游戏文件并启动实例。
 #       - cancel_launch() -> bool — 取消正在执行的启动或文件补全任务。
 #       - list_crash_candidates(game_path, version_id) -> list[dict[str, Any]] — 列出指定实例文件夹内可分析的候选日志文件。
 #       - analyze_crash_file(file_path, game_path, version_id) -> dict[str, Any] — 分析用户为指定游戏版本选择的日志或 ZIP 文件。
@@ -35,6 +35,7 @@ from contextvars import copy_context
 from pathlib import Path
 from threading import Event, Thread
 from time import monotonic, sleep, time
+from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
@@ -346,6 +347,13 @@ def _resolve_name_target(target: str, roots: Sequence[Path]) -> tuple[Path, str]
 
 
 class LaunchCoordinator(_GameState):
+    """
+    协调启动前准备、游戏进程及退出收尾，使用最终游戏目录维护启动选项。
+    """
+
+    minecraft_language_by_launcher: Mapping[str, str] = MappingProxyType(
+        {"zh-CN": "zh_cn", "zh-TW": "zh_tw", "en-US": "en_us", "ja-JP": "ja_jp", "ru-RU": "ru_ru", "de-DE": "de_de"}
+    )
     pre_launch_command_timeout_seconds = 60
     post_exit_command_timeout_seconds = 60
     mesa_loader_windows_version = "26.0.4"
@@ -711,29 +719,114 @@ class LaunchCoordinator(_GameState):
                 "JAVA_ARCH_MEMORY_LIMIT",
             )
 
-    def _apply_fullscreen_option(self, game_directory: Path, enabled: bool) -> None:
-        # Minecraft 无全屏命令行参数，启动前把 options.txt 的 fullscreen 键写为目标状态，
-        # 由游戏启动时读取该值决定窗口模式；写入失败不阻断启动，沿用游戏内既有状态。
+    @staticmethod
+    def _minecraft_uses_uppercase_region(version_id: str) -> bool | None:
+        """
+        按实际原版版本判断地区码大小写，不把实例目录名称当成版本。
+
+        返回 None 表示没有语言选项或无法可靠识别；16w32a 起内置语言代码使用小写。
+        """
+        if len(version_id) > 64:
+            return None
+        release = re.fullmatch(
+            r"([0-9]+)\.([0-9]+)(?:\.[0-9]+)?(?:(?:-(?:pre|rc)-?|-snapshot-)[0-9]+| Pre-Release [0-9]+| Release Candidate [0-9]+)?",
+            version_id,
+        )
+        if release:
+            major, minor = (int(value) for value in release.groups())
+            if major < 1 or (major == 1 and minor == 0) or 1 < major < 26:
+                return None
+            return major == 1 and minor < 11
+        snapshot = re.fullmatch(r"(\d{2})w(\d{2})[a-z]", version_id)
+        if snapshot:
+            year, week = (int(value) for value in snapshot.groups())
+            if 1 <= week <= 53 and (year, week) >= (11, 49):
+                return (year, week) < (16, 32)
+        return None
+
+    def _initial_game_language(
+        self,
+        launcher_locale: object,
+        version_info: Mapping[str, object],
+        version_document: Mapping[str, object],
+    ) -> str | None:
+        """
+        将有效界面语言转为当前原版版本使用的代码，未知输入只告警而不写入。
+
+        扫描结果优先，其次使用继承声明或原版元数据标识，不使用可重命名的目录名。
+        """
+        locale = "zh-CN" if launcher_locale is None else launcher_locale
+        if not isinstance(locale, str) or locale not in self.minecraft_language_by_launcher:
+            self.logger.warning("初始化游戏语言已跳过：启动器语言配置无效")
+            return None
+        candidates = (
+            version_info.get("VanillaVersion"),
+            version_document.get("inheritsFrom"),
+            version_document.get("id"),
+        )
+        version_id = next(
+            (value for value in candidates if isinstance(value, str) and value and value.casefold() != "unknown"),
+            "",
+        )
+        uppercase_region = self._minecraft_uses_uppercase_region(version_id)
+        if uppercase_region is None:
+            self.logger.warning("初始化游戏语言已跳过：原版版本不支持语言选项或无法可靠识别")
+            return None
+        language = self.minecraft_language_by_launcher[locale]
+        if uppercase_region:
+            name, region = language.split("_", 1)
+            return f"{name}_{region.upper()}"
+        return language
+
+    def _apply_launch_options(
+        self,
+        game_directory: Path,
+        fullscreen: bool,
+        launcher_locale: object,
+        version_info: Mapping[str, object],
+        version_document: Mapping[str, object],
+    ) -> None:
+        """
+        在最终游戏目录原子更新全屏设置，并仅初始化未配置的游戏语言。
+
+        阻塞读写由调用方放入线程。读取失败或编码损坏时跳过全部选项写入，
+        避免将用户原有配置按空文件覆盖；读写失败不阻断启动，也不输出私人路径。
+        """
         options_path = game_directory / "options.txt"
-        value = "true" if enabled else "false"
         try:
-            lines = (
-                options_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                if options_path.is_file()
-                else []
-            )
-        except OSError:
-            lines = []
+            original = options_path.read_bytes().decode("utf-8")
+        except FileNotFoundError:
+            original = ""
+        except (OSError, UnicodeError) as exc:
+            self.logger.warning("读取游戏选项失败，保留原文件并跳过启动选项更新；原因：%s", type(exc).__name__)
+            return
+        bom = "\ufeff" if original.startswith("\ufeff") else ""
+        lines = original.removeprefix(bom).splitlines(keepends=True)
+        newline = "\r\n" if "\r\n" in original else "\n"
+        updates = {"fullscreen": "true" if fullscreen else "false"}
+        has_language = any(line.partition(":")[0] == "lang" and line.partition(":")[2].strip() for line in lines)
+        if not has_language:
+            language = self._initial_game_language(launcher_locale, version_info, version_document)
+            if language is not None:
+                updates["lang"] = language
+        remaining = set(updates)
         for index, line in enumerate(lines):
-            if line.startswith("fullscreen:"):
-                lines[index] = f"fullscreen:{value}"
-                break
-        else:
-            lines.append(f"fullscreen:{value}")
+            key, separator, _value = line.partition(":")
+            if separator and key in updates:
+                ending = line[len(line.rstrip("\r\n")) :]
+                lines[index] = f"{key}:{updates[key]}{ending}"
+                remaining.discard(key)
+        if remaining:
+            if lines and not lines[-1].endswith(("\r", "\n")):
+                lines[-1] += newline
+            lines.extend(f"{key}:{value}{newline}" for key, value in updates.items() if key in remaining)
+        updated = bom + "".join(lines)
+        if updated == original:
+            return
         try:
-            atomic_write_text(options_path, "\n".join(lines) + "\n")
+            atomic_write_text(options_path, updated)
         except OSError as exc:
-            self.logger.warning("写入全屏设置失败，游戏将沿用既有窗口状态: %s", exc)
+            self.logger.warning("写入游戏选项失败，游戏将沿用既有设置；原因：%s", type(exc).__name__)
 
     async def launch_instance(  # noqa: C901 - launch transaction and cleanup boundary
         self,
@@ -746,6 +839,7 @@ class LaunchCoordinator(_GameState):
         width: Any = 854,
         height: Any = 480,
         fullscreen: Any = False,
+        launcher_locale: object = None,
         jvm_args: Any = None,
         game_args: Any = None,
         version_isolation: Any = None,
@@ -773,6 +867,7 @@ class LaunchCoordinator(_GameState):
         :param width: 游戏窗口宽度
         :param height: 游戏窗口高度
         :param fullscreen: 启动时是否进入全屏模式
+        :param launcher_locale: 有效配置中的界面语言，仅用于初始化未配置的游戏语言；缺省使用简体中文
         :param jvm_args: 附加的 JVM 参数列表
         :param game_args: 附加的 Minecraft 参数列表
         :param version_isolation: 是否启用版本目录隔离
@@ -805,6 +900,8 @@ class LaunchCoordinator(_GameState):
             version_document = json.loads(version_json.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise GameServiceError("实例版本 JSON 无法读取或已经损坏", "VERSION_JSON_INVALID") from exc
+        if not isinstance(version_document, dict):
+            raise GameServiceError("实例版本 JSON 必须是对象", "VERSION_JSON_INVALID")
         inherited_version = str(version_document.get("inheritsFrom") or "").strip()
         # 扫描会遍历 versions/ 下每个目录并解析版本 JSON，属于阻塞磁盘操作。
         scanned_versions = await to_thread.run_sync(lambda: self._search_factory(path).search_minecraft())
@@ -1063,7 +1160,14 @@ class LaunchCoordinator(_GameState):
                     )
 
             # options.txt 需要读取并原子写回，避免阻塞事件循环导致进度与取消无响应。
-            await to_thread.run_sync(self._apply_fullscreen_option, game_directory, fullscreen_enabled)
+            await to_thread.run_sync(
+                self._apply_launch_options,
+                game_directory,
+                fullscreen_enabled,
+                launcher_locale,
+                version_info,
+                version_document,
+            )
             renderer_agent = await self._ensure_renderer_agent(selected_renderer)
             if cancel_event.is_set():
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
