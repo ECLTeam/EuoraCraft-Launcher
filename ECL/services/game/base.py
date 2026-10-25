@@ -4,6 +4,11 @@
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
 # 文件作用：游戏服务内部共享基类。
+#
+# 公开接口：
+#   - GameServiceError / VersionScanError — 重导出游戏服务领域异常。
+#   - ApiClientFactory / DownloaderFactory / CommandBuilder — 共享的 Core 构造及启动回调类型。
+#   - SearchFactory / JavaScannerFactory / ModSourceProvider / IsolationPolicyProvider — 扫描与配置提供器类型。
 # ============================================================
 
 from __future__ import annotations
@@ -189,6 +194,7 @@ class _GameState(ModSourceAware):
         self._owns_operations = operations is None
         self._application_operations = operations or OperationManager(self._data_path, self.events)
         self._modpack_preparations = ModpackPreparationService()
+        self._export_output_paths: set[Path] = set()
         self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._server_status_lock = RLock()
         self._schematic_sessions: dict[str, SchematicSession] = {}

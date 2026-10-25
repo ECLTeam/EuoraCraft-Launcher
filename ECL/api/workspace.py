@@ -19,6 +19,7 @@
 #       - game_modpack_preparation_release(body) -> ApiResponse
 #       - game_modpack_install(body) -> ApiResponse
 #       - game_instance_export(body) -> ApiResponse
+#       - game_instance_export_preview(body) -> ApiResponse — 扫描可导出的实例内容。
 #       - game_instance_files_check(body) -> ApiResponse
 #       - game_instance_files_repair(body) -> ApiResponse
 #       - game_instance_delete(body) -> ApiResponse
@@ -313,13 +314,45 @@ class WorkspaceHandlers(_FrontendState):
             ),
         )
 
+    @_ipc_handler("INSTANCE_EXPORT_PREVIEW_FAILED")
+    async def game_instance_export_preview(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        提交按实例实际游戏目录扫描的后台预览，不接受任意文件路径。
+
+        :param body: 实例目标
+        :return: 可取消的扫描操作句柄
+        """
+        return await self._validated_call(
+            InstanceTarget,
+            body,
+            lambda request: self.game.preview_instance_export(
+                request.game_path, request.version_id, request.version_isolation
+            ),
+        )
+
     @_ipc_handler("INSTANCE_EXPORT_FAILED")
     async def game_instance_export(self, body: dict[str, Any]) -> ApiResponse:
+        """
+        按用户确认的服务器文件身份和整合包信息提交导出。
+
+        :param body: 有界文件选择、来源版本、资源模式及保存目标
+        :return: 后台导出操作句柄
+        """
         return await self._validated_call(
             InstancePackExportRequest,
             body,
             lambda request: self.game.export_instance_pack(
-                request.game_path, request.version_id, request.output_path, request.pack_format
+                request.game_path,
+                request.version_id,
+                request.output_path,
+                request.pack_format,
+                source_revision=request.source_revision,
+                selected_file_ids=request.selected_file_ids,
+                pack_name=request.pack_name,
+                pack_version=request.pack_version,
+                summary=request.summary,
+                resource_mode=request.resource_mode,
+                version_isolation=request.version_isolation,
             ),
         )
 

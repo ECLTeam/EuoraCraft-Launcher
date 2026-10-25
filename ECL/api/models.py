@@ -650,6 +650,27 @@ class ModpackInstallRequest(ModpackPreparationRequest):
 class InstancePackExportRequest(InstanceTarget):
     output_path: Path
     pack_format: Literal["modrinth"]
+    source_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    selected_file_ids: list[Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]] = Field(max_length=50000)
+    pack_name: str = Field(min_length=1, max_length=100)
+    pack_version: str = Field(min_length=1, max_length=100)
+    summary: str = Field(max_length=2000)
+    resource_mode: Literal["references", "bundled"]
+
+    @field_validator("pack_name", "pack_version")
+    @classmethod
+    def validate_export_text(cls, value: str) -> str:
+        """
+        去除名称和版本首尾空白，拒绝空值或控制字符。
+
+        :param value: 客户端提交的名称或版本
+        :return: 去除首尾空白后的有效文本
+        :raises ValueError: 空值或包含控制字符时抛出
+        """
+        value = value.strip()
+        if not value or any(ord(character) < 32 for character in value):
+            raise ValueError("整合包名称或版本无效")
+        return value
 
 
 class OperationRequest(RequestModel):
@@ -1044,6 +1065,8 @@ class RequestModelRegistry:
     """
 
     models: dict[str, type[BaseModel]] = {
+        "game_instance_export_preview": InstanceTarget,
+        "game_instance_export": InstancePackExportRequest,
         "game_modpack_prepare": ModpackPrepareRequest,
         "game_modpack_preparation_get": ModpackPreparationRequest,
         "game_modpack_preparation_release": ModpackPreparationRequest,

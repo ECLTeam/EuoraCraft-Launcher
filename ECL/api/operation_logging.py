@@ -134,6 +134,7 @@ class IpcLogPolicy:
             "game_modpack_preparation_release": IpcLogSpec("释放整合包预览", "action"),
             "game_modpack_install": IpcLogSpec("安装整合包", "action", timed=True),
             "game_instance_export": IpcLogSpec("游戏实例：导出", "action", timed=True),
+            "game_instance_export_preview": IpcLogSpec("整合包导出：扫描文件", "query", timed=True),
             "game_instance_files_check": IpcLogSpec("实例文件：检查完整性", "action", timed=True),
             "game_instance_files_repair": IpcLogSpec("实例文件：修复", "action", timed=True),
             "game_instance_delete": IpcLogSpec("游戏实例：删除", "action"),

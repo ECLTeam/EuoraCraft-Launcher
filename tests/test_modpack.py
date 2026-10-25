@@ -962,6 +962,7 @@ def _make_instance_with_mods(game_path: Path) -> tuple[Path, bytes, bytes]:
     instance = game_path / "versions" / "Exported 1.21.1"
     mods = instance / "mods"
     mods.mkdir(parents=True, exist_ok=True)
+    (instance / f"{instance.name}.json").write_text(json.dumps({"id": "1.21.1"}), encoding="utf-8")
     (instance / "config").mkdir()
     (instance / "config" / "opts.txt").write_bytes(b"fov=1\n")
     (instance / "saves").mkdir()
@@ -974,6 +975,94 @@ def _make_instance_with_mods(game_path: Path) -> tuple[Path, bytes, bytes]:
     return instance, mod_a, mod_b
 
 
+def _export_options(service: GameService, game_path: Path, version_id: str, isolated: bool = True) -> dict:
+    state = _await_operation(service, service.preview_instance_export(game_path, version_id, isolated))
+    assert state["status"] == "completed", state
+    preview = state["result"]
+    return {
+        "source_revision": preview["sourceRevision"],
+        "selected_file_ids": [entry["fileId"] for entry in preview["files"] if entry["recommended"]],
+        "pack_name": "Test Pack",
+        "pack_version": "2.0.0",
+        "summary": "Test export",
+        "resource_mode": "references",
+        "version_isolation": isolated,
+    }
+
+
+def test_export_bundled_selection_and_string_metadata(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    _make_instance_with_mods(game_path)
+    service = _build_pack_service(_pack_downloader_factory({}))
+    options = _export_options(service, game_path, "Exported 1.21.1")
+    options["resource_mode"] = "bundled"
+    monkeypatch.setattr(modpack_module, "_proxied_post", lambda *_args, **_kwargs: pytest.fail("直接打包不能联网反查"))
+    output = tmp_path / "bundle.mrpack"
+    state = _await_operation(
+        service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth", **options)
+    )
+    assert state["status"] == "completed", state
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+        index = json.loads(archive.read("modrinth.index.json"))
+    assert index["name"] == "Test Pack"
+    assert index["versionId"] == "2.0.0"
+    assert index["files"] == []
+    assert "overrides/mods/a.jar" in names
+    assert "overrides/saves/world.dat" not in names
+
+
+def test_export_empty_selection_contains_only_dependencies(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    _make_instance_with_mods(game_path)
+    service = _build_pack_service(_pack_downloader_factory({}))
+    options = _export_options(service, game_path, "Exported 1.21.1")
+    options.update(resource_mode="bundled", selected_file_ids=[])
+    output = tmp_path / "empty.mrpack"
+    state = _await_operation(
+        service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth", **options)
+    )
+    assert state["status"] == "completed", state
+    with zipfile.ZipFile(output) as archive:
+        assert archive.namelist() == ["modrinth.index.json"]
+
+
+def test_export_stale_selection_preserves_existing_output(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    instance, _a, _b = _make_instance_with_mods(game_path)
+    service = _build_pack_service(_pack_downloader_factory({}))
+    options = _export_options(service, game_path, "Exported 1.21.1")
+    options["resource_mode"] = "bundled"
+    (instance / "mods/a.jar").write_bytes(b"changed after preview")
+    output = tmp_path / "existing.mrpack"
+    output.write_bytes(b"keep previous pack")
+    state = _await_operation(
+        service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth", **options)
+    )
+    assert state["status"] == "failed"
+    assert output.read_bytes() == b"keep previous pack"
+    assert not list(tmp_path.glob("*.ecl-tmp"))
+
+
+def test_export_shared_game_data_does_not_include_sibling_instances(tmp_path) -> None:
+    game_path = tmp_path / ".minecraft"
+    _make_instance_with_mods(game_path)
+    shared_mods = game_path / "versions/mods"
+    shared_mods.mkdir()
+    (shared_mods / "shared.jar").write_bytes(b"actual shared mod")
+    service = _build_pack_service(_pack_downloader_factory({}))
+    options = _export_options(service, game_path, "Exported 1.21.1", False)
+    options["resource_mode"] = "bundled"
+    output = tmp_path / "shared.mrpack"
+    state = _await_operation(
+        service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth", **options)
+    )
+    assert state["status"] == "completed", state
+    with zipfile.ZipFile(output) as archive:
+        assert "overrides/mods/shared.jar" in archive.namelist()
+        assert not any("Exported 1.21.1" in name for name in archive.namelist())
+
+
 def test_export_pack_resolves_online_mods(tmp_path, monkeypatch) -> None:
     """导出应把 Modrinth/CF 命中的模组写入 files[] 并从 overrides 剔除。"""
     monkeypatch.delenv("CURSEFORGE_API_KEY", raising=False)
@@ -984,7 +1073,14 @@ def test_export_pack_resolves_online_mods(tmp_path, monkeypatch) -> None:
 
     modrinth_versions = {
         hashlib.sha1(mod_a).hexdigest(): {
-            "files": [{"primary": True, "url": "https://dl.example.com/a.jar", "size": len(mod_a)}]
+            "files": [
+                {
+                    "primary": True,
+                    "url": "https://dl.example.com/a.jar",
+                    "size": len(mod_a),
+                    "hashes": {"sha1": hashlib.sha1(mod_a).hexdigest()},
+                }
+            ]
         }
     }
 
@@ -1012,7 +1108,12 @@ def test_export_pack_resolves_online_mods(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(modpack_module, "_proxied_post", fake_post)
     output = tmp_path / "out.mrpack"
 
-    state = _await_operation(service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth"))
+    state = _await_operation(
+        service,
+        service.export_instance_pack(
+            game_path, "Exported 1.21.1", output, "modrinth", **_export_options(service, game_path, "Exported 1.21.1")
+        ),
+    )
 
     assert state["status"] == "completed", state
     result = state["result"]
@@ -1047,13 +1148,25 @@ def test_export_pack_degrades_without_curseforge_key(tmp_path, monkeypatch) -> N
 
     modrinth_versions = {
         hashlib.sha1(mod_a).hexdigest(): {
-            "files": [{"primary": True, "url": "https://dl.example.com/a.jar", "size": len(mod_a)}]
+            "files": [
+                {
+                    "primary": True,
+                    "url": "https://dl.example.com/a.jar",
+                    "size": len(mod_a),
+                    "hashes": {"sha1": hashlib.sha1(mod_a).hexdigest()},
+                }
+            ]
         }
     }
     monkeypatch.setattr(modpack_module, "_proxied_post", _fake_online_post(modrinth_versions))
     output = tmp_path / "out.mrpack"
 
-    state = _await_operation(service, service.export_instance_pack(game_path, "Exported 1.21.1", output, "modrinth"))
+    state = _await_operation(
+        service,
+        service.export_instance_pack(
+            game_path, "Exported 1.21.1", output, "modrinth", **_export_options(service, game_path, "Exported 1.21.1")
+        ),
+    )
 
     assert state["status"] == "completed", state
     result = state["result"]

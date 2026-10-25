@@ -114,6 +114,7 @@ class IpcCommandRegistry:
         "game_modpack_preparation_release",
         "game_modpack_install",
         "game_instance_export",
+        "game_instance_export_preview",
         "game_instance_files_check",
         "game_instance_files_repair",
         "game_instance_delete",

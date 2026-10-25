@@ -30,6 +30,7 @@ from pydantic import ValidationError
 from ECL.api.game import GameHandlers
 from ECL.api.models import (
     GameVersionRequest,
+    InstancePackExportRequest,
     InstallRequest,
     LaunchRequest,
     LoaderCatalogRequest,
@@ -42,6 +43,36 @@ from ECL.api.models import (
 from ECL.api.registry import IpcCommandRegistry
 from ECL.api.system import SystemHandlers
 from ECL.api.workspace import WorkspaceHandlers
+
+
+def test_export_request_requires_a_bounded_preview_selection(tmp_path) -> None:
+    payload = {
+        "game_path": str(tmp_path),
+        "version_id": "Demo",
+        "output_path": str(tmp_path / "demo.mrpack"),
+        "pack_format": "modrinth",
+        "source_revision": "a" * 64,
+        "selected_file_ids": [],
+        "pack_name": " Demo ",
+        "pack_version": " 2.0 ",
+        "summary": "",
+        "resource_mode": "bundled",
+    }
+    request = InstancePackExportRequest.model_validate(payload)
+    assert request.pack_name == "Demo"
+    assert request.pack_version == "2.0"
+    for patch in [
+        {"pack_version": " "},
+        {"selected_file_ids": ["../secret"]},
+        {"resource_mode": "unknown"},
+        {"source_revision": ""},
+    ]:
+        with pytest.raises(ValidationError):
+            InstancePackExportRequest.model_validate({**payload, **patch})
+    with pytest.raises(ValidationError):
+        InstancePackExportRequest.model_validate(
+            {key: payload[key] for key in ("game_path", "version_id", "output_path", "pack_format")}
+        )
 
 
 @pytest.mark.asyncio
@@ -291,6 +322,8 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
     schemas = request_schemas()
 
     assert set(schemas) == {
+        "game_instance_export_preview",
+        "game_instance_export",
         "game_modpack_prepare",
         "game_modpack_preparation_get",
         "game_modpack_preparation_release",

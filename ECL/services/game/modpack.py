@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：读取整合包，下载所需文件并创建游戏实例。
+# 文件作用：协调整合包读取、实例安装与按已确认文件选择导出，不修改导出源文件。
 #
 # 公开接口：
 #   - class PackFileEntry — 整合包内单个待下载文件条目（路径/直链/哈希/环境适用性）。
@@ -13,7 +13,9 @@
 #       - prepare_modpack(source, ...) — 准备安装预览与私有快照。
 #       - get_modpack_preparation(preparation_id) / release_modpack_preparation(preparation_id) — 查询和释放预览。
 #       - install_prepared_modpack(preparation_id, game_path, new_version_id, excluded_file_ids) — 按已确认的选择安装。
-#       - export_instance_pack(game_path, version_id, output_path, pack_format) -> dict[str, str] — 导出实例为标准 Modrinth 整合包（mrpack）。
+#       - preview_instance_export — 扫描实际游戏目录，返回可选文件预览操作。
+#       - export_instance_pack — 按预览文件选择和整合包信息导出标准 mrpack。
+#   - curseforge_fingerprint(path) — 流式计算 CurseForge 文件指纹。
 #   - detect_pack_format(root) -> str — 按内容特征识别整合包格式标签。
 #   - build_pack_plan(root) -> ModpackPlan — 解析指定格式并输出统一安装计划。
 # ============================================================
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import zipfile
@@ -29,16 +32,26 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from threading import Event, Thread
 from types import MappingProxyType
-from typing import Any
+from typing import Any, BinaryIO
 from uuid import uuid4
 
 import httpx
+from pydantic import JsonValue
 
 from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError, _GameState
 from .mod_sources import mod_api_base, mod_user_agent, rewrite_mod_file_url
+from .modpack_export import (
+    ExportContentPolicy,
+    ExportFile,
+    ExportMod,
+    ExportSnapshot,
+    OnlineExportFile,
+    export_source_revision,
+    scan_export_files,
+)
 from .modpack_preparation import PreparedModpackFile
 from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
@@ -552,28 +565,43 @@ def _murmur2_tail(h: int, tail: bytes) -> int:
     return h
 
 
-def curseforge_fingerprint(path: Path) -> int:
+def _curseforge_fingerprint_stream(stream: BinaryIO, context: OperationContext | None) -> int:
     """
-    计算 CurseForge 文件指纹（MurmurHash2 32 位，seed=1）。
+    在同一个已打开文件上执行两遍有界读取，后台导出逐块响应取消。
 
-    与 CurseForge 客户端一样，计算指纹时跳过空白字节（0x09/0x0A/0x0D/0x20），
-    其余字节原样参与。分块流式处理，避免大文件整体载入内存。
+    CurseForge 的种子包含过滤空白后的总长度，所以不能在未知长度时直接
+    完成哈希；重新定位同一描述符，避免两次打开路径之间被替换成界外链接。
     """
     filtered_length = 0
-    with path.open("rb") as stream:
-        while chunk := stream.read(_fingerprint_chunk_bytes):
-            filtered_length += sum(1 for byte in chunk if byte not in _fingerprint_skipped_bytes)
+    stream.seek(0)
+    while chunk := stream.read(_fingerprint_chunk_bytes):
+        if context is not None:
+            context.check_cancelled()
+        filtered_length += sum(1 for byte in chunk if byte not in _fingerprint_skipped_bytes)
     h = (1 ^ filtered_length) & 0xFFFFFFFF
     carry = b""
-    with path.open("rb") as stream:
-        while chunk := stream.read(_fingerprint_chunk_bytes):
-            filtered = bytes(byte for byte in chunk if byte not in _fingerprint_skipped_bytes)
-            if carry:
-                filtered = carry + filtered
-            h, carry = _murmur2_absorb(h, filtered)
+    stream.seek(0)
+    while chunk := stream.read(_fingerprint_chunk_bytes):
+        if context is not None:
+            context.check_cancelled()
+        filtered = bytes(byte for byte in chunk if byte not in _fingerprint_skipped_bytes)
+        if carry:
+            filtered = carry + filtered
+        h, carry = _murmur2_absorb(h, filtered)
     if carry:
         h = _murmur2_tail(h, carry)
     return h
+
+
+def curseforge_fingerprint(path: Path) -> int:
+    """
+    流式计算 CurseForge 文件指纹，跳过协议指定的空白字节。
+
+    :param path: 调用方已确认的本地文件
+    :return: MurmurHash2 32 位无符号指纹
+    """
+    with path.open("rb") as stream:
+        return _curseforge_fingerprint_stream(stream, None)
 
 
 def _extract_minecraft_version(version_id: str) -> str:
@@ -581,13 +609,13 @@ def _extract_minecraft_version(version_id: str) -> str:
     return matches[-1].group(0) if matches else version_id
 
 
-def _resolve_export_dependencies(target: Any) -> dict[str, str]:
+def _resolve_export_dependencies(target: ResolvedInstanceTarget) -> dict[str, str]:
     """
     从实例版本清单解析 Modrinth 依赖声明。
 
     实例名由用户或安装参数决定，无法可靠推断 MC 版本与加载器；优先读取版本
-    JSON 的 ``inheritsFrom`` 与依赖库坐标，读取失败时返回空映射，由调用方回退
-    到名称匹配。Forge 的库坐标形如 ``1.20.1-47.2.0``，需要去掉 MC 版本前缀。
+    JSON 的 ``inheritsFrom`` 与依赖库坐标，读取失败时明确拒绝导出。
+    Forge 的库坐标形如 ``1.20.1-47.2.0``，需要去掉 MC 版本前缀。
 
     :param target: 已解析的实例目标
     :return: 形如 ``{"minecraft": "1.20.1", "fabric-loader": "0.17.0"}`` 的依赖映射
@@ -595,10 +623,10 @@ def _resolve_export_dependencies(target: Any) -> dict[str, str]:
     manifest_path = target.instance_path / f"{target.instance_directory_name}.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError):
-        return {}
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        raise GameServiceError("无法读取实例启动描述", "EXPORT_MANIFEST_INVALID") from exc
     if not isinstance(manifest, dict):
-        return {}
+        raise GameServiceError("实例启动描述不是对象", "EXPORT_MANIFEST_INVALID")
 
     dependencies: dict[str, str] = {}
     minecraft = str(manifest.get("inheritsFrom") or "").strip()
@@ -614,8 +642,11 @@ def _resolve_export_dependencies(target: Any) -> dict[str, str]:
         "neoforge": "net.neoforged:neoforge:",
         "forge": "net.minecraftforge:forge:",
     }
-    for library in manifest.get("libraries") or []:
-        coordinate = str((library or {}).get("name") or "")
+    libraries = manifest.get("libraries", [])
+    if not isinstance(libraries, list) or any(not isinstance(library, dict) for library in libraries):
+        raise GameServiceError("实例依赖列表无效", "EXPORT_MANIFEST_INVALID")
+    for library in libraries:
+        coordinate = str(library.get("name") or "")
         for key, prefix in loader_prefixes.items():
             if not coordinate.startswith(prefix):
                 continue
@@ -1217,107 +1248,225 @@ class ModpackCoordinator(_GameState):
             json.dumps(metadata, ensure_ascii=False, indent=2),
         )
 
-    # 导出时排除的隐私目录与文件；与导入时的过滤规则一致，避免把存档和截图打包导出。
-    _export_private_entries = frozenset({"saves", "screenshots", "logs", "crash-reports", "servers.dat"})
     _online_lookup_batch_size = 100
 
-    def export_instance_pack(
-        self, game_path: Any, version_id: Any, output_path: Any, pack_format: str
-    ) -> dict[str, Any]:
+    def _instance_export_snapshot(
+        self, game_path: Path, version_id: str, version_isolation: bool | None, context: OperationContext
+    ) -> ExportSnapshot:
         """
-        导出实例为标准 Modrinth 整合包（mrpack）。
+        按当前隔离策略解析数据目录，版本依赖只从所属实例的启动描述读取。
+        """
+        isolated = self.resolve_version_isolation(game_path, version_id, version_isolation)
+        target = self.resolve_instance(game_path, version_id, isolated)
+        manifest = target.instance_path / f"{target.instance_directory_name}.json"
+        if manifest.is_symlink() or (manifest.exists() and ExportContentPolicy.is_link(manifest.lstat())):
+            raise GameServiceError("实例启动描述不能是链接", "EXPORT_MANIFEST_INVALID")
+        if manifest.is_file() and manifest.stat().st_size > ExportContentPolicy.max_manifest_bytes:
+            raise GameServiceError("实例启动描述过大", "EXPORT_MANIFEST_TOO_LARGE")
+        before = export_source_revision(target, {})
+        dependencies = _resolve_export_dependencies(target)
+        if export_source_revision(target, {}) != before:
+            raise GameServiceError("实例启动描述已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
+        if not dependencies.get("minecraft"):
+            raise GameServiceError("无法确定实例的 Minecraft 版本", "EXPORT_DEPENDENCIES_INVALID")
+        snapshot = scan_export_files(target, dependencies, context)
+        if export_source_revision(target, {}) != before:
+            raise GameServiceError("实例启动描述已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
+        return snapshot
 
-        排除隐私目录（存档/截图/日志/崩溃报告/servers.dat）；对 mods 下启用的
-        jar 计算哈希与 CurseForge 指纹，优先经 Modrinth 批量接口、再经 CurseForge
-        指纹接口反查在线来源，命中的模组写入 ``files[]``，其余随 overrides 打包。
-        反查失败或未配置 CurseForge Key 不阻塞导出，以警告记录。
+    def preview_instance_export(
+        self, game_path: Path, version_id: str, version_isolation: bool | None = None
+    ) -> dict[str, str]:
+        """
+        在后台扫描实例实际游戏目录，返回可选择文件的服务器身份。
 
         :param game_path: Minecraft 游戏根目录
-        :param version_id: 实例 ID
-        :param output_path: 输出 .mrpack 文件路径
-        :param pack_format: 仅支持 ``modrinth``
-        :return: 长任务句柄（operationId 与初始状态）
-        :raises GameServiceError: 格式不支持时抛出
+        :param version_id: 所属实例 ID
+        :param version_isolation: 临时隔离覆盖，未指定时使用实例和全局设置
+        :return: 可取消的扫描操作句柄
         """
-        if pack_format != "modrinth":
-            raise GameServiceError("不支持的整合包格式", "INVALID_PACK_FORMAT")
-        target = self.resolve_instance(game_path, version_id)
-        output = Path(str(output_path)).expanduser().resolve(strict=False)
 
-        def worker(context: OperationContext) -> dict[str, Any]:
-            output.parent.mkdir(parents=True, exist_ok=True)
-            context.progress(5, "正在收集模组指纹")
-            hashed_mods = self._collect_export_mods(target.instance_path)
-            context.progress(18, f"正在反查 {len(hashed_mods)} 个模组的在线来源")
-            online_files, warnings = self._resolve_online_mod_files(hashed_mods, context)
-            temp = output.with_name(f".{output.name}.ecl-tmp")
+        def worker(context: OperationContext) -> dict[str, JsonValue]:
+            context.progress(0, "正在读取实例导出信息")
+            snapshot = self._instance_export_snapshot(game_path, version_id, version_isolation, context)
+            context.check_cancelled()
+            return snapshot.payload()
+
+        return self._application_operations.submit("instance_export_preview", worker)
+
+    def export_instance_pack(
+        self,
+        game_path: Path,
+        version_id: str,
+        output_path: Path,
+        pack_format: str,
+        *,
+        source_revision: str,
+        selected_file_ids: list[str],
+        pack_name: str,
+        pack_version: str,
+        summary: str,
+        resource_mode: str,
+        version_isolation: bool | None = None,
+    ) -> dict[str, str]:
+        """
+        重新验证用户选择并原子导出标准 mrpack，失败或取消保留原有输出。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 源实例 ID
+        :param output_path: 用户选择的输出位置
+        :param pack_format: 当前仅支持 modrinth
+        :param source_revision: 预览确认的来源身份
+        :param selected_file_ids: 服务器生成的有界文件选择，空列表只导出依赖
+        :param pack_name: 整合包名称
+        :param pack_version: 字符串版本
+        :param summary: 整合包简介
+        :param resource_mode: references 优先反查所选模组，bundled 直接打包
+        :param version_isolation: 未指定时使用实例有效隔离策略
+        :return: 后台导出操作句柄，提交不等于完成
+        :raises GameServiceError: 格式、来源、选择或输出冲突时抛出
+        """
+        if pack_format != "modrinth" or resource_mode not in {"references", "bundled"}:
+            raise GameServiceError("不支持的整合包格式或资源模式", "INVALID_PACK_FORMAT")
+        output = Path(output_path).expanduser().resolve(strict=False)
+        if output.suffix.casefold() != ".mrpack":
+            raise GameServiceError("导出文件必须使用 .mrpack 后缀", "INVALID_EXPORT_OUTPUT")
+        selected_ids = list(selected_file_ids)
+        with self._lock:
+            if output in self._export_output_paths:
+                raise GameServiceError("该输出位置正在导出，请等待任务结束", "EXPORT_OUTPUT_BUSY")
+
+        def worker(context: OperationContext) -> dict[str, JsonValue]:
+            with self._lock:
+                if output in self._export_output_paths:
+                    raise GameServiceError("该输出位置正在导出，请等待任务结束", "EXPORT_OUTPUT_BUSY")
+                self._export_output_paths.add(output)
+            temporary_file = output.with_name(f".{output.name}.{uuid4().hex}.ecl-tmp")
             try:
-                with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED) as archive:
-                    files = [path for path in target.instance_path.rglob("*") if path.is_file()]
-                    total = max(len(files), 1)
-                    for index, path in enumerate(files, 1):
+                snapshot = self._instance_export_snapshot(game_path, version_id, version_isolation, context)
+                files = snapshot.selection(source_revision, selected_ids)
+                if any(entry.source_path == output for entry in files):
+                    raise GameServiceError("不能用导出结果覆盖已选源文件", "INVALID_EXPORT_OUTPUT")
+                online_files: dict[str, OnlineExportFile] = {}
+                warnings: list[str] = []
+                if resource_mode == "references":
+                    context.progress(15, "正在收集已选模组指纹")
+                    hashed_mods = self._collect_export_mods(files, snapshot.root, context)
+                    context.progress(22, "正在查询已选模组在线来源")
+                    online_files, warnings = self._resolve_online_mod_files(hashed_mods, context)
+                    unmatched = len(hashed_mods) - len(online_files)
+                    if unmatched:
+                        warnings.append(f"{unmatched} 个模组未识别在线来源，已直接打包")
+                context.report_effect("staged")
+                output.parent.mkdir(parents=True, exist_ok=True)
+                packed_count = 0
+                total_bytes = sum(entry.size for entry in files)
+                completed_bytes = 0
+                with (
+                    temporary_file.open("xb") as output_stream,
+                    zipfile.ZipFile(output_stream, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as archive,
+                ):
+                    for entry in files:
                         context.check_cancelled()
-                        relative = path.relative_to(target.instance_path)
-                        if relative.parts and relative.parts[0] in self._export_private_entries:
+                        entry.validate(snapshot.root)
+                        if entry.relative in online_files:
+                            completed_bytes += entry.size
                             continue
-                        if relative.as_posix() in online_files:
-                            continue
-                        archive.write(path, Path("overrides") / relative)
-                        if index % 20 == 0 or index == total:
-                            context.progress(25 + 70 * index / total, "正在导出整合包")
-                    dependencies = _resolve_export_dependencies(target)
-                    if "minecraft" not in dependencies:
-                        dependencies["minecraft"] = _extract_minecraft_version(target.instance_directory_name)
+                        with entry.source_path.open("rb") as source:
+                            if not entry.matches(os.fstat(source.fileno())):
+                                raise GameServiceError("导出文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
+                            with archive.open(f"overrides/{entry.relative}", "w", force_zip64=True) as destination:
+                                while chunk := source.read(1024 * 1024):
+                                    context.check_cancelled()
+                                    destination.write(chunk)
+                                    completed_bytes += len(chunk)
+                                    context.progress(
+                                        25 + 70 * completed_bytes / max(total_bytes, 1),
+                                        "正在打包已选文件",
+                                        done=completed_bytes,
+                                        total=total_bytes,
+                                        progressType="bytes",
+                                    )
+                            if not entry.matches(os.fstat(source.fileno())):
+                                raise GameServiceError("导出期间文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
+                        packed_count += 1
                     archive.writestr(
                         "modrinth.index.json",
                         json.dumps(
                             {
                                 "formatVersion": 1,
                                 "game": "minecraft",
-                                "versionId": 1,
-                                "name": target.instance_directory_name,
-                                "summary": "Exported by ECL",
+                                "versionId": pack_version,
+                                "name": pack_name,
+                                "summary": summary,
                                 "files": [online_files[key] for key in sorted(online_files)],
-                                "dependencies": dependencies,
+                                "dependencies": dict(snapshot.dependencies),
                             },
                             ensure_ascii=False,
                         ),
                     )
-                context.check_cancelled()
-                temp.replace(output)
+                # 已反查为在线条目的文件也必须仍与预览一致。
+                for entry in files:
+                    entry.validate(snapshot.root)
+                snapshot.validate_source()
+                context.finalize(lambda: temporary_file.replace(output))
                 return {
                     "path": str(output),
                     "format": "modrinth",
                     "onlineFiles": len(online_files),
-                    "warnings": warnings,
+                    "packedFiles": packed_count,
+                    "selectedBytes": total_bytes,
+                    "warnings": list(warnings),
                 }
             finally:
-                temp.unlink(missing_ok=True)
+                try:
+                    temporary_file.unlink(missing_ok=True)
+                finally:
+                    with self._lock:
+                        self._export_output_paths.discard(output)
 
         return self._application_operations.submit("instance_export", worker)
 
-    def _collect_export_mods(self, instance_path: Path) -> list[dict[str, Any]]:
-        # 收集 mods 目录下启用 jar 的哈希与 CurseForge 指纹；禁用模组不参与反查，随 overrides 打包。
-        mods: list[dict[str, Any]] = []
-        mods_dir = instance_path / "mods"
-        if not mods_dir.is_dir():
-            return mods
-        for path in sorted(mods_dir.glob("*.jar")):
+    def _collect_export_mods(
+        self, files: tuple[ExportFile, ...], root: Path, context: OperationContext
+    ) -> list[ExportMod]:
+        """
+        只计算已选启用模组的指纹；禁用模组及未选文件不参与联网反查。
+        """
+        mods: list[ExportMod] = []
+        for entry in files:
+            context.check_cancelled()
+            if entry.category != "mods" or entry.source_path.suffix.casefold() != ".jar":
+                continue
+            entry.validate(root)
+            with entry.source_path.open("rb") as stream:
+                if not entry.matches(os.fstat(stream.fileno())):
+                    raise GameServiceError("导出文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
+                sha1 = hashlib.sha1()
+                sha512 = hashlib.sha512()
+                while chunk := stream.read(1024 * 1024):
+                    context.check_cancelled()
+                    sha1.update(chunk)
+                    sha512.update(chunk)
+                fingerprint = _curseforge_fingerprint_stream(stream, context)
+                if not entry.matches(os.fstat(stream.fileno())):
+                    raise GameServiceError("导出文件已变化，请刷新后重试", "EXPORT_PREVIEW_STALE")
             mods.append(
                 {
-                    "relative": path.relative_to(instance_path).as_posix(),
-                    "path": path,
-                    "sha1": _file_digest(path, "sha1"),
-                    "sha512": _file_digest(path, "sha512"),
-                    "size": path.stat().st_size,
-                    "fingerprint": curseforge_fingerprint(path),
+                    "relative": entry.relative,
+                    "path": entry.source_path,
+                    "sha1": sha1.hexdigest(),
+                    "sha512": sha512.hexdigest(),
+                    "size": entry.size,
+                    "fingerprint": fingerprint,
                 }
             )
+            entry.validate(root)
         return mods
 
     def _resolve_online_mod_files(
-        self, hashed_mods: list[dict[str, Any]], context: OperationContext
-    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        self, hashed_mods: list[ExportMod], context: OperationContext
+    ) -> tuple[dict[str, OnlineExportFile], list[str]]:
         """
         把本地模组反查为 mrpack ``files[]`` 在线条目。
 
@@ -1326,7 +1475,7 @@ class ModpackCoordinator(_GameState):
 
         :return: (模组相对路径 -> files[] 条目) 与警告列表
         """
-        resolved: dict[str, dict[str, Any]] = {}
+        resolved: dict[str, OnlineExportFile] = {}
         warnings: list[str] = []
         if not hashed_mods:
             return resolved, warnings
@@ -1347,7 +1496,8 @@ class ModpackCoordinator(_GameState):
                     entry = self._modrinth_file_entry(mod, versions, mod_source)
                     if entry is not None:
                         resolved[mod["relative"]] = entry
-        except (httpx.HTTPError, GameServiceError) as exc:
+        except (httpx.HTTPError, GameServiceError, ValueError, TypeError) as exc:
+            context.check_cancelled()
             warnings.append(f"Modrinth 模组反查失败：{exc}")
         remaining = [mod for mod in hashed_mods if mod["relative"] not in resolved]
         if remaining:
@@ -1355,11 +1505,11 @@ class ModpackCoordinator(_GameState):
         return resolved, warnings
 
     @staticmethod
-    def _modrinth_file_entry(mod: dict[str, Any], versions: Any, mod_source: str) -> dict[str, Any] | None:
+    def _modrinth_file_entry(mod: ExportMod, versions: Any, mod_source: str) -> OnlineExportFile | None:
         """
-        从批量反查响应中取该模组的主文件。
+        从批量反查响应中取哈希与所选本地模组一致的文件。
 
-        文件地址按模组源重写后才能走镜像下载；无有效主文件视为未命中。
+        文件地址按模组源重写后才能走镜像下载；无匹配文件视为未命中。
 
         :param mod: 含相对路径、哈希与指纹的本地模组条目
         :param versions: Modrinth 批量反查响应
@@ -1370,28 +1520,36 @@ class ModpackCoordinator(_GameState):
         files = version.get("files") if isinstance(version, dict) else None
         if not isinstance(files, list):
             return None
-        primary = next((item for item in files if isinstance(item, dict) and item.get("primary")), None)
-        candidate = primary if primary is not None else (files[0] if files and isinstance(files[0], dict) else None)
-        if not isinstance(candidate, dict) or not candidate.get("url"):
+        candidate = next(
+            (
+                item
+                for item in files
+                if isinstance(item, dict)
+                and isinstance(item.get("hashes"), dict)
+                and item["hashes"].get("sha1") == mod["sha1"]
+            ),
+            None,
+        )
+        if not isinstance(candidate, dict) or not isinstance(candidate.get("url"), str) or not candidate["url"]:
             return None
         return {
             "path": mod["relative"],
             "hashes": {"sha1": mod["sha1"], "sha512": mod["sha512"]},
             "env": {"client": "required", "server": "required"},
             "downloads": [rewrite_mod_file_url(str(candidate["url"]), mod_source)],
-            "fileSize": candidate.get("size") if isinstance(candidate.get("size"), int) else mod["size"],
+            "fileSize": mod["size"],
         }
 
     def _resolve_curseforge_matches(
-        self, mods: list[dict[str, Any]], warnings: list[str], context: OperationContext
-    ) -> dict[str, dict[str, Any]]:
+        self, mods: list[ExportMod], warnings: list[str], context: OperationContext
+    ) -> dict[str, OnlineExportFile]:
         """
         对 Modrinth 未命中的模组做 CurseForge 指纹批量反查。
 
         模组源为 MCIM 时镜像不需要 API Key；官方源未配置 Key 或接口失败时记录
         警告并返回空，不阻塞导出。
         """
-        resolved: dict[str, dict[str, Any]] = {}
+        resolved: dict[str, OnlineExportFile] = {}
         mod_source = self.mod_source()
         try:
             headers = self._curseforge_headers(mod_source)
@@ -1426,6 +1584,7 @@ class ModpackCoordinator(_GameState):
                         "downloads": [rewrite_mod_file_url(str(file_info["downloadUrl"]), mod_source)],
                         "fileSize": mod["size"],
                     }
-        except (httpx.HTTPError, GameServiceError) as exc:
+        except (httpx.HTTPError, GameServiceError, ValueError, TypeError) as exc:
+            context.check_cancelled()
             warnings.append(f"CurseForge 指纹反查失败：{exc}")
         return resolved
