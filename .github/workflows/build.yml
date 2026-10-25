@@ -2,10 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -15,71 +12,29 @@ jobs:
     permissions:
       actions: read
       contents: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      full_version: ${{ steps.release.outputs.full_version }}
+      type: ${{ steps.release.outputs.type }}
+      filename_version: ${{ steps.release.outputs.filename_version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      publish: ${{ steps.release.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - shell: bash
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Resolve version and validate publication
+        id: release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          REF_TYPE: ${{ github.ref_type }}
-          TAG_NAME: ${{ github.ref_name }}
         run: |
-          set -euo pipefail
-
-          if [ "$REF_TYPE" != "tag" ]; then
-            exit 0
-          fi
-
-          if [[ "$TAG_NAME" != *-beta* ]]; then
-            exit 0
-          fi
-
-          if [ "$(git cat-file -t "$GITHUB_REF")" != "tag" ]; then
-            echo "beta 标签必须是带注释标签：$TAG_NAME" >&2
-            exit 1
-          fi
-
-          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*\+[0-9]{8}$ ]]; then
-            echo "不合法的 beta 标签：$TAG_NAME" >&2
-            echo "beta 标签必须为 vMAJOR.MINOR.PATCH-beta.N+YYYYMMDD，例如 v0.1.0-beta.2+20260919。" >&2
-            exit 1
-          fi
-
-          release_date="${TAG_NAME##*+}"
-          python - "$release_date" <<'PY'
-          from datetime import datetime
-          from sys import argv
-
-          datetime.strptime(argv[1], "%Y%m%d")
-          PY
-
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          tag_commit="$(git rev-list -n 1 "$GITHUB_REF")"
-          main_commit="$(git rev-parse origin/main)"
-          if [ "$tag_commit" != "$main_commit" ]; then
-            echo "beta 标签必须指向 origin/main 当前提交。tag=$tag_commit main=$main_commit" >&2
-            exit 1
-          fi
-
-          require_successful_main_workflow() {
-            local workflow_file="$1"
-            local workflow_name="$2"
-            local successful_runs
-            successful_runs="$(
-              gh api \
-                "/repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$tag_commit&branch=main&event=push&status=completed" \
-                --jq '[.workflow_runs[] | select(.conclusion == "success")] | length'
-            )"
-            if [ "$successful_runs" = "0" ]; then
-              echo "beta 标签对应提交尚未通过主分支工作流：$workflow_name" >&2
-              exit 1
-            fi
-          }
-
-          require_successful_main_workflow "backend-tests.yml" "Backend Tests"
-          require_successful_main_workflow "build.yml" "Build"
+          python packaging/release_metadata.py >> "$GITHUB_OUTPUT"
 
   build-frontend:
     name: Build Frontend
@@ -122,7 +77,7 @@ jobs:
   # build backend with matrix
   build-backend:
     name: Build Backend
-    needs: build-frontend
+    needs: [validate-release-tag, build-frontend]
     strategy:
       fail-fast: false
       matrix:
@@ -183,88 +138,36 @@ jobs:
               f.write(text)
           PY
 
-      - name: Parse version from tag
-        id: version_info
-        shell: bash
-        run: |
-          TAG="${{ github.ref_name }}"
-          # Strip v prefix, then extract version, type and build metadata
-          if [[ "$TAG" == v* ]]; then
-            VER="${TAG#v}"
-            # Determine version type from pre-release suffix
-            if [[ "$VER" == *-beta* ]]; then
-              echo "type=beta" >> "$GITHUB_OUTPUT"
-            elif [[ "$VER" == *-alpha* ]]; then
-              echo "type=alpha" >> "$GITHUB_OUTPUT"
-            elif [[ "$VER" == *-rc* ]]; then
-              echo "type=rc" >> "$GITHUB_OUTPUT"
-            else
-              echo "type=release" >> "$GITHUB_OUTPUT"
-            fi
-            # Strip pre-release suffix for the semver core version
-            CLEAN_VER="${VER%-*}"
-            if [ "$CLEAN_VER" = "$VER" ]; then
-              # No pre-release suffix, use as-is
-              echo "version=$VER" >> "$GITHUB_OUTPUT"
-            else
-              echo "version=$CLEAN_VER" >> "$GITHUB_OUTPUT"
-            fi
-            # Full version (pre-release and build metadata included) for runtime injection
-            echo "full_version=$VER" >> "$GITHUB_OUTPUT"
-          else
-            echo "type=" >> "$GITHUB_OUTPUT"
-            echo "version=" >> "$GITHUB_OUTPUT"
-            echo "full_version=" >> "$GITHUB_OUTPUT"
-          fi
-          if [[ "$TAG" == v* ]]; then
-            echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
-          else
-            # 无 tag 时回退到 version.py 中的版本，避免产物命名为 dev
-            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
-            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
-            if [ -n "$VER_PY" ]; then
-              # version.py 已含预发布/构建元数据时直接使用；旧格式（纯版本号+类型）再拼上类型
-              if [[ "$VER_PY" != *-* ]] && [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
-                echo "filename_version=v${VER_PY}-${TYPE_PY}" >> "$GITHUB_OUTPUT"
-              else
-                echo "filename_version=v${VER_PY}" >> "$GITHUB_OUTPUT"
-              fi
-            else
-              echo "filename_version=dev" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
       - name: Inject version info into version.py
         shell: bash
         env:
-          VTYPE: ${{ steps.version_info.outputs.type }}
-          VVER: ${{ steps.version_info.outputs.full_version }}
+          VTYPE: ${{ needs.validate-release-tag.outputs.type }}
+          VVER: ${{ needs.validate-release-tag.outputs.full_version }}
         run: |
           python - <<'PY'
           import os, re
-          vtype = os.environ.get("VTYPE", "")
-          vver = os.environ.get("VVER", "")
-          if vtype and vver:
-              path = "ECL/foundation/version.py"
-              with open(path, encoding="utf-8") as f:
-                  text = f.read()
-              # Update __version__ with the full version (pre-release and build metadata included)
-              text = re.sub(
-                  r"""__version__\s*=\s*['"][^'"]*['"]""",
-                  f'__version__ = "{vver}"',
-                  text,
-              )
-              # Update __version_type__
-              text = re.sub(
-                  r"""__version_type__\s*=\s*['"][^'"]*['"]""",
-                  f'__version_type__ = "{vtype}"',
-                  text,
-              )
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write(text)
-              print(f"Injected version={vver}, version_type={vtype}")
-          else:
-              print("No tag detected, keeping existing version.py")
+          vtype = os.environ["VTYPE"]
+          vver = os.environ["VVER"]
+          if not vtype or not vver:
+              raise ValueError("构建版本信息缺失")
+          path = "ECL/foundation/version.py"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          # Update __version__ with the full version (pre-release and build metadata included)
+          text = re.sub(
+              r"""__version__\s*=\s*['"][^'"]*['"]""",
+              f'__version__ = "{vver}"',
+              text,
+          )
+          # Update __version_type__
+          text = re.sub(
+              r"""__version_type__\s*=\s*['"][^'"]*['"]""",
+              f'__version_type__ = "{vtype}"',
+              text,
+          )
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          print(f"Injected version={vver}, version_type={vtype}")
           PY
 
       - name: Generate host dependency manifest
@@ -275,7 +178,7 @@ jobs:
         if: ${{ runner.os != 'macOS' }}
         shell: bash
         env:
-          VTYPE: ${{ steps.version_info.outputs.type }}
+          VTYPE: ${{ needs.validate-release-tag.outputs.type }}
         run: |
           set -euo pipefail
           # macOS 改由 PyInstaller 构建（见下方 Build with PyInstaller）；
@@ -334,18 +237,18 @@ jobs:
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             cd dist
-            hdiutil create -volname "EuoraCraft Launcher" -srcfolder "EuoraCraft Launcher.app" -ov -format UDZO "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg"
-            echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.dmg" >> "$GITHUB_OUTPUT"
+            hdiutil create -volname "EuoraCraft Launcher" -srcfolder "EuoraCraft Launcher.app" -ov -format UDZO "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ needs.validate-release-tag.outputs.filename_version }}.dmg"
+            echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ needs.validate-release-tag.outputs.filename_version }}.dmg" >> "$GITHUB_OUTPUT"
             echo "dir=dist" >> "$GITHUB_OUTPUT"
           else
             cd build-nuitka
             echo "dir=build-nuitka" >> "$GITHUB_OUTPUT"
             if [ "${{ runner.os }}" = "Windows" ]; then
-              mv "main.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe"
-              echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}.exe" >> "$GITHUB_OUTPUT"
+              mv "main.exe" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ needs.validate-release-tag.outputs.filename_version }}.exe"
+              echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ needs.validate-release-tag.outputs.filename_version }}.exe" >> "$GITHUB_OUTPUT"
             else
-              mv "main.bin" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}"
-              echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ steps.version_info.outputs.filename_version }}" >> "$GITHUB_OUTPUT"
+              mv "main.bin" "EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ needs.validate-release-tag.outputs.filename_version }}"
+              echo "filename=EuoraCraft-Launcher-${{ runner.os }}-${{ runner.arch }}-${{ needs.validate-release-tag.outputs.filename_version }}" >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -357,12 +260,12 @@ jobs:
           archive: false
 
       - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: needs.validate-release-tag.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
-          prerelease: ${{ steps.version_info.outputs.type != 'release' }}
+          prerelease: ${{ needs.validate-release-tag.outputs.prerelease == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -371,7 +274,7 @@ jobs:
   build-arch-pkg:
     name: Build Arch Linux package
     # 只等待共用前端产物，随后与其他平台的后端矩阵并行构建。
-    needs: build-frontend
+    needs: [validate-release-tag, build-frontend]
     runs-on: ubuntu-latest
     container:
       image: archlinux:base-devel
@@ -394,54 +297,6 @@ jobs:
         with:
           name: frontend-dist
           path: frontend/dist
-
-      - name: Resolve version from tag
-        id: ver
-        shell: bash
-        run: |
-          TAG=""
-          VTYPE=""
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            TAG="${{ github.ref_name }}"
-          fi
-          VER="0.0.0"
-          if [ -n "$TAG" ]; then
-            VER="${TAG#v}"
-            if [[ "$VER" == *-beta* ]]; then
-              VTYPE="beta"
-            elif [[ "$VER" == *-alpha* ]]; then
-              VTYPE="alpha"
-            elif [[ "$VER" == *-rc* ]]; then
-              VTYPE="rc"
-            else
-              VTYPE="release"
-            fi
-            echo "full_version=$VER" >> "$GITHUB_OUTPUT"
-            CLEAN="${VER%-*}"
-            [ "$CLEAN" != "$VER" ] && VER="$CLEAN"
-          else
-            echo "full_version=" >> "$GITHUB_OUTPUT"
-          fi
-          echo "tagname=$TAG" >> "$GITHUB_OUTPUT"
-          echo "pkgver=$VER" >> "$GITHUB_OUTPUT"
-          echo "version_type=$VTYPE" >> "$GITHUB_OUTPUT"
-          if [ -n "$TAG" ]; then
-            echo "filename_version=$TAG" >> "$GITHUB_OUTPUT"
-          else
-            # 无 tag 时回退到 version.py 中的版本，避免产物命名为 dev
-            VER_PY=$(sed -n 's/^__version__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
-            TYPE_PY=$(sed -n 's/^__version_type__ = "\([^"]*\)".*/\1/p' ECL/foundation/version.py)
-            if [ -n "$VER_PY" ]; then
-              # version.py 已含预发布/构建元数据时直接使用；旧格式（纯版本号+类型）再拼上类型
-              if [[ "$VER_PY" != *-* ]] && [ -n "$TYPE_PY" ] && [ "$TYPE_PY" != "release" ]; then
-                echo "filename_version=v${VER_PY}-${TYPE_PY}" >> "$GITHUB_OUTPUT"
-              else
-                echo "filename_version=v${VER_PY}" >> "$GITHUB_OUTPUT"
-              fi
-            else
-              echo "filename_version=dev" >> "$GITHUB_OUTPUT"
-            fi
-          fi
 
       - name: Install build toolchain
         run: |
@@ -485,32 +340,31 @@ jobs:
       - name: Inject version info into version.py
         shell: bash
         env:
-          VTYPE: ${{ steps.ver.outputs.version_type }}
-          VVER: ${{ steps.ver.outputs.full_version }}
+          VTYPE: ${{ needs.validate-release-tag.outputs.type }}
+          VVER: ${{ needs.validate-release-tag.outputs.full_version }}
         run: |
           .venv-arch/bin/python - <<'PY'
           import os, re
-          vtype = os.environ.get("VTYPE", "")
-          vver = os.environ.get("VVER", "")
-          if vtype and vver != "0.0.0":
-              path = "ECL/foundation/version.py"
-              with open(path, encoding="utf-8") as f:
-                  text = f.read()
-              text = re.sub(
-                  r'''__version__\s*=\s*['"][^'"]*['"]''',
-                  f'__version__ = "{vver}"',
-                  text,
-              )
-              text = re.sub(
-                  r'''__version_type__\s*=\s*['"][^'"]*['"]''',
-                  f'__version_type__ = "{vtype}"',
-                  text,
-              )
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write(text)
-              print(f"Injected version={vver}, version_type={vtype}")
-          else:
-              print("No tag detected, keeping existing version.py")
+          vtype = os.environ["VTYPE"]
+          vver = os.environ["VVER"]
+          if not vtype or not vver:
+              raise ValueError("构建版本信息缺失")
+          path = "ECL/foundation/version.py"
+          with open(path, encoding="utf-8") as f:
+              text = f.read()
+          text = re.sub(
+              r'''__version__\s*=\s*['"][^'"]*['"]''',
+              f'__version__ = "{vver}"',
+              text,
+          )
+          text = re.sub(
+              r'''__version_type__\s*=\s*['"][^'"]*['"]''',
+              f'__version_type__ = "{vtype}"',
+              text,
+          )
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          print(f"Injected version={vver}, version_type={vtype}")
           PY
 
       - name: Build Arch binary with Nuitka
@@ -540,7 +394,7 @@ jobs:
           SRC="$GITHUB_WORKSPACE/build-nuitka/main.bin"
           [ -x "$SRC" ] || { echo "未找到 Arch 原生二进制"; exit 1; }
           cp "$SRC" euoracraft-launcher
-          cp "$SRC" "$GITHUB_WORKSPACE/EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}"
+          cp "$SRC" "$GITHUB_WORKSPACE/EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}"
           # CI 用本 job 的 Arch 原生产物，把 PKGBUILD 的远程 source 换成本地二进制。
           sed -i 's#^.*euoracraft-launcher::.*$#    "euoracraft-launcher"#' PKGBUILD
 
@@ -548,7 +402,7 @@ jobs:
         working-directory: packaging/arch
         shell: bash
         env:
-          PKGVER: ${{ steps.ver.outputs.pkgver }}
+          PKGVER: ${{ needs.validate-release-tag.outputs.version }}
         run: |
           sed -i 's#^pkgver=.*#pkgver='"$PKGVER"'#' PKGBUILD
           useradd -m builder
@@ -584,14 +438,14 @@ jobs:
       - name: Upload Arch binary as artifact
         uses: actions/upload-artifact@v7
         with:
-          name: EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}
-          path: EuoraCraft-Launcher-Arch-X64-${{ steps.ver.outputs.filename_version }}
+          name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}
+          path: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}
           archive: false
 
   publish-arch:
     name: Publish Arch-x64
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-backend, build-arch-pkg]
+    if: needs.validate-release-tag.outputs.publish == 'true'
+    needs: [validate-release-tag, build-backend, build-arch-pkg]
     runs-on: ubuntu-latest
     permissions:
       contents: write
