@@ -9,6 +9,7 @@
 - 新规则归入对应职责章节，合并重复表述；同一测试命令或验收门槛集中定义，其他章节引用，不按历次对话持续追加独立小节。
 - 同时适用且可以共同满足的要求按较严格者执行；存在直接矛盾时应说明冲突并向用户确认。用户明确指令优先于仓库默认约定，已有授权无需重复询问。
 - 存量不符合项随相关功能变更逐步收敛，不得借规范整理发起无关的全仓重构。
+- 外部规范的固定版本、适用条目、覆盖证据与维护职责见 [工程治理](docs/governance/README.md)；只采用已列明范围，不将局部检查通过描述为整体合规。版本升级和例外仍须按本文件变更流程审查。
 
 ## 0. 需求确认与变更工作流
 
@@ -223,6 +224,8 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 
 ### 4.8 键盘交互与焦点
 
+- 首批 WCAG 2.2 A/AA 条目与自动/人工范围见 [可访问性要求](docs/governance/accessibility.md)。可访问名称、对比度及焦点须按适用成功准则验收；自动扫描的 `incomplete` 须复核，不视为通过。
+
 - 可交互控件必须支持适用的键盘操作，并保留清晰的可见焦点；优先使用原生语义控件或已有公共组件，纯图标按钮必须提供可访问名称。
 - 弹窗复用现有交互与层级管理机制，处理焦点进入、Tab 导航及关闭后的焦点恢复；Esc 按弹窗是否允许关闭处理，不得绕过执行中的关闭约束。
 
@@ -245,6 +248,8 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 - 预期失败使用稳定错误码；未预期异常在实际捕获边界记录堆栈，入口结果日志不再重复打印同一堆栈。
 
 ## 6. 测试与验收
+
+治理检查的依赖审计和浏览器扫描须保留范围与原始报告；未处置违规、工具失败、空覆盖和过期例外均不得通过。有限期例外统一维护于 `docs/governance/exceptions.json`，不得自动接受风险或用无限期仅报告模式代替门禁。安全条目与桌面边界见 [安全要求](docs/governance/security.md)。
 
 ### 6.1 范围与行为
 
@@ -277,12 +282,15 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 | --- | --- |
 | 后端定向验证 | 在所属仓库执行 `ruff check <改动文件...>`、`ruff format --check <改动文件...>`；在主仓库执行 `python -m pytest <相关测试路径...> --tb=short -q`，覆盖相关主仓库及子模块调用。 |
 | 主仓库后端全量验证 | 在主仓库执行 `ruff check ECL tests`、`ruff format --check ECL tests`、`python -m pytest --tb=short -q`。对应 CI 为 `.github/workflows/backend-tests.yml`。 |
-| 适用的主仓库 Ruff 全量检查 | 按 `.github/workflows/ruff.yml` 在主仓库执行 `ruff check . --format github`；符合 6.1 局部类别时，本地采用改动文件的定向 Ruff 检查。 |
+| 适用的主仓库 Ruff 全量检查 | 按 `.github/workflows/ruff.yml` 在主仓库执行 `ruff check . --output-format github`；符合 6.1 局部类别时，本地采用改动文件的定向 Ruff 检查。 |
 | Core 子模块全量验证与集成 | 按子仓库规范及主仓库 CI 验证；在 `ECL/game` 执行 `ruff check .`，在主仓库执行 `python -m pytest ECL/game/tests --tb=short -q`，并通过相关主仓库集成测试。符合 6.1 局部类别时可采用定向命令，但必须遵守子仓库自身规范并覆盖实际集成调用。 |
 | 前端定向验证 | 在 `frontend` 执行 `pnpm exec prettier --check <改动文件...>`；涉及 Vue / TypeScript / JavaScript 时执行 `pnpm exec eslint <相关代码文件...>`，涉及模板、类型或运行代码时执行 `pnpm typecheck`；使用 `pnpm exec vitest run <相关测试文件...>` 运行选定测试。纯文档、文案和资源改动按 6.1 判断是否需要测试。 |
 | 前端全量验证 | 在 `frontend` 执行 `pnpm check`，与 `frontend/.github/workflows/lint.yml` 一致，包含 Prettier 格式检查、ESLint、类型检查与全量 Vitest。 |
 | 前端 UI 或启动器运行流程变更 | 对应定向或全量检查通过后，按 6.3 验收受影响界面。修改模板、运行代码、资源处理或构建配置时，继续执行 `pnpm build` 后实际启动启动器；纯局部 CSS、文案等改动不要求重新构建，但仍须通过适用的真实布局和界面验收。 |
 | 仅文档变更 | 按影响检查内容、Markdown 结构、链接、现行章节引用及 `git diff --check`；仅规范文字重排无需启动应用或执行无关功能测试。 |
+| Python 依赖治理 | 在独立工具环境执行 `python ECL/tooling/governance.py audit --kind pip-audit --scope <python-windows-runtime/python-linux-runtime/python-windows-all/python-linux-all> --target-python <干净目标环境解释器> --output <报告>`，再执行 `python ECL/tooling/governance.py check --report <报告> --scope <同一范围> --exceptions docs/governance/exceptions.json`；运行环境与完整开发/构建环境分别扫描。 |
+| 前端依赖治理 | 在主仓库执行 `python ECL/tooling/governance.py audit --kind pnpm-audit --scope <frontend-production/frontend-all> --frontend frontend --output <报告>`；生产依赖附加 `--production`。随后执行上述 `check` 并使用相同范围。 |
+| 前端可访问性治理 | 在前端执行 `pnpm test:accessibility`，由固定版本 Python Playwright 打开实际页面并生成报告；在主仓库执行 `python ECL/tooling/governance.py check --report <报告> --scope frontend-accessibility --exceptions docs/governance/exceptions.json`。安装及报告参数见前端浏览器测试说明；不替代 6.3 的真实启动器验收。 |
 
 ### 6.3 真实界面验收
 

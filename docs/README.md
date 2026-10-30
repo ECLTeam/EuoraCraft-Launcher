@@ -10,12 +10,15 @@
 | `protocols/` | 插件、主题等对外协议与格式规范 | 协议变更时同步更新 |
 | `designs/` | 架构设计与实现设计 | 设计定稿后基本冻结 |
 | `adr/` | 架构决策记录 | 只追加，不修改历史结论 |
+| `governance/` | 外部规范适用性、安全与可访问性证据及有限期例外 | 随工具、功能及规范版本更新 |
 
 `plans/` 存放单次功能变更的过程记录（需求、方案取舍、验收结果），属于阶段性材料，不纳入本索引；需要时直接查看该目录，已完成的记录通过 `git log --diff-filter=D -- docs/plans/` 追溯。
 
 需要确认现行行为时以代码和 `AGENTS.md` 为准；追溯历史决策时看 `adr/`、`designs/` 与 Git 历史。
 
 ## 使用指南
+
+工程维护另见[外部规范与治理](governance/README.md)、[可访问性要求](governance/accessibility.md)和[安全要求](governance/security.md)。
 
 | 文档 | 说明 |
 | --- | --- |

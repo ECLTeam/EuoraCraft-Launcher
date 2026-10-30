@@ -1,0 +1,107 @@
+name: Engineering Governance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 19 * * 4"
+
+permissions:
+  contents: read
+
+jobs:
+  python-audit:
+    name: Python audit (${{ matrix.os }}, ${{ matrix.environment }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        environment: [runtime, all]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Prepare isolated tools and target
+        shell: python
+        run: |
+          import os, pathlib, subprocess, sys
+          subprocess.check_call([sys.executable, "-m", "pip", "install", "pip-audit==2.10.1"])
+          subprocess.check_call([sys.executable, "-m", "venv", "build/governance/target"])
+          target = pathlib.Path("build/governance/target") / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          requirement = ".[dev]" if "${{ matrix.environment }}" == "all" else "."
+          subprocess.check_call([str(target), "-m", "pip", "install", requirement])
+      - name: Audit and enforce
+        shell: python
+        run: |
+          import os, pathlib, subprocess, sys
+          platform = "windows" if os.name == "nt" else "linux"
+          scope = f"python-{platform}-${{ matrix.environment }}"
+          target = pathlib.Path("build/governance/target") / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          report = f"build/governance/{scope}.json"
+          tool = [sys.executable, "ECL/tooling/governance.py"]
+          subprocess.check_call(tool + ["audit", "--kind", "pip-audit", "--scope", scope, "--target-python", str(target), "--output", report])
+          subprocess.check_call(tool + ["check", "--scope", scope, "--report", report, "--exceptions", "docs/governance/exceptions.json"])
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: governance-python-${{ matrix.os }}-${{ matrix.environment }}
+          path: build/governance/*.json
+          retention-days: 14
+
+  frontend-audit:
+    name: Frontend audit and accessibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install browser tools
+        run: |
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Collect dependency reports
+        run: |
+          python ECL/tooling/governance.py audit --kind pnpm-audit --scope frontend-production --production --output build/governance/frontend-production.json
+          python ECL/tooling/governance.py audit --kind pnpm-audit --scope frontend-all --output build/governance/frontend-all.json
+      - name: Scan actual pages
+        working-directory: frontend
+        run: pnpm test:accessibility
+      - name: Enforce frontend reports
+        if: ${{ !cancelled() }}
+        shell: python
+        run: |
+          import subprocess, sys
+          results = []
+          for scope in ("frontend-production", "frontend-all", "frontend-accessibility"):
+              results.append(subprocess.call([sys.executable, "ECL/tooling/governance.py", "check", "--scope", scope,
+                  "--report", f"build/governance/{scope}.json", "--exceptions", "docs/governance/exceptions.json"]))
+          sys.exit(1 if any(results) else 0)
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: governance-frontend
+          path: |
+            build/governance/*.json
+            build/governance/accessibility/
+          retention-days: 14

@@ -25,4 +25,4 @@ jobs:
       - name: Run ruff
         run: |
           # Run ruff over the repository and output GitHub annotations
-          ruff check . --format github
+          ruff check . --output-format github

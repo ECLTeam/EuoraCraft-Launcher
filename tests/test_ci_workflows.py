@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import textwrap
@@ -33,6 +34,37 @@ def test_complete_build_only_runs_for_version_tags_or_manual_dispatch():
     trigger = _trigger(source)
     assert 'tags: ["v*"]' in trigger
     assert "branches:" not in trigger
+
+
+def test_governance_is_read_only_bounded_and_separate_from_release():
+    source = _workflow("governance.yml")
+    assert _events(source) == {"push", "pull_request", "workflow_dispatch", "schedule"}
+    assert "contents: read" in source
+    assert "pull_request_target" not in source
+    assert "continue-on-error" not in source
+    assert "timeout-minutes: 20" in source
+    assert 'cron: "0 19 * * 4"' in source
+    assert "retention-days: 14" in source
+    assert "windows-latest, ubuntu-latest" in source
+    assert "environment: [runtime, all]" in source
+    for scope in ("frontend-production", "frontend-all", "frontend-accessibility"):
+        assert scope in source
+    assert "pip-audit==2.10.1" in source
+    assert "playwright==1.58.0" in source
+    assert "--fix" not in source
+    assert "pnpm build" not in source
+    assert "subprocess.check_call" in source
+    assert "if: ${{ !cancelled() }}" in source
+
+
+def test_ruff_workflow_uses_supported_output_option(tmp_path):
+    source = _workflow("ruff.yml")
+    command = next(line.strip() for line in source.splitlines() if line.strip().startswith("ruff check "))
+    (tmp_path / "example.py").write_text("number = 1\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "ruff", *shlex.split(command)[1:]], cwd=tmp_path, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
 
 
 def test_daily_frontend_checks_cover_parent_main_and_pull_requests():
