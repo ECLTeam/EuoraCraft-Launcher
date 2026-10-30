@@ -2,9 +2,9 @@
 
 <img src="./resources/img/logo.ico" width="320" alt="EuoraCraft Launcher Logo" />
 
-**轻松安装游戏、管理整合包，与好友一起玩 Minecraft。**
+**一个使用 Python 编写的现代化 Minecraft 第三方启动器，支持插件拓展功能，构建出自己的启动器吧**
 
-*Install Minecraft, manage modpacks, and play with friends.*
+*Modern Minecraft third-party launcher written in Python, with plugin extensibility, build your own launcher.*
 
 [![Release](https://img.shields.io/github/v/release/ECLTeam/EuoraCraft-Launcher?style=flat-square&logo=github&label=Release&color=40c9c0)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
 [![Stars](https://img.shields.io/github/stars/ECLTeam/EuoraCraft-Launcher?style=flat-square&logo=github&label=Stars&color=f0b429)](https://github.com/ECLTeam/EuoraCraft-Launcher/stargazers)
