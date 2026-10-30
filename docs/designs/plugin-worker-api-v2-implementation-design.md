@@ -1105,3 +1105,11 @@ Broker现有mutation回执用于提交去重和超时后查询；权限撤销后
 InstanceProfileStore拥有唯一资料锁与InstanceProfileTransactions资源；现行桌面更新、图标、排序及只读快照共同遵守损坏资料和待恢复屏障。原生Windows目录相对句柄工具统一位于ECL/utils/windows_file_handles.py，由实例和私有文件共同使用。真实任务继续由应用唯一OperationManager执行，提交最多5秒，总截止30秒，结果只从已发布快照投影并复核原读许可。
 
 先持久登记，再移动原对象备份，最后不覆盖发布；原资料名称可能短暂缺失。恢复只观察实际对象，保留外部占名文件，不重放旧补丁。可信主窗口新增两条实例资料恢复命令，“文件恢复”弹窗分私有文件和实例资料视图；沿用应用任务服务，关闭不取消接纳任务。成功更新不提供旧版本撤销，仅支持Windows x64、本地NTFS。现行协议及示例见 [归档文档](../protocols/eclplugin-package-format.md#获准实例资料修改)，实施与本机验收证据见 资料修改方案。
+
+## 29. 获准游戏目录、安装与进程控制（2026-10-26）
+
+P12按用户批准范围实施，2026-10-30完成本机验收。新增game.catalog.read及独立instances.install/launch/stop；可信主窗口分别选择游戏根、可启动实例及可停止实例，不从读取范围推导写入或控制许可。六个game方法严格投影公开目录、实例和本运行进程，不开放账户、路径、任意参数或未实现的runtime_ref。
+
+PluginGameCoordinator复用应用GameService及唯一OperationManager，目录查询沿用当前有效来源，安装复用Core和InstallationProgress。安装占位由普通界面、整合包和插件共享；原生句柄固定目标，线程与句柄实际收尾前保持忙，保留用户实例与失败文件。启动复用宿主既有事件循环和账户客户端，进程创建进入短提交点；同一运行记录由正常游戏列表与插件所有者索引共同引用。停止只匹配确切进程对象，关闭插件和提交后撤权不杀游戏。
+
+三类任务在可信任务中心显示真实业务阶段，Worker继续使用自身任务引用及原读许可结果投影。权限弹窗支持根安装及具体实例启动/停止，六语言同步。当前实现、接口边界和验收记录见[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)、[协议](../protocols/eclplugin-package-format.md#获准游戏目录安装与进程控制)、[安装示例](../../examples/plugins/worker_game_install/README.md)及[启动示例](../../examples/plugins/worker_game_launch/README.md)。

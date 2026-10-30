@@ -232,6 +232,35 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 失败、排队取消和审计失败都尝试清理暂存与实际网络工作；系统 DNS 尚未返回、关闭/删除失败或审计未保存时保持 cleanup pending，阻止同安装重新启用。清理重试不会重做 HTTP 或发布，不删除成功文件，不扫描清除崩溃残留，不恢复旧run控制权。其余稳定错误沿用网络、文件和任务接口。参见 完整下载方案与验收 和 [worker_download](../../examples/plugins/worker_download/README.md)。
 
+## 获准游戏目录、安装与进程控制
+
+声明 `game.catalog.read`、`instances.install`、`instances.launch`、`instances.stop`。目录能力不接收资源范围；其余能力在清单中也不得提供宿主资源标识，由可信主窗口分别选择。安装只批准游戏根目录，启动和停止只批准具体实例，读取沿用独立的 `instances.read`；任一能力不隐含其他能力。修改权限后旧租约失效，重新批准不复活旧操作的结果读取许可。
+
+| 方法 | 请求 | 结果及限制 |
+| --- | --- | --- |
+| `game.catalog` | `{type?:"release"\|"snapshot",cursor?,limit?:1..100}` | `{items:[{version_id,type,release_time}],next_cursor}`；不含旧Alpha/Beta分类或下载地址 |
+| `game.loaders` | `{game_version,loader:"fabric"\|"forge"\|"neoforge"\|"quilt",cursor?,limit?:1..100}` | `{items:[{loader_version,is_latest}],next_cursor}`；版本降序，最新标记与安装默认选择一致 |
+| `game.install` | `{root_ref,version_id,version_name?,loader?:"vanilla"\|"fabric"\|"forge"\|"neoforge"\|"quilt",loader_version?}` | `{operation_ref,state:"queued"}`；成功结果为允许读取的 `InstanceView`，否则为null |
+| `game.launch` | `{instance_ref,options?:LaunchOptions}` | 自身任务回执；必须同时拥有该实例的读取与启动许可，成功结果为 `GameRunView` |
+| `game.running` | `{instance_ref}` | `{items:[GameRunView]}`；只返回当前Worker运行创建的进程记录，包含保留的实际退出码 |
+| `game.stop` | `{game_run_ref}` | 自身任务回执；独立停止许可仅控制本运行创建的确切进程，成功结果读取仍需独立读取许可 |
+
+所有请求严格拒绝未知字段和错误类型。分页默认50，目录最多10000项；游标绑定当前运行、查询和授权代次，120秒过期，不跨运行复用。查询最多30秒，使用宿主当前有效下载源及已有目录服务，不接受URL、代理、源配置或账户信息。显式加载器版本必须存在于该游戏版本的目录；省略时由宿主选择兼容的最高版本。
+
+`LaunchOptions` 仅有 `memory_mb?:512..65536`（默认4096）、`width?:320..16384`（默认854）、`height?:240..16384`（默认480）、`fullscreen?:bool`（默认false）。整数不接受布尔值。账户、Java、下载源和游戏语言由宿主提供；不开放 `runtime_ref`、Java路径、JVM/游戏参数、wrapper、命令、脚本或环境变量。需要当前账户时返回 `PLUGIN_ACCOUNT_REQUIRED`，提交前账户变化返回 `PLUGIN_ACCOUNT_CHANGED`。
+
+`GameRunView` 为 `{game_run_ref,instance_ref,pid,running,exit_code}`。引用是本运行随机引用，不返回路径、命令、日志、账户、内部任务编号或内部进程token。宿主按原始进程对象与所有者校验停止目标，不按PID、名称或可复用的实例编号找进程。每运行最多保留128条进程记录；跨运行查询不交付别人的进程，外来停止引用返回 `PLUGIN_OWNER_MISMATCH`。
+
+安装、启动、停止沿用 `mutation_key` 去重和 `operations.get/list/cancel`，接纳RPC至多5秒；安装总截止1800秒、启动180秒、停止30秒，均含排队。等待超时使用原键查询 `mutations.get`，不换键自动重放。接纳、请求取消、实际结束和清理完成相互独立。Worker任务视图的 `stage` 返回实际业务阶段，可信主窗口任务中心显示相同任务及安装权威快照；结果只显式投影并复核原始读取租约。
+
+安装只支持Windows x64本地NTFS。新实例名称须为安全的单个目录组件，不允许路径、ADS、设备名、尾点或空白归一化。原生目录句柄固定游戏根和目标身份；同一物理根及名称的占位由界面安装、整合包基础安装和插件共用，实际线程与句柄清理完成前不释放。已有用户实例拒绝覆盖；失败文件原地保留，只允许同一运行对同一物理身份及相同安装请求继续。插件关闭不删除文件，新运行不接管旧残留。写入开始后失败如实为 `effect:"partial"`，完整安装完成才为 `committed`。
+
+用户与插件共用单个启动准备占位，冲突返回忙。异步账户和下载准备沿用宿主既有事件循环，进程创建是短提交点，之前再次核对原始许可、取消、目录身份和当前账户；之后撤权或关闭插件不会杀游戏。准备可能已经补全游戏文件，即使未创建进程也可能是partial。已创建游戏仍在启动器正常运行列表中；停止使用有限等待，并在未确认退出时返回 `PLUGIN_GAME_STOP_TIMEOUT`。重复停止已退出的自身进程成功且保留退出码。
+
+常见失败包括 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_GAME_VERSION_INVALID`、`PLUGIN_LOADER_VERSION_INVALID`、`PLUGIN_INSTALL_BUSY`、`PLUGIN_LAUNCH_BUSY`、`PLUGIN_HOST_NOT_READY`、`PLUGIN_FILE_EXISTS`、`PLUGIN_OWNER_MISMATCH`，其余沿用授权、资源、任务和安装错误。参见[安装示例](../../examples/plugins/worker_game_install/README.md)、[启动示例](../../examples/plugins/worker_game_launch/README.md)及[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)。
+
 ## 产物验证
+
+游戏目录与授权边界由 `tests/test_plugin_game_queries.py` 验证；安装、共享占位及结果读取由 `test_plugin_game_install.py` 验证；启动、进程所有权、撤权竞争及停止由 `test_plugin_game_launch.py` 验证。后两者包含公开示例经过真实源码与冻结Worker的RPC用例，完成记录见[游戏操作实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md#8-验证与交付)。
 
 真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py`、`test_plugin_network_worker.py` 和 `test_plugin_download_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。下载的流式实体、双权限/提交竞争、配额、取消和失败恢复由 `test_plugin_download_api.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
