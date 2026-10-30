@@ -41,6 +41,7 @@ from ECL.plugins.grant_models import (
     GrantLease,
     GrantView,
     PermissionDecision,
+    PermissionDeclaration,
     PermissionManagementCaller,
     PermissionView,
     PluginContentBinding,
@@ -204,7 +205,7 @@ class PluginGrantSession:
             or not all(isinstance(item, str) for item in resource_refs)
             or len(set(resource_refs)) != len(resource_refs)
             or (declared.resource_refs and not resource_refs)
-            or (capability in {"instances.read", "instances.write"} and not resource_refs)
+            or (capability in PermissionDeclaration.host_selected_capabilities and not resource_refs)
             or not set(resource_refs).issubset(permission.resource_refs)
         ):
             raise PluginGrantError("插件资源范围未获准", "PLUGIN_RESOURCE_DENIED")
@@ -336,28 +337,45 @@ class PluginGrantStore:
         self._used_run_ids: set[str] = set()
         self._available_instance_refs: frozenset[str] = frozenset()
         self._available_writable_instance_refs: frozenset[str] = frozenset()
+        self._available_install_root_refs: frozenset[str] = frozenset()
 
-    def update_resource_scope(self, available_refs: frozenset[str], writable_refs: frozenset[str]) -> None:
+    def update_resource_scope(
+        self,
+        available_refs: frozenset[str],
+        writable_refs: frozenset[str],
+        install_root_refs: frozenset[str] = frozenset(),
+    ) -> None:
         """
         发布宿主已核实的读资源及具体实例写资源，范围变化使原租约失效。
 
         :param available_refs: 包含目录及具体实例的有效读取资源
         :param writable_refs: 仅包含具体实例，不能包含目录范围
+        :param install_root_refs: 仅包含可批准安装的游戏根目录
         """
         with self._lock:
-            previous = self._available_instance_refs
-            previous_writable = self._available_writable_instance_refs
+            previous_by_capability = {
+                capability: self._resource_scope(capability)
+                for capability in PermissionDeclaration.host_selected_capabilities
+            }
             self._available_instance_refs = available_refs
             self._available_writable_instance_refs = writable_refs
+            self._available_install_root_refs = install_root_refs
             for state in self._states_by_run.values():
                 grants = {**state.permanent_grants, **state.session_grants}
-                for capability in ("instances.read", "instances.write"):
+                for capability in PermissionDeclaration.host_selected_capabilities:
                     grant = grants.get(capability)
-                    before = previous if capability == "instances.read" else previous_writable
-                    after = available_refs if capability == "instances.read" else writable_refs
+                    before = previous_by_capability[capability]
+                    after = self._resource_scope(capability)
                     if grant and (set(grant.resource_refs) & before) != (set(grant.resource_refs) & after):
                         state.epoch += 1
                         break
+
+    def _resource_scope(self, capability: str) -> frozenset[str]:
+        if capability == "instances.read":
+            return self._available_instance_refs
+        if capability == "instances.install":
+            return self._available_install_root_refs
+        return self._available_writable_instance_refs
 
     @staticmethod
     def new_installation_id() -> str:
@@ -623,17 +641,13 @@ class PluginGrantStore:
                 and item.resource_refs
             ):
                 raise PluginGrantError("文件许可只允许安装私有空间", "PLUGIN_GRANT_INVALID")
-            if item.capability in {"instances.read", "instances.write"}:
+            if item.capability in PermissionDeclaration.host_selected_capabilities:
                 if any(re.fullmatch(r"[0-9a-f]{32}", ref) is None for ref in item.resource_refs):
                     raise PluginGrantError("实例资源身份无效", "PLUGIN_GRANT_INVALID")
                 if (
                     not is_disk
                     and item.decision == "allow"
-                    and not set(item.resource_refs).issubset(
-                        self._available_instance_refs
-                        if item.capability == "instances.read"
-                        else self._available_writable_instance_refs
-                    )
+                    and not set(item.resource_refs).issubset(self._resource_scope(item.capability))
                 ):
                     raise PluginGrantError("实例资源已不可用，请刷新后重试", "PLUGIN_RESOURCE_UNAVAILABLE")
             elif not set(item.resource_refs).issubset(declared.resource_refs):
@@ -703,12 +717,8 @@ class PluginGrantStore:
                 and declared.capability not in state.expired_capabilities
             )
             resources = grant.resource_refs if is_allowed and grant else ()
-            if declared.capability in {"instances.read", "instances.write"}:
-                available = (
-                    self._available_instance_refs
-                    if declared.capability == "instances.read"
-                    else self._available_writable_instance_refs
-                )
+            if declared.capability in PermissionDeclaration.host_selected_capabilities:
+                available = self._resource_scope(declared.capability)
                 resources = tuple(ref for ref in resources if ref in available)
                 is_allowed = is_allowed and bool(resources)
                 is_required_missing = not is_allowed

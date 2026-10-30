@@ -18,6 +18,7 @@ from .instance_queries import InstanceQueryCoordinator
 from .launch import LaunchCoordinator
 from .modpack import ModpackCoordinator
 from .mods import ModCoordinator
+from .plugin_games import PluginGameCoordinator
 from .profiles import ProfileCoordinator
 from .resources import ResourceCoordinator
 from .scan import ScanCoordinator
@@ -29,6 +30,7 @@ from .worlds import WorldCoordinator
 
 
 class GameService(
+    PluginGameCoordinator,
     InstanceQueryCoordinator,
     ProfileCoordinator,
     WorkspaceCoordinator,

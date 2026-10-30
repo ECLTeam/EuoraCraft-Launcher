@@ -19,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
-from ECL.plugins.grant_models import PermissionDecision
+from ECL.plugins.grant_models import InstanceCapability, PermissionDecision
 from ECL.plugins.runtime.models import FileRef
 
 
@@ -49,7 +49,7 @@ class PluginPermissionResources(PluginPermissionQuery):
     """
 
     content_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    capability: Literal["instances.read", "instances.write"]
+    capability: InstanceCapability
     parent_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     search: str = Field(default="", max_length=120)
     cursor: str | None = Field(default=None, max_length=128)

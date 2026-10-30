@@ -127,12 +127,21 @@ class InstanceQueryCoordinator(_GameState):
         documents: list[dict[str, JsonValue]] = []
         visited: set[str] = set()
         current = name
+        declaration_directory = name
         while current:
             current = self._query_name(current)
             if current in visited or len(visited) >= 64:
                 raise InstanceReadError("实例继承链无效", "PLUGIN_INSTANCE_METADATA_INVALID")
             visited.add(current)
-            document = reader.read_json(Path("versions") / current / f"{current}.json", 8 * 1024 * 1024, optional=True)
+            # Core安装器先在当前实例内保存基础声明；只在文件缺失时读取明确命名的父实例。
+            document = reader.read_json(
+                Path("versions") / declaration_directory / f"{current}.json", 8 * 1024 * 1024, optional=True
+            )
+            if document is None and documents and declaration_directory != current:
+                document = reader.read_json(
+                    Path("versions") / current / f"{current}.json", 8 * 1024 * 1024, optional=True
+                )
+                declaration_directory = current
             if document is None:
                 if documents:
                     raise InstanceReadError("实例父声明不存在", "PLUGIN_INSTANCE_METADATA_INVALID")

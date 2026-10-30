@@ -171,6 +171,7 @@ class OperationSnapshot:
     error_code: str | None
     audit_pending: bool
     cleanup_pending: bool
+    business_stage: str | None = None
 
 
 class _PluginJournal(BaseModel):
@@ -235,11 +236,17 @@ class OperationManager:
 
     max_plugin_operations: ClassVar[int] = 1024
     max_owner_operations: ClassVar[int] = 128
+    visible_plugin_kinds: ClassVar[frozenset[str]] = frozenset(
+        {"plugin_game_install", "plugin_game_launch", "plugin_game_stop"}
+    )
 
     kind_titles: ClassVar[MappingProxyType[str, str]] = MappingProxyType(
         {
             "custom_download": "自定义下载",
             "java_install": "安装 Java",
+            "plugin_game_install": "插件安装游戏",
+            "plugin_game_launch": "插件启动游戏",
+            "plugin_game_stop": "插件停止游戏",
             "java_remove": "移除托管 Java",
             "java_cleanup": "清理 Java 遗留文件",
             "instance_import": "导入实例",
@@ -369,7 +376,7 @@ class OperationManager:
             lambda action: self._finalize(operation, action),
             lambda: self._checkpoint(operation),
             lambda effect: self._report_effect(operation, effect),
-            operation.origin is None,
+            operation.origin is None or operation.kind in self.visible_plugin_kinds,
         )
         try:
             if not is_initial_saved or (operation.origin is not None and not self._persist(operation)):
@@ -537,7 +544,9 @@ class OperationManager:
                 "percent": operation.percent,
                 "message": operation.message,
                 "createdAt": operation.created_at,
-                "result": operation.result,
+                "result": None
+                if operation.origin is not None and operation.kind in self.visible_plugin_kinds
+                else operation.result,
                 "error": operation.error,
                 "errorCode": operation.error_code,
                 "canCancel": operation.can_cancel and operation.status in {"pending", "running"},
@@ -546,7 +555,7 @@ class OperationManager:
             }
 
     def _emit(self, operation: _Operation) -> None:
-        if operation.origin is not None:
+        if operation.origin is not None and operation.kind not in self.visible_plugin_kinds:
             return
         with self._lock:
             snapshot = self._payload(operation)
@@ -631,6 +640,11 @@ class OperationManager:
                     or not operation.future.done()
                     or not operation.is_cleanup_complete
                     or operation.audit_pending
+                ),
+                business_stage=(
+                    operation.details["stage"]
+                    if operation.kind in self.visible_plugin_kinds and isinstance(operation.details.get("stage"), str)
+                    else None
                 ),
             )
 

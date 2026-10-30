@@ -10,6 +10,7 @@
 #       - install_version(body, game_path, source, java_path) -> dict[str, str] — 开始安装版本，返回任务 ID 和最终保存的版本名称。
 #       - install_blocking(task_id, ..., report, cancel_event) -> None — 在无事件循环的工作线程中同步执行完整版本安装，供安装任务与整合包导入复用。
 #       - uninstall_version(version_id, game_path) -> None — 从指定 Minecraft 目录卸载版本。
+#       - reserve_install_target / release_install_target — 共享目标占位及实际目录句柄收尾。
 # ============================================================
 
 from __future__ import annotations
@@ -18,10 +19,12 @@ import asyncio
 import functools
 import json
 import shutil
+import sys
 from collections.abc import Callable, Mapping
 from contextvars import copy_context
 from pathlib import Path
 from threading import Event, Thread
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -30,9 +33,12 @@ from anyio import to_thread
 from packaging.version import InvalidVersion, Version
 
 from ECL.game import GetGames, InstallEvent, InstallObserver
+from ECL.utils.instance_reading import InstanceReadBoundary, directory_identity
+from ECL.utils.windows_file_handles import FileBoundaryError
 
 from .base import Downloader, GameServiceError, _GameState
 from .install_progress import InstallationProgress, InstallationSnapshot
+from .install_targets import InstallReservation
 from .mod_sources import mod_api_base, mod_user_agent, rewrite_mod_file_url
 from .workspace import resolve_relative_id
 
@@ -49,6 +55,68 @@ class InstallCoordinator(_GameState):
 
     fabric_api_project: str = "fabric-api"
     fabric_api_timeout_seconds: int = 10
+
+    def reserve_install_target(self, game_path: Path, version_name: str) -> InstallReservation:
+        """
+        在准入时独占同一物理游戏根和实例名，所有安装入口共用同一张占位表。
+
+        :param game_path: 已存在的游戏根目录
+        :param version_name: 已校验实例名
+        :return: 实际执行结束后必须释放的占位
+        :raises GameServiceError: 相同目标仍被另一安装使用
+        """
+        root_path = self._normalize_game_path(game_path)
+        root_identity = directory_identity(root_path)
+        comparison_name = version_name.casefold() if sys.platform == "win32" else version_name
+        reservation = InstallReservation(root_path, root_identity, version_name, comparison_name, uuid4().hex)
+        key = (root_identity, comparison_name)
+        with self._lock:
+            if self._closing:
+                raise GameServiceError("游戏服务正在关闭", "GAME_SERVICE_CLOSED")
+            if key in self._install_reservations:
+                raise GameServiceError("该实例正在安装，请等待安装结束", "INSTALL_ALREADY_RUNNING")
+            self._install_reservations[key] = reservation
+        return reservation
+
+    def release_install_target(self, reservation: InstallReservation) -> bool:
+        """
+        仅释放自身占位，重复清理不会移除后来任务占用的相同目标。
+
+        :param reservation: 原准入产生的占位
+        :return: 该占位已不再持有目标
+        """
+        for handle in tuple(reversed(reservation.handles)):
+            try:
+                handle.close()
+            except (OSError, FileBoundaryError):
+                self.logger.exception("安装目录句柄尚未关闭，保留目标占位等待清理")
+            else:
+                reservation.handles.remove(handle)
+        if reservation.handles:
+            return False
+        with self._lock:
+            key = (reservation.root_identity, reservation.comparison_name)
+            if self._install_reservations.get(key) == reservation:
+                self._install_reservations.pop(key)
+        return True
+
+    def _check_install_target(self, reservation: InstallReservation, game_path: Path, version_name: str) -> None:
+        """
+        每次执行前检查目标、占位与物理根一致，拒绝把旧占位换绑到新目录。
+        """
+        with self._lock:
+            current = self._install_reservations.get((reservation.root_identity, reservation.comparison_name))
+        if current != reservation or reservation.root_path != game_path or reservation.version_name != version_name:
+            raise GameServiceError("安装目标占位已经失效", "INSTALL_TARGET_INVALID")
+        reader = InstanceReadBoundary(game_path, monotonic() + 5)
+        if reader.identity != reservation.root_identity:
+            raise GameServiceError("安装目标目录身份已经变化", "INSTALL_TARGET_INVALID")
+        versions_path = game_path / "versions"
+        if versions_path.exists() or versions_path.is_symlink():
+            reader.directory(Path("versions"))
+        instance_path = versions_path / version_name
+        if instance_path.exists() or instance_path.is_symlink():
+            reader.directory(Path("versions") / version_name)
 
     def _emit_install_progress(
         self,
@@ -146,27 +214,44 @@ class InstallCoordinator(_GameState):
             task_id = f"install-{uuid4().hex}"
 
         loop = asyncio.get_running_loop()
+        reservation = self.reserve_install_target(path, save_name)
         with self._lock:
             existing = self._install_tasks.get(task_id)
             if existing is not None and not existing.done():
+                self.release_install_target(reservation)
                 raise GameServiceError("相同的安装任务已在运行", "INSTALL_ALREADY_RUNNING")
-            task = loop.create_task(
-                self._run_install(
-                    task_id,
-                    version_id,
-                    save_name,
-                    loader,
-                    loader_version,
-                    body.get("fabric_api_version"),
-                    path,
-                    normalized_source,
-                    java_path,
-                ),
-                name=f"ECLInstall-{task_id}",
+            coroutine = self._run_install(
+                task_id,
+                version_id,
+                save_name,
+                loader,
+                loader_version,
+                body.get("fabric_api_version"),
+                path,
+                normalized_source,
+                java_path,
+                reservation,
             )
+            try:
+                task = loop.create_task(coroutine, name=f"ECLInstall-{task_id}")
+            except BaseException:
+                coroutine.close()
+                self.release_install_target(reservation)
+                raise
             self._install_tasks[task_id] = task
+            # 在协程首次运行前被取消时，协程内部的finally不会执行。
+            task.add_done_callback(lambda finished: self._finish_install_task(task_id, reservation, finished))
         self.logger.info("开始安装 %s，保存为 %s，加载器: %s", version_id, save_name, loader)
         return {"taskId": task_id, "versionId": version_id, "versionName": save_name}
+
+    def _finish_install_task(self, task_id: str, reservation: InstallReservation, task: asyncio.Task[None]) -> None:
+        """
+        任务真正结束后释放占位，包含首次运行前取消和正常工作线程退出。
+        """
+        with self._lock:
+            if self._install_tasks.get(task_id) is task:
+                self._install_tasks.pop(task_id)
+        self.release_install_target(reservation)
 
     async def _run_install(
         self,
@@ -179,6 +264,7 @@ class InstallCoordinator(_GameState):
         game_path: Path,
         source: str,
         java_path: str | None,
+        reservation: InstallReservation,
     ) -> None:
         report = functools.partial(self._emit_install_progress, task_id)
         cancel_event = Event()
@@ -200,6 +286,7 @@ class InstallCoordinator(_GameState):
                     cancel_event,
                     asyncio.get_running_loop(),
                     progress_record=progress_record,
+                    reservation=reservation,
                 )
             )
         )
@@ -228,6 +315,7 @@ class InstallCoordinator(_GameState):
             with self._lock:
                 self._active_downloads.pop(task_id, None)
                 self._install_tasks.pop(task_id, None)
+            self.release_install_target(reservation)
 
     @staticmethod
     def _normalize_loader_version(value: object) -> str | None:
@@ -268,20 +356,25 @@ class InstallCoordinator(_GameState):
         if not versions:
             raise GameServiceError(f"未找到 {loader} 在 {version_id} 下的可用版本", "LOADER_VERSION_NOT_FOUND")
 
-        def version_key(candidate: str) -> Version:
-            # NeoForge 的 1.20.1 Maven 坐标包含游戏前缀；比较时移除，安装时保留原值。
-            if loader == "neoforge" and version_id == "1.20.1":
-                candidate = candidate.removeprefix("1.20.1-")
-            return Version(candidate)
-
         try:
-            selected_version = max(versions, key=version_key)
+            selected_version = max(
+                versions, key=lambda candidate: self._install_loader_version_key(loader, version_id, candidate)
+            )
         except InvalidVersion as exc:
             raise GameServiceError("加载器版本数据无法比较，请重试", "INVALID_LOADER_VERSION_DATA") from exc
         self.logger.info(
             "已选择加载器最新版；加载器：%s；游戏版本：%s；加载器版本：%s", loader, version_id, selected_version
         )
         return selected_version
+
+    @staticmethod
+    def _install_loader_version_key(loader: str, game_version: str, candidate: str) -> Version:
+        """
+        统一目录最新版本标记与安装默认选择，保留实际安装所需的原始版本串。
+        """
+        if loader == "neoforge" and game_version == "1.20.1":
+            candidate = candidate.removeprefix("1.20.1-")
+        return Version(candidate)
 
     @staticmethod
     def _ensure_install_not_cancelled(cancel_event: Event | None) -> None:
@@ -337,6 +430,8 @@ class InstallCoordinator(_GameState):
         include_fabric_api: bool = True,
         *,
         progress_record: InstallationProgress | None = None,
+        reservation: InstallReservation | None = None,
+        check_callback: Callable[[], None] | None = None,
     ) -> None:
         """
         同步执行一次完整的版本安装：构建下载清单、并发下载、备用源补全。
@@ -361,10 +456,21 @@ class InstallCoordinator(_GameState):
         :param progress_record: 异步入口持有的本次安装记录，用于在线程退出前报告取消请求
         :param include_fabric_api: fabric 安装是否附带 Fabric API；整合包导入的
             基础安装应传 False，避免与包内自带的 API 模组重复
+        :param reservation: 已在准入时持有的目标占位；未提供时在本次执行范围内占位
+        :param check_callback: 插件原始准入与物理身份检查，不用于构造新许可
         :raises GameServiceError: 加载器版本查询或数据错误、下载失败或安装取消时抛出
         """
+        owns_reservation = reservation is None
+        reservation = reservation or self.reserve_install_target(game_path, save_name)
         record = progress_record or InstallationProgress(loader, include_fabric_api, report)
-        observer = InstallObserver(record.accept, functools.partial(self._ensure_install_not_cancelled, cancel_event))
+
+        def check() -> None:
+            self._ensure_install_not_cancelled(cancel_event)
+            self._check_install_target(reservation, game_path, save_name)
+            if check_callback is not None:
+                check_callback()
+
+        observer = InstallObserver(record.accept, check)
         try:
             observer.emit("resolve_metadata")
             loader_version = self._resolve_install_loader_version(
@@ -416,6 +522,9 @@ class InstallCoordinator(_GameState):
         except Exception:
             record.finish("error", "安装失败，请查看错误详情", "VERSION_INSTALL_FAILED")
             raise
+        finally:
+            if owns_reservation:
+                self.release_install_target(reservation)
 
     def _download_install_files(
         self,

@@ -24,7 +24,13 @@ from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api._windows import WindowsRuntimeError
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.environment_pool import PluginDependencyDirectory
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller, PluginContentBinding
+from ECL.plugins.grant_models import (
+    InstanceCapability,
+    PermissionDecision,
+    PermissionDeclaration,
+    PermissionManagementCaller,
+    PluginContentBinding,
+)
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession, PluginGrantStore
 from ECL.plugins.installation_store import PluginInstallationStore, WorkerManifest
 from ECL.plugins.package_preparation import PluginPackagePreparer, current_plugin_target
@@ -41,6 +47,7 @@ from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.services.game.plugin_games import PluginGameCoordinator
 
 
 @dataclass(slots=True)
@@ -75,6 +82,7 @@ class PluginWorkerService:
         instance_profiles: InstanceProfileTransactions | None = None,
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
         operations: OperationManager | None = None,
+        game_operations: PluginGameCoordinator | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -84,6 +92,7 @@ class PluginWorkerService:
         :param instance_profiles: 应用现有的共享实例资料事务资源
         :param instance_queries: 现有应用拥有的只读游戏查询
         :param operations: 应用唯一任务服务，不创建独立执行器
+        :param game_operations: 应用唯一游戏业务入口，缺失时不开放游戏查询及执行
         :param instance_roots: 有效配置的游戏根目录快照
         """
         self.data_path: Path = data_path
@@ -98,6 +107,7 @@ class PluginWorkerService:
         self._closed = Event()
         self._monitor_thread: Thread | None = None
         self._operations = operations
+        self._game_operations = game_operations
         self._file_storage = PluginFileStorage(data_path)
         self._network_service = PluginNetworkService()
         self._instance_profiles = instance_profiles
@@ -126,11 +136,15 @@ class PluginWorkerService:
             if isinstance(exc, InstanceReadError):
                 raise
             raise InstanceReadError("实例资源目录刷新失败", "PLUGIN_RESOURCE_CATALOG_INVALID") from exc
-        self.grants.update_resource_scope(self._catalog.active_refs(), self._catalog.active_instance_refs())
+        self.grants.update_resource_scope(
+            self._catalog.active_refs(), self._catalog.active_instance_refs(), self._catalog.active_root_refs()
+        )
         return revision
 
     def _refresh_declared_resources(self, session: PluginGrantSession) -> None:
-        if any(item.capability in {"instances.read", "instances.write"} for item in session.binding.declarations):
+        if any(
+            item.capability in PermissionDeclaration.host_selected_capabilities for item in session.binding.declarations
+        ):
             try:
                 self.refresh_resources()
             except InstanceReadError:
@@ -144,7 +158,7 @@ class PluginWorkerService:
         search: str,
         cursor: str | None,
         limit: int,
-        capability: Literal["instances.read", "instances.write"] = "instances.read",
+        capability: InstanceCapability = "instances.read",
     ) -> dict[str, JsonValue]:
         """
         为可信权限界面发现配置目录或展开一个目录，不替用户授予许可。
@@ -172,8 +186,12 @@ class PluginWorkerService:
             raise ProtocolError("插件未申请此实例能力", "PLUGIN_PERMISSION_DENIED")
         if self._catalog is None:
             raise ProtocolError("当前宿主未提供实例资源", "PLUGIN_API_METHOD_NOT_FOUND")
+        if capability == "instances.install" and parent_ref is not None:
+            raise ProtocolError("安装只能选择游戏根目录", "PLUGIN_SCHEMA_INVALID")
         revision = self._catalog.refresh(discover=cursor is None, parent_ref=parent_ref)
-        self.grants.update_resource_scope(self._catalog.active_refs(), self._catalog.active_instance_refs())
+        self.grants.update_resource_scope(
+            self._catalog.active_refs(), self._catalog.active_instance_refs(), self._catalog.active_root_refs()
+        )
         selected = entry.session.selected_resources(capability)
         signature = json.dumps([entry.installation_id, content_digest, capability, parent_ref, search, limit])
 
@@ -182,12 +200,12 @@ class PluginWorkerService:
             str(revision),
             cursor,
             limit,
-            lambda: self._resource_candidates(parent_ref, search, selected),
+            lambda: self._resource_candidates(parent_ref, search, selected, capability),
         )
         return {**page, "catalog_revision": revision}
 
     def _resource_candidates(
-        self, parent_ref: str | None, search: str, selected: tuple[str, ...]
+        self, parent_ref: str | None, search: str, selected: tuple[str, ...], capability: InstanceCapability
     ) -> tuple[dict[str, JsonValue], ...]:
         """
         将宿主目录快照投影为可信审阅候选，保留已选择的失效项以便撤销。
@@ -197,6 +215,8 @@ class PluginWorkerService:
         root = self._catalog.resolve(parent_ref) if parent_ref else None
         items: list[dict[str, JsonValue]] = []
         for item in resources:
+            if capability == "instances.install" and item.version_id is not None:
+                continue
             if root is not None:
                 if item.root_path != root.root_path or item.version_id is None:
                     continue
@@ -348,6 +368,7 @@ class PluginWorkerService:
                     file_storage=self._file_storage,
                     network_service=self._network_service,
                     instance_profiles=self._instance_profiles,
+                    game_operations=self._game_operations,
                     resources=RuntimeResources(
                         entry.session, self._catalog, self._instance_queries, self.refresh_resources
                     )
@@ -574,7 +595,8 @@ class PluginWorkerService:
         """
         entry = self._entry(name)
         if any(
-            item.capability in {"instances.read", "instances.write"} and item.decision == "allow" for item in decisions
+            item.capability in PermissionDeclaration.host_selected_capabilities and item.decision == "allow"
+            for item in decisions
         ) and (resource_revision is None or resource_revision != self.refresh_resources()):
             raise ProtocolError("资源候选已经变化，请刷新后重试", "PLUGIN_RESOURCE_REVISION_CONFLICT")
         # 不持有生命周期锁保存授权，运行中的长回调不能延迟拒绝屏障。
@@ -664,7 +686,10 @@ class PluginWorkerService:
             with self._lock:
                 entries = tuple(self._entries.items())
             if any(
-                any(item.capability in {"instances.read", "instances.write"} for item in entry.manifest.permissions)
+                any(
+                    item.capability in PermissionDeclaration.host_selected_capabilities
+                    for item in entry.manifest.permissions
+                )
                 for _, entry in entries
             ):
                 try:

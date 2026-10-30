@@ -31,12 +31,12 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from pathlib import Path
 from threading import Event, Thread
 from time import monotonic, sleep, time
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
 import httpx
@@ -44,6 +44,8 @@ import psutil
 from anyio import to_thread
 
 from ECL.game import LaunchConfig
+from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.launch_hooks import LaunchContext
 from ECL.services.account.authlib import AuthlibError
 from ECL.utils.errors import AccountError
@@ -52,6 +54,7 @@ from ECL.utils.operation_logging import current_operation, trace_scope
 
 from .base import GameServiceError, _GameState, _RunningGame
 from .crash.capture import CrashRunSnapshot
+from .plugin_games import PluginGameRun, PluginLaunchControl
 
 if sys.platform == "win32":
     import winreg
@@ -372,6 +375,10 @@ class LaunchCoordinator(_GameState):
         "joining world",
     )
 
+    plugin_progress_context: ClassVar[ContextVar[PluginLaunchControl | None]] = ContextVar(
+        "plugin_game_launch_progress", default=None
+    )
+
     def _emit_launch_progress(
         self,
         phase: str,
@@ -379,6 +386,10 @@ class LaunchCoordinator(_GameState):
         percent: int | None = None,
         error_code: str | None = None,
     ) -> None:
+        control = self.plugin_progress_context.get()
+        if control is not None:
+            control.context.progress(percent or 0, "插件正在准备启动游戏", stage=phase)
+            return
         payload: dict[str, Any] = {"phase": phase, "message": message}
         if percent is not None:
             payload["percent"] = percent
@@ -855,7 +866,8 @@ class LaunchCoordinator(_GameState):
         env_vars: Any = "",
         window_title: Any = "",
         launcher_visibility: Any = "none",
-    ) -> dict[str, str]:
+        plugin_control: PluginLaunchControl | None = None,
+    ) -> dict[str, str] | PluginGameRun:
         """
         检查游戏文件并启动实例。
 
@@ -883,9 +895,14 @@ class LaunchCoordinator(_GameState):
         :param env_vars: 多行 KEY=VALUE 自定义环境变量；优先级低于插件提供的变量
         :param window_title: 游戏窗口标题模板（{instance}/{version}/{account}）；为空时不修改
         :param launcher_visibility: 游戏启动成功后的启动器行为: none / minimize / quit
+        :param plugin_control: 仅受信游戏适配器可提供的来源、占位及提交控制，不从IPC请求反序列化
         """
         version_name = self._normalize_version_name(body.get("version_id"))
         path = self._normalize_game_path(game_path)
+        if plugin_control is None:
+            with self._lock:
+                if self._launch_origin is not None:
+                    raise GameServiceError("插件正在启动游戏，请等待当前启动结束", "LAUNCH_ALREADY_RUNNING")
         self.logger.debug(
             "准备启动实例：版本：%s；目录：%s；内存：%s；Java：%s",
             version_name,
@@ -942,13 +959,23 @@ class LaunchCoordinator(_GameState):
         if isolated:
             game_directory /= version_name
 
-        cancel_event = Event()
+        cancel_event = plugin_control.cancel_event if plugin_control is not None else Event()
         java_lease = None
         with self._lock:
-            if self._launch_cancel_event is not None:
+            owns_reservation = (
+                plugin_control is not None
+                and self._launch_cancel_event is cancel_event
+                and self._launch_origin == plugin_control.origin
+            )
+            if plugin_control is not None and not owns_reservation:
+                raise GameServiceError("插件启动占位已经失效", "PLUGIN_LAUNCH_BUSY")
+            if self._launch_cancel_event is not None and not owns_reservation:
                 raise GameServiceError("已有游戏启动任务正在运行", "LAUNCH_ALREADY_RUNNING")
             self._launch_cancel_event = cancel_event
+            self._launch_origin = plugin_control.origin if plugin_control is not None else None
 
+        progress_token = self.plugin_progress_context.set(plugin_control)
+        plugin_run_token: str | None = None
         try:
             self._emit_launch_progress("preparing", f"正在准备启动 {version_name}", 3)
             current_account_getter = getattr(self.accounts, "current_account", None)
@@ -1228,6 +1255,8 @@ class LaunchCoordinator(_GameState):
                 raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
             self._emit_launch_progress("launching", "正在创建游戏进程", 97)
             run_token = uuid4().hex
+            if plugin_control is not None:
+                plugin_run_token = run_token
             run = _RunningGame(
                 token=run_token,
                 version_id=version_name,
@@ -1239,6 +1268,7 @@ class LaunchCoordinator(_GameState):
                 java_lease=java_lease,
                 crash_analysis_disabled=crash_analysis_disabled,
                 trace=current_operation(),
+                origin=plugin_control.origin if plugin_control is not None else None,
             )
             with self._lock:
                 self._running_games[run_token] = run
@@ -1269,23 +1299,52 @@ class LaunchCoordinator(_GameState):
                 # 插件 env 是覆写/追加语义，必须合并进父进程环境后再传给子进程，
                 # 否则游戏进程会丢失 PATH/SystemRoot 等系统变量导致启动失败。
                 instance_env = {**os.environ, **launch_context.env} if launch_context.env else None
-                instance_id, process = self.instances.create_instance(
-                    instance_name=version_name,
-                    instance_type="Minecraft",
-                    args=command,
-                    cwd=launch_context.working_directory or (path / "versions" / version_name),
-                    new_session=True,
-                    env=instance_env,
-                    priority=normalized_priority,
-                    log_callback=lambda line, current_id: self._handle_instance_log(run_token, line, current_id),
-                    exit_callback=on_instance_exit,
-                )
-                if java_lease is not None:
-                    java_lease.attach_process(process.pid)
+                instance_id = ""
+                process = None
+
+                def create_process() -> PluginGameRun | None:
+                    nonlocal instance_id, process
+                    instance_id, process = self.instances.create_instance(
+                        instance_name=version_name,
+                        instance_type="Minecraft",
+                        args=command,
+                        cwd=launch_context.working_directory or (path / "versions" / version_name),
+                        new_session=True,
+                        env=instance_env,
+                        priority=normalized_priority,
+                        log_callback=lambda line, current_id: self._handle_instance_log(run_token, line, current_id),
+                        exit_callback=on_instance_exit,
+                    )
+                    with self._lock:
+                        run.instance_id = instance_id
+                        run.process = process
+                        if plugin_control is not None:
+                            self._plugin_game_runs[run_token] = run
+                    if java_lease is not None:
+                        java_lease.attach_process(process.pid)
+                    return (
+                        self.plugin_game_run(plugin_control.origin, run_token) if plugin_control is not None else None
+                    )
+
+                if plugin_control is not None:
+                    plugin_control.verify()
+                    plugin_control.context.check_cancelled()
+                    selected_account = self.accounts.current_account()
+                    if not isinstance(selected_account, dict):
+                        raise GameServiceError("请先选择游戏账户", "PLUGIN_ACCOUNT_REQUIRED")
+                    if not isinstance(current_account, dict) or selected_account.get("id") != current_account.get("id"):
+                        raise GameServiceError("启动期间选中账户发生变化，请重新启动", "PLUGIN_ACCOUNT_CHANGED")
+                    plugin_control.context.finalize(create_process)
+                else:
+                    create_process()
             except Exception:
                 with self._lock:
-                    self._running_games.pop(run_token, None)
+                    if plugin_control is None or process is None:
+                        self._running_games.pop(run_token, None)
+                    else:
+                        run.pending = False
                 raise
+            assert process is not None
             self.launch_hooks.post_launch(launch_context)
 
             with self._lock:
@@ -1323,6 +1382,8 @@ class LaunchCoordinator(_GameState):
                     ).start()
             if normalized_visibility != "none":
                 self.events.emit("launcher:visibility", {"action": normalized_visibility})
+            if plugin_control is not None:
+                return self.plugin_game_run(plugin_control.origin, run_token)
             return {
                 "instanceId": instance_id,
                 "versionId": version_name,
@@ -1335,19 +1396,40 @@ class LaunchCoordinator(_GameState):
         except AccountError as exc:
             # 账户缺失、资料不完整、令牌刷新失败都是预期业务错误，保留原错误码
             # 供前端给出「去登录 / 检查网络」等针对性提示，不记为程序异常。
-            error = GameServiceError(str(exc), exc.error_code)
+            error_code = (
+                "PLUGIN_ACCOUNT_REQUIRED"
+                if plugin_control is not None and exc.error_code == "ACCOUNT_REQUIRED"
+                else exc.error_code
+            )
+            error = GameServiceError(str(exc), error_code)
             self._emit_launch_progress("error", str(error), 0, error.error_code)
             raise error from exc
+        except (ProtocolError, PluginGrantError) as exc:
+            raise GameServiceError("插件启动准入已失效", exc.error_code) from exc
         except Exception as exc:
             self.logger.exception("启动 Minecraft 失败")
             error = GameServiceError(f"启动游戏失败: {exc}", "GAME_LAUNCH_FAILED")
             self._emit_launch_progress("error", str(error), 0, error.error_code)
             raise error from exc
         finally:
+            self.plugin_progress_context.reset(progress_token)
+            if plugin_run_token is not None:
+                with self._lock:
+                    pending_run = self._plugin_game_runs.get(plugin_run_token)
+                    needs_registration = pending_run is not None and pending_run.pending
+                    if needs_registration:
+                        pending_run.pending = False
+                if needs_registration and pending_run is not None:
+                    if pending_run.exited:
+                        self._finalize_instance_run(plugin_run_token, action="exited")
+                    else:
+                        self._emit_instance_change(pending_run, "started")
             if java_lease is not None and not java_lease.is_game:
                 java_lease.release()
             with self._lock:
-                self._launch_cancel_event = None
+                if plugin_control is None and self._launch_cancel_event is cancel_event:
+                    self._launch_cancel_event = None
+                    self._launch_origin = None
 
     def cancel_launch(self) -> bool:
         """

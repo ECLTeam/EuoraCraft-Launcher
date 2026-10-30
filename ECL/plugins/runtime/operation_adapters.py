@@ -170,7 +170,7 @@ class RuntimeOperations:
             "kind": snapshot.kind,
             "state": state,
             "percent": snapshot.percent,
-            "stage": snapshot.phase,
+            "stage": snapshot.business_stage or snapshot.phase,
             "message": state,
             "can_cancel": snapshot.can_cancel,
             "cancellation_requested": snapshot.cancellation_requested,

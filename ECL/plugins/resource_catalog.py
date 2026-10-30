@@ -240,6 +240,17 @@ class PluginResourceCatalog:
                 item.resource_id for item in self._record.resources if item.is_active and item.version_id is not None
             )
 
+    def active_root_refs(self) -> frozenset[str]:
+        """
+        返回可独立批准安装的游戏根目录，不把具体实例当作安装根。
+
+        :return: 仅含有效目录的宿主资源ID
+        """
+        with self._lock:
+            return frozenset(
+                item.resource_id for item in self._record.resources if item.is_active and item.version_id is None
+            )
+
     def resources(self) -> tuple[PluginResource, ...]:
         """
         返回不可变资源快照供可信审阅和运行映射使用。

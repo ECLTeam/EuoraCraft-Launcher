@@ -84,6 +84,34 @@ def test_query_inheritance_and_etag_are_real_without_stats_initialization(tmp_pa
     assert not (target / ".ecl/stats.json").exists()
 
 
+def test_query_uses_core_installed_parent_in_same_instance_before_sibling(tmp_path, queries):
+    root = tmp_path / "game"
+    target = instance(root, "custom-fabric")
+    (target / "custom-fabric.json").write_text(
+        json.dumps(
+            {"id": "fabric-loader", "inheritsFrom": "1.21", "libraries": [{"name": "net.fabricmc:fabric-loader:0.16"}]}
+        ),
+        encoding="utf-8",
+    )
+    (target / "1.21.json").write_text('{"id":"1.21"}', encoding="utf-8")
+    sibling = instance(root, "1.21")
+    (sibling / "1.21.json").write_text("damaged unrelated sibling", encoding="utf-8")
+    before = tree(root)
+    result = queries.query_instance_summary(root, "custom-fabric", monotonic() + 5)
+    assert (result.loader, result.game_version) == ("Fabric", "1.21")
+    assert tree(root) == before
+
+
+def test_query_does_not_fall_back_from_damaged_local_parent(tmp_path, queries):
+    root = tmp_path / "game"
+    target = instance(root, "custom-fabric")
+    (target / "custom-fabric.json").write_text('{"id":"fabric","inheritsFrom":"1.21"}', encoding="utf-8")
+    (target / "1.21.json").write_text("damaged", encoding="utf-8")
+    instance(root, "1.21")
+    with pytest.raises(InstanceReadError):
+        queries.query_instance_summary(root, "custom-fabric", monotonic() + 5)
+
+
 @pytest.mark.parametrize(
     "payload", ["[]", '{"id":"x","inheritsFrom":"../secret"}', '{"id":"x","inheritsFrom":"x"}', '{"id":NaN}']
 )

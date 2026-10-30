@@ -202,7 +202,14 @@ class ResourceListRequest(RequestModel):
     """
 
     capability: Literal[
-        "instances.read", "filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"
+        "instances.read",
+        "instances.install",
+        "instances.launch",
+        "instances.stop",
+        "filesystem.read",
+        "filesystem.write",
+        "filesystem.delete",
+        "filesystem.replace",
     ]
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)

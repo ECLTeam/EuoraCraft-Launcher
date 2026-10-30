@@ -19,6 +19,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from subprocess import Popen
 from tempfile import gettempdir
 from threading import Event, RLock, Thread
 from typing import TYPE_CHECKING, Any
@@ -43,8 +44,9 @@ from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.services.account import AccountManager, AuthlibInjector
-from ECL.services.operations import OperationManager
+from ECL.services.operations import OperationManager, OperationOrigin
 from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
+from ECL.utils.instance_reading import DirectoryIdentity
 from ECL.utils.operation_logging import OperationTrace
 
 from .download_sources import PreferredApiClient, alternate_source
@@ -60,6 +62,8 @@ from .version_stats import VersionStatsStore
 if TYPE_CHECKING:
     from .crash.analyzer import CrashAnalyzer
     from .crash.capture import CrashCapture
+    from .install_targets import InstallReservation
+    from .plugin_games import PluginInstallTarget
     from .schematics import SchematicSession
 
 ApiClientFactory = Callable[[ApiUrlConfig], BaseApiClient]
@@ -99,6 +103,8 @@ class _RunningGame:
     crash_analysis_disabled: bool = False
     output_lines: deque[str] = field(default_factory=lambda: deque(maxlen=500))
     trace: OperationTrace | None = None
+    origin: OperationOrigin | None = None
+    process: Popen[str] | None = None
 
 
 class _GameState(ModSourceAware):
@@ -128,6 +134,8 @@ class _GameState(ModSourceAware):
         operations: OperationManager | None = None,
         java_manager: JavaManager | None = None,
         mod_source_provider: ModSourceProvider | None = None,
+        game_download_source_provider: Callable[[], str] | None = None,
+        game_locale_provider: Callable[[], str | None] | None = None,
     ):
         """
         创建游戏服务共用的状态，并接收可替换的 Core 实现。
@@ -149,11 +157,15 @@ class _GameState(ModSourceAware):
         :param event_bus: 当前应用使用的事件总线
         :param isolation_policy_provider: 读取全局实例隔离策略的延迟提供器
         :param mod_source_provider: 读取当前模组源的延迟提供器；缺省时固定为官方源
+        :param game_download_source_provider: 插件游戏操作使用的宿主有效下载源
+        :param game_locale_provider: 插件启动沿用的宿主界面语言
         """
         self.logger = get_logger("GameService")
         self.events = event_bus or EventBus()
         self._isolation_policy_provider = isolation_policy_provider
         self._mod_sources = ModSourceRequestPolicy(mod_source_provider or (lambda: "official"), self.logger)
+        self._game_download_source_provider = game_download_source_provider or (lambda: "official")
+        self._game_locale_provider = game_locale_provider or (lambda: None)
         self.accounts = accounts
         self._search_factory = search_factory
         self.instances = instances_manager or InstancesManager()
@@ -179,8 +191,11 @@ class _GameState(ModSourceAware):
         # 下载器和 asyncio 任务必须持有强引用，关闭服务时才能可靠停止或取消。
         self._active_downloads: dict[str, Downloader] = {}
         self._install_tasks: dict[str, asyncio.Task[None]] = {}
+        self._install_reservations: dict[tuple[DirectoryIdentity, str], InstallReservation] = {}
+        self._plugin_install_targets: dict[tuple[DirectoryIdentity, str], PluginInstallTarget] = {}
         # 已启动进程由 InstancesManager 拥有；这里只保存当前会话的展示与统计元数据。
         self._running_games: dict[str, _RunningGame] = {}
+        self._plugin_game_runs: dict[str, _RunningGame] = {}
         self._version_stats = VersionStatsStore()
         self.instance_compatibility = InstanceCompatibilityRegistry()
         self.launch_hooks = LaunchHookRegistry()
@@ -206,6 +221,8 @@ class _GameState(ModSourceAware):
         self._crash_capture: CrashCapture = CrashCapture(self._crash_analyzer, self.events, self._crash_executor)
         self._closing = False
         self._launch_cancel_event: Event | None = None
+        self._launch_origin: OperationOrigin | None = None
+        self._plugin_launch_loop: asyncio.AbstractEventLoop | None = None
         # 版本目录监听状态由唯一后台线程使用，所有共享容器仍受同一把锁保护。
         self._version_scan_cache: dict[str, list[dict[str, Any]]] = {}
         self._version_watch_paths: dict[str, Path] = {}

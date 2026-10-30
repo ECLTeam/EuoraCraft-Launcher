@@ -64,6 +64,7 @@ class Adapter:
         tauri_config = self._build_config()
         self.context.state.active_window_chrome = self._active_window_chrome
         with start_blocking_portal("asyncio") as portal:  # 允许异步方法
+            portal.call(self.context.game.bind_plugin_launch_loop)
             self.logger.debug("正在创建 Tauri 窗口")
             context = context_factory(self.resource_path, tauri_config=tauri_config)
             self.logger.debug("Tauri 窗口已创建")

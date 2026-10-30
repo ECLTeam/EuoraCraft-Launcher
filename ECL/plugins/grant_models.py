@@ -12,6 +12,7 @@
 #   - class PermissionView / GrantView — 当前运行实际有效的只读授权视图。
 #   - class GrantLease — 宿主生成的执行准入快照。
 #   - class PermissionManagementCaller — 受信入口分类，不能从请求体取得。
+#   - InstanceCapability — 由宿主选择精确游戏根或实例的能力类型。
 # ============================================================
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -42,6 +43,9 @@ from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepar
 
 capability_name = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$", max_length=96)]
 resource_reference = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
+InstanceCapability = Literal[
+    "instances.read", "instances.write", "instances.install", "instances.launch", "instances.stop"
+]
 
 
 class _PermissionScope(BaseModel):
@@ -70,9 +74,14 @@ class PermissionDeclaration(_PermissionScope):
     """
 
     required: StrictBool = False
+    host_selected_capabilities: ClassVar[frozenset[str]] = frozenset(
+        {"instances.read", "instances.write", "instances.install", "instances.launch", "instances.stop"}
+    )
 
     @model_validator(mode="after")
     def _network_origins(self) -> Self:
+        if self.capability == "game.catalog.read" and self.resource_refs:
+            raise ValueError("游戏目录由宿主固定来源提供，不接收资源范围")
         if self.capability == "network.read":
             if not 1 <= len(self.resource_refs) <= 16:
                 raise ValueError("网络读取必须声明 1 至 16 个精确站点")
@@ -83,7 +92,7 @@ class PermissionDeclaration(_PermissionScope):
     @field_validator("resource_refs")
     @classmethod
     def _host_selected_instances(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
-        if info.data.get("capability") in {"instances.read", "instances.write"} and value:
+        if info.data.get("capability") in cls.host_selected_capabilities and value:
             raise ValueError("实例资源由宿主用户选择，清单不能指定本机资源")
         if (
             info.data.get("capability")

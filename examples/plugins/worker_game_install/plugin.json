@@ -1,0 +1,30 @@
+{
+  "name": "worker_game_install",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "获准游戏安装示例",
+  "description": "仅在明确命令执行后操作用户选择的游戏资源。",
+  "entry_point": "main:Plugin",
+  "permissions": [
+    {
+      "capability": "commands.register",
+      "required": true
+    },
+    {
+      "capability": "commands.execute",
+      "required": true
+    },
+    {
+      "capability": "game.catalog.read",
+      "required": false
+    },
+    {
+      "capability": "instances.read",
+      "required": false
+    },
+    {
+      "capability": "instances.install",
+      "required": false
+    }
+  ]
+}

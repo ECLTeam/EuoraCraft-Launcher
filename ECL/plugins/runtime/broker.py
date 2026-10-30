@@ -30,11 +30,14 @@ from ECL.foundation.version import __version__
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.environment_pool import _exclusive_lock
-from ECL.plugins.grant_models import GrantLease
+from ECL.plugins.grant_models import GrantLease, PermissionDeclaration
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.download_api import RuntimeDownloads
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage
+from ECL.plugins.runtime.game_install import RuntimeGameInstall
+from ECL.plugins.runtime.game_launch import RuntimeGameLaunch
+from ECL.plugins.runtime.game_queries import RuntimeGameCatalog
 from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
 from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
@@ -46,6 +49,7 @@ from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.services.game.plugin_games import PluginGameCoordinator
 
 
 @dataclass(slots=True)
@@ -79,6 +83,10 @@ class PluginHostBroker:
             "filesystem.delete",
             "filesystem.replace",
             "network.read",
+            "game.catalog.read",
+            "instances.install",
+            "instances.launch",
+            "instances.stop",
         }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
@@ -98,6 +106,9 @@ class PluginHostBroker:
             "files.replace_begin",
             "instances.profile_patch",
             "downloads.submit",
+            "game.install",
+            "game.launch",
+            "game.stop",
         }
     )
     max_receipts: ClassVar[int] = 1024
@@ -114,6 +125,7 @@ class PluginHostBroker:
         file_storage: PluginFileStorage | None = None,
         network_service: PluginNetworkService | None = None,
         instance_profiles: InstanceProfileTransactions | None = None,
+        game_operations: PluginGameCoordinator | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -127,13 +139,27 @@ class PluginHostBroker:
         :param file_storage: 应用拥有的私有文件存储；缺少任务服务时不开放文件 API
         :param network_service: 应用唯一只读网络服务；未提供时不开放网络方法
         :param instance_profiles: 应用唯一共享实例资料事务，缺失时拒绝资料写接口
+        :param game_operations: 应用唯一游戏业务入口，未提供时拒绝游戏方法
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
         self._invoke = invoke
         self._run_state = run_state
         self._resources = resources
+        self.game_catalog: RuntimeGameCatalog | None = (
+            RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
+        )
         self.operations: RuntimeOperations | None = RuntimeOperations(session, operations) if operations else None
+        self.game_install: RuntimeGameInstall | None = (
+            RuntimeGameInstall(session, game_operations, resources, self.operations)
+            if game_operations is not None and resources is not None and self.operations is not None
+            else None
+        )
+        self.game_launch: RuntimeGameLaunch | None = (
+            RuntimeGameLaunch(session, game_operations, resources, self.operations)
+            if game_operations is not None and resources is not None and self.operations is not None
+            else None
+        )
         self.files: RuntimeFiles | None = (
             RuntimeFiles(session, file_storage, self.operations) if file_storage and self.operations else None
         )
@@ -220,6 +246,8 @@ class PluginHostBroker:
             return False
         if self.operations is not None and not self.operations.is_idle():
             return False
+        if self.game_launch is not None:
+            self.game_launch.release()
         if self.network is not None and not self.network.is_idle():
             return False
         return self.files is None or self.files.is_idle()
@@ -294,6 +322,8 @@ class PluginHostBroker:
 
     def _dispatch(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
+        if method.startswith("game."):
+            return self._game_service(request)
         if method.startswith("files.") or method in {
             "operations.get",
             "operations.list",
@@ -380,6 +410,23 @@ class PluginHostBroker:
             return result
         raise ProtocolError("服务方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
 
+    def _game_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        仅转给当前应用实际绑定的游戏查询或控制门面，未知方法保持拒绝。
+        """
+        if request.method in {"game.catalog", "game.loaders"} and self.game_catalog is not None:
+            return self.game_catalog.handle(request.method, request.params, request.deadline)
+        if request.method == "game.install" and self.game_install is not None:
+            return self.game_install.submit(request.params, min(request.deadline, monotonic() + 5))
+        if self.game_launch is not None:
+            if request.method == "game.launch":
+                return self.game_launch.launch(request.params, min(request.deadline, monotonic() + 5))
+            if request.method == "game.running":
+                return self.game_launch.running(request.params, min(request.deadline, monotonic() + 5))
+            if request.method == "game.stop":
+                return self.game_launch.stop(request.params, min(request.deadline, monotonic() + 5))
+        raise ProtocolError("当前宿主未提供此游戏方法", "PLUGIN_API_METHOD_NOT_FOUND")
+
     def _release_registration(self, method: str, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         self._keys(params, {"registration_ref"} if method == "commands.unregister" else {"subscription_ref"})
         with self._lock:
@@ -401,7 +448,7 @@ class PluginHostBroker:
         view = self.session.view()
         items = [dict(asdict(item), resource_refs=list(item.resource_refs)) for item in view.items]
         for item in items:
-            if item["capability"] in {"instances.read", "instances.write"}:
+            if item["capability"] in PermissionDeclaration.host_selected_capabilities:
                 item["resource_refs"] = (
                     self._resources.permission_refs(item["capability"])
                     if self._resources and item["decision"] == "allow"
@@ -706,6 +753,12 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        if self.game_catalog is not None:
+            self.game_catalog.close()
+        if self.game_install is not None:
+            self.game_install.close()
+        if self.game_launch is not None:
+            self.game_launch.close()
         if self.network is not None:
             self.network.close()
         if self.files is not None:

@@ -39,6 +39,7 @@ from .install_transaction import recover_plugin_install_transactions
 if TYPE_CHECKING:
     from ECL.plugins.package_activation import PluginPackageActivationStore
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.services.game.plugin_games import PluginGameCoordinator
 
 
 class _PluginState:
@@ -62,6 +63,7 @@ class _PluginState:
         instance_profiles: InstanceProfileTransactions | None = None,
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
         operations: OperationManager | None = None,
+        game_operations: PluginGameCoordinator | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -78,6 +80,7 @@ class _PluginState:
         :param instance_queries: 应用现有的无写入实例查询接口
         :param operations: 应用共用的后台任务执行与取消服务
         :param instance_roots: 当前配置中的游戏根目录快照
+        :param game_operations: 应用唯一游戏业务入口
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
@@ -87,6 +90,7 @@ class _PluginState:
         self.launch_hooks = launch_hooks or LaunchHookRegistry()
         self.http_client = http_client
         self._operations = operations
+        self._game_operations = game_operations
         self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
         self._instance_roots = instance_roots
@@ -157,6 +161,7 @@ class _PluginState:
             instance_profiles=self._instance_profiles,
             instance_roots=self._instance_roots,
             operations=self._operations,
+            game_operations=self._game_operations,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
