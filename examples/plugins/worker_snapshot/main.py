@@ -31,7 +31,7 @@ def export_snapshot(host: HostClient) -> dict[str, str]:
     :return: 任务引用与文件的逻辑名称、根引用
     :raises HostApiError: 权限、空间或上传失败时抛出
     """
-    roots = host.call("resources.list", {"capability": "filesystem.write"})["items"]
+    roots = host.call("resources.list", {"capability": "plugin.base"})["items"]
     if not isinstance(roots, list) or not roots or not isinstance(roots[0], dict):
         raise HostApiError("私有文件根不可用", "PLUGIN_SCHEMA_INVALID")
     reference = roots[0].get("root_ref")

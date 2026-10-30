@@ -63,8 +63,25 @@ async def check_network_permission_layout(channel, process):
         ctypes.c_int,
         wintypes.UINT,
     ]
-    assert user.SetWindowPos(windows[0], None, 20, 20, 960, 600, 0x14)
+    user.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+
+    def dimensions():
+        outer, client = wintypes.RECT(), wintypes.RECT()
+        assert user.GetWindowRect(windows[0], ctypes.byref(outer))
+        assert user.GetClientRect(windows[0], ctypes.byref(client))
+        return (outer.right - outer.left, outer.bottom - outer.top), (client.right, client.bottom)
+
+    initial_outer, initial_client = dimensions()
+    frame_width = initial_outer[0] - initial_client[0]
+    frame_height = initial_outer[1] - initial_client[1]
+    assert user.SetWindowPos(windows[0], None, 20, 20, 960 + frame_width, 600 + frame_height, 0x14)
     try:
+        sizes = []
+        for _ in range(3):
+            await asyncio.sleep(0.1)
+            sizes.append(dimensions())
+        assert sizes[0] == sizes[1] == sizes[2] and sizes[0][1] == (960, 600), sizes
         await wait("!!document.getElementById('app')?.__vue_app__")
         await evaluate(
             "document.getElementById('app').__vue_app__.config.globalProperties.$i18n.locale='de-DE';location.hash='#/more/plugins';true"
@@ -83,7 +100,7 @@ async def check_network_permission_layout(channel, process):
         })()""")
         result = await evaluate("""(()=>{
             const sites=document.querySelector('.permission-origins');
-            const row=sites.closest('.permission-row');
+            const row=sites.closest('.network-access');
             const box=row.querySelector('.n-checkbox');
             const label=box.querySelector('.n-checkbox__label');
             const text=[...label.childNodes].find(node=>node.nodeType===3&&node.textContent.trim());
@@ -92,10 +109,18 @@ async def check_network_permission_layout(channel, process):
             const footer=row.closest('.modal-container').querySelector('.modal-footer').getBoundingClientRect();
             const toolbar=document.querySelector('.plugins-toolbar');
             return {sites:sites.children.length,lines:fragments.length,footer:footer.bottom<=innerHeight+1,
+                viewport:innerWidth===960&&innerHeight===600,
                 toolbarFits:toolbar.scrollWidth<=toolbar.clientWidth+1,
-                noOverlap:row.querySelector('.permission-label').getBoundingClientRect().right<=box.getBoundingClientRect().left+1}
+                noOverlap:box.getBoundingClientRect().bottom<=sites.getBoundingClientRect().top+1}
         })()""")
-        assert result == {"sites": 16, "lines": 1, "footer": True, "toolbarFits": True, "noOverlap": True}, result
+        assert result == {
+            "sites": 16,
+            "lines": 1,
+            "footer": True,
+            "viewport": True,
+            "toolbarFits": True,
+            "noOverlap": True,
+        }, result
         await evaluate(
             "document.querySelector('.plugin-permissions').closest('.modal-container').querySelector('.modal-header button').click();true"
         )
@@ -104,4 +129,4 @@ async def check_network_permission_layout(channel, process):
         )
     finally:
         await evaluate("document.getElementById('app').__vue_app__.config.globalProperties.$i18n.locale='zh-CN';true")
-        assert user.SetWindowPos(windows[0], None, 20, 20, 1200, 800, 0x14)
+        assert user.SetWindowPos(windows[0], None, 20, 20, 1200 + frame_width, 800 + frame_height, 0x14)

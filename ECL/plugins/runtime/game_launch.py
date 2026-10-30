@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.grant_store import PluginGrantSession
 from ECL.plugins.runtime.game_models import GameLaunchRequest, GameRunningRequest, GameStopRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -87,22 +87,20 @@ class RuntimeGameLaunch:
             "exit_code": run.exit_code,
         }
 
-    def _project(
-        self, value: object, instance_ref: str, target: GameResourceTarget, read: GrantLease | None
-    ) -> JsonValue:
+    def _project(self, value: object, instance_ref: str, target: GameResourceTarget, read: GrantLease) -> JsonValue:
         """
-        结果交付仍需原始独立读取许可，任务完成不能恢复已撤销权限。
+        结果交付仍需原始管理准入，任务完成不能恢复已撤销权限。
         """
         from ECL.services.game.plugin_games import PluginGameRun
 
-        if read is None or not isinstance(value, PluginGameRun):
+        if not isinstance(value, PluginGameRun):
             return None
         self._resources.verify_game_target(target, read, monotonic() + 5)
         return self._view(self._game.plugin_game_run(self._origin, value.token), instance_ref, target)
 
     def launch(self, params: dict[str, JsonValue], submission_deadline: float) -> dict[str, JsonValue]:
         """
-        用独立读和启动准入登记全局单启动任务，在进程创建时再次复核。
+        用原始管理准入登记全局单启动任务，在进程创建时再次复核。
 
         :param params: 当前实例引用及有限窗口、内存选项
         :param submission_deadline: 任务接纳截止
@@ -110,8 +108,9 @@ class RuntimeGameLaunch:
         :raises ProtocolError: 请求、权限、全局占位或宿主不满足
         """
         query = GameLaunchRequest.model_validate(params)
-        target, launch = self._resources.game_target(query.instance_ref, "instances.launch", submission_deadline)
-        read = self._resources.read_game_target(target, submission_deadline)
+        target, launch = self._resources.game_target(query.instance_ref, "instances.manage", submission_deadline)
+        if target.version_id is None:
+            raise ProtocolError("启动需要具体实例", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
         try:
             reservation = self._game.reserve_plugin_launch(self._origin)
         except GameServiceError as exc:
@@ -120,7 +119,6 @@ class RuntimeGameLaunch:
 
         def verify() -> None:
             self._resources.verify_game_target(target, launch, min(deadline, monotonic() + 5))
-            self._session.check(read)
 
         try:
             reference = self._operations.submit(
@@ -137,9 +135,8 @@ class RuntimeGameLaunch:
                     query.options.fullscreen,
                 ),
                 launch,
-                additional_leases=(read,),
-                result_lease=read,
-                project_result=lambda value: self._project(value, query.instance_ref, target, read),
+                result_lease=launch,
+                project_result=lambda value: self._project(value, query.instance_ref, target, launch),
                 cleanup=lambda: self._game.release_plugin_launch(reservation),
                 deadline=deadline,
                 submission_deadline=submission_deadline,
@@ -151,7 +148,7 @@ class RuntimeGameLaunch:
 
     def running(self, params: dict[str, JsonValue], deadline: float) -> dict[str, JsonValue]:
         """
-        仅返回本运行已提交的进程，独立读取许可失效时不交付旧状态。
+        仅返回本运行已提交的进程，原始业务准入失效时不交付旧状态。
 
         :param params: 当前实例引用
         :param deadline: 当前查询截止
@@ -168,7 +165,7 @@ class RuntimeGameLaunch:
 
     def stop(self, params: dict[str, JsonValue], submission_deadline: float) -> dict[str, JsonValue]:
         """
-        独立停止授权仅作用于本运行的确切进程，重复请求不会获得其他进程控制权。
+        管理权限的停止操作仅作用于本运行的确切进程，重复请求不会获得其他进程控制权。
 
         :param params: 本运行持有的游戏引用
         :param submission_deadline: 当前接纳截止
@@ -180,20 +177,16 @@ class RuntimeGameLaunch:
             owned = self._references.get(query.game_run_ref)
         if owned is None:
             raise ProtocolError("游戏进程不属于当前运行", "PLUGIN_OWNER_MISMATCH")
-        target, stop = self._resources.game_target(owned.instance_ref, "instances.stop", submission_deadline)
+        target, stop = self._resources.game_target(owned.instance_ref, "instances.manage", submission_deadline)
         if target != owned.target:
             raise ProtocolError("游戏实例身份已经变化", "PLUGIN_RESOURCE_UNAVAILABLE")
-        try:
-            read = self._resources.read_game_target(target, submission_deadline)
-        except PluginGrantError:
-            read = None
         deadline = monotonic() + 30
         reference = self._operations.submit(
             "plugin_game_stop",
             lambda context: self._game.plugin_stop(context, self._origin, owned.token),
             stop,
-            result_lease=read,
-            project_result=lambda value: self._project(value, owned.instance_ref, target, read),
+            result_lease=stop,
+            project_result=lambda value: self._project(value, owned.instance_ref, target, stop),
             deadline=deadline,
             submission_deadline=submission_deadline,
         )

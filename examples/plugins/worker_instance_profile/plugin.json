@@ -5,9 +5,13 @@
   "entry_point": "main:Plugin",
   "title": "实例资料修改示例",
   "permissions": [
-    { "capability": "commands.register", "required": true },
-    { "capability": "commands.execute", "required": true },
-    { "capability": "instances.read", "required": true },
-    { "capability": "instances.write", "required": true }
+    {
+      "capability": "instances.read",
+      "required": true
+    },
+    {
+      "capability": "instances.manage",
+      "required": false
+    }
   ]
 }

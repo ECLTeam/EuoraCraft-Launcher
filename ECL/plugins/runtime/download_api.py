@@ -80,17 +80,12 @@ class RuntimeDownloads:
         view = self._session.view()
         permission = next((item for item in view.items if item.capability == "network.read"), None)
         network_lease = self._session.authorize("network.read", permission.resource_refs if permission else ())
-        write_lease = self._session.authorize("filesystem.write")
+        write_lease = self._session.authorize("plugin.base")
         self._session.check_all((write_lease, network_lease))
         origin, _ = NetworkOrigin.from_url(query.url)
         if origin.reference not in network_lease.resource_refs:
             raise ProtocolError("插件下载站点未获准", "PLUGIN_RESOURCE_DENIED")
-        try:
-            read_lease = self._session.authorize("filesystem.read")
-        except PluginGrantError as exc:
-            if exc.error_code != "PLUGIN_PERMISSION_DENIED":
-                raise
-            read_lease = None
+        read_lease = write_lease
         staged = self._files.prepare(
             query.target,
             write_lease,

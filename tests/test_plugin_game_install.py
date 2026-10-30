@@ -57,13 +57,13 @@ def game_install(tmp_path, monkeypatch):
     metadata = {
         "name": "game-test",
         "api_version": 2,
-        "permissions": [{"capability": cap} for cap in ["instances.install", "instances.read"]],
+        "permissions": [{"capability": cap} for cap in ["instances.manage", "instances.read"]],
     }
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("value=1", encoding="utf-8")
     worker.register(metadata, source, "directory")
     view = worker.permissions("game-test")
-    page = worker.permission_resources("game-test", view["content_digest"], None, "", None, 100, "instances.install")
+    page = worker.permission_resources("game-test", view["content_digest"], None, "", None, 100, "instances.manage")
     root_id = page["items"][0]["resource_id"]
     worker.update_permissions(
         "game-test",
@@ -71,7 +71,7 @@ def game_install(tmp_path, monkeypatch):
         view["revision"],
         tuple(
             PermissionDecision(capability=cap, decision="allow", resource_refs=(root_id,))
-            for cap in ["instances.install", "instances.read"]
+            for cap in ["instances.manage", "instances.read"]
         ),
         PermissionManagementCaller.main_webview,
         page["catalog_revision"],
@@ -87,7 +87,7 @@ def game_install(tmp_path, monkeypatch):
         resources=resources,
         game_operations=game,
     )
-    ref = call(broker, "resources.list", {"capability": "instances.install"})["items"][0]["root_ref"]
+    ref = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
     yield SimpleNamespace(
         game=game,
         worker=worker,
@@ -130,9 +130,9 @@ def test_install_scope_is_root_only_and_declarations_cannot_supply_host_refs(gam
 
     state = game_install
     with pytest.raises(ValidationError):
-        PermissionDeclaration(capability="instances.install", resource_refs=("a" * 32,))
+        PermissionDeclaration(capability="instances.manage", resource_refs=("a" * 32,))
     page = call(state.broker, "permissions.list")
-    assert next(item for item in page["items"] if item["capability"] == "instances.install")["resource_refs"] == [
+    assert next(item for item in page["items"] if item["capability"] == "instances.manage")["resource_refs"] == [
         state.ref
     ]
     with pytest.raises(ProtocolError) as error:
@@ -194,7 +194,7 @@ def test_actual_worker_catalog_install_result_and_duplicate_submission(game_inst
     state.worker.register(metadata, example, "directory")
     view = state.worker.permissions(metadata["name"])
     page = state.worker.permission_resources(
-        metadata["name"], view["content_digest"], None, "", None, 50, "instances.install"
+        metadata["name"], view["content_digest"], None, "", None, 50, "instances.manage"
     )
     root_id = page["items"][0]["resource_id"]
     state.worker.update_permissions(
@@ -205,7 +205,7 @@ def test_actual_worker_catalog_install_result_and_duplicate_submission(game_inst
             PermissionDecision(
                 capability=item["capability"],
                 decision="allow",
-                resource_refs=(root_id,) if item["capability"] in {"instances.install", "instances.read"} else (),
+                resource_refs=(root_id,) if item["capability"] in {"instances.manage", "instances.read"} else (),
             )
             for item in view["items"]
         ),
@@ -220,7 +220,7 @@ def test_actual_worker_catalog_install_result_and_duplicate_submission(game_inst
 
     assert not state.writes
     assert command("catalog", {})["items"][0]["version_id"] == "1.20.1"
-    roots = command("discover", {"capability": "instances.install"})
+    roots = command("discover", {"capability": "instances.manage"})
     params = {
         "root_ref": roots["items"][0]["root_ref"],
         "version_id": "1.20.1",

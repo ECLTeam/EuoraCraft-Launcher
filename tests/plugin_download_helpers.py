@@ -27,7 +27,7 @@ def call(broker, method, params=None, key=None, seconds=5):
 
 
 def target(broker, name="download.bin"):
-    root = call(broker, "resources.list", {"capability": "filesystem.write"})["items"][0]["root_ref"]
+    root = call(broker, "resources.list", {"capability": "plugin.base"})["items"][0]["root_ref"]
     return {"root_ref": root, "relative_path": name}
 
 
@@ -47,7 +47,7 @@ def finish(broker, manager, receipt):
 def decide(broker, store, capability, decision="deny"):
     return store.update(
         broker.session,
-        (PermissionDecision(capability=capability, decision=decision),),
+        (PermissionDecision(capability=capability, decision=decision),) if capability != "plugin.base" else (),
         expected_revision=broker.session.view().revision,
         content_digest=broker.session.binding.content_digest,
         caller=PermissionManagementCaller.main_webview,
@@ -60,7 +60,7 @@ def downloads(tmp_path):
         pytest.skip("真实 Windows NTFS 下载事务")
     manager = OperationManager(tmp_path, EventBus(), max_workers=1)
     storage = PluginFileStorage(tmp_path)
-    capabilities = frozenset({"network.read", "filesystem.read", "filesystem.write"})
+    capabilities = frozenset({"network.read"})
     store = PluginGrantStore(tmp_path, implemented_capabilities=capabilities)
     brokers, services = [], []
 

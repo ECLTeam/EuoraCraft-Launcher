@@ -6,10 +6,12 @@
   "description": "按明确命令下载一个新文件，通过自身任务查询和取消。",
   "entry_point": "main:Plugin",
   "permissions": [
-    { "capability": "commands.register", "required": true },
-    { "capability": "commands.execute", "required": true },
-    { "capability": "filesystem.read", "required": false },
-    { "capability": "filesystem.write", "required": false },
-    { "capability": "network.read", "required": false, "resource_refs": ["https:downloads.example.com:443"] }
+    {
+      "capability": "network.read",
+      "required": false,
+      "resource_refs": [
+        "https:downloads.example.com:443"
+      ]
+    }
   ]
 }

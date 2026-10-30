@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：将实例资料四字段修改接入原始双许可和应用唯一任务执行器，不向Worker暴露路径。
+# 文件作用：将实例资料四字段修改接入原始管理准入和应用唯一任务执行器，不向Worker暴露路径。
 #
 # 公开接口：
 #   - class RuntimeInstanceProfiles — 本次运行的资料任务提交适配器。
@@ -63,18 +63,18 @@ class RuntimeInstanceProfiles:
         deadline = monotonic() + 30
         query = InstanceProfilePatchRequest.model_validate(params)
         patch = InstanceProfilePatch.model_validate(query.patch)
-        target, read, write = self._resources.profile_target(query.instance_ref, submission_deadline)
+        target, management = self._resources.profile_target(query.instance_ref, submission_deadline)
         item = self._transactions.reserve(target, self._session.view().installation_id)
 
         def admit() -> None:
-            self._resources.verify_profile_target(target, read, write, deadline)
-            self._session.accept_all((read, write), lambda: None)
+            self._resources.verify_profile_read(target, management, deadline)
+            self._session.accept(management, lambda: None)
 
         def project(result: object) -> JsonValue:
             if not isinstance(result, InstanceProfileSnapshot):
                 return None
-            # 原write在提交前受控；交付已提交内容只要求原read和同一实际对象。
-            self._resources.verify_profile_read(target, read, monotonic() + 5)
+            # 操作和结果交付绑定同一原始管理准入。
+            self._resources.verify_profile_read(target, management, monotonic() + 5)
             from ECL.services.game.instance_profiles import InstanceProfileStore
 
             fields = InstanceProfileStore.parse_local_fields(result.document)
@@ -95,9 +95,8 @@ class RuntimeInstanceProfiles:
                 lambda context: self._transactions.patch(
                     item, query.expected_profile_etag, patch, context, deadline, admit
                 ),
-                write,
-                additional_leases=(read,),
-                result_lease=read,
+                management,
+                result_lease=management,
                 project_result=project,
                 cleanup=lambda: self._transactions.cleanup(item),
                 deadline=deadline,

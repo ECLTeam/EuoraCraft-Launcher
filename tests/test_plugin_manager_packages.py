@@ -177,10 +177,7 @@ def test_two_package_workers_use_distinct_versions_without_host_dependency_confl
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     code = "from ECL.plugin_api import Plugin as Base\nimport samplelib\nclass Plugin(Base):\n    def on_load(self):\n        self.define_command('version', self.version, output_fields=({'name':'value','type':'string'},))\n    def version(self):\n        return {'value':samplelib.VALUE}\n"
-    permissions = (
-        {"capability": "commands.register", "required": True},
-        {"capability": "commands.execute", "required": True},
-    )
+    permissions = ()
     for name, version in (("one", "1.0"), ("two", "2.0")):
         folder = tmp_path / name
         folder.mkdir()

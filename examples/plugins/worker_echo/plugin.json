@@ -5,10 +5,5 @@
   "title": "Worker 示例",
   "description": "通过宿主命令和自身设置演示独立运行。",
   "entry_point": "main:Plugin",
-  "permissions": [
-    { "capability": "commands.register", "required": true },
-    { "capability": "commands.execute", "required": true },
-    { "capability": "settings.read", "required": true },
-    { "capability": "settings.write", "required": true }
-  ]
+  "permissions": []
 }

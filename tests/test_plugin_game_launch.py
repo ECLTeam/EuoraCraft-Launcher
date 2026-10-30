@@ -71,7 +71,7 @@ def game_launch(tmp_path, monkeypatch):
         metadata = {
             "name": name,
             "api_version": 2,
-            "permissions": [{"capability": cap} for cap in ["instances.read", "instances.launch", "instances.stop"]],
+            "permissions": [{"capability": cap} for cap in ["instances.read", "instances.manage"]],
         }
         (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
         (source / "main.py").write_text("value=1", encoding="utf-8")
@@ -79,16 +79,15 @@ def game_launch(tmp_path, monkeypatch):
         view = worker.permissions(name)
         roots = worker.permission_resources(name, view["content_digest"], None, "", None, 100, "instances.read")
         root_id = roots["items"][0]["resource_id"]
-        children = worker.permission_resources(name, view["content_digest"], root_id, "", None, 100, "instances.launch")
-        instance_id = next(item["resource_id"] for item in children["items"] if item["version_id"] == "one")
+        children = roots
+        instance_id = root_id
         worker.update_permissions(
             name,
             view["content_digest"],
             view["revision"],
             (
                 PermissionDecision(capability="instances.read", decision="allow", resource_refs=(root_id,)),
-                PermissionDecision(capability="instances.launch", decision="allow", resource_refs=(instance_id,)),
-                PermissionDecision(capability="instances.stop", decision="allow", resource_refs=(instance_id,)),
+                PermissionDecision(capability="instances.manage", decision="allow", resource_refs=(instance_id,)),
             ),
             PermissionManagementCaller.main_webview,
             children["catalog_revision"],
@@ -104,7 +103,12 @@ def game_launch(tmp_path, monkeypatch):
             resources=resources,
             game_operations=game,
         )
-        ref = call(broker, "resources.list", {"capability": "instances.launch"})["items"][0]["instance_ref"]
+        root_ref = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
+        ref = next(
+            item["instance_ref"]
+            for item in call(broker, "instances.scan", {"root_ref": root_ref})["items"]
+            if item["version_id"] == "one"
+        )
         state = SimpleNamespace(
             game=game,
             manager=manager,
@@ -165,7 +169,7 @@ def test_actual_worker_launch_query_stop_and_close_preserves_process(game_launch
     state.worker.register(metadata, example, "directory")
     view = state.worker.permissions(metadata["name"])
     page = state.worker.permission_resources(
-        metadata["name"], view["content_digest"], state.root_id, "", None, 50, "instances.launch"
+        metadata["name"], view["content_digest"], None, "", None, 50, "instances.manage"
     )
     state.worker.update_permissions(
         metadata["name"],
@@ -178,7 +182,7 @@ def test_actual_worker_launch_query_stop_and_close_preserves_process(game_launch
                 resource_refs=(state.root_id,)
                 if item["capability"] == "instances.read"
                 else (state.instance_id,)
-                if item["capability"] in {"instances.launch", "instances.stop"}
+                if item["capability"] in {"instances.manage"}
                 else (),
             )
             for item in view["items"]
@@ -203,7 +207,10 @@ def test_actual_worker_launch_query_stop_and_close_preserves_process(game_launch
             sleep(0.025)
 
     assert not state.game._plugin_game_runs
-    instance_ref = command("discover", {"capability": "instances.launch"})["items"][0]["instance_ref"]
+    root_ref = command("discover", {"capability": "instances.manage"})["items"][0]["root_ref"]
+    instance_ref = next(
+        item["instance_ref"] for item in command("scan", {"root_ref": root_ref})["items"] if item["version_id"] == "one"
+    )
     params = {"instance_ref": instance_ref, "mutation_key": "worker-launch"}
     receipt = command("launch", params)
     assert command("launch", params) == receipt
@@ -221,7 +228,7 @@ def revoke_launch(state):
     session = state.broker.session
     state.worker.grants.update(
         session,
-        (PermissionDecision(capability="instances.launch", decision="deny"),),
+        (PermissionDecision(capability="instances.manage", decision="deny"),),
         expected_revision=session.view().revision,
         content_digest=session.binding.content_digest,
         caller=PermissionManagementCaller.main_webview,

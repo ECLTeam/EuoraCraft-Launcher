@@ -104,20 +104,13 @@ def test_command_schema_reverse_callback_and_owner_rejection(broker_setup):
     assert len(calls) == 1
 
 
-def test_revocation_rejects_write_and_old_command_results(broker_setup):
-    broker, store, session, _calls = broker_setup
+def test_closing_run_rejects_basic_writes(broker_setup):
+    broker, _, session, _ = broker_setup
     define_setting(broker)
-    store.update(
-        session,
-        (PermissionDecision(capability="settings.write", decision="deny"),),
-        expected_revision=1,
-        content_digest=session.binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
+    session.close()
     with pytest.raises(ProtocolError) as error:
         request(broker, "settings.set", {"values": {"greeting": "blocked"}, "expected_revision": 0})
-    assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
-    assert broker.settings_view()["values"] == {"greeting": "hello"}
+    assert error.value.error_code == "PLUGIN_SESSION_EXPIRED"
 
 
 def test_storage_failure_keeps_original_settings_and_same_key_never_replays(broker_setup, monkeypatch):
@@ -153,7 +146,7 @@ def test_cached_receipt_cannot_deliver_result_after_permission_epoch_changes(bro
     assert request(broker, "settings.set", params, "before-revoke") == {"revision": 1}
     store.update(
         session,
-        (PermissionDecision(capability="settings.write", decision="deny"),),
+        (),
         expected_revision=1,
         content_digest=session.binding.content_digest,
         caller=PermissionManagementCaller.main_webview,
@@ -192,7 +185,7 @@ def test_unsubscribed_queued_event_is_not_delivered(broker_setup):
         release.set()
 
 
-def test_optional_registration_revocation_invalidates_existing_command(broker_setup):
+def test_business_permission_change_invalidates_original_command_lease(broker_setup):
     broker, store, session, calls = broker_setup
     fields = [{"name": "value", "type": "string"}]
     registration = request(
@@ -200,13 +193,15 @@ def test_optional_registration_revocation_invalidates_existing_command(broker_se
         "commands.register",
         {"name": "echo", "callback_ref": uuid4().hex, "input_fields": fields, "output_fields": fields},
     )
+    original_lease = broker._commands[registration["command_ref"]][2]
     store.update(
         session,
-        (PermissionDecision(capability="commands.register", decision="deny"),),
+        (),
         expected_revision=1,
         content_digest=session.binding.content_digest,
         caller=PermissionManagementCaller.main_webview,
     )
-    with pytest.raises(ProtocolError):
-        broker.call_command(registration["command_ref"], {"value": "not allowed"})
+    with pytest.raises(ValueError):
+        session.check(original_lease)
     assert calls == []
+    assert broker.call_command(registration["command_ref"], {"value": "new"}) == {"value": "new"}

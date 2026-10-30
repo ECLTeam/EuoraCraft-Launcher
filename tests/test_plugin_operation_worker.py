@@ -36,11 +36,7 @@ def worker(tmp_path, request):
         "name": "task_control",
         "version": "1.0.0",
         "api_version": 2,
-        "permissions": [
-            {"capability": "commands.register", "required": True},
-            {"capability": "commands.execute", "required": True},
-            {"capability": "settings.write", "required": False},
-        ],
+        "permissions": [],
     }
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (root / "main.py").write_text(
@@ -94,7 +90,7 @@ def test_real_worker_queries_and_cancels_only_owned_task(worker):
         assert release.wait(8)
         context.check_cancelled()
 
-    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.authorize("settings.write"))
+    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.authorize("plugin.base"))
     operation_id = adapter._references[reference].operation_id
     try:
         assert entered.wait(3)
@@ -127,7 +123,7 @@ def test_real_worker_stop_waits_for_host_commit_and_rejects_early_enable(worker)
 
         return context.finalize(commit)
 
-    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.authorize("settings.write"))
+    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.authorize("plugin.base"))
     operation_id = adapter._references[reference].operation_id
     try:
         assert entered.wait(3)
@@ -137,7 +133,7 @@ def test_real_worker_stop_waits_for_host_commit_and_rejects_early_enable(worker)
             "task_control",
             view["content_digest"],
             view["revision"],
-            (PermissionDecision(capability="settings.write", decision="deny"),),
+            (),
             PermissionManagementCaller.main_webview,
         )
         assert control(service, "get", reference)["state"] == "committing"

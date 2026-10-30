@@ -124,7 +124,7 @@ def test_real_worker_download_publish_cancel_revoke_and_stop(tmp_path, is_frozen
             release.clear()
             slow = start("revoked.bin", "/slow")
             assert entered.wait(2)
-            review("filesystem.write")
+            review("plugin.base")
             assert wait(slow)["state"] in {"failed", "cancelled"}
             assert not (files / "revoked.bin").exists()
             release.set()

@@ -7,23 +7,7 @@
   "entry_point": "main:Plugin",
   "permissions": [
     {
-      "capability": "commands.register",
-      "required": true
-    },
-    {
-      "capability": "commands.execute",
-      "required": true
-    },
-    {
-      "capability": "instances.read",
-      "required": false
-    },
-    {
-      "capability": "instances.launch",
-      "required": false
-    },
-    {
-      "capability": "instances.stop",
+      "capability": "instances.manage",
       "required": false
     }
   ]

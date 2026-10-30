@@ -28,7 +28,7 @@ def runtime(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "main.py").write_text("value = 1", encoding="utf-8")
-    capabilities = frozenset({"settings.read", "settings.write", "commands.register", "events.subscribe"})
+    capabilities = frozenset(set())
     binding = PluginContentBinding.capture(
         code, tuple(PermissionDeclaration(capability=item) for item in capabilities), "windows-x86_64-cp311"
     )
@@ -70,9 +70,9 @@ def submit(broker, worker, *, result=False):
     return broker.operations.submit(
         "host_fixture",
         worker,
-        broker.session.authorize("settings.write"),
+        broker.session.authorize("plugin.base"),
         project_result=(lambda value: {"value": value}) if result else None,
-        result_lease=broker.session.authorize("settings.read") if result else None,
+        result_lease=broker.session.authorize("plugin.base") if result else None,
     )
 
 
@@ -85,7 +85,7 @@ def finish(broker, manager, reference):
 def revoke(broker, store):
     store.update(
         broker.session,
-        (PermissionDecision(capability="settings.write", decision="deny"),),
+        (),
         expected_revision=broker.session.view().revision,
         content_digest=broker.session.binding.content_digest,
         caller=PermissionManagementCaller.main_webview,
@@ -379,7 +379,7 @@ def test_running_task_does_not_block_other_terminal_cleanup_and_supervision_retr
     try:
         assert started.wait(3)
         second = broker.operations.submit(
-            "host_fixture", lambda context: None, broker.session.authorize("settings.write"), cleanup=cleanup
+            "host_fixture", lambda context: None, broker.session.authorize("plugin.base"), cleanup=cleanup
         )
         view = finish(broker, manager, second)
         assert view["cleanup_pending"]
@@ -410,7 +410,7 @@ def test_current_short_writes_recheck_at_acceptance(runtime, monkeypatch, method
     def accept(lease, register):
         store.update(
             broker.session,
-            (PermissionDecision(capability=lease.capability, decision="deny"),),
+            (),
             expected_revision=broker.session.view().revision,
             content_digest=broker.session.binding.content_digest,
             caller=PermissionManagementCaller.main_webview,

@@ -10,8 +10,6 @@ import pytest
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_models import (
-    PermissionDecision,
-    PermissionDeclaration,
     PermissionManagementCaller,
     PluginContentBinding,
 )
@@ -25,9 +23,7 @@ def catalogs(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     (source / "main.py").write_text("value=1", encoding="utf-8")
-    binding = PluginContentBinding.capture(
-        source, (PermissionDeclaration(capability="game.catalog.read"),), "windows-x86_64-cp311"
-    )
+    binding = PluginContentBinding.capture(source, (), "windows-x86_64-cp311")
     store = PluginGrantStore(tmp_path, implemented_capabilities=PluginHostBroker.implemented_capabilities)
     game = GameService.__new__(GameService)
     game._game_download_source_provider = lambda: "official"
@@ -43,7 +39,7 @@ def catalogs(tmp_path):
         session = store.open_session(uuid4().hex, binding)
         store.update(
             session,
-            (PermissionDecision(capability="game.catalog.read", decision="allow" if allow else "deny"),),
+            (),
             expected_revision=0,
             content_digest=binding.content_digest,
             caller=PermissionManagementCaller.main_webview,
@@ -101,11 +97,9 @@ def test_query_cursors_do_not_cross_run_or_query(catalogs):
         assert error.value.error_code == "PLUGIN_CURSOR_INVALID"
 
 
-def test_catalog_denial_and_unknown_game_version(catalogs):
+def test_catalog_is_basic_and_unknown_game_version_is_rejected(catalogs):
     broker, _, _, create = catalogs
-    with pytest.raises(ProtocolError) as error:
-        call(create(False))
-    assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
+    assert call(create(False))["items"]
     with pytest.raises(ProtocolError) as error:
         call(broker, "game.loaders", {"game_version": "arbitrary", "loader": "forge"})
     assert error.value.error_code == "PLUGIN_GAME_VERSION_INVALID"
@@ -136,7 +130,7 @@ def test_revocation_during_network_read_prevents_result_delivery(catalogs):
         try:
             store.update(
                 broker.session,
-                (PermissionDecision(capability="game.catalog.read", decision="deny"),),
+                (),
                 expected_revision=broker.session.view().revision,
                 content_digest=broker.session.binding.content_digest,
                 caller=PermissionManagementCaller.main_webview,

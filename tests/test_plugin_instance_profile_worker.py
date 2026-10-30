@@ -62,10 +62,8 @@ def test_actual_profile_worker_updates_and_cancels_without_automatic_writes(tmp_
         review = service.permissions(metadata["name"])
         roots = service.permission_resources(metadata["name"], review["content_digest"], None, "", None, 50)
         root_id = roots["items"][0]["resource_id"]
-        children = service.permission_resources(
-            metadata["name"], review["content_digest"], root_id, "", None, 50, "instances.write"
-        )
-        selected = children["items"][0]["resource_id"]
+        children = roots
+        selected = root_id
         service.update_permissions(
             metadata["name"],
             review["content_digest"],
@@ -77,7 +75,7 @@ def test_actual_profile_worker_updates_and_cancels_without_automatic_writes(tmp_
                     resource_refs=(root_id,)
                     if item["capability"] == "instances.read"
                     else (selected,)
-                    if item["capability"] == "instances.write"
+                    if item["capability"] == "instances.manage"
                     else (),
                 )
                 for item in review["items"]

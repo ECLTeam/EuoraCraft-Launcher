@@ -56,7 +56,7 @@ class RuntimeGameCatalog:
             query = GameLoadersRequest.model_validate(params)
         else:
             raise ProtocolError("游戏查询尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
-        lease = self._session.authorize("game.catalog.read")
+        lease = self._session.authorize("plugin.base")
         self._session.check(lease)
         deadline = min(deadline, monotonic() + 30)
 

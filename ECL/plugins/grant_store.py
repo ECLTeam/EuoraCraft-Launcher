@@ -196,6 +196,21 @@ class PluginGrantSession:
             raise PluginGrantError("本次插件运行不具备授权准入", view.error_code)
         if not view.required_satisfied:
             raise PluginGrantError("插件缺少必要授权", "PLUGIN_REQUIRED_PERMISSION_DENIED")
+        if capability == "plugin.base":
+            if view.revision == 0 or resource_refs:
+                raise PluginGrantError("插件基础能力需要先确认启用内容", "PLUGIN_GRANT_REVIEW_REQUIRED")
+            return GrantLease(
+                state.installation_id, state.binding.content_digest, state.run_id, view.grant_epoch, "plugin.base", ()
+            )
+        if capability == "instances.read":
+            management = next((item for item in view.items if item.capability == "instances.manage"), None)
+            if (
+                management
+                and management.decision == "allow"
+                and resource_refs
+                and set(resource_refs).issubset(management.resource_refs)
+            ):
+                capability = "instances.manage"
         permission = next((item for item in view.items if item.capability == capability), None)
         if permission is None or permission.decision != "allow":
             raise PluginGrantError("插件能力未获准", "PLUGIN_PERMISSION_DENIED")
@@ -335,47 +350,25 @@ class PluginGrantStore:
         self._io_locks: dict[tuple[str, str], RLock] = {}
         self._states_by_run: dict[str, _SessionState] = {}
         self._used_run_ids: set[str] = set()
-        self._available_instance_refs: frozenset[str] = frozenset()
-        self._available_writable_instance_refs: frozenset[str] = frozenset()
-        self._available_install_root_refs: frozenset[str] = frozenset()
+        self._available_root_refs: frozenset[str] = frozenset()
 
-    def update_resource_scope(
-        self,
-        available_refs: frozenset[str],
-        writable_refs: frozenset[str],
-        install_root_refs: frozenset[str] = frozenset(),
-    ) -> None:
+    def update_resource_scope(self, root_refs: frozenset[str]) -> None:
         """
-        发布宿主已核实的读资源及具体实例写资源，范围变化使原租约失效。
+        发布当前有效游戏根，范围变化使该根上的原始运行准入失效。
 
-        :param available_refs: 包含目录及具体实例的有效读取资源
-        :param writable_refs: 仅包含具体实例，不能包含目录范围
-        :param install_root_refs: 仅包含可批准安装的游戏根目录
+        :param root_refs: 宿主确认物理身份的游戏根目录标识
         """
         with self._lock:
-            previous_by_capability = {
-                capability: self._resource_scope(capability)
-                for capability in PermissionDeclaration.host_selected_capabilities
-            }
-            self._available_instance_refs = available_refs
-            self._available_writable_instance_refs = writable_refs
-            self._available_install_root_refs = install_root_refs
+            previous = self._available_root_refs
+            self._available_root_refs = root_refs
             for state in self._states_by_run.values():
                 grants = {**state.permanent_grants, **state.session_grants}
-                for capability in PermissionDeclaration.host_selected_capabilities:
-                    grant = grants.get(capability)
-                    before = previous_by_capability[capability]
-                    after = self._resource_scope(capability)
-                    if grant and (set(grant.resource_refs) & before) != (set(grant.resource_refs) & after):
-                        state.epoch += 1
-                        break
-
-    def _resource_scope(self, capability: str) -> frozenset[str]:
-        if capability == "instances.read":
-            return self._available_instance_refs
-        if capability == "instances.install":
-            return self._available_install_root_refs
-        return self._available_writable_instance_refs
+                if any(
+                    grant and (set(grant.resource_refs) & previous) != (set(grant.resource_refs) & root_refs)
+                    for capability in PermissionDeclaration.host_selected_capabilities
+                    if (grant := grants.get(capability))
+                ):
+                    state.epoch += 1
 
     @staticmethod
     def new_installation_id() -> str:
@@ -636,18 +629,13 @@ class PluginGrantStore:
             declared = declared_by_capability.get(item.capability)
             if declared is None:
                 raise PluginGrantError("授权决定超出已审阅声明", "PLUGIN_GRANT_INVALID")
-            if (
-                item.capability in {"filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"}
-                and item.resource_refs
-            ):
-                raise PluginGrantError("文件许可只允许安装私有空间", "PLUGIN_GRANT_INVALID")
             if item.capability in PermissionDeclaration.host_selected_capabilities:
                 if any(re.fullmatch(r"[0-9a-f]{32}", ref) is None for ref in item.resource_refs):
                     raise PluginGrantError("实例资源身份无效", "PLUGIN_GRANT_INVALID")
                 if (
                     not is_disk
                     and item.decision == "allow"
-                    and not set(item.resource_refs).issubset(self._resource_scope(item.capability))
+                    and not set(item.resource_refs).issubset(self._available_root_refs)
                 ):
                     raise PluginGrantError("实例资源已不可用，请刷新后重试", "PLUGIN_RESOURCE_UNAVAILABLE")
             elif not set(item.resource_refs).issubset(declared.resource_refs):
@@ -706,7 +694,6 @@ class PluginGrantStore:
             state.epoch += 1
             state.expired_capabilities.update(expired)
         items: list[PermissionView] = []
-        required_satisfied = state.blocked_error is None
         for declared in state.binding.declarations:
             grant = grants.get(declared.capability)
             is_allowed = (
@@ -718,14 +705,9 @@ class PluginGrantStore:
             )
             resources = grant.resource_refs if is_allowed and grant else ()
             if declared.capability in PermissionDeclaration.host_selected_capabilities:
-                available = self._resource_scope(declared.capability)
+                available = self._available_root_refs
                 resources = tuple(ref for ref in resources if ref in available)
                 is_allowed = is_allowed and bool(resources)
-                is_required_missing = not is_allowed
-            else:
-                is_required_missing = not is_allowed or not set(declared.resource_refs).issubset(resources)
-            if declared.required and is_required_missing:
-                required_satisfied = False
             items.append(
                 PermissionView(
                     declared.capability,
@@ -736,6 +718,40 @@ class PluginGrantStore:
                     state.epoch,
                 )
             )
+        management = next(
+            (item for item in items if item.capability == "instances.manage" and item.decision == "allow"), None
+        )
+        if management is not None:
+            items = [
+                PermissionView(
+                    item.capability,
+                    item.required,
+                    "allow",
+                    tuple(sorted(set(item.resource_refs) | set(management.resource_refs))),
+                    item.expires_at,
+                    item.grant_epoch,
+                )
+                if item.capability == "instances.read"
+                else item
+                for item in items
+            ]
+        required_satisfied = state.blocked_error is None and all(
+            not item.required
+            or (
+                item.decision == "allow"
+                and (
+                    item.capability in PermissionDeclaration.host_selected_capabilities
+                    or set(
+                        next(
+                            declaration.resource_refs
+                            for declaration in state.binding.declarations
+                            if declaration.capability == item.capability
+                        )
+                    ).issubset(item.resource_refs)
+                )
+            )
+            for item in items
+        )
         return GrantView(
             state.installation_id,
             state.binding.content_digest,

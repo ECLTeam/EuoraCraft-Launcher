@@ -11,7 +11,6 @@ from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api._windows import WindowsRuntimeError
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_models import (
-    PermissionDecision,
     PermissionDeclaration,
     PermissionManagementCaller,
     PluginContentBinding,
@@ -25,7 +24,7 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Wi
 
 def _prepare_session(supervisor, tmp_path, code_path, declarations=()):
     binding = PluginContentBinding.capture(code_path, declarations, "windows-x86_64-cp311")
-    store = PluginGrantStore(tmp_path / "data", implemented_capabilities=frozenset({"settings.read"}))
+    store = PluginGrantStore(tmp_path / "data", implemented_capabilities=frozenset(set()))
     session = store.open_session(store.new_installation_id(), binding, supervisor.run_id)
     return store, session
 
@@ -74,7 +73,7 @@ def test_missing_required_permission_prevents_first_plugin_statement(tmp_path: P
     )
     with WorkerSupervisor() as supervisor:
         store, session = _prepare_session(
-            supervisor, tmp_path, code_path, (PermissionDeclaration(capability="settings.read", required=True),)
+            supervisor, tmp_path, code_path, (PermissionDeclaration(capability="instances.read", required=True),)
         )
         _review(store, session)
         with pytest.raises(PluginGrantError) as error:
@@ -134,7 +133,7 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
 
     def host_handler(request: RpcRequest):
         try:
-            session.authorize("settings.read")
+            session.authorize("plugin.base")
         except PluginGrantError as exc:
             raise ProtocolError("宿主授权拒绝", exc.error_code) from exc
         if request.method == "test.echo":
@@ -147,10 +146,8 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
     supervisor = WorkerSupervisor(executable, host_handler=host_handler)
     try:
         supervisor.start()
-        store, session = _prepare_session(
-            supervisor, tmp_path, code_path, (PermissionDeclaration(capability="settings.read", required=True),)
-        )
-        _review(store, session, (PermissionDecision(capability="settings.read", decision="allow"),))
+        store, session = _prepare_session(supervisor, tmp_path, code_path, ())
+        _review(store, session, ())
         supervisor.authorize_load(session)
         assert _phase(supervisor, "load", "loaded") == "loaded"
         report = json.loads(report_path.read_bytes())

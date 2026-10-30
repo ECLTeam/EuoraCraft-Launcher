@@ -6,8 +6,9 @@
   "version": "1.0.0",
   "entry_point": "main:Plugin",
   "permissions": [
-    { "capability": "commands.register", "required": true },
-    { "capability": "commands.execute", "required": true },
-    { "capability": "instances.read", "required": true }
+    {
+      "capability": "instances.read",
+      "required": true
+    }
   ]
 }

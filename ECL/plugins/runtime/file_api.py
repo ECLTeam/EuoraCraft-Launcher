@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.grant_store import PluginGrantSession
 from ECL.plugins.runtime.file_storage import FileDeletion, PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import (
     FileDeleteRequest,
@@ -123,9 +123,9 @@ class RuntimeFiles:
         只发现当前安装的逻辑根；首次只读发现不创建任何目录或记录。
         """
         query = ResourceListRequest.model_validate(params)
-        if query.capability not in {"filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"}:
+        if query.capability != "plugin.base":
             raise ProtocolError("此资源类别不属于私有文件", "PLUGIN_SCHEMA_INVALID")
-        lease = self._session.authorize(query.capability)
+        lease = self._session.authorize("plugin.base")
         with self._storage.access(self._installation_id) as space:
             self._check(lease, deadline)
             with self._lock:
@@ -151,7 +151,7 @@ class RuntimeFiles:
         query = (
             FileReadRequest.model_validate(params) if method == "files.read" else FileStatRequest.model_validate(params)
         )
-        lease = self._session.authorize("filesystem.read")
+        lease = self._session.authorize("plugin.base")
         target = query.target
         with self._storage.access(self._installation_id) as space:
             self._resolve(target, lease, space.identity)
@@ -199,7 +199,7 @@ class RuntimeFiles:
         query = FileListRequest.model_validate(params)
         if query.directory.relative_path:
             raise FileBoundaryError("只能枚举私有根", "PLUGIN_SCHEMA_INVALID")
-        lease = self._session.authorize("filesystem.read")
+        lease = self._session.authorize("plugin.base")
         with self._storage.access(self._installation_id) as space:
             self._resolve(query.directory, lease, space.identity)
             self._check(lease, deadline)
@@ -247,7 +247,7 @@ class RuntimeFiles:
         先验证根和精确目标，再登记预留并独占创建暂存；清理失败保留资源归属。
         """
         query = FileWriteBeginRequest.model_validate(params)
-        lease = self._session.authorize("filesystem.write")
+        lease = self._session.authorize("plugin.base")
         upload = self.prepare(query.target, lease, query.total_bytes, query.total_bytes, deadline)
         return {"write_ref": upload.write_ref, "max_chunk_bytes": 32768}
 
@@ -256,7 +256,7 @@ class RuntimeFiles:
         只准备已有空间的替换上传，原文件完整版本由提交工作线程核对。
         """
         query = FileReplaceBeginRequest.model_validate(params)
-        lease = self._session.authorize("filesystem.replace")
+        lease = self._session.authorize("plugin.base")
         upload = self.prepare(
             query.target, lease, query.total_bytes, query.total_bytes, deadline, expected_etag=query.expected_etag
         )
@@ -497,12 +497,7 @@ class RuntimeFiles:
             self._check_upload(upload, deadline)
             if upload.received_bytes != upload.expected_bytes:
                 raise FileBoundaryError("上传尚未完成", "PLUGIN_WRITE_SEQUENCE_INVALID")
-            try:
-                result_lease = self._session.authorize("filesystem.read")
-            except PluginGrantError as exc:
-                if exc.error_code != "PLUGIN_PERMISSION_DENIED":
-                    raise
-                result_lease = None
+            result_lease = upload.lease
             upload.owner = "task"
             try:
                 reference = self._operations.submit(
@@ -540,7 +535,7 @@ class RuntimeFiles:
         """
         deadline = monotonic() + 30
         query = FileDeleteRequest.model_validate(params)
-        lease = self._session.authorize("filesystem.delete")
+        lease = self._session.authorize("plugin.base")
         with self._storage.access(self._installation_id) as space:
             self._resolve(query.target, lease, space.identity)
             self._check(lease, submission_deadline)

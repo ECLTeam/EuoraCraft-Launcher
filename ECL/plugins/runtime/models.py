@@ -201,16 +201,7 @@ class ResourceListRequest(RequestModel):
     仅发现本运行获准的实例资源，不接受其他能力或宿主路径。
     """
 
-    capability: Literal[
-        "instances.read",
-        "instances.install",
-        "instances.launch",
-        "instances.stop",
-        "filesystem.read",
-        "filesystem.write",
-        "filesystem.delete",
-        "filesystem.replace",
-    ]
+    capability: Literal["plugin.base", "instances.read", "instances.manage"]
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
 

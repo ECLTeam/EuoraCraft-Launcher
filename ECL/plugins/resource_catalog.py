@@ -251,6 +251,24 @@ class PluginResourceCatalog:
                 item.resource_id for item in self._record.resources if item.is_active and item.version_id is None
             )
 
+    def default_root_ref(self) -> str | None:
+        """
+        返回配置提供器按当前选择排序后的首个有效根，仅用于确认界面的默认选择。
+
+        :return: 当前有效根的持久身份，没有有效配置时为空
+        """
+        configured = self._configured()
+        first = next(iter(configured), None)
+        with self._lock:
+            return next(
+                (
+                    item.resource_id
+                    for item in self._record.resources
+                    if item.is_active and item.version_id is None and item.root_path == first
+                ),
+                None,
+            )
+
     def resources(self) -> tuple[PluginResource, ...]:
         """
         返回不可变资源快照供可信审阅和运行映射使用。

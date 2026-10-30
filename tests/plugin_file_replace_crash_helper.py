@@ -12,7 +12,7 @@ from ECL.utils.windows_file_handles import FileHandle
 
 def prepare_case(data_path: Path) -> tuple[PluginFileStorage, StagedFile, FileHandle]:
     storage = PluginFileStorage(data_path)
-    lease = GrantLease("a" * 32, "b" * 64, "c" * 32, 1, "filesystem.replace", ())
+    lease = GrantLease("a" * 32, "b" * 64, "c" * 32, 1, "plugin.base", ())
     with storage.access(lease.installation_id, initialize=True, admit=lambda: None) as space:
         source = space.directory.file(".initial", create=True)
         source.write(0, b"original")

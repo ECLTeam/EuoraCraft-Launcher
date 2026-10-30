@@ -9,7 +9,6 @@ from time import monotonic
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -64,7 +63,7 @@ def profiles(tmp_path):
     metadata = {
         "name": "writer",
         "api_version": 2,
-        "permissions": [{"capability": "instances.read"}, {"capability": "instances.write"}],
+        "permissions": [{"capability": "instances.read"}, {"capability": "instances.manage"}],
     }
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("value=1", encoding="utf-8")
@@ -72,15 +71,15 @@ def profiles(tmp_path):
     view = service.permissions("writer")
     roots = service.permission_resources("writer", view["content_digest"], None, "", None, 100)
     root_id = roots["items"][0]["resource_id"]
-    children = service.permission_resources("writer", view["content_digest"], root_id, "", None, 100, "instances.write")
-    selected = next(item["resource_id"] for item in children["items"] if item["version_id"] == "one")
+    children = roots
+    selected = root_id
     service.update_permissions(
         "writer",
         view["content_digest"],
         view["revision"],
         (
             PermissionDecision(capability="instances.read", decision="allow", resource_refs=(root_id,)),
-            PermissionDecision(capability="instances.write", decision="allow", resource_refs=(selected,)),
+            PermissionDecision(capability="instances.manage", decision="allow", resource_refs=(selected,)),
         ),
         PermissionManagementCaller.main_webview,
         children["catalog_revision"],
@@ -144,12 +143,11 @@ def test_full_version_includes_unexposed_fields_and_same_content_new_object(prof
     assert path.read_bytes() == old
 
 
-def test_read_root_does_not_authorize_write_to_another_instance(profiles):
-    broker, _, _, _, _, _, _, instances = profiles
+def test_management_root_covers_other_existing_instances(profiles):
+    broker, manager, _, _, _, _, _, instances = profiles
     second = next(item for item in instances if item["version_id"] == "two")
-    with pytest.raises(ProtocolError) as error:
-        patch(broker, second, {"alias": "Forbidden"})
-    assert error.value.error_code in {"PLUGIN_RESOURCE_DENIED", "PLUGIN_PERMISSION_DENIED"}
+    result = finish(broker, manager, patch(broker, second, {"alias": "Managed"}))
+    assert result["state"] == "completed" and result["result"]["alias"] == "Managed"
 
 
 def test_cancel_queued_profile_releases_real_occupancy_without_writing(profiles):
@@ -170,7 +168,7 @@ def test_cancel_queued_profile_releases_real_occupancy_without_writing(profiles)
     assert path.read_bytes() == original and not store.transactions.has_pending()
 
 
-@pytest.mark.parametrize("reason", ["instances.read", "instances.write", "deadline"])
+@pytest.mark.parametrize("reason", ["instances.read", "instances.manage", "deadline"])
 def test_queued_profile_rechecks_original_dual_permission_and_total_deadline(profiles, monkeypatch, reason):
     import ECL.plugins.runtime.instance_profiles as api_module
     import ECL.plugins.runtime.operation_adapters as operation_module
@@ -331,26 +329,16 @@ def test_notification_failure_retries_only_notification_without_repeating_write(
     assert json.loads(path.read_bytes())["alias"] == "Later" and notified == [root]
 
 
-def test_permission_view_only_exposes_run_refs_and_root_write_decision_is_rejected(profiles):
-    broker, _, _, service, _, before, _, _ = profiles
+def test_management_permission_view_exposes_only_runtime_root_refs(profiles):
+    broker, _, _, service, _, _, _, _ = profiles
     view = service.permissions("writer")
     persistent = next(
-        item["selected_resource_refs"] for item in view["items"] if item["capability"] == "instances.write"
+        item["selected_resource_refs"] for item in view["items"] if item["capability"] == "instances.manage"
     )
     public = call(broker, "permissions.list")
-    write = next(item for item in public["items"] if item["capability"] == "instances.write")
-    assert write["resource_refs"] == [before["instance_ref"]]
-    assert write["resource_refs"] != persistent
-    root = next(item["selected_resource_refs"][0] for item in view["items"] if item["capability"] == "instances.read")
-    with pytest.raises(ValueError):
-        service.update_permissions(
-            "writer",
-            view["content_digest"],
-            view["revision"],
-            (PermissionDecision(capability="instances.write", decision="allow", resource_refs=(root,)),),
-            PermissionManagementCaller.main_webview,
-            service.refresh_resources(),
-        )
+    management = next(item for item in public["items"] if item["capability"] == "instances.manage")
+    root_ref = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
+    assert management["resource_refs"] == [root_ref] and management["resource_refs"] != persistent
 
 
 def test_profile_metadata_handle_keeps_reservation_until_actual_backup_disappearance(profiles):

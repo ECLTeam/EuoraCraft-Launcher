@@ -70,24 +70,7 @@ class PluginHostBroker:
     """
 
     implemented_capabilities: ClassVar[frozenset[str]] = frozenset(
-        {
-            "commands.register",
-            "commands.execute",
-            "settings.read",
-            "settings.write",
-            "events.subscribe",
-            "instances.read",
-            "instances.write",
-            "filesystem.read",
-            "filesystem.write",
-            "filesystem.delete",
-            "filesystem.replace",
-            "network.read",
-            "game.catalog.read",
-            "instances.install",
-            "instances.launch",
-            "instances.stop",
-        }
+        {"instances.read", "instances.manage", "network.read"}
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
         {
@@ -388,11 +371,7 @@ class PluginHostBroker:
             result = self.network.handle(params, request.deadline)
             request.check_deadline()
             return result
-        if method.startswith("files.") or (
-            method == "resources.list"
-            and params.get("capability")
-            in ("filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace")
-        ):
+        if method.startswith("files.") or (method == "resources.list" and params.get("capability") == "plugin.base"):
             if self.files is None:
                 raise ProtocolError("当前宿主未提供私有文件", "PLUGIN_API_METHOD_NOT_FOUND")
             deadline = min(request.deadline, monotonic() + (30 if method == "files.read" else 5))
@@ -486,7 +465,7 @@ class PluginHostBroker:
         """
         在授权接受点原子登记本 run 的命令，实际回调在锁外执行。
         """
-        lease = self.session.authorize("commands.register")
+        lease = self.session.authorize("plugin.base")
         definition = CommandDefinition.model_validate(params)
         if definition.exported:
             raise ProtocolError("跨插件命令尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
@@ -509,7 +488,7 @@ class PluginHostBroker:
         只在授权接受点登记自身设置订阅，不开放完整宿主事件总线。
         """
         self._keys(params, {"event", "callback_ref"})
-        lease = self.session.authorize("events.subscribe")
+        lease = self.session.authorize("plugin.base")
         callback = params["callback_ref"]
         if params["event"] != "settings.changed" or not isinstance(callback, str) or len(callback) != 32:
             raise ProtocolError("该事件或回调尚未开放", "PLUGIN_EVENT_NOT_EXPOSED")
@@ -536,7 +515,7 @@ class PluginHostBroker:
         :raises ProtocolError: 命令、授权、schema 或回调无效时抛出
         """
         self._check_open()
-        lease = self.session.authorize("commands.execute")
+        lease = self.session.authorize("plugin.base")
         with self._lock:
             item = self._commands.get(reference) or next(
                 (v for v in self._commands.values() if v[1].name == reference), None
@@ -587,7 +566,7 @@ class PluginHostBroker:
 
         :return: 当前设置视图
         """
-        self.session.authorize("settings.read")
+        self.session.authorize("plugin.base")
         with self._settings_lock:
             values, revision = self._read_settings()
             return {
@@ -598,7 +577,7 @@ class PluginHostBroker:
 
     def _settings(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
-        lease = self.session.authorize("settings.read" if method == "settings.get" else "settings.write")
+        lease = self.session.authorize("plugin.base")
         with self._settings_lock:
             if method == "settings.define":
                 self._keys(params, {"definitions"})
@@ -790,12 +769,11 @@ class PluginHostBroker:
         """
         self.refresh_pending_work()
         view = self.session.view()
-        allowed = {item.capability for item in view.items if item.decision == "allow"}
         if view.error_code or not view.required_satisfied:
             self.close()
             return
-        event_lease = self.session.authorize("events.subscribe") if "events.subscribe" in allowed else None
-        command_lease = self.session.authorize("commands.register") if "commands.register" in allowed else None
+        event_lease = self.session.authorize("plugin.base")
+        command_lease = self.session.authorize("plugin.base")
         with self._lock:
             self._observed_epoch = view.grant_epoch
             self._commands = (

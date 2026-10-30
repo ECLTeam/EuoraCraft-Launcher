@@ -41,11 +41,8 @@ from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepared_code
 
-capability_name = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$", max_length=96)]
 resource_reference = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
-InstanceCapability = Literal[
-    "instances.read", "instances.write", "instances.install", "instances.launch", "instances.stop"
-]
+InstanceCapability = Literal["instances.read", "instances.manage"]
 
 
 class _PermissionScope(BaseModel):
@@ -54,7 +51,7 @@ class _PermissionScope(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    capability: capability_name
+    capability: Literal["instances.read", "instances.manage", "network.read"]
     resource_refs: tuple[resource_reference, ...] = Field(default=(), max_length=128)
 
     @field_validator("resource_refs")
@@ -69,19 +66,25 @@ class PermissionDeclaration(_PermissionScope):
     """
     保存插件请求的能力及宿主解析的资源范围，不赋予实际权限。
 
-    resource_refs 必须来自宿主资源目录；instances.read 只声明能力，其实际范围
-    由用户在宿主界面选择，其他能力仍按已定义的声明范围处理。
+    游戏范围由用户在宿主界面选择根目录，联网范围由清单声明精确站点。
+    自身命令、设置、私有数据及公开目录随启用提供，不接受单独权限声明。
     """
 
     required: StrictBool = False
-    host_selected_capabilities: ClassVar[frozenset[str]] = frozenset(
-        {"instances.read", "instances.write", "instances.install", "instances.launch", "instances.stop"}
-    )
+    host_selected_capabilities: ClassVar[frozenset[str]] = frozenset({"instances.read", "instances.manage"})
+
+    @field_validator("capability", mode="before")
+    @classmethod
+    def _business_capability(cls, value: str) -> str:
+        """
+        只接受当前三项业务权限，旧细项必须由插件作者更新。
+        """
+        if not isinstance(value, str) or value not in {"instances.read", "instances.manage", "network.read"}:
+            raise ValueError("插件权限声明不受支持，请更新插件权限清单")
+        return value
 
     @model_validator(mode="after")
     def _network_origins(self) -> Self:
-        if self.capability == "game.catalog.read" and self.resource_refs:
-            raise ValueError("游戏目录由宿主固定来源提供，不接收资源范围")
         if self.capability == "network.read":
             if not 1 <= len(self.resource_refs) <= 16:
                 raise ValueError("网络读取必须声明 1 至 16 个精确站点")
@@ -94,12 +97,6 @@ class PermissionDeclaration(_PermissionScope):
     def _host_selected_instances(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
         if info.data.get("capability") in cls.host_selected_capabilities and value:
             raise ValueError("实例资源由宿主用户选择，清单不能指定本机资源")
-        if (
-            info.data.get("capability")
-            in {"filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"}
-            and value
-        ):
-            raise ValueError("文件能力仅允许当前安装的私有空间")
         return value
 
 
