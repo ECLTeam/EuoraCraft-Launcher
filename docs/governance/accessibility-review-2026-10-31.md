@@ -20,25 +20,25 @@
 | `tasks-classic-light-zh-CN-1200x800` | 30 | 5.865 | 0 |
 | `account-login-classic-light-zh-CN-1200x800` | 4 | 5.671 | 4 |
 | `instance-classic-light-zh-CN-1200x800` | 38 | 4.940 | 0 |
-| `permissions-classic-light-zh-CN-1200x800` | 9 | 5.037 | 0 |
+| `permissions-classic-light-zh-CN-1200x800` | 15 | 5.037 | 2 |
 | `update-classic-light-zh-CN-1200x800` | 10 | 5.037 | 0 |
 | `settings-classic-dark-zh-CN-1200x800` | 31 | 5.802 | 2 |
 | `tasks-classic-dark-zh-CN-1200x800` | 30 | 7.234 | 0 |
 | `account-login-classic-dark-zh-CN-1200x800` | 4 | 8.230 | 4 |
 | `instance-classic-dark-zh-CN-1200x800` | 38 | 6.084 | 0 |
-| `permissions-classic-dark-zh-CN-1200x800` | 9 | 5.037 | 0 |
+| `permissions-classic-dark-zh-CN-1200x800` | 15 | 5.037 | 2 |
 | `update-classic-dark-zh-CN-1200x800` | 10 | 5.037 | 0 |
 | `settings-folia-light-zh-CN-1200x800` | 31 | 5.821 | 2 |
 | `tasks-folia-light-zh-CN-1200x800` | 30 | 5.832 | 0 |
 | `account-login-folia-light-zh-CN-1200x800` | 4 | 4.760 | 4 |
 | `instance-folia-light-zh-CN-1200x800` | 38 | 4.511 | 0 |
-| `permissions-folia-light-zh-CN-1200x800` | 9 | 4.820 | 0 |
+| `permissions-folia-light-zh-CN-1200x800` | 15 | 4.779 | 2 |
 | `update-folia-light-zh-CN-1200x800` | 10 | 4.766 | 0 |
 | `settings-folia-dark-zh-CN-1200x800` | 31 | 5.912 | 2 |
 | `tasks-folia-dark-zh-CN-1200x800` | 30 | 7.390 | 0 |
 | `account-login-folia-dark-zh-CN-1200x800` | 4 | 8.938 | 4 |
 | `instance-folia-dark-zh-CN-1200x800` | 38 | 6.040 | 0 |
-| `permissions-folia-dark-zh-CN-1200x800` | 9 | 5.037 | 0 |
+| `permissions-folia-dark-zh-CN-1200x800` | 15 | 5.037 | 2 |
 | `update-folia-dark-zh-CN-1200x800` | 10 | 5.037 | 0 |
 | `settings-classic-light-zh-CN-960x600` | 26 | 6.062 | 1 |
 | `settings-classic-light-zh-TW-960x600` | 24 | 6.062 | 2 |
@@ -53,3 +53,5 @@
 此次精确节点列表登记为 `manual-review`，2026-11-30 到期。未决节点增加、选择器改变、规则改变或补充测量失败均会使门禁失败，不自动刷新列表。节点减少产生的失效例外需要复核后清理。该日期是复核期限，不是问题修复期限或风险接受声明。
 
 相关问题：[辅助技术控件与对比度问题 #76](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/76)。只有远端默认分支完成集成并通过验收后才按贡献指南关闭。
+
+本次合并新版插件授权界面后，四个权限场景已重新查看截图及逐节点证据。保留原始 `target`，含动态 ID 的节点另记录经唯一性验证的 `governance_target` 结构定位；例外逐项匹配结构定位，不改变控件 ID 或可访问属性。结构变化仍需复核。

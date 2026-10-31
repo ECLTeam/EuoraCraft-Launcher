@@ -169,7 +169,7 @@ def _axe_findings(payload: dict[str, object]) -> tuple[int, list[Finding], list[
                     raise GovernanceError("规则发现缺少定位证据")
                 for node in nodes:
                     node_record = _object(node)
-                    target = _array(node_record.get("target"))
+                    target = _array(node_record.get("governance_target", node_record.get("target")))
                     selector = " | ".join(_text(part) for part in target)
                     finding = Finding(rule, case_name, _text(selector))
                     if field == "incomplete" and rule == "color-contrast" and _has_failed_contrast(node_record):

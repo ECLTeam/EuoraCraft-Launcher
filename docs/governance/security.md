@@ -8,7 +8,7 @@
 | v5.0.0-2.2.1、v5.0.0-2.2.2 | 输入按业务结构校验，安全检查在可信服务边界执行 | API/插件；`tests/test_api_models.py`、`tests/test_plugin_network.py`、前端 API validation 测试 | 部分覆盖；类型声明不代替运行时校验 |
 | v5.0.0-3.2.2 | 需要作为文本展示的内容使用安全文本呈现 | 前端；Vue 插值、Markdown 净化相关测试 | 部分覆盖；不将所有富文本都改为纯文本 |
 | v5.0.0-6.1.3 | 认证路径及其控制一起记录和检查 | 账户；`tests/test_microsoft_auth.py`、`tests/test_accounts.py`、`tests/test_yggdrasil_auth.py` | 部分覆盖；认证提供方服务端控制不由本项目证明 |
-| v5.0.0-8.2.1、v5.0.0-8.2.2 | 功能和具体资源访问受显式权限约束 | 插件；权限、实例查询/写入、游戏操作测试 | 部分覆盖；受控 API 授权不等于进程沙箱 |
+| v5.0.0-8.2.1、v5.0.0-8.2.2 | 功能和具体资源访问受显式权限约束 | 插件；`test_plugin_grant_store.py`、`test_plugin_permission_simplification.py`、实例查询/写入与游戏操作测试 | 部分覆盖；采用当前 `plugin.base`、`instances.read/manage`、`network.read` 契约，受控 API 授权不等于进程沙箱 |
 | v5.0.0-16.2.5 | 日志按敏感程度限制凭据等数据 | 日志/账户；`tests/test_operation_logging.py`、`tests/test_account_audit.py` | 部分覆盖；需持续核对新增日志边界 |
 | ASVS V10 授权服务器相关控制 | 启动器不实现 OAuth 授权服务器 | 账户维护者；微软登录实现与协议 | 对外部服务器自身实现不适用；客户端凭据和流程仍需验证 |
 

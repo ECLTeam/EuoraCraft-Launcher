@@ -159,6 +159,18 @@ def axe_payload():
     }
 
 
+def test_axe_generated_id_uses_exact_structural_target_without_losing_raw_evidence():
+    payload = axe_payload()
+    node = {"target": ["#generated"], "governance_target": ["html > body > button:nth-of-type(1)"]}
+    payload["cases"][0]["incomplete"] = [{"id": "color-contrast", "nodes": [node]}]
+    report = parse_report(envelope("axe", payload), "python-windows-runtime")
+    assert report.reviews[0].location == "html > body > button:nth-of-type(1)"
+    assert node["target"] == ["#generated"]
+    node["governance_target"] = []
+    with pytest.raises(GovernanceError):
+        parse_report(envelope("axe", payload), "python-windows-runtime")
+
+
 def test_axe_incomplete_requires_manual_review_and_exact_node():
     payload = axe_payload()
     payload["cases"][0]["incomplete"] = [{"id": "color-contrast", "nodes": [{"target": ["#submit"]}]}]
