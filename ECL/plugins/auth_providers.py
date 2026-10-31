@@ -26,6 +26,66 @@ from typing import Any
 
 from ECL.utils import get_logger
 
+# 第三方认证返回值上限：账户标识与不透明负载都要有界。
+limit_account_text = 256
+limit_account_data_fields = 16
+user_types = frozenset({"msa", "yggdrasil", "legacy"})
+
+
+def sanitize_account_payload(payload: object) -> dict[str, Any]:
+    """
+    校验第三方认证回调返回的账户信息，越界或缺失时整体拒绝。
+
+    :param payload: 插件回调返回值
+    :return: 可直接交给账户服务的账户信息
+    :raises ValueError: 必需字段缺失、类型不符或超长时抛出
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("认证返回值必须是对象")
+    result: dict[str, Any] = {}
+    for key in ("id", "alias", "uuid"):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value or len(value) > limit_account_text:
+            raise ValueError(f"认证返回值的 {key} 无效")
+        result[key] = value
+    skin_url = payload.get("skinUrl")
+    if isinstance(skin_url, str) and skin_url:
+        result["skinUrl"] = skin_url[:limit_account_text]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        cleaned = {
+            str(key)[:64]: value[:limit_account_text]
+            for key, value in list(data.items())[:limit_account_data_fields]
+            if isinstance(value, str)
+        }
+        if cleaned:
+            result["data"] = cleaned
+    return result
+
+
+def sanitize_credentials_payload(payload: object) -> dict[str, str]:
+    """
+    校验启动时的凭据解析结果，凭据只交给账户服务，不写日志。
+
+    :param payload: 插件回调返回值
+    :return: 账户服务可消费的凭据字典
+    :raises ValueError: 必需字段缺失或 user_type 不在允许范围时抛出
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("凭据解析返回值必须是对象")
+    result: dict[str, str] = {}
+    for key in ("player_name", "uuid", "user_type", "access_token"):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"凭据解析返回值的 {key} 无效")
+        result[key] = value[: limit_account_text * 4]
+    if result["user_type"] not in user_types:
+        raise ValueError("凭据解析返回的 user_type 不受支持")
+    auth_server = payload.get("auth_server")
+    if isinstance(auth_server, str) and auth_server:
+        result["auth_server"] = auth_server[:limit_account_text]
+    return result
+
 
 @dataclass(frozen=True)
 class AuthField:

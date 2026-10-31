@@ -42,8 +42,10 @@ from ECL.plugins.runtime.game_resources import RuntimeGameResources
 from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
 from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.models import (
+    AuthProviderDefinition,
     CommandDefinition,
     CompatSourceDefinition,
+    ConnectorStatusDefinition,
     CrashExtensionDefinition,
     HtmlSlotDefinition,
     LaunchHookDefinition,
@@ -139,6 +141,8 @@ class PluginHostBroker:
             "java.install",
             "accounts.read",
             "ui.inject",
+            "auth.provider",
+            "connector.extend",
         }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
@@ -161,6 +165,8 @@ class PluginHostBroker:
             "hooks.register",
             "crash.register",
             "compat.register",
+            "auth.register",
+            "connector.register_status",
             "ui.register_vue",
             "settings.define",
             "settings.set",
@@ -205,6 +211,8 @@ class PluginHostBroker:
         crash_sink: Callable[[str], None] | None = None,
         compat_sink: Callable[[str, str, str], None] | None = None,
         tool_channel: ToolChannel | None = None,
+        online_sink: Callable[[str, str | None, AuthProviderDefinition | None], None] | None = None,
+        connector_sink: Callable[[str, str | None], None] | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -227,6 +235,8 @@ class PluginHostBroker:
         :param crash_sink: 崩溃分析回调接收方；未提供时拒绝登记
         :param compat_sink: 实例兼容来源接收方；未提供时拒绝登记
         :param tool_channel: 受管工具通道；未提供时拒绝工具调用
+        :param online_sink: 认证提供方接收方；提供方为 None 表示撤销
+        :param connector_sink: 联机状态补充接收方；回调为 None 表示撤销
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -239,6 +249,8 @@ class PluginHostBroker:
         self._compat_sink = compat_sink
         self._tool_channel = tool_channel
         self._tools: dict[str, ToolDefinition] = {}
+        self._online_sink = online_sink
+        self._connector_sink = connector_sink
         self._resources = resources
         self.game_catalog: RuntimeGameCatalog | None = (
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
@@ -467,6 +479,10 @@ class PluginHostBroker:
             return self._compat_service(request)
         if method.startswith("tools."):
             return self._tool_service(request)
+        if method.startswith("auth."):
+            return self._auth_service(request)
+        if method.startswith("connector."):
+            return self._connector_service(request)
         return self._control_service(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
@@ -815,6 +831,40 @@ class PluginHostBroker:
             raise ProtocolError("当前宿主未提供启动钩子", "PLUGIN_API_METHOD_NOT_FOUND")
         definition = LaunchHookDefinition.model_validate(request.params)
         self._hook_sink(definition.phase, definition.callback_ref, definition.required)
+        return {"registered": True}
+
+    def _auth_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只接受第三方登录提供方登记，按「第三方登录」独立准入。
+
+        :param request: 已通过变更检查的请求
+        :return: 登记结果
+        :raises ProtocolError: 未获准或通道缺失时抛出
+        """
+        self.session.authorize("auth.provider")
+        if request.method != "auth.register":
+            raise ProtocolError("此登录方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+        if self._online_sink is None:
+            raise ProtocolError("当前宿主未提供第三方登录", "PLUGIN_API_METHOD_NOT_FOUND")
+        definition = AuthProviderDefinition.model_validate(request.params)
+        self._online_sink("auth", definition.provider_id, definition)
+        return {"registered": True}
+
+    def _connector_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只接受联机状态补充登记，按「联机扩展」独立准入。
+
+        :param request: 已通过变更检查的请求
+        :return: 登记结果
+        :raises ProtocolError: 未获准或通道缺失时抛出
+        """
+        self.session.authorize("connector.extend")
+        if request.method != "connector.register_status":
+            raise ProtocolError("此联机方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+        if self._connector_sink is None:
+            raise ProtocolError("当前宿主未提供联机扩展", "PLUGIN_API_METHOD_NOT_FOUND")
+        definition = ConnectorStatusDefinition.model_validate(request.params)
+        self._connector_sink("status", definition.callback_ref)
         return {"registered": True}
 
     def _tool_service(self, request: RpcRequest) -> dict[str, JsonValue]:

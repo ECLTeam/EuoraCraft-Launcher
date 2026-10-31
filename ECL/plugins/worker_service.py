@@ -113,6 +113,8 @@ class PluginWorkerService:
         compat_sink: Callable[[str, str | None, str | None, str | None], None] | None = None,
         tool_spawner: Callable[[str, str, list[str], str], str] | None = None,
         tool_stopper: Callable[[str, str], bool] | None = None,
+        auth_sink: Callable[[str, str | None, object | None], None] | None = None,
+        connector_sink: Callable[[str, str | None], None] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -135,6 +137,8 @@ class PluginWorkerService:
         :param compat_sink: 实例兼容来源接收方；来源为 None 表示撤销该安装全部来源
         :param tool_spawner: 受管工具启动方；未提供时拒绝工具调用
         :param tool_stopper: 受管工具停止方；未提供时拒绝停止
+        :param auth_sink: 认证提供方接收方；提供方为 None 表示撤销
+        :param connector_sink: 联机状态补充接收方；回调为 None 表示撤销
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
@@ -144,6 +148,8 @@ class PluginWorkerService:
         self._compat_sink = compat_sink
         self._tool_spawner = tool_spawner
         self._tool_stopper = tool_stopper
+        self._auth_sink = auth_sink
+        self._connector_sink = connector_sink
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -578,6 +584,8 @@ class PluginWorkerService:
                     hook_sink=partial(self._publish_hook, name),
                     crash_sink=partial(self._publish_crash, name),
                     compat_sink=partial(self._publish_compat, name),
+                    online_sink=partial(self._publish_auth, name),
+                    connector_sink=partial(self._publish_connector, name),
                     tool_channel=ToolChannel(
                         run=partial(self._tool_run, name),
                         stop=partial(self._tool_stop, name),
@@ -652,6 +660,48 @@ class PluginWorkerService:
         if self._crash_sink is None:
             raise ProtocolError("当前宿主未提供崩溃分析", "PLUGIN_API_METHOD_NOT_FOUND")
         self._crash_sink(name, callback_ref)
+
+    def _publish_auth(self, name: str, kind: str, definition: object | None) -> None:
+        """
+        把已获准的认证提供方交给管理器。
+
+        :param name: 安装名称
+        :param kind: 登记类型，固定为 auth
+        :param definition: 提供方定义；None 表示撤销
+        """
+        if self._auth_sink is None:
+            raise ProtocolError("当前宿主未提供第三方登录", "PLUGIN_API_METHOD_NOT_FOUND")
+        self._auth_sink(name, None if definition is None else str(getattr(definition, "provider_id", "")), definition)
+
+    def _clear_auth(self, name: str) -> None:
+        """
+        撤销该安装登记的全部认证提供方，禁用后不再出现在登录列表。
+
+        :param name: 安装名称
+        """
+        if self._auth_sink is not None:
+            self._auth_sink(name, None, None)
+
+    def _publish_connector(self, name: str, kind: str, callback_ref: str | None) -> None:
+        """
+        把已获准的联机状态补充回调交给管理器。
+
+        :param name: 安装名称
+        :param kind: 登记类型，固定为 status
+        :param callback_ref: 本运行登记的回调标识；None 表示撤销
+        """
+        if self._connector_sink is None:
+            raise ProtocolError("当前宿主未提供联机扩展", "PLUGIN_API_METHOD_NOT_FOUND")
+        self._connector_sink(name, callback_ref)
+
+    def _clear_connector(self, name: str) -> None:
+        """
+        撤销该安装登记的全部联机扩展，禁用后不再补充状态。
+
+        :param name: 安装名称
+        """
+        if self._connector_sink is not None:
+            self._connector_sink(name, None)
 
     def _tool_run(self, name: str, definition: object, args: tuple[str, ...]) -> str:
         """
@@ -736,8 +786,7 @@ class PluginWorkerService:
         return frozenset(
             ref
             for item in view.items
-            if item.capability in {"instances.read", "instances.manage"}
-            and item.decision == "allow"
+            if item.capability in {"instances.read", "instances.manage"} and item.decision == "allow"
             for ref in item.resource_refs
         )
 
@@ -909,6 +958,8 @@ class PluginWorkerService:
             self._clear_hooks(name)
             self._clear_crash(name)
             self._clear_compat(name)
+            self._clear_auth(name)
+            self._clear_connector(name)
             entry.state = "disabled"
             entry.cleanup_state = "completed"
             if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:

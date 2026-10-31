@@ -17,13 +17,15 @@
 #       - register_crash_analyzer — 登记崩溃分析回调。
 #       - register_instance_source — 登记实例识别来源。
 #       - define_tool / run_tool / stop_tool — 声明并运行受管工具进程。
+#       - register_auth_provider — 登记第三方登录提供方。
+#       - register_connector_status — 登记联机状态补充。
 # ============================================================
 
 from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from threading import RLock
 from typing import ClassVar
 from uuid import uuid4
@@ -313,6 +315,71 @@ class Plugin:
             "hooks.register",
             {"phase": phase, "callback_ref": reference, "required": required},
         )
+        return reference
+
+    def register_auth_provider(
+        self,
+        provider_id: str,
+        title: str,
+        fields: Sequence[Mapping[str, JsonValue]],
+        authenticate: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
+        resolve_credentials: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
+        description: str = "",
+    ) -> None:
+        """
+        登记第三方登录提供方，需已获准「第三方登录」。
+
+        提供方只处理自己的认证材料：authenticate 收到用户填写的字段，返回
+        ``{id, alias, uuid, data?, skinUrl?}``；resolve_credentials 在启动时
+        收到公开账户信息，返回 ``{player_name, uuid, user_type, access_token}``。
+        宿主按提供方分区保存不透明负载，不记录凭据明文。
+
+        :param provider_id: 提供方稳定标识，小写字母开头
+        :param title: 面向用户显示的名称
+        :param fields: 动态登录表单字段，最多 6 项
+        :param authenticate: 处理用户输入并返回账户信息的回调
+        :param resolve_credentials: 启动时解析凭据的回调
+        :param description: 可选说明
+        :raises HostApiError: 未获准或表单字段无效时抛出
+        """
+        authenticate_ref = self.register_callback(authenticate)
+        resolve_ref = self.register_callback(resolve_credentials)
+        self.host.call(
+            "auth.register",
+            {
+                "provider_id": provider_id,
+                "title": title,
+                "description": description,
+                "fields": [
+                    {
+                        "key": str(item.get("key", "")),
+                        "label": str(item.get("label", "")),
+                        "type": str(item.get("type", "text")),
+                        "required": bool(item.get("required", True)),
+                    }
+                    for item in fields
+                ],
+                "authenticate_ref": authenticate_ref,
+                "resolve_ref": resolve_ref,
+            },
+        )
+
+    def register_connector_status(
+        self,
+        callback: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
+    ) -> str:
+        """
+        登记联机状态补充，需已获准「联机扩展」。
+
+        回调只收到玩家数量与协议名，返回 ``{"fields": {...}}`` 补充展示字段；
+        不能创建、加入或关闭房间。
+
+        :param callback: 处理状态上下文的回调
+        :return: 本运行登记的回调标识
+        :raises HostApiError: 未获准或宿主未提供联机扩展时抛出
+        """
+        reference = self.register_callback(callback)
+        self.host.call("connector.register_status", {"callback_ref": reference})
         return reference
 
     def define_tool(

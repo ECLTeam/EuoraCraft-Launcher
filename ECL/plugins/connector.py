@@ -40,6 +40,29 @@ from typing import Any
 
 from ECL.utils import get_logger
 
+# 第三方状态补充上限：只允许补充展示字段，不覆盖宿主结论。
+limit_status_fields = 8
+limit_status_text = 256
+
+
+def sanitize_status_fields(payload: object) -> dict[str, str]:
+    """
+    收敛第三方联机状态补充，越界项丢弃而不是整体失败。
+
+    :param payload: 插件回调返回值
+    :return: 可直接合并进状态展示的字段
+    """
+    if not isinstance(payload, dict):
+        return {}
+    fields = payload.get("fields")
+    if not isinstance(fields, dict):
+        return {}
+    return {
+        str(key)[:64]: value[:limit_status_text]
+        for key, value in list(fields.items())[:limit_status_fields]
+        if isinstance(value, str)
+    }
+
 
 class ConnectorProtocolPolicy:
     """

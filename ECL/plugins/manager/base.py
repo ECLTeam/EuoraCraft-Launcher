@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import RLock
@@ -22,8 +22,13 @@ from ECL.foundation import EventBus
 from ECL.java.manager import JavaManager
 from ECL.java.queries import JavaQueries
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.auth_providers import AuthProviderRegistry
-from ECL.plugins.connector import ConnectorExtensionRegistry
+from ECL.plugins.auth_providers import (
+    AuthField,
+    AuthProviderRegistry,
+    sanitize_account_payload,
+    sanitize_credentials_payload,
+)
+from ECL.plugins.connector import ConnectorExtensionRegistry, sanitize_status_fields
 from ECL.plugins.crash_extensions import (
     CrashAnalysisContext,
     CrashAnalysisExtensionRegistry,
@@ -203,6 +208,8 @@ class _PluginState:
             compat_sink=self._on_worker_compat,
             tool_spawner=self._spawn_worker_tool,
             tool_stopper=self._stop_worker_tool,
+            auth_sink=self._on_worker_auth,
+            connector_sink=self._on_worker_connector,
             ui_injection_allowed=self._ui_injection_allowed,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
@@ -299,6 +306,76 @@ class _PluginState:
             name=f"worker:{phase}",
             required=required,
             **{attribute: self._worker_hook_callable(name, phase, callback_ref)},
+        )
+
+    def _on_worker_auth(self, name: str, provider_id: str | None, definition: object | None) -> None:
+        """
+        登记或撤销第三方登录提供方，凭据由账户服务按提供方分区保存。
+
+        :param name: 安装名称
+        :param provider_id: 提供方标识；None 表示撤销
+        :param definition: 已校验的提供方定义
+        """
+        if provider_id is None or definition is None:
+            self.auth_providers.unregister_owner(name)
+            return
+        fields = [
+            AuthField(key=item.key, label=item.label, type=item.type, required=item.required)
+            for item in definition.fields
+        ]
+        authenticate_ref = definition.authenticate_ref
+        resolve_ref = definition.resolve_ref
+
+        def authenticate(values: Mapping[str, object]) -> dict[str, object]:
+            if self.worker_service is None:
+                raise RuntimeError("插件运行未就绪")
+            payload = {"fields": {str(key)[:32]: str(value)[:1024] for key, value in list(values.items())[:6]}}
+            return sanitize_account_payload(self.worker_service.invoke_hook(name, authenticate_ref, payload, 5.0))
+
+        def resolve(current: dict[str, object]) -> dict[str, str]:
+            if self.worker_service is None:
+                raise RuntimeError("插件运行未就绪")
+            payload = {"account": {key: str(current.get(key, ""))[:256] for key in ("id", "alias", "uuid")}}
+            return sanitize_credentials_payload(self.worker_service.invoke_hook(name, resolve_ref, payload, 5.0))
+
+        self.auth_providers.register(
+            owner=name,
+            provider_id=provider_id,
+            title=definition.title,
+            fields=fields,
+            authenticate=authenticate,
+            resolve_credentials=resolve,
+            description=definition.description,
+        )
+
+    def _on_worker_connector(self, name: str, callback_ref: str | None) -> None:
+        """
+        登记或撤销第三方联机状态补充，只允许补充展示字段。
+
+        :param name: 安装名称
+        :param callback_ref: 本运行登记的回调标识；None 表示撤销
+        """
+        if callback_ref is None:
+            self.connector_extensions.unregister_owner(name)
+            return
+
+        def enrich(_context: object, status: dict[str, object]) -> dict[str, object]:
+            if self.worker_service is None:
+                return {}
+            players = status.get("players")
+            protocols = status.get("protocols")
+            payload = {
+                "player_count": len(players) if isinstance(players, list) else 0,
+                "protocols": [str(item)[:64] for item in protocols[:16]] if isinstance(protocols, list) else [],
+            }
+            fields = sanitize_status_fields(self.worker_service.invoke_hook(name, callback_ref, payload, 5.0))
+            return {"plugin_fields": fields} if fields else {}
+
+        self.connector_extensions.register(
+            owner=name,
+            name="status",
+            protocols={},
+            enrich_status=enrich,
         )
 
     def _spawn_worker_tool(self, owner: str, title: str, argv: list[str], cwd: str) -> str:

@@ -373,6 +373,38 @@ class LaunchHookDefinition(RequestModel):
     required: StrictBool = False
 
 
+class AuthFieldSpec(RequestModel):
+    """
+    动态登录表单字段：只声明输入形态，不携带默认值或凭据。
+    """
+
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    label: str = Field(min_length=1, max_length=32)
+    type: Literal["text", "password"] = "text"
+    required: StrictBool = True
+
+
+class AuthProviderDefinition(RequestModel):
+    """
+    认证提供方登记：表单字段与两个回调，宿主不保存任何凭据明文。
+    """
+
+    provider_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,31}$")
+    title: str = Field(min_length=1, max_length=32)
+    description: str = Field(default="", max_length=200)
+    fields: list[AuthFieldSpec] = Field(min_length=1, max_length=6)
+    authenticate_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    resolve_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class ConnectorStatusDefinition(RequestModel):
+    """
+    联机状态补充登记：只允许补充展示字段，不参与房间控制。
+    """
+
+    callback_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
 class ToolDefinition(RequestModel):
     """
     受管工具声明：可执行文件必须位于插件包内，参数模型固定且数量有界。
