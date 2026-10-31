@@ -1,0 +1,16 @@
+{
+  "name": "worker-game-tools-example",
+  "title": "游戏资源与整合包示例",
+  "version": "1.0.0",
+  "api_version": 2,
+  "entry_point": "main:Plugin",
+  "description": "仅在明确调用命令后执行资源或整合包操作。",
+  "permissions": [
+    {"capability": "instances.read", "required": false},
+    {"capability": "instances.manage", "required": false},
+    {"capability": "accounts.read", "required": false},
+    {"capability": "java.read", "required": false},
+    {"capability": "java.use", "required": false},
+    {"capability": "network.read", "required": false, "resource_refs": ["https:cdn.modrinth.com:443"]}
+  ]
+}

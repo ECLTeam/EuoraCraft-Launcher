@@ -29,7 +29,7 @@ import os
 import re
 import shutil
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from threading import Event, Thread
@@ -837,7 +837,13 @@ class ModpackCoordinator(_GameState):
     """
 
     def prepare_modpack(
-        self, source: str, source_path: Path | None = None, project_id: str = "", file_id: str = ""
+        self,
+        source: str,
+        source_path: Path | None = None,
+        project_id: str = "",
+        file_id: str = "",
+        *,
+        context: OperationContext | None = None,
     ) -> dict[str, str]:
         """
         创建进程内整合包快照并提交可取消的预览准备任务，不安装游戏或模组。
@@ -846,6 +852,7 @@ class ModpackCoordinator(_GameState):
         :param source_path: 本地压缩包，仅 local 使用
         :param project_id: 在线项目标识
         :param file_id: 在线包版本或文件标识
+        :param context: 受信调用方已有的任务；提供时在该任务内执行，不创建全局回执
         :return: preparationId 与后台 operationId
         :raises GameServiceError: 来源、文件或在线标识无效
         """
@@ -909,6 +916,8 @@ class ModpackCoordinator(_GameState):
             finally:
                 self._modpack_preparations.finish_worker(record, prepared=prepared)
 
+        if context is not None:
+            return worker(context)
         try:
             operation = self._application_operations.submit("modpack_prepare", worker)
         except Exception:
@@ -955,8 +964,15 @@ class ModpackCoordinator(_GameState):
         return self._modpack_preparations.release(preparation_id)
 
     def install_prepared_modpack(
-        self, preparation_id: str, game_path: Path, new_version_id: str, excluded_file_ids: list[str]
-    ) -> dict[str, str]:
+        self,
+        preparation_id: str,
+        game_path: Path,
+        new_version_id: str,
+        excluded_file_ids: list[str],
+        *,
+        context: OperationContext | None = None,
+        download: Callable[[PackFileEntry, Path, OperationContext], None] | None = None,
+    ) -> dict[str, JsonValue]:
         """
         根据已经展示的快照和可选文件选择创建新实例。
 
@@ -964,6 +980,8 @@ class ModpackCoordinator(_GameState):
         :param game_path: 目标游戏根目录
         :param new_version_id: 新实例名，不允许覆盖
         :param excluded_file_ids: 明确排除的 optional 文件标识
+        :param context: 受信调用方拥有的任务上下文，缺省由应用创建用户任务
+        :param download: 受信下载边界；插件提供时逐条验证其联网准入
         :return: 安装操作句柄
         :raises GameServiceError: 快照、选择或目标无效
         """
@@ -977,7 +995,9 @@ class ModpackCoordinator(_GameState):
                 context.check_cancelled()
                 target.instance_path.parent.mkdir(parents=True, exist_ok=True)
                 if record.legacy_root is not None:
-                    return self._import_legacy_ecl_pack(record.legacy_root, target, context)
+                    return self._import_legacy_ecl_pack(
+                        record.legacy_root, target, context, private_staging=download is not None
+                    )
                 assert record.plan is not None
                 ignored_paths = frozenset(
                     item.entry.target_relative.casefold()
@@ -992,13 +1012,15 @@ class ModpackCoordinator(_GameState):
                         if item.file_id not in excluded and item.entry.env_client != "unsupported"
                     ),
                 )
-                result = self._install_plan_into_instance(plan, target, context, ignored_paths)
+                result = self._install_plan_into_instance(plan, target, context, ignored_paths, download=download)
                 result["excludedOptionalFiles"] = len(excluded)
                 result["unsupportedFiles"] = sum(item.entry.env_client == "unsupported" for item in record.files)
                 return result
             finally:
                 self._modpack_preparations.finish_worker(record)
 
+        if context is not None:
+            return worker(context)
         kind = "instance_import" if record.source == "local" else "modpack_online_install"
         try:
             return self._application_operations.submit(kind, worker)
@@ -1031,7 +1053,12 @@ class ModpackCoordinator(_GameState):
         return build_ftb_plan(info if isinstance(info, dict) else {}, manifest)
 
     def _import_legacy_ecl_pack(
-        self, extracted: Path, target: ResolvedInstanceTarget, context: OperationContext
+        self,
+        extracted: Path,
+        target: ResolvedInstanceTarget,
+        context: OperationContext,
+        *,
+        private_staging: bool = False,
     ) -> dict[str, Any]:
         """
         按 ECL 旧格式流程导入：包内容整体即实例，主版本描述重命名为新实例名。
@@ -1039,8 +1066,13 @@ class ModpackCoordinator(_GameState):
         保留历史行为：不下载文件、不校验基础版本。
         """
         staging = target.instance_path.with_name(f".{target.instance_directory_name}.ecl-import")
+        if private_staging:
+            staging = target.instance_path.with_name(f".ecl-plugin-import-{uuid4().hex}")
+            staging.mkdir()
         try:
-            shutil.copytree(extracted, staging, ignore=shutil.ignore_patterns("ecl-pack.json"))
+            shutil.copytree(
+                extracted, staging, ignore=shutil.ignore_patterns("ecl-pack.json"), dirs_exist_ok=private_staging
+            )
             manifests = list(staging.glob("*.json"))
             original = next((path for path in manifests if path.name != "ecl-pack.json"), None)
             if original and original.name != f"{target.instance_directory_name}.json":
@@ -1068,6 +1100,8 @@ class ModpackCoordinator(_GameState):
         target: ResolvedInstanceTarget,
         context: OperationContext,
         ignored_paths: frozenset[str] = frozenset(),
+        *,
+        download: Callable[[PackFileEntry, Path, OperationContext], None] | None = None,
     ) -> dict[str, Any]:
         """
         按安装计划创建实例：读取文件清单、安装基础版本、下载并校验文件，最后一次性保存。
@@ -1078,16 +1112,19 @@ class ModpackCoordinator(_GameState):
         if not plan.minecraft_version:
             raise GameServiceError("整合包缺少 Minecraft 版本声明", "INVALID_PACK_ARCHIVE")
         staging = target.instance_path.with_name(f".{target.instance_directory_name}.ecl-import")
+        if download is not None:
+            staging = target.instance_path.with_name(f".ecl-plugin-import-{uuid4().hex}")
+            staging.mkdir()
         try:
             entries, skipped = self._resolve_pack_entries(plan, context)
             base_name = self._ensure_pack_base_version(plan, target, context)
             context.progress(32, f"正在下载 {len(entries)} 个整合包文件")
-            self._download_pack_files(entries, staging, context, 32, 72)
+            self._download_pack_files(entries, staging, context, 32, 72, download)
             context.progress(74, "正在校验下载文件")
             self._verify_pack_files(entries, staging, context)
             context.progress(78, "正在复制整合包实例内容")
             overrides_count = self._copy_pack_overrides(plan, staging, context, ignored_paths)
-            self._write_pack_version_json(base_name, target, staging)
+            self._write_pack_version_json(base_name, target, staging, plan.minecraft_version)
             context.check_cancelled()
             context.finalize(lambda: _commit_staged_instance(staging, target.instance_path))
             return {
@@ -1188,6 +1225,7 @@ class ModpackCoordinator(_GameState):
             report=report,
             cancel_event=context.cancel_event,
             include_fabric_api=False,
+            check_callback=context.check_cancelled,
         )
         if not _is_instance_manifest_ready(base_json):
             raise GameServiceError(f"基础版本 {base_name} 安装失败", "PACK_BASE_VERSION_MISSING")
@@ -1201,6 +1239,7 @@ class ModpackCoordinator(_GameState):
         context: OperationContext,
         progress_start: float,
         progress_end: float,
+        download: Callable[[PackFileEntry, Path, OperationContext], None] | None = None,
     ) -> None:
         """
         用共享下载引擎并发下载整合包文件到 staging 目录。
@@ -1209,6 +1248,16 @@ class ModpackCoordinator(_GameState):
         监听并停止下载器。
         """
         if not entries:
+            return
+        if download is not None:
+            for index, entry in enumerate(entries):
+                context.check_cancelled()
+                destination = staging.joinpath(*entry.target_relative.split("/"))
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                download(entry, destination, context)
+                context.progress(
+                    progress_start + (index + 1) / len(entries) * (progress_end - progress_start), "正在下载整合包文件"
+                )
             return
         download_list: list[tuple[str, Path]] = []
         for entry in entries:
@@ -1316,13 +1365,16 @@ class ModpackCoordinator(_GameState):
         return len(files)
 
     @staticmethod
-    def _write_pack_version_json(base_name: str, target: ResolvedInstanceTarget, staging: Path) -> None:
+    def _write_pack_version_json(
+        base_name: str, target: ResolvedInstanceTarget, staging: Path, minecraft_version: str
+    ) -> None:
         """
         保留基础版本的完整启动描述与本地父版本文件，使导入实例符合 Core 文件布局。
 
         Core 不把父描述的 mainClass 合并到子描述，且加载器目录可能内嵌原版
         JSON/JAR；只写 inheritsFrom 会得到无法启动的实例。复制仅限顶层启动
         元数据与客户端 JAR，不复制基础目录中的模组、配置或用户文件。
+        新实例使用整合包声明的 Minecraft 父版本，避免将自定义实例名作为导出依赖。
         """
         base_directory = target.instance_path.parent / base_name
         metadata = _read_json_file(base_directory / f"{base_name}.json")
@@ -1337,6 +1389,7 @@ class ModpackCoordinator(_GameState):
             name = f"{target.instance_directory_name}.jar" if source.name == f"{base_name}.jar" else source.name
             shutil.copy2(source, staging / name)
         metadata["id"] = target.instance_directory_name
+        metadata["inheritsFrom"] = minecraft_version
         atomic_write_text(
             staging / f"{target.instance_directory_name}.json",
             json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -1369,14 +1422,20 @@ class ModpackCoordinator(_GameState):
         return snapshot
 
     def preview_instance_export(
-        self, game_path: Path, version_id: str, version_isolation: bool | None = None
-    ) -> dict[str, str]:
+        self,
+        game_path: Path,
+        version_id: str,
+        version_isolation: bool | None = None,
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, JsonValue]:
         """
         在后台扫描实例实际游戏目录，返回可选择文件的服务器身份。
 
         :param game_path: Minecraft 游戏根目录
         :param version_id: 所属实例 ID
         :param version_isolation: 临时隔离覆盖，未指定时使用实例和全局设置
+        :param context: 原始调用方的任务上下文，提供时不创建其他任务
         :return: 可取消的扫描操作句柄
         """
 
@@ -1386,6 +1445,8 @@ class ModpackCoordinator(_GameState):
             context.check_cancelled()
             return snapshot.payload()
 
+        if context is not None:
+            return worker(context)
         return self._application_operations.submit("instance_export_preview", worker)
 
     def export_instance_pack(
@@ -1402,7 +1463,8 @@ class ModpackCoordinator(_GameState):
         summary: str,
         resource_mode: str,
         version_isolation: bool | None = None,
-    ) -> dict[str, str]:
+        context: OperationContext | None = None,
+    ) -> dict[str, JsonValue]:
         """
         重新验证用户选择并原子导出标准 mrpack，失败或取消保留原有输出。
 
@@ -1417,6 +1479,7 @@ class ModpackCoordinator(_GameState):
         :param summary: 整合包简介
         :param resource_mode: references 优先反查所选模组，bundled 直接打包
         :param version_isolation: 未指定时使用实例有效隔离策略
+        :param context: 原始调用方的任务；输出必须由该调用方在可信边界确定
         :return: 后台导出操作句柄，提交不等于完成
         :raises GameServiceError: 格式、来源、选择或输出冲突时抛出
         """
@@ -1484,6 +1547,8 @@ class ModpackCoordinator(_GameState):
                     with self._lock:
                         self._export_output_paths.discard(output)
 
+        if context is not None:
+            return worker(context)
         return self._application_operations.submit("instance_export", worker)
 
     def _resolve_export_online_files(

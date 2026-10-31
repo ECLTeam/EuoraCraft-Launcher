@@ -27,6 +27,7 @@ from ECL.services.operations import OperationOrigin
 from ECL.utils.errors import GameServiceError
 
 if TYPE_CHECKING:
+    from ECL.plugins.runtime.java_api import RuntimeJava
     from ECL.services.game.plugin_games import GameResourceTarget, PluginGameCoordinator, PluginGameRun
 
 
@@ -48,6 +49,7 @@ class RuntimeGameLaunch:
         game: PluginGameCoordinator,
         resources: RuntimeResources,
         operations: RuntimeOperations,
+        java: RuntimeJava | None = None,
     ) -> None:
         """
         绑定已有授权、游戏和任务服务，不建立进程管理器或执行器。
@@ -56,11 +58,13 @@ class RuntimeGameLaunch:
         :param game: 应用唯一游戏服务
         :param resources: 当前运行的物理资源引用
         :param operations: 当前运行任务门面
+        :param java: 同一运行的 Java 引用服务，不接受客户端路径
         """
         self._session = session
         self._game = game
         self._resources = resources
         self._operations = operations
+        self._java = java
         self._origin = OperationOrigin(session.view().installation_id, session.binding.content_digest, session.run_id)
         self._references: dict[str, _GameRunReference] = {}
         self._lock = RLock()
@@ -111,6 +115,14 @@ class RuntimeGameLaunch:
         target, launch = self._resources.game_target(query.instance_ref, "instances.manage", submission_deadline)
         if target.version_id is None:
             raise ProtocolError("启动需要具体实例", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
+        deadline = monotonic() + 180
+        java_path = None
+        java_check = None
+        if query.options.runtime_ref is not None:
+            if self._java is None:
+                raise ProtocolError("当前宿主未提供 Java 选用", "PLUGIN_API_METHOD_NOT_FOUND")
+            record, java_check = self._java.selection(query.options.runtime_ref, deadline)
+            java_path = record.executable_path
         try:
             reservation = self._game.reserve_plugin_launch(self._origin)
         except GameServiceError as exc:
@@ -119,6 +131,8 @@ class RuntimeGameLaunch:
 
         def verify() -> None:
             self._resources.verify_game_target(target, launch, min(deadline, monotonic() + 5))
+            if java_check is not None:
+                java_check()
 
         try:
             reference = self._operations.submit(
@@ -133,6 +147,7 @@ class RuntimeGameLaunch:
                     query.options.width,
                     query.options.height,
                     query.options.fullscreen,
+                    java_path=java_path,
                 ),
                 launch,
                 result_lease=launch,

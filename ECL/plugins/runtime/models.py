@@ -18,6 +18,7 @@
 #   - validate_fields — 校验命令输入输出的基础字段。
 #   - class DownloadSubmitRequest — 私有空间新文件下载任务请求。
 #   - class NetworkRequest — GET/HEAD 只读网络请求的严格边界。
+#   - class JavaInventoryRequest / JavaValidateRequest / JavaCatalogRequest — Java 查询与校验输入。
 # ============================================================
 
 from __future__ import annotations
@@ -196,12 +197,28 @@ def validate_fields(fields: list[FieldSpec], values: dict[str, JsonValue]) -> No
         raise ProtocolError("插件命令字段不符合定义", "PLUGIN_SCHEMA_INVALID")
 
 
+class JavaInstallPlanRequest(RequestModel):
+    """
+    仅接受当前运行通过官方目录获得的包引用。
+    """
+
+    package_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class JavaInstallRequest(RequestModel):
+    """
+    仅接受当前运行已准备的 Java 安装计划。
+    """
+
+    plan_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
 class ResourceListRequest(RequestModel):
     """
     仅发现本运行获准的实例资源，不接受其他能力或宿主路径。
     """
 
-    capability: Literal["plugin.base", "instances.read", "instances.manage"]
+    capability: Literal["plugin.base", "instances.read", "instances.manage", "java.read", "accounts.read"]
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
 
@@ -396,4 +413,53 @@ class DownloadSubmitRequest(FileStatRequest):
             raise ValueError("下载只允许新建命名文件")
         if "expected_sha256" in self.model_fields_set and self.expected_sha256 is None:
             raise ValueError("摘要不得显式为空")
+        return self
+
+
+class JavaInventoryRequest(RequestModel):
+    """
+    仅分页已授权 Java，不接受扫描或强制刷新参数。
+    """
+
+    cursor: str | None = Field(default=None, max_length=128)
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+class JavaValidateRequest(RequestModel):
+    """
+    仅校验当前运行引用，最低主版本不接受空值或伪整数。
+    """
+
+    runtime_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    required_major: StrictInt | None = Field(default=None, ge=1, le=99)
+
+    @model_validator(mode="after")
+    def validate_major(self) -> JavaValidateRequest:
+        """
+        区分未指定最低版本和显式非法空值。
+
+        :return: 完成严格校验的请求
+        """
+        if "required_major" in self.model_fields_set and self.required_major is None:
+            raise ValueError("最低主版本不能为 null")
+        return self
+
+
+class JavaCatalogRequest(JavaInventoryRequest):
+    """
+    查询固定来源的单个主版本与运行时类型。
+    """
+
+    major_version: StrictInt | None = Field(default=None, ge=1, le=99)
+    runtime_kind: Literal["JRE", "JDK"] = "JRE"
+
+    @model_validator(mode="after")
+    def validate_major(self) -> JavaCatalogRequest:
+        """
+        显式 null 不代替推荐版本选择。
+
+        :return: 完成校验的请求
+        """
+        if "major_version" in self.model_fields_set and self.major_version is None:
+            raise ValueError("主版本不能为 null")
         return self

@@ -454,7 +454,7 @@ def test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None:
     assert (instance / "mods" / "a.jar").read_bytes() == mod_bytes
     assert (instance / "config" / "opts.txt").read_bytes() == b"fov=1\n"
     version_json = json.loads((instance / "Demo Pack.json").read_text(encoding="utf-8"))
-    assert version_json == {"id": "Demo Pack", "mainClass": "net.minecraft.client.main.Main"}
+    assert version_json == {"id": "Demo Pack", "mainClass": "net.minecraft.client.main.Main", "inheritsFrom": "1.21.1"}
     assert not (game_path / "versions" / ".Demo Pack.ecl-import").exists()
 
 

@@ -38,10 +38,15 @@ from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.game_install import RuntimeGameInstall
 from ECL.plugins.runtime.game_launch import RuntimeGameLaunch
 from ECL.plugins.runtime.game_queries import RuntimeGameCatalog
+from ECL.plugins.runtime.game_resources import RuntimeGameResources
 from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
+from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
+from ECL.plugins.runtime.modpacks import RuntimeModpacks
 from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
+from ECL.plugins.runtime.public_queries import RuntimePublicQueries
+from ECL.plugins.runtime.resource_queries import RuntimeResourceCatalog
 from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.services.operations import OperationManager
 from ECL.utils import atomic_write_text, get_logger
@@ -70,10 +75,30 @@ class PluginHostBroker:
     """
 
     implemented_capabilities: ClassVar[frozenset[str]] = frozenset(
-        {"instances.read", "instances.manage", "network.read"}
+        {
+            "instances.read",
+            "instances.manage",
+            "network.read",
+            "java.read",
+            "java.use",
+            "java.catalog.read",
+            "java.install",
+            "accounts.read",
+        }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
         {
+            "mods.install",
+            "mods.delete",
+            "mods.set_enabled",
+            "resourcepacks.install",
+            "resourcepacks.delete",
+            "shaders.install",
+            "shaders.delete",
+            "modpacks.prepare",
+            "modpacks.install",
+            "modpacks.export_preview",
+            "modpacks.export",
             "commands.register",
             "commands.unregister",
             "settings.define",
@@ -92,6 +117,8 @@ class PluginHostBroker:
             "game.install",
             "game.launch",
             "game.stop",
+            "java.install_plan",
+            "java.install",
         }
     )
     max_receipts: ClassVar[int] = 1024
@@ -109,6 +136,8 @@ class PluginHostBroker:
         network_service: PluginNetworkService | None = None,
         instance_profiles: InstanceProfileTransactions | None = None,
         game_operations: PluginGameCoordinator | None = None,
+        java: RuntimeJava | None = None,
+        public_queries: RuntimePublicQueries | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -123,6 +152,8 @@ class PluginHostBroker:
         :param network_service: 应用唯一只读网络服务；未提供时不开放网络方法
         :param instance_profiles: 应用唯一共享实例资料事务，缺失时拒绝资料写接口
         :param game_operations: 应用唯一游戏业务入口，未提供时拒绝游戏方法
+        :param java: 当前运行的 Java 查询及实际探测资源，缺失时拒绝 Java 方法
+        :param public_queries: 明确选定账户与公开配置的白名单查询
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -139,7 +170,7 @@ class PluginHostBroker:
             else None
         )
         self.game_launch: RuntimeGameLaunch | None = (
-            RuntimeGameLaunch(session, game_operations, resources, self.operations)
+            RuntimeGameLaunch(session, game_operations, resources, self.operations, java)
             if game_operations is not None and resources is not None and self.operations is not None
             else None
         )
@@ -147,6 +178,28 @@ class PluginHostBroker:
             RuntimeFiles(session, file_storage, self.operations) if file_storage and self.operations else None
         )
         self.network: RuntimeNetwork | None = RuntimeNetwork(session, network_service) if network_service else None
+        self.java: RuntimeJava | None = java
+        self.public_queries = public_queries
+        self.resource_catalog = (
+            RuntimeResourceCatalog(session, game_operations) if game_operations is not None else None
+        )
+        self.game_resources: RuntimeGameResources | None = (
+            RuntimeGameResources(resources, game_operations, self.files, self.operations)
+            if resources is not None
+            and game_operations is not None
+            and self.files is not None
+            and self.operations is not None
+            else None
+        )
+        self.modpacks: RuntimeModpacks | None = (
+            RuntimeModpacks(session, game_operations, resources, self.files, self.operations, self.network, data_path)
+            if game_operations is not None
+            and resources is not None
+            and self.files is not None
+            and self.operations is not None
+            and self.network is not None
+            else None
+        )
         self.downloads: RuntimeDownloads | None = (
             RuntimeDownloads(session, self.files, self.network, self.operations)
             if self.files is not None and self.network is not None and self.operations is not None
@@ -305,9 +358,9 @@ class PluginHostBroker:
 
     def _dispatch(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
-        if method.startswith("game."):
+        if method.startswith(("game.", "mods.", "resourcepacks.", "shaders.", "modpacks.")):
             return self._game_service(request)
-        if method.startswith("files.") or method in {
+        if method.startswith(("files.", "java.", "accounts.", "config.")) or method in {
             "operations.get",
             "operations.list",
             "operations.cancel",
@@ -357,21 +410,23 @@ class PluginHostBroker:
             raise ProtocolError("当前宿主未提供实例资料修改", "PLUGIN_API_METHOD_NOT_FOUND")
         return self.instance_profiles.submit(request.params, min(request.deadline, monotonic() + 5))
 
+    @staticmethod
+    def _is_java_query(request: RpcRequest) -> bool:
+        return request.method.startswith("java.") or (
+            request.method == "resources.list" and request.params.get("capability") == "java.read"
+        )
+
     def _query_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
+        if self._is_public_query(request):
+            return self._public_query(request)
+        if self._is_java_query(request):
+            return self._java_query(request)
         if method == "instances.profile_patch":
             return self._profile_service(request)
-        if method == "downloads.submit":
-            if self.downloads is None:
-                raise ProtocolError("当前宿主未提供下载任务", "PLUGIN_API_METHOD_NOT_FOUND")
-            return self.downloads.submit(params, request.deadline)
-        if method == "network.request":
-            if self.network is None:
-                raise ProtocolError("当前宿主未提供网络读取", "PLUGIN_API_METHOD_NOT_FOUND")
-            result = self.network.handle(params, request.deadline)
-            request.check_deadline()
-            return result
-        if method.startswith("files.") or (method == "resources.list" and params.get("capability") == "plugin.base"):
+        if method in {"downloads.submit", "network.request"}:
+            return self._network_query(request)
+        if self._is_file_query(request):
             if self.files is None:
                 raise ProtocolError("当前宿主未提供私有文件", "PLUGIN_API_METHOD_NOT_FOUND")
             deadline = min(request.deadline, monotonic() + (30 if method == "files.read" else 5))
@@ -381,18 +436,54 @@ class PluginHostBroker:
                 raise ProtocolError("当前宿主未提供任务控制", "PLUGIN_API_METHOD_NOT_FOUND")
             return self.operations.handle(method, params)
         if method in {"resources.list", "instances.scan", "instances.get"}:
-            if self._resources is None:
-                raise ProtocolError("当前宿主未提供实例查询", "PLUGIN_API_METHOD_NOT_FOUND")
-            deadline = min(request.deadline, monotonic() + (30 if method == "instances.scan" else 5))
-            result = self._resources.handle(method, params, deadline)
-            request.check_deadline()
-            return result
+            return self._instance_query(request)
         raise ProtocolError("服务方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+
+    @staticmethod
+    def _is_file_query(request: RpcRequest) -> bool:
+        return request.method.startswith("files.") or (
+            request.method == "resources.list" and request.params.get("capability") == "plugin.base"
+        )
+
+    def _network_query(self, request: RpcRequest) -> dict[str, JsonValue]:
+        if request.method == "downloads.submit":
+            if self.downloads is None:
+                raise ProtocolError("当前宿主未提供下载任务", "PLUGIN_API_METHOD_NOT_FOUND")
+            return self.downloads.submit(request.params, request.deadline)
+        if self.network is None:
+            raise ProtocolError("当前宿主未提供网络读取", "PLUGIN_API_METHOD_NOT_FOUND")
+        result = self.network.handle(request.params, request.deadline)
+        request.check_deadline()
+        return result
+
+    @staticmethod
+    def _is_public_query(request: RpcRequest) -> bool:
+        return request.method.startswith(("accounts.", "config.")) or (
+            request.method == "resources.list" and request.params.get("capability") == "accounts.read"
+        )
+
+    def _public_query(self, request: RpcRequest) -> dict[str, JsonValue]:
+        if self.public_queries is None:
+            raise ProtocolError("当前宿主未提供公开查询", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self.public_queries.handle(request.method, request.params, request.deadline)
 
     def _game_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         """
         仅转给当前应用实际绑定的游戏查询或控制门面，未知方法保持拒绝。
         """
+        if request.method.startswith("modpacks."):
+            if self.modpacks is None:
+                raise ProtocolError("当前宿主未提供整合包管理", "PLUGIN_API_METHOD_NOT_FOUND")
+            return self.modpacks.handle(request.method, request.params, request.deadline)
+        if request.method.startswith(("mods.", "resourcepacks.", "shaders.")):
+            if (
+                request.method.endswith((".search", ".versions", ".download_info"))
+                and self.resource_catalog is not None
+            ):
+                return self.resource_catalog.handle(request.method, request.params, request.deadline)
+            if self.game_resources is None:
+                raise ProtocolError("当前宿主未提供游戏资源管理", "PLUGIN_API_METHOD_NOT_FOUND")
+            return self.game_resources.handle(request.method, request.params, request.deadline)
         if request.method in {"game.catalog", "game.loaders"} and self.game_catalog is not None:
             return self.game_catalog.handle(request.method, request.params, request.deadline)
         if request.method == "game.install" and self.game_install is not None:
@@ -405,6 +496,29 @@ class PluginHostBroker:
             if request.method == "game.stop":
                 return self.game_launch.stop(request.params, min(request.deadline, monotonic() + 5))
         raise ProtocolError("当前宿主未提供此游戏方法", "PLUGIN_API_METHOD_NOT_FOUND")
+
+    def _java_query(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        拒绝未注入的 Java 服务，并限制其真实调用总预算。
+        """
+        if self.java is None:
+            raise ProtocolError("当前宿主未提供 Java 查询", "PLUGIN_API_METHOD_NOT_FOUND")
+        if request.method == "java.install":
+            if self.operations is None:
+                raise ProtocolError("当前宿主未提供任务服务", "PLUGIN_API_METHOD_NOT_FOUND")
+            return self.java.install(request.params, self.operations, min(request.deadline, monotonic() + 5))
+        return self.java.handle(request.method, request.params, min(request.deadline, monotonic() + 30))
+
+    def _instance_query(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        为实例读取提供统一服务缺失、截止及交付检查。
+        """
+        if self._resources is None:
+            raise ProtocolError("当前宿主未提供实例查询", "PLUGIN_API_METHOD_NOT_FOUND")
+        deadline = min(request.deadline, monotonic() + (30 if request.method == "instances.scan" else 5))
+        result = self._resources.handle(request.method, request.params, deadline)
+        request.check_deadline()
+        return result
 
     def _release_registration(self, method: str, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         self._keys(params, {"registration_ref"} if method == "commands.unregister" else {"subscription_ref"})
@@ -427,7 +541,15 @@ class PluginHostBroker:
         view = self.session.view()
         items = [dict(asdict(item), resource_refs=list(item.resource_refs)) for item in view.items]
         for item in items:
-            if item["capability"] in PermissionDeclaration.host_selected_capabilities:
+            if item["capability"] == "accounts.read":
+                item["resource_refs"] = (
+                    self.public_queries.permission_refs() if self.public_queries and item["decision"] == "allow" else []
+                )
+            elif item["capability"] in {"java.read", "java.use"}:
+                item["resource_refs"] = (
+                    self.java.permission_refs(item["capability"]) if self.java and item["decision"] == "allow" else []
+                )
+            elif item["capability"] in PermissionDeclaration.host_selected_capabilities:
                 item["resource_refs"] = (
                     self._resources.permission_refs(item["capability"])
                     if self._resources and item["decision"] == "allow"
@@ -732,12 +854,16 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        if self.modpacks is not None:
+            self.modpacks.close()
         if self.game_catalog is not None:
             self.game_catalog.close()
         if self.game_install is not None:
             self.game_install.close()
         if self.game_launch is not None:
             self.game_launch.close()
+        if self.java is not None:
+            self.java.close()
         if self.network is not None:
             self.network.close()
         if self.files is not None:

@@ -331,7 +331,7 @@ def test_imported_instance_builds_core_launch_command_with_complete_metadata(tmp
         target = service.resolve_instance(game_path, "Imported")
         staging = tmp_path / "staging"
         staging.mkdir()
-        service._write_pack_version_json(base_name, target, staging)
+        service._write_pack_version_json(base_name, target, staging, "1.21.1")
         staging.replace(target.instance_path)
         command = build_minecraft_cmd(
             LaunchConfig(

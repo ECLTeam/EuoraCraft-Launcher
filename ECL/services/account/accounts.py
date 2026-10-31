@@ -9,6 +9,7 @@
 #   - class LauncherMicrosoftAccountManager — 将底层 Microsoft 认证流程适配为启动器账户管理流程。
 #       - add_microsoft_account() -> str — 完成 Microsoft 登录并保存可用于启动游戏的账户。
 #   - class AccountManager — 聚合离线、Microsoft 与 Authlib 账户，并维护当前账户选择。
+#   - class AccountSummary — 不包含邮箱、凭据或提供方私有数据的账户快照。
 #       - microsoft_login_config() -> dict[str, bool] — 返回微软设备代码登录是否具备有效客户端配置。
 #       - default_skins() -> list[dict[str, Any]] — 返回可供离线账户选择的默认皮肤列表。
 #       - list_auth_providers() -> list[dict[str, Any]] — 返回插件注册的全部认证提供方定义，供前端动态渲染登录表单。
@@ -58,6 +59,7 @@ from ECL.foundation import BuildEnvironment, EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
 from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.utils import AccountError, atomic_write_text, get_logger
+from ECL.utils.account_reading import AccountSummary
 
 from .authlib import AuthlibAccountManager, AuthlibError
 
@@ -661,6 +663,36 @@ class AccountManager:
             accounts = self._all_accounts()
             current = next((account for account in accounts if account["isCurrent"]), None)
             return {"accounts": accounts, "current": current}
+
+    def plugin_account_snapshot(self) -> tuple[AccountSummary, ...]:
+        """
+        在账户锁内读取最小展示快照，不刷新凭据或修改当前选择。
+
+        :return: 不含邮箱、令牌、头像地址或提供方私有数据的不可变摘要
+        :raises AccountError: 账户展示数据损坏或数量超限时抛出
+        """
+        with self._lock:
+            accounts = self._all_accounts()
+            if len(accounts) > 4096:
+                raise AccountError("账户摘要数量超过上限", "PLUGIN_ACCOUNT_QUERY_FAILED")
+            result = []
+            for account in accounts:
+                identifier, alias, uuid, kind = (account.get(key) for key in ("id", "alias", "uuid", "type"))
+                if not all(isinstance(value, str) for value in (identifier, alias, uuid, kind)) or not identifier:
+                    raise AccountError("账户摘要格式无效", "PLUGIN_ACCOUNT_QUERY_FAILED")
+                if len(identifier) > 256 or len(alias) > 256 or len(uuid) > 64 or len(kind) > 64:
+                    raise AccountError("账户摘要字段超过上限", "PLUGIN_ACCOUNT_QUERY_FAILED")
+                # 展示层或外部提供方可能以邮箱回退，插件只取得玩家名称。
+                if "@" in alias:
+                    alias = ""
+                try:
+                    player_uuid = UUID(uuid).hex if uuid else ""
+                except ValueError as error:
+                    raise AccountError("账户玩家 UUID 无效", "PLUGIN_ACCOUNT_QUERY_FAILED") from error
+                result.append(
+                    AccountSummary(identifier, alias, player_uuid, kind, identifier == self._current_account_id)
+                )
+            return tuple(result)
 
     def current_account(self) -> dict[str, Any] | None:
         """

@@ -25,7 +25,7 @@ from typing import BinaryIO
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from .models import JavaError, JavaPackage, JavaPolicy
 
@@ -48,32 +48,84 @@ class JavaCatalog:
         self._client = client
         self._lock = RLock()
         self._cache: dict[tuple[int, str, str, str], tuple[float, tuple[JavaPackage, ...]]] = {}
-        self._releases: tuple[float, tuple[int, ...]] | None = None
-        self.recommended_major: int = 0
+        self._releases: tuple[float, tuple[int, ...], int] | None = None
         self._package_by_id: dict[str, JavaPackage] = {}
 
-    def _get(self, suffix: str, params: dict[str, str] | None = None) -> JsonValue:
+    @property
+    def recommended_major(self) -> int:
+        """
+        从唯一版本目录快照派生推荐主版本。
+
+        :return: 尚无有效目录时为零
+        """
+        with self._lock:
+            return self._releases[2] if self._releases else 0
+
+    def release_snapshot(self, deadline: float, check: Callable[[], None]) -> tuple[int, tuple[int, ...]]:
+        """
+        查询并返回同一快照的推荐版本及正式主版本，避免并发更新交叉。
+
+        :param deadline: 原调用共同截止
+        :param check: 原始授权复核
+        :return: 同一快照的推荐主版本及正式主版本列表
+        """
+        self.releases(deadline=deadline, check=check)
+        with self._lock:
+            assert self._releases is not None
+            return self._releases[2], self._releases[1]
+
+    def _get(
+        self,
+        suffix: str,
+        params: dict[str, str] | None = None,
+        *,
+        deadline: float | None = None,
+        check: Callable[[], None] | None = None,
+    ) -> JsonValue:
         """
         限制请求耗时与 JSON 大小，校验后才将数据送入领域解析。
         """
         try:
-            deadline = monotonic() + 30
-            with self._client.stream(
-                "GET", f"https://api.adoptium.net/v3/{suffix}", params=params, timeout=15
-            ) as response:
+            deadline = deadline if deadline is not None else monotonic() + 30
+            if check is not None:
+                check()
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise JavaError("Java 目录查询已超时", "PLUGIN_DEADLINE_EXCEEDED")
+            # 新建请求不继承共享客户端的 Cookie、认证和默认请求头。
+            request = httpx.Request(
+                "GET",
+                f"https://api.adoptium.net/v3/{suffix}",
+                params=params,
+                headers={"accept": "application/json", "accept-encoding": "identity"},
+                extensions={"timeout": httpx.Timeout(min(5, remaining)).as_dict()},
+            )
+            response = self._client.send(request, stream=True, auth=None, follow_redirects=False)
+            try:
                 if response.status_code == 404:
                     return []
                 response.raise_for_status()
+                if response.headers.get("content-encoding", "identity").lower() != "identity":
+                    raise JavaError("Java 目录不接受压缩响应", "JAVA_CATALOG_INVALID")
                 content = bytearray()
-                for chunk in response.iter_bytes():
-                    if monotonic() >= deadline or len(content) + len(chunk) > 2 * 1024 * 1024:
-                        raise ValueError("metadata limit")
+                chunks = (response.content,) if response.is_stream_consumed else response.iter_raw()
+                for chunk in chunks:
+                    if check is not None:
+                        check()
+                    if monotonic() >= deadline:
+                        raise JavaError("Java 目录查询已超时", "PLUGIN_DEADLINE_EXCEEDED")
+                    if len(content) + len(chunk) > 2 * 1024 * 1024:
+                        raise JavaError("Java 目录响应超过上限", "JAVA_CATALOG_INVALID")
                     content.extend(chunk)
                 return self.json_adapter.validate_json(bytes(content))
-        except (httpx.HTTPError, ValueError) as exc:
+            finally:
+                response.close()
+        except (httpx.HTTPError, ValidationError) as exc:
             raise JavaError("Java 官方下载目录暂时不可用，请稍后刷新", "JAVA_CATALOG_UNAVAILABLE") from exc
 
-    def releases(self, force: bool = False) -> tuple[int, ...]:
+    def releases(
+        self, force: bool = False, *, deadline: float | None = None, check: Callable[[], None] | None = None
+    ) -> tuple[int, ...]:
         """
         查询实际存在的正式主版本，不硬编码来源支持能力。
 
@@ -83,7 +135,7 @@ class JavaCatalog:
         with self._lock:
             if not force and self._releases and monotonic() - self._releases[0] < 300:
                 return self._releases[1]
-        payload = self._get("info/available_releases")
+        payload = self._get("info/available_releases", deadline=deadline, check=check)
         versions = payload.get("available_releases") if isinstance(payload, dict) else None
         if not isinstance(versions, list):
             raise JavaError("Java 官方版本目录格式无效", "JAVA_CATALOG_INVALID")
@@ -97,14 +149,21 @@ class JavaCatalog:
             )
         )
         with self._lock:
-            self._releases = (monotonic(), releases)
             recommended = payload.get("most_recent_lts")
-            self.recommended_major = (
-                recommended if isinstance(recommended, int) and recommended in releases else max(releases, default=0)
-            )
+            if type(recommended) is not int or recommended not in releases:
+                raise JavaError("Java 推荐版本格式无效", "JAVA_CATALOG_INVALID")
+            self._releases = (monotonic(), releases, recommended)
         return releases
 
-    def packages(self, major_version: int, runtime_kind: str, *, force: bool = False) -> tuple[JavaPackage, ...]:
+    def packages(
+        self,
+        major_version: int,
+        runtime_kind: str,
+        *,
+        force: bool = False,
+        deadline: float | None = None,
+        check: Callable[[], None] | None = None,
+    ) -> tuple[JavaPackage, ...]:
         """
         查询主机平台的实际 GA 包，空列表明确表示来源暂无适用包。
 
@@ -128,8 +187,10 @@ class JavaCatalog:
                 "vendor": "eclipse",
                 "release_type": "ga",
             },
+            deadline=deadline,
+            check=check,
         )
-        if not isinstance(payload, list):
+        if not isinstance(payload, list) or len(payload) > 256:
             raise JavaError("Java 官方发布包格式无效", "JAVA_CATALOG_INVALID")
         packages = tuple(self._parse(item, major_version, runtime_kind, platform, architecture) for item in payload)
         with self._lock:
@@ -143,6 +204,26 @@ class JavaCatalog:
             }
         return packages
 
+    def package_snapshot(
+        self, major_version: int, runtime_kind: str, deadline: float, check: Callable[[], None]
+    ) -> tuple[tuple[JavaPackage, ...], float]:
+        """
+        读取同一目录快照与截止，不因并发更新延长旧包的有效期。
+
+        :param major_version: 已查询的主版本
+        :param runtime_kind: 已查询的 JRE 或 JDK
+        :param deadline: 当前调用共享绝对截止
+        :param check: 原始授权复核
+        :return: 同一缓存项的包列表和绝对截止
+        """
+        self.packages(major_version, runtime_kind, deadline=deadline, check=check)
+        platform, architecture = JavaPolicy.host()
+        with self._lock:
+            cached = self._cache.get((major_version, runtime_kind, platform, architecture))
+            if cached is None or cached[0] + 300 <= monotonic():
+                raise JavaError("Java 目录快照已过期", "JAVA_PACKAGE_EXPIRED")
+            return cached[1], cached[0] + 300
+
     @staticmethod
     def _parse(value: JsonValue, major: int, kind: str, platform: str, architecture: str) -> JavaPackage:
         """
@@ -155,6 +236,14 @@ class JavaCatalog:
             package = binary.get("package") if isinstance(binary, dict) else None
             if not isinstance(package, dict):
                 raise ValueError("package object")
+            if (
+                binary.get("os") != platform
+                or binary.get("image_type") != kind.lower()
+                or not isinstance(binary.get("architecture"), str)
+                or JavaPolicy.architecture(binary["architecture"]) != architecture
+                or type(package.get("size")) is not int
+            ):
+                raise ValueError("package platform or size")
             url = package.get("link")
             parsed = urlparse(url) if isinstance(url, str) else None
             if (

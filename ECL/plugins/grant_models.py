@@ -51,7 +51,16 @@ class _PermissionScope(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    capability: Literal["instances.read", "instances.manage", "network.read"]
+    capability: Literal[
+        "instances.read",
+        "instances.manage",
+        "network.read",
+        "java.read",
+        "java.use",
+        "java.catalog.read",
+        "java.install",
+        "accounts.read",
+    ]
     resource_refs: tuple[resource_reference, ...] = Field(default=(), max_length=128)
 
     @field_validator("resource_refs")
@@ -77,9 +86,18 @@ class PermissionDeclaration(_PermissionScope):
     @classmethod
     def _business_capability(cls, value: str) -> str:
         """
-        只接受当前三项业务权限，旧细项必须由插件作者更新。
+        只接受当前游戏、联网和 Java 领域权限，旧细项必须由插件作者更新。
         """
-        if not isinstance(value, str) or value not in {"instances.read", "instances.manage", "network.read"}:
+        if not isinstance(value, str) or value not in {
+            "instances.read",
+            "instances.manage",
+            "network.read",
+            "java.read",
+            "java.use",
+            "java.catalog.read",
+            "java.install",
+            "accounts.read",
+        }:
             raise ValueError("插件权限声明不受支持，请更新插件权限清单")
         return value
 
@@ -95,7 +113,14 @@ class PermissionDeclaration(_PermissionScope):
     @field_validator("resource_refs")
     @classmethod
     def _host_selected_instances(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
-        if info.data.get("capability") in cls.host_selected_capabilities and value:
+        if (
+            info.data.get("capability")
+            in (
+                cls.host_selected_capabilities
+                | {"java.read", "java.use", "java.catalog.read", "java.install", "accounts.read"}
+            )
+            and value
+        ):
             raise ValueError("实例资源由宿主用户选择，清单不能指定本机资源")
         return value
 

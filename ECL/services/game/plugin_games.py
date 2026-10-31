@@ -7,6 +7,7 @@
 #
 # 公开接口：
 #   - class GameCatalogEntry — 不含网络地址的版本目录项。
+#   - class ResourceDownload — 已有在线资源服务选出的公开文件信息。
 #   - class GameResourceTarget / PluginInstallTarget / InstalledGame — 物理目标与内部安装结果。
 #   - class PluginGameRun / PluginLaunchControl / PluginLaunchReservation — 进程事实、提交控制与句柄归属。
 #   - class PluginGameCoordinator — 复用游戏服务状态的插件游戏业务入口。
@@ -30,9 +31,22 @@ from packaging.version import InvalidVersion
 from ECL.services.game.base import GameServiceError, _GameState
 from ECL.services.game.install_progress import InstallationSnapshot
 from ECL.services.game.install_targets import InstallReservation
+from ECL.services.game.workspace import resolve_instance_target
 from ECL.services.operations import OperationCommitRejectedError, OperationContext, OperationOrigin
 from ECL.utils.instance_reading import DirectoryIdentity, directory_identity
 from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceDownload:
+    """
+    仅保存公开文件名、下载地址、大小与校验摘要，不提供宿主目标路径。
+    """
+
+    filename: str
+    url: str
+    sha512: str | None
+    size: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +135,51 @@ class PluginGameCoordinator(_GameState):
     """
     使用宿主有效下载源及已有游戏服务，不接受插件选择网络地址或凭据。
     """
+
+    def plugin_resource_download(self, source: str, project_id: str, version_id: str) -> ResourceDownload:
+        """
+        复用现有平台文件选择和用户下载源，仅读取公开下载信息。
+
+        :param source: 已校验的平台名称
+        :param project_id: 已校验的项目标识
+        :param version_id: 已校验的平台版本标识
+        :return: 不含提供方密钥的公开文件信息
+        :raises GameServiceError: 平台数据结构无效或文件不可下载时抛出
+        """
+        selected = self._select_online_file(source, project_id, version_id)
+        filename, url, size = selected.get("filename"), selected.get("url"), selected.get("size")
+        hashes = selected.get("hashes")
+        sha512 = hashes.get("sha512") if isinstance(hashes, dict) else None
+        if not isinstance(filename, str) or not isinstance(url, str):
+            raise GameServiceError("在线文件信息无效", "PLUGIN_RESOURCE_CATALOG_INVALID")
+        if sha512 is not None and not isinstance(sha512, str):
+            raise GameServiceError("在线文件校验信息无效", "PLUGIN_RESOURCE_CATALOG_INVALID")
+        if size is not None and (type(size) is not int or size < 0):
+            raise GameServiceError("在线文件大小无效", "PLUGIN_RESOURCE_CATALOG_INVALID")
+        return ResourceDownload(filename, url, sha512, size)
+
+    def plugin_resource_path(self, target: GameResourceTarget, kind: str) -> Path:
+        """
+        按现有隔离策略解析游戏资源位置，不由插件决定实例数据目录。
+
+        :param target: 宿主已经验证的实例物理目标
+        :param kind: 模组、资源包或光影的固定业务类型
+        :return: 当前实例真实使用的资源目录
+        :raises GameServiceError: 类型或实例不满足时抛出
+        """
+        if target.version_id is None:
+            raise GameServiceError("资源管理需要具体实例", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
+        if kind == "mods":
+            directory = "mods"
+        elif kind == "resourcepacks":
+            directory = "resourcepacks"
+        elif kind == "shaders":
+            directory = "shaderpacks"
+        else:
+            raise GameServiceError("游戏资源类型不支持", "PLUGIN_SCHEMA_INVALID")
+        isolated = self.resolve_version_isolation(target.root_path, target.version_id)
+        resolved = resolve_instance_target(target.root_path, target.version_id, isolated)
+        return resolved.game_data_path / directory
 
     def plugin_catalog(
         self, version_type: Literal["release", "snapshot"] | None, deadline: float
@@ -354,6 +413,8 @@ class PluginGameCoordinator(_GameState):
         width: int,
         height: int,
         fullscreen: bool,
+        *,
+        java_path: Path | None = None,
     ) -> PluginGameRun:
         """
         在宿主原循环执行既有准备流程，工作线程等待实际执行结束而不提前报告取消。
@@ -367,6 +428,7 @@ class PluginGameCoordinator(_GameState):
         :param width: 窗口宽度
         :param height: 窗口高度
         :param fullscreen: 是否全屏
+        :param java_path: 宿主从本运行已获准引用解析的 Java，不从插件请求直接读取
         :return: 不含账户、路径或启动参数的实际进程结果
         :raises GameServiceError: 宿主、启动或执行取消失败
         """
@@ -394,6 +456,7 @@ class PluginGameCoordinator(_GameState):
             width=width,
             height=height,
             fullscreen=fullscreen,
+            java_path=java_path,
             launcher_locale=self._game_locale_provider(),
             plugin_control=control,
         )

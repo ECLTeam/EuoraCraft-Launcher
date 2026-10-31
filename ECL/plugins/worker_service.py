@@ -20,9 +20,13 @@ from pathlib import Path
 from threading import Event, RLock, Thread
 from typing import TYPE_CHECKING, Literal
 
+from ECL.java.manager import JavaManager
+from ECL.java.models import JavaError
+from ECL.java.queries import JavaQueries
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api._windows import WindowsRuntimeError
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.account_resources import PluginAccountResourceCatalog
 from ECL.plugins.environment_pool import PluginDependencyDirectory
 from ECL.plugins.grant_models import (
     InstanceCapability,
@@ -33,16 +37,20 @@ from ECL.plugins.grant_models import (
 )
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession, PluginGrantStore
 from ECL.plugins.installation_store import PluginInstallationStore, WorkerManifest
+from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.package_preparation import PluginPackagePreparer, current_plugin_target
 from ECL.plugins.resource_catalog import PluginResourceCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.file_storage import PluginFileStorage
+from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.network_api import PluginNetworkService
+from ECL.plugins.runtime.public_queries import RuntimePublicQueries
 from ECL.plugins.runtime.resources import InstanceQueries, ResourcePages, RuntimeResources
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 from ECL.services.operations import OperationManager
-from ECL.utils import get_logger
+from ECL.utils import AccountError, get_logger
+from ECL.utils.account_reading import AccountSummary
 from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
@@ -83,6 +91,10 @@ class PluginWorkerService:
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
         operations: OperationManager | None = None,
         game_operations: PluginGameCoordinator | None = None,
+        java_queries: JavaQueries | None = None,
+        java_manager: JavaManager | None = None,
+        account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
+        public_config: Callable[[], JsonValue] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -93,6 +105,10 @@ class PluginWorkerService:
         :param instance_queries: 现有应用拥有的只读游戏查询
         :param operations: 应用唯一任务服务，不创建独立执行器
         :param game_operations: 应用唯一游戏业务入口，缺失时不开放游戏查询及执行
+        :param java_queries: 应用唯一 Java 查询服务，不提供安装或全系统扫描
+        :param java_manager: 应用唯一 Java 安装服务，不创建第二份登记
+        :param account_snapshot: 不刷新认证的账户领域最小摘要
+        :param public_config: 应用当前配置快照，公开字段由边界白名单投影
         :param instance_roots: 有效配置的游戏根目录快照
         """
         self.data_path: Path = data_path
@@ -108,6 +124,11 @@ class PluginWorkerService:
         self._monitor_thread: Thread | None = None
         self._operations = operations
         self._game_operations = game_operations
+        self._java_queries = java_queries
+        self._java_manager = java_manager
+        self._account_catalog = PluginAccountResourceCatalog(data_path, account_snapshot) if account_snapshot else None
+        self._public_config = public_config
+        self._java_catalog = PluginJavaResourceCatalog(data_path, java_queries) if java_queries is not None else None
         self._file_storage = PluginFileStorage(data_path)
         self._network_service = PluginNetworkService()
         self._instance_profiles = instance_profiles
@@ -139,7 +160,29 @@ class PluginWorkerService:
         self.grants.update_resource_scope(self._catalog.active_root_refs())
         return revision
 
+    def _refresh_declared_java(self, session: PluginGrantSession) -> None:
+        """
+        仅对使用本机 Java 资源的运行刷新有效身份，故障时保持拒绝。
+        """
+        if any(item.capability in {"java.read", "java.use"} for item in session.binding.declarations):
+            try:
+                self.refresh_java_resources()
+            except JavaError:
+                get_logger("PluginWorkerService").debug("Java 资源当前不可用，保持相关许可拒绝")
+
+    def _refresh_declared_accounts(self, session: PluginGrantSession) -> None:
+        """
+        账户摘要范围变化在普通监管期间同样失效，不等待插件主动再次查询。
+        """
+        if any(item.capability == "accounts.read" for item in session.binding.declarations):
+            try:
+                self.refresh_account_resources()
+            except ProtocolError:
+                get_logger("PluginWorkerService").debug("账户资源当前不可用，保持相关许可拒绝")
+
     def _refresh_declared_resources(self, session: PluginGrantSession) -> None:
+        self._refresh_declared_java(session)
+        self._refresh_declared_accounts(session)
         if any(
             item.capability in PermissionDeclaration.host_selected_capabilities for item in session.binding.declarations
         ):
@@ -156,7 +199,9 @@ class PluginWorkerService:
         search: str,
         cursor: str | None,
         limit: int,
-        capability: InstanceCapability = "instances.read",
+        capability: Literal[
+            "instances.read", "instances.manage", "java.read", "java.use", "accounts.read"
+        ] = "instances.read",
     ) -> dict[str, JsonValue]:
         """
         为可信权限界面发现配置目录或展开一个目录，不替用户授予许可。
@@ -182,6 +227,14 @@ class PluginWorkerService:
             raise ProtocolError("插件内容已变化", "PLUGIN_GRANT_CONTENT_MISMATCH")
         if not any(item.capability == capability for item in entry.session.binding.declarations):
             raise ProtocolError("插件未申请此实例能力", "PLUGIN_PERMISSION_DENIED")
+        if capability == "accounts.read":
+            if parent_ref is not None:
+                raise ProtocolError("账户资源不能展开目录", "PLUGIN_SCHEMA_INVALID")
+            return self._account_candidates(entry, search, cursor, limit)
+        if capability in {"java.read", "java.use"}:
+            if parent_ref is not None:
+                raise ProtocolError("Java 资源不能展开父目录", "PLUGIN_SCHEMA_INVALID")
+            return self._java_candidates(entry, capability, search, cursor, limit)
         if self._catalog is None:
             raise ProtocolError("当前宿主未提供实例资源", "PLUGIN_API_METHOD_NOT_FOUND")
         if parent_ref is not None:
@@ -198,6 +251,118 @@ class PluginWorkerService:
             limit,
             lambda: self._resource_candidates(parent_ref, search, selected, capability),
         )
+        return {**page, "catalog_revision": revision}
+
+    def refresh_account_resources(self, *, discover: bool = False) -> int:
+        """
+        核验账户授权目录，任何读取故障均撤去相关可用范围。
+
+        :param discover: 仅可信审阅可发现新的账户身份
+        :return: 当前账户目录版本
+        :raises ProtocolError: 目录或领域快照不可用时抛出
+        """
+        if self._account_catalog is None:
+            raise ProtocolError("当前宿主未提供账户查询", "PLUGIN_API_METHOD_NOT_FOUND")
+        try:
+            revision = self._account_catalog.refresh(discover=discover)
+        except (AccountError, OSError, ValueError, ProtocolError) as error:
+            self.grants.update_account_scope(frozenset())
+            raise ProtocolError("账户授权目录无法刷新", "PLUGIN_RESOURCE_CATALOG_INVALID") from error
+        self.grants.update_account_scope(self._account_catalog.active_refs())
+        return revision
+
+    def _account_candidates(
+        self, entry: _WorkerEntry, search: str, cursor: str | None, limit: int
+    ) -> dict[str, JsonValue]:
+        """
+        可信窗口只显示账户类型与玩家名称，不显示登录邮箱和凭据。
+        """
+        revision = self.refresh_account_resources(discover=cursor is None)
+        assert self._account_catalog is not None
+        selected = entry.session.selected_resources("accounts.read")
+        items: list[dict[str, JsonValue]] = []
+        for resource_id, account in self._account_catalog.candidates():
+            if account is None and resource_id not in selected:
+                continue
+            label = f"{account.alias} ({account.kind})" if account else "Account"
+            if search.casefold() not in label.casefold():
+                continue
+            items.append(
+                {
+                    "resource_id": resource_id,
+                    "kind": "account",
+                    "label": label[:120],
+                    "parent_ref": None,
+                    "version_id": None,
+                    "is_default": False,
+                    "available": account is not None,
+                    "selected": resource_id in selected,
+                }
+            )
+        signature = json.dumps(
+            [entry.installation_id, entry.session.binding.content_digest, "accounts.read", search, limit]
+        )
+        page = self._resource_pages.page(signature, str(revision), cursor, limit, lambda: tuple(items))
+        return {**page, "catalog_revision": revision}
+
+    def refresh_java_resources(self, *, discover: bool = False) -> int:
+        """
+        刷新 Java 授权身份，故障时只拒绝相关资源能力。
+
+        :param discover: 仅可信审阅允许发现新身份
+        :return: Java 资源目录版本
+        :raises JavaError: 服务缺失、索引损坏或对象无法核实时抛出
+        """
+        if self._java_catalog is None:
+            raise JavaError("当前宿主未提供 Java 资源", "PLUGIN_API_METHOD_NOT_FOUND")
+        try:
+            revision = self._java_catalog.refresh(discover=discover)
+        except (OSError, ValueError, JavaError) as exc:
+            self.grants.update_java_scope(frozenset())
+            if isinstance(exc, JavaError):
+                raise
+            raise JavaError("Java 授权目录无法刷新", "PLUGIN_RESOURCE_CATALOG_INVALID") from exc
+        self.grants.update_java_scope(self._java_catalog.active_refs())
+        return revision
+
+    def _java_candidates(
+        self,
+        entry: _WorkerEntry,
+        capability: str,
+        search: str,
+        cursor: str | None,
+        limit: int,
+    ) -> dict[str, JsonValue]:
+        """
+        为可信主窗口投影平铺候选，保留失效选择用于撤销。
+        """
+        revision = self.refresh_java_resources(discover=cursor is None)
+        assert self._java_catalog is not None
+        assert self._java_queries is not None
+        records = {item.runtime_id: item for item in self._java_queries.records()}
+        selected = entry.session.selected_resources(capability)
+        items: list[dict[str, JsonValue]] = []
+        for resource in self._java_catalog.resources():
+            if not resource.is_active and resource.resource_id not in selected:
+                continue
+            record = records.get(resource.runtime_id)
+            label = f"{record.vendor} Java {record.full_version} {record.architecture}"[:120] if record else "Java"
+            if search.casefold() not in label.casefold():
+                continue
+            items.append(
+                {
+                    "resource_id": resource.resource_id,
+                    "kind": "java_runtime",
+                    "is_default": False,
+                    "label": label,
+                    "parent_ref": None,
+                    "version_id": None,
+                    "available": resource.is_active,
+                    "selected": resource.resource_id in selected,
+                }
+            )
+        signature = json.dumps([entry.installation_id, entry.session.binding.content_digest, capability, search, limit])
+        page = self._resource_pages.page(signature, str(revision), cursor, limit, lambda: tuple(items))
         return {**page, "catalog_revision": revision}
 
     def _resource_candidates(
@@ -361,6 +526,18 @@ class PluginWorkerService:
                     network_service=self._network_service,
                     instance_profiles=self._instance_profiles,
                     game_operations=self._game_operations,
+                    public_queries=RuntimePublicQueries(
+                        entry.session, self._account_catalog, self.refresh_account_resources, self._public_config
+                    ),
+                    java=RuntimeJava(
+                        entry.session,
+                        self._java_queries,
+                        self._java_catalog,
+                        self.refresh_java_resources,
+                        self._java_manager,
+                    )
+                    if self._java_queries is not None and self._java_catalog is not None
+                    else None,
                     resources=RuntimeResources(
                         entry.session, self._catalog, self._instance_queries, self.refresh_resources
                     )
@@ -572,6 +749,8 @@ class PluginWorkerService:
         decisions: tuple[PermissionDecision, ...],
         caller: PermissionManagementCaller,
         resource_revision: int | None = None,
+        java_resource_revision: int | None = None,
+        account_resource_revision: int | None = None,
     ) -> dict[str, JsonValue]:
         """
         由可信主界面持久化决定，改变运行授权后清理原运行，避免旧注册继续使用。
@@ -582,6 +761,8 @@ class PluginWorkerService:
         :param decisions: 用户实际选择
         :param caller: 真实调用入口的分类
         :param resource_revision: 审阅资源候选的目录版本，允许实例读取时必填
+        :param java_resource_revision: 审阅 Java 候选的独立版本，允许 Java 读用时必填
+        :param account_resource_revision: 审阅账户候选的独立版本，允许账户摘要时必填
         :return: 落盘结果和独立清理状态
         :raises PluginGrantError: 主体、内容、版本或持久化失败时抛出
         """
@@ -591,6 +772,14 @@ class PluginWorkerService:
             for item in decisions
         ) and (resource_revision is None or resource_revision != self.refresh_resources()):
             raise ProtocolError("资源候选已经变化，请刷新后重试", "PLUGIN_RESOURCE_REVISION_CONFLICT")
+        if any(item.capability in {"java.read", "java.use"} and item.decision == "allow" for item in decisions) and (
+            java_resource_revision is None or java_resource_revision != self.refresh_java_resources()
+        ):
+            raise ProtocolError("Java 资源候选已经变化，请刷新后重试", "PLUGIN_RESOURCE_REVISION_CONFLICT")
+        if any(item.capability == "accounts.read" and item.decision == "allow" for item in decisions) and (
+            account_resource_revision is None or account_resource_revision != self.refresh_account_resources()
+        ):
+            raise ProtocolError("账户候选已经变化，请刷新后重试", "PLUGIN_RESOURCE_REVISION_CONFLICT")
         # 不持有生命周期锁保存授权，运行中的长回调不能延迟拒绝屏障。
         view = self.grants.update(
             entry.session, decisions, expected_revision=expected_revision, content_digest=content_digest, caller=caller
@@ -689,6 +878,8 @@ class PluginWorkerService:
                 except InstanceReadError:
                     get_logger("PluginWorkerService").debug("实例资源刷新失败，相关许可保持拒绝")
             for name, entry in entries:
+                self._refresh_declared_java(entry.session)
+                self._refresh_declared_accounts(entry.session)
                 with entry.lock:
                     with self._lock:
                         if self._entries.get(name) is not entry:

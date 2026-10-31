@@ -220,7 +220,11 @@ class PluginGrantSession:
             or not all(isinstance(item, str) for item in resource_refs)
             or len(set(resource_refs)) != len(resource_refs)
             or (declared.resource_refs and not resource_refs)
-            or (capability in PermissionDeclaration.host_selected_capabilities and not resource_refs)
+            or (
+                capability
+                in (PermissionDeclaration.host_selected_capabilities | {"java.read", "java.use", "accounts.read"})
+                and not resource_refs
+            )
             or not set(resource_refs).issubset(permission.resource_refs)
         ):
             raise PluginGrantError("插件资源范围未获准", "PLUGIN_RESOURCE_DENIED")
@@ -351,6 +355,40 @@ class PluginGrantStore:
         self._states_by_run: dict[str, _SessionState] = {}
         self._used_run_ids: set[str] = set()
         self._available_root_refs: frozenset[str] = frozenset()
+        self._available_java_refs: frozenset[str] = frozenset()
+        self._available_account_refs: frozenset[str] = frozenset()
+
+    def update_account_scope(self, available_refs: frozenset[str]) -> None:
+        """
+        发布有效账户身份，所选账户变化后原运行租约立即失效。
+
+        :param available_refs: 账户领域快照中仍有效的授权身份
+        """
+        with self._lock:
+            previous = self._available_account_refs
+            self._available_account_refs = available_refs
+            for state in self._states_by_run.values():
+                grants = {**state.permanent_grants, **state.session_grants}
+                grant = grants.get("accounts.read")
+                if grant and (set(grant.resource_refs) & previous) != (set(grant.resource_refs) & available_refs):
+                    state.epoch += 1
+
+    def update_java_scope(self, available_refs: frozenset[str]) -> None:
+        """
+        发布已验证的 Java 身份，资源变化只失效引用它的运行租约。
+
+        :param available_refs: 当前 Java 目录的有效持久身份
+        """
+        with self._lock:
+            previous = self._available_java_refs
+            self._available_java_refs = available_refs
+            for state in self._states_by_run.values():
+                grants = {**state.permanent_grants, **state.session_grants}
+                if any(
+                    grant and (set(grant.resource_refs) & previous) != (set(grant.resource_refs) & available_refs)
+                    for grant in (grants.get("java.read"), grants.get("java.use"))
+                ):
+                    state.epoch += 1
 
     def update_resource_scope(self, root_refs: frozenset[str]) -> None:
         """
@@ -629,7 +667,11 @@ class PluginGrantStore:
             declared = declared_by_capability.get(item.capability)
             if declared is None:
                 raise PluginGrantError("授权决定超出已审阅声明", "PLUGIN_GRANT_INVALID")
-            if item.capability in PermissionDeclaration.host_selected_capabilities:
+            if item.capability in {"java.read", "java.use", "java.catalog.read", "java.install"}:
+                self._validate_java_decision(item, is_disk=is_disk)
+            elif item.capability == "accounts.read":
+                self._validate_account_decision(item, is_disk=is_disk)
+            elif item.capability in PermissionDeclaration.host_selected_capabilities:
                 if any(re.fullmatch(r"[0-9a-f]{32}", ref) is None for ref in item.resource_refs):
                     raise PluginGrantError("实例资源身份无效", "PLUGIN_GRANT_INVALID")
                 if (
@@ -647,6 +689,34 @@ class PluginGrantStore:
                 and item.expires_at <= self._clock()
             ):
                 raise PluginGrantError("不能授予已经到期的许可", "PLUGIN_GRANT_INVALID")
+
+    def _validate_account_decision(self, item: PermissionDecision, *, is_disk: bool) -> None:
+        """
+        账户摘要必须明确选择有效身份，持久决定不会自动覆盖新账户。
+        """
+        if any(re.fullmatch(r"[0-9a-f]{32}", ref) is None for ref in item.resource_refs):
+            raise PluginGrantError("账户资源身份无效", "PLUGIN_GRANT_INVALID")
+        if item.decision == "allow" and not item.resource_refs:
+            raise PluginGrantError("请明确选择允许查看的账户", "PLUGIN_GRANT_INVALID")
+        if (
+            not is_disk
+            and item.decision == "allow"
+            and not set(item.resource_refs).issubset(self._available_account_refs)
+        ):
+            raise PluginGrantError("账户资源已经失效", "PLUGIN_RESOURCE_UNAVAILABLE")
+
+    def _validate_java_decision(self, item: PermissionDecision, *, is_disk: bool) -> None:
+        """
+        Java 目录不接受自报资源，动态读用范围只来自宿主有效身份。
+        """
+        if item.capability in {"java.catalog.read", "java.install"}:
+            if item.resource_refs:
+                raise PluginGrantError("Java 目录不接受本机资源范围", "PLUGIN_GRANT_INVALID")
+            return
+        if any(re.fullmatch(r"[0-9a-f]{32}", ref) is None for ref in item.resource_refs):
+            raise PluginGrantError("Java 资源身份无效", "PLUGIN_GRANT_INVALID")
+        if not is_disk and item.decision == "allow" and not set(item.resource_refs).issubset(self._available_java_refs):
+            raise PluginGrantError("Java 资源已不可用", "PLUGIN_RESOURCE_UNAVAILABLE")
 
     def _view(self, session: PluginGrantSession) -> GrantView:
         """
@@ -704,7 +774,14 @@ class PluginGrantStore:
                 and declared.capability not in state.expired_capabilities
             )
             resources = grant.resource_refs if is_allowed and grant else ()
-            if declared.capability in PermissionDeclaration.host_selected_capabilities:
+            if declared.capability == "accounts.read":
+                resources = tuple(ref for ref in resources if ref in self._available_account_refs)
+                is_allowed = is_allowed and bool(resources)
+            elif declared.capability in {"java.read", "java.use"}:
+                available = self._available_java_refs
+                resources = tuple(ref for ref in resources if ref in available)
+                is_allowed = is_allowed and bool(resources)
+            elif declared.capability in PermissionDeclaration.host_selected_capabilities:
                 available = self._available_root_refs
                 resources = tuple(ref for ref in resources if ref in available)
                 is_allowed = is_allowed and bool(resources)

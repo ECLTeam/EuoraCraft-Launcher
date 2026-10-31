@@ -19,6 +19,9 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ECL.foundation import EventBus
+from ECL.java.manager import JavaManager
+from ECL.java.queries import JavaQueries
+from ECL.plugin_api.contracts import JsonValue
 from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.plugins.connector import ConnectorExtensionRegistry
 from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
@@ -32,6 +35,7 @@ from ECL.plugins.runtime.resources import InstanceQueries
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
 from ECL.utils import get_logger
+from ECL.utils.account_reading import AccountSummary
 from ECL.utils.instance_reading import InstanceReadError
 
 from .install_transaction import recover_plugin_install_transactions
@@ -64,6 +68,10 @@ class _PluginState:
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
         operations: OperationManager | None = None,
         game_operations: PluginGameCoordinator | None = None,
+        java_queries: JavaQueries | None = None,
+        java_manager: JavaManager | None = None,
+        account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
+        public_config: Callable[[], JsonValue] | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -79,6 +87,10 @@ class _PluginState:
         :param instance_profiles: 应用现有的共享实例资料事务资源
         :param instance_queries: 应用现有的无写入实例查询接口
         :param operations: 应用共用的后台任务执行与取消服务
+        :param java_queries: 应用已有的 Java 只读查询及受控探测服务
+        :param java_manager: 应用唯一 Java 安装与登记服务
+        :param account_snapshot: 不执行认证的最小账户摘要
+        :param public_config: 当前配置快照，仅在宿主边界投影公开字段
         :param instance_roots: 当前配置中的游戏根目录快照
         :param game_operations: 应用唯一游戏业务入口
         """
@@ -91,6 +103,10 @@ class _PluginState:
         self.http_client = http_client
         self._operations = operations
         self._game_operations = game_operations
+        self._java_queries = java_queries
+        self._java_manager = java_manager
+        self._account_snapshot = account_snapshot
+        self._public_config = public_config
         self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
         self._instance_roots = instance_roots
@@ -162,6 +178,10 @@ class _PluginState:
             instance_roots=self._instance_roots,
             operations=self._operations,
             game_operations=self._game_operations,
+            java_queries=self._java_queries,
+            java_manager=self._java_manager,
+            account_snapshot=self._account_snapshot,
+            public_config=self._public_config,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path

@@ -237,7 +237,19 @@ class OperationManager:
     max_plugin_operations: ClassVar[int] = 1024
     max_owner_operations: ClassVar[int] = 128
     visible_plugin_kinds: ClassVar[frozenset[str]] = frozenset(
-        {"plugin_game_install", "plugin_game_launch", "plugin_game_stop"}
+        {
+            "plugin_game_install",
+            "plugin_game_launch",
+            "plugin_game_stop",
+            "plugin_java_install",
+            "plugin_resource_install",
+            "plugin_resource_delete",
+            "plugin_mod_enabled",
+            "plugin_modpack_prepare",
+            "plugin_modpack_install",
+            "plugin_modpack_export_preview",
+            "plugin_modpack_export",
+        }
     )
 
     kind_titles: ClassVar[MappingProxyType[str, str]] = MappingProxyType(
@@ -245,6 +257,14 @@ class OperationManager:
             "custom_download": "自定义下载",
             "java_install": "安装 Java",
             "plugin_game_install": "插件安装游戏",
+            "plugin_java_install": "插件安装 Java",
+            "plugin_resource_install": "插件安装游戏资源",
+            "plugin_resource_delete": "插件删除游戏资源",
+            "plugin_mod_enabled": "插件调整模组状态",
+            "plugin_modpack_prepare": "插件识别整合包",
+            "plugin_modpack_install": "插件安装整合包",
+            "plugin_modpack_export_preview": "插件预览整合包导出",
+            "plugin_modpack_export": "插件导出整合包",
             "plugin_game_launch": "插件启动游戏",
             "plugin_game_stop": "插件停止游戏",
             "java_remove": "移除托管 Java",

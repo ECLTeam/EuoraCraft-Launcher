@@ -117,7 +117,7 @@ class Plugin(BasePlugin):
 
 基础能力随确认启用当前内容获得：自身命令、设置、自身设置事件、私有数据文件及固定来源的游戏版本目录不再逐项声明。`plugin.base` 是绑定当前安装、内容和运行的内部准入，不能写进权限清单或作为用户授权项。
 
-清单只接受 `instances.read`（查看游戏）、`instances.manage`（管理游戏）和 `network.read`（联网）。管理游戏包含查看、安装、资料修改、启动和停止本运行创建的游戏；游戏授权统一选择根目录，覆盖其中现有及以后新增的实例。只读插件不能据此管理游戏。需要只读降级的插件可以同时声明必要查看和可选管理，管理生效时包含同一范围的查看能力。
+清单接受 `instances.read`（查看游戏）、`instances.manage`（管理游戏）、`network.read`（联网），以及独立的 `java.read`、`java.use`、`java.catalog.read`、`java.install`、`accounts.read`。管理游戏包含查看、安装、资料修改、启动、资源与整合包管理，以及停止本运行创建的游戏；游戏授权统一选择根目录，覆盖其中现有及以后新增的实例。只读插件不能据此管理游戏。需要只读降级的插件可以同时声明必要查看和可选管理，管理生效时包含同一范围的查看能力。Java 与账户不继承游戏范围，详见下文。
 
 基础插件点击启用即确认当前内容；业务插件在一个游戏目录选择区和联网站点说明中完成“同意并启用”。当前有效游戏目录可预选，但须在确认前显示。授权已保存而启动失败时可以直接重试启用；已启用插件保存访问范围不等于重新启用。授权继续绑定完整内容，不继承到更新后的不同内容。
 
@@ -265,6 +265,66 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 用户与插件共用单个启动准备占位，冲突返回忙。异步账户和下载准备沿用宿主既有事件循环，进程创建是短提交点，之前再次核对原始许可、取消、目录身份和当前账户；之后撤权或关闭插件不会杀游戏。准备可能已经补全游戏文件，即使未创建进程也可能是partial。已创建游戏仍在启动器正常运行列表中；停止使用有限等待，并在未确认退出时返回 `PLUGIN_GAME_STOP_TIMEOUT`。重复停止已退出的自身进程成功且保留退出码。
 
 常见失败包括 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_GAME_VERSION_INVALID`、`PLUGIN_LOADER_VERSION_INVALID`、`PLUGIN_INSTALL_BUSY`、`PLUGIN_LAUNCH_BUSY`、`PLUGIN_HOST_NOT_READY`、`PLUGIN_FILE_EXISTS`、`PLUGIN_OWNER_MISMATCH`，其余沿用授权、资源、任务和安装错误。参见[安装示例](../../examples/plugins/worker_game_install/README.md)、[启动示例](../../examples/plugins/worker_game_launch/README.md)及[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)。
+
+### Java 资源和固定来源安装
+
+`java.read`、`java.use` 的清单范围必须为空，由可信主窗口分别选择已登记运行时；两项不自动预选。候选 `kind` 为 `java_runtime`，使用独立 `java_resource_revision` 提交授权。`java.catalog.read` 和 `java.install` 不接受资源范围，后者的用户可见含义为“安装并使用官方 Java”。清单不能提供 URL、磁盘路径或全局删除能力。
+
+| 方法 | 参数与结果 |
+| --- | --- |
+| `java.inventory` | `{cursor?,limit?}`；所选运行时的最后登记摘要，不扫描或运行 Java |
+| `resources.list` | `{capability:"java.read",cursor?,limit?}`；当前运行 `runtime_ref`，不返回登记 ID 或路径 |
+| `java.validate` | `{runtime_ref,required_major?}`；执行固定参数的有界单目标探测，不修改登记或配置 |
+| `java.catalog` | `{major_version?,runtime_kind?:"JRE"|"JDK",cursor?,limit?}`；固定官方来源包的 `package_ref` 和公开摘要 |
+| `java.install_plan` | `{package_ref}`；当前运行中未过期的包生成 `plan_ref` 和计划摘要，属于有去重键的变更请求 |
+| `java.install` | `{plan_ref}`；返回自身任务回执；实际安装、校验和登记后交付 `runtime_ref` |
+
+已登记目标校验与选用要求对应 `java.read` / `java.use` 的明确选择。本运行在原始 `java.install` 许可下安装成功的目标可直接选用；这不授予其他全局 Java 的访问权。`game.launch.options.runtime_ref` 可传入此引用，宿主在执行前与进程创建前重新核验原始许可及文件身份。其他启动参数不增加裸 Java 路径、JVM 参数或命令入口。
+
+每个运行最多保留 32 个未过期安装计划。安装目标先检查真实任务所有者，用户与不同插件的在途安装返回忙，不复用或取消其任务。重复去重键只查询同一回执。取消、超时和撤权不等于安装线程已结束；目标占位保留至实际清理。安装结果受原始许可约束，撤权保留文件且不复活旧引用。示例见 [Java 查询与安装](../../examples/plugins/worker_java_query/README.md)。
+
+### 模组、资源包、光影与在线目录
+
+以下 `kind` 取 `mods`、`resourcepacks` 或 `shaders`，文件后缀分别为 `.jar`、`.zip`、`.zip`。查看使用 `instances.read` 或其管理包含的查看范围；写入使用所选根的 `instances.manage`。所有副作用通过自身任务提交，并使用稳定去重键。
+
+| 方法 | 参数与结果 |
+| --- | --- |
+| `<kind>.list` | `{instance_ref,cursor?,limit?}`；返回 `resource_ref`、文件名、大小和适用的启用状态，不返回路径 |
+| `<kind>.install` | `{instance_ref,source:FileRef,filename}`；从本插件私有普通文件复制到实例实际资源目录，成功才提交新文件 |
+| `<kind>.delete` | `{resource_ref}`；只删除原列表对应的文件版本，替换后旧引用失败 |
+| `mods.set_enabled` | `{resource_ref,enabled:boolean}`；设置明确目标状态，重复禁用不反向启用 |
+| `<kind>.search` | `{source?:"modrinth"|"curseforge",query?,game_version?,loader?,offset?,limit?}`；公开项目白名单与下一偏移 |
+| `<kind>.versions` | `{source?,project_id,game_version?,loader?,cursor?,limit?}`；公开平台版本分页 |
+| `<kind>.download_info` | `{source?,project_id,version_id}`；公开文件名、URL、站点、大小和适用的 SHA-512 摘要，不直接下载 |
+
+目录查询属于固定来源基础能力，复用用户设置的现有模组源，不接受插件指定 API 地址或提供方密钥。搜索每页 1—50 条，偏移最多 1000；版本分页每页 1—50 条。下载文件仍使用 `downloads.submit` 及单独批准的精确网络站点，完成后再传私有 `FileRef` 安装。`download_info` 不隐式授予站点或写入权限。
+
+隔离与共享位置使用现有实例数据归属规则，不能根据实例名称自行拼路径。源与目标均固定实际句柄、拒绝链接和重解析点；同名目标不覆盖，资源版本变化后重新读取列表。当前单个资源安装最多 64 MiB，并继续受私有源文件自身配额约束。仅模组提供启用状态操作。示例与实际命令序列见 [游戏资源与整合包](../../examples/plugins/worker_game_tools/README.md)。
+
+### 整合包所属任务
+
+| 方法 | 参数与结果 |
+| --- | --- |
+| `modpacks.prepare` | `{source:FileRef}`；复制私有归档并执行现有校验，所属任务完成后返回 `preparation_ref` |
+| `modpacks.get` | `{preparation_ref,cursor?,limit?}`；名称、格式、Minecraft、加载器和有限文件预览 |
+| `modpacks.install` | `{root_ref,preparation_ref,version_name,excluded_file_ids?}`；批准游戏根中的新实例安装任务，拒绝已有实例覆盖 |
+| `modpacks.export_preview` | `{instance_ref}`；读取所选实例并产生含 `preview_ref` 的导出预览任务 |
+| `modpacks.export_files` | `{preview_ref,cursor?,limit?}`；分页列出候选文件，不自动全选 |
+| `modpacks.export` | `{preview_ref,selected_file_ids,destination:FileRef,name,version,summary?}`；只导出明确选择的文件到私有新 `.mrpack` |
+
+准备使用基础准入，导入使用管理游戏范围，导出同时要求查看实例与私有写入。每次运行最多保留 32 个准备引用和 32 个导出预览引用；准备另受领域有效期约束，运行关闭时释放，分页上限 100，明确选择或排除文件上限 1024。归档识别、路径穿越拒绝、文件大小和格式约束沿用现有领域实现。
+
+清单的每个下载地址单独通过 `network.read` 站点、重定向、DNS 和连接检查，不转交普通共享下载器绕过许可；当前单文件下载上限 128 MiB。共享基础版本安装仍属于该插件的实际任务，原始许可变化在阶段检查处拒绝。取消可能保留已经安装的共享基础版本，按真实 partial / committed 及清理状态报告，不宣称完整事务回滚。导出中间归档不作为最终提交，私有文件原子发布成功才接受任务提交。
+
+导入实例保留实际 Minecraft 父版本关系及完整启动描述，导出不从自定义实例名称猜测版本。插件导入的暂存目录独占创建，不复用或清理既有同名用户暂存目录。
+
+### 公共配置与所选账户摘要
+
+`config.public` 只接受 `{}`，在基础准入下返回 `locale`、`theme_id`、`theme_mode`、`accent_color`、`default_memory_mb`。没有配置分区透传或通用写入口，不返回路径、启动命令、网络密钥或账户配置。
+
+`accounts.read` 清单不能自报资源，由可信主窗口明确选择账户，不预选全部或当前账户。候选 `kind:"account"` 与独立 `account_resource_revision` 绑定；空允许范围拒绝。`accounts.list({cursor?,limit?})` 与 `resources.list({capability:"accounts.read",cursor?,limit?})` 只返回 `account_ref`、`alias`、`uuid`、`type`、`is_current`，`accounts.get({account_ref})` 查询单项。UUID 是 Minecraft 玩家 UUID，宿主真实账户标识、邮箱、令牌和提供方私有数据均不返回。
+
+账户目录只保存随机授权身份和最小摘要指纹；账户内容或授权目录身份变化使旧引用失效，新账户不继承选择。仅当前选择状态变化可在相同引用下更新。账户或 Java 目录损坏时保持相关许可拒绝，保留原文件并明确失败，不通过空列表冒充成功。可信授权 API 对游戏、Java、账户分别复核自己的目录版本，不能将三个版本取最大值后共用。
 
 ## 产物验证
 

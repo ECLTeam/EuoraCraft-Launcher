@@ -14,6 +14,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import RLock
 from time import monotonic, sleep
@@ -189,6 +191,31 @@ class RuntimeFiles:
                 self._check(lease, deadline)
                 space.directory.information()
                 return result
+            finally:
+                stream.close()
+
+    @contextmanager
+    def read_source(self, target: FileRef, deadline: float) -> Iterator[FileHandle]:
+        """
+        为受信资源安装与整合包导入固定本运行私有源文件，不交付真实路径。
+
+        :param target: 当前运行私有根下的文件引用
+        :param deadline: 整个读取操作的截止
+        :return: 禁止并发改写及删除的源文件句柄，由本服务负责关闭
+        :raises ProtocolError: 来源、权限、对象或预算无效时抛出
+        """
+        lease = self._session.authorize("plugin.base")
+        with self._storage.access(self._installation_id) as space:
+            self._resolve(target, lease, space.identity)
+            self._check(lease, deadline)
+            if space.directory is None:
+                raise FileBoundaryError("私有源文件不存在", "PLUGIN_RESOURCE_NOT_FOUND")
+            stream = space.directory.file(target.relative_path)
+            try:
+                if stream.information().size > 64 * 1024 * 1024:
+                    raise FileBoundaryError("私有源文件超过读取上限", "PLUGIN_MESSAGE_TOO_LARGE")
+                yield stream
+                stream.information()
             finally:
                 stream.close()
 

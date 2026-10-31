@@ -99,6 +99,7 @@ class GameLaunchOptions(RequestModel):
     width: StrictInt = Field(default=854, ge=320, le=16384)
     height: StrictInt = Field(default=480, ge=240, le=16384)
     fullscreen: StrictBool = False
+    runtime_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
 
 
 class GameLaunchRequest(InstanceGetRequest):

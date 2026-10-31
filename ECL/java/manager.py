@@ -40,7 +40,7 @@ from .models import (
 from .packages import JavaCatalog
 
 if TYPE_CHECKING:
-    from ECL.services.operations import OperationContext, OperationManager
+    from ECL.services.operations import OperationContext, OperationManager, OperationOrigin
 
 
 class JavaManager:
@@ -87,6 +87,7 @@ class JavaManager:
         self._probe_lock = RLock()
         self._plans: dict[str, JavaInstallPlan] = {}
         self._receipts_by_action: dict[tuple[str, str], dict[str, str]] = {}
+        self._plugin_install_owners: dict[Path, tuple[str, OperationOrigin]] = {}
         self._scanned: tuple[JavaRuntime, ...] | None = None
         self._probe_cache: dict[Path, tuple[tuple[int, ...], float, JavaRuntime | None]] = {}
         self._is_closed = False
@@ -192,6 +193,16 @@ class JavaManager:
                 managed_root_path=self.registry.root_path,
                 cleanup_pending_count=len(state.cleanup_paths),
             )
+
+    def registered_snapshot(self) -> tuple[RuntimeRecord, ...]:
+        """
+        读取唯一登记的不可变快照，不扫描、探测或更新登记。
+
+        :return: 已登记运行时，首次没有清单时为空
+        :raises JavaError: 服务关闭或登记无法验证时抛出
+        """
+        self._ensure_open()
+        return self.registry.read().runtimes
 
     def _view(self, record: RuntimeRecord) -> RuntimeView:
         """
@@ -339,6 +350,67 @@ class JavaManager:
             self._plans[plan.plan_id] = plan
         return plan
 
+    def reserve_plugin_install(self, plan: JavaInstallPlan, origin: OperationOrigin) -> str:
+        """
+        在任务接纳前独占安装目标，不复用用户或其他插件的任务。
+
+        :param plan: 由本管理器生成的未过期计划
+        :param origin: 可信宿主构造的插件运行来源
+        :return: 本次目标预约的随机身份
+        :raises JavaError: 计划失效或目标已有工作时抛出
+        """
+        self._ensure_open()
+        with self._task_lock:
+            if self._plans.get(plan.plan_id) != plan or plan.expires_at <= time():
+                raise JavaError("Java 安装计划已过期", "PLUGIN_JAVA_PLAN_EXPIRED")
+            key = ("install", str(plan.install_path))
+            receipt = self._receipts_by_action.get(key)
+            if plan.install_path in self._plugin_install_owners or (
+                receipt and self._operations.get(receipt["operationId"]).get("status") in {"pending", "running"}
+            ):
+                raise JavaError("Java 安装目标正在由其他任务使用", "PLUGIN_HOST_BUSY")
+            token = uuid4().hex
+            self._plugin_install_owners[plan.install_path] = (token, origin)
+            return token
+
+    def release_plugin_install(self, plan: JavaInstallPlan, token: str, origin: OperationOrigin) -> bool:
+        """
+        实际执行结束或排队取消后幂等释放原始预约。
+
+        :param plan: 预约对应计划
+        :param token: 预约身份
+        :param origin: 原始任务来源
+        :return: 该预约已经释放时为 True
+        """
+        with self._task_lock:
+            if self._plugin_install_owners.get(plan.install_path) == (token, origin):
+                self._plugin_install_owners.pop(plan.install_path)
+            return self._plugin_install_owners.get(plan.install_path) != (token, origin)
+
+    def install_for_plugin(
+        self, plan: JavaInstallPlan, token: str, origin: OperationOrigin, context: OperationContext
+    ) -> RuntimeRecord:
+        """
+        在调用方拥有的任务中执行既有安装事务，不创建或借用全局任务。
+
+        :param plan: 原始安装计划
+        :param token: 目标独占预约
+        :param origin: 原始插件运行来源
+        :param context: 应用唯一任务服务提供的上下文，含授权与提交检查
+        :return: 已登记的真实运行时
+        :raises JavaError: 预约或计划无效、安装失败时抛出
+        """
+        self._ensure_open()
+        context.check_cancelled()
+        with self._task_lock:
+            if self._plugin_install_owners.get(plan.install_path) != (token, origin):
+                raise JavaError("Java 安装预约不属于当前运行", "PLUGIN_OWNER_MISMATCH")
+            if plan.expires_at <= time():
+                raise JavaError("Java 安装计划已过期", "PLUGIN_JAVA_PLAN_EXPIRED")
+        record = self._installer.install(plan, context)
+        self._changed()
+        return record
+
     def install(self, plan_id: str) -> dict[str, str]:
         """
         提交或复用同一目标安装任务，网络工作由应用执行器拥有。
@@ -370,6 +442,8 @@ class JavaManager:
         在应用会话内按动作和目标合并在途请求，跨页回执不会创建重复工作。
         """
         with self._task_lock:
+            if key[0] == "install" and Path(key[1]) in self._plugin_install_owners:
+                raise JavaError("Java 安装目标正在由插件任务使用", "JAVA_INSTALL_TARGET_BUSY")
             receipt = self._receipts_by_action.get(key)
             if receipt and self._operations.get(receipt["operationId"]).get("status") in {"pending", "running"}:
                 return dict(receipt)

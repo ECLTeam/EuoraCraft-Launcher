@@ -19,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
-from ECL.plugins.grant_models import InstanceCapability, PermissionDecision
+from ECL.plugins.grant_models import PermissionDecision
 from ECL.plugins.runtime.models import FileRef
 
 
@@ -41,6 +41,8 @@ class PluginPermissionUpdate(PluginPermissionQuery):
     expected_revision: StrictInt = Field(ge=0)
     decisions: list[PermissionDecision] = Field(max_length=128)
     resource_revision: StrictInt | None = Field(default=None, ge=0)
+    java_resource_revision: StrictInt | None = Field(default=None, ge=0)
+    account_resource_revision: StrictInt | None = Field(default=None, ge=0)
 
 
 class PluginPermissionResources(PluginPermissionQuery):
@@ -49,7 +51,7 @@ class PluginPermissionResources(PluginPermissionQuery):
     """
 
     content_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    capability: InstanceCapability
+    capability: Literal["instances.read", "instances.manage", "java.read", "java.use", "accounts.read"]
     parent_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     search: str = Field(default="", max_length=120)
     cursor: str | None = Field(default=None, max_length=128)

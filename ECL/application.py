@@ -40,6 +40,7 @@ from ECL.host.dev_channel import DevChannelService
 from ECL.host.single_instance import SingleInstanceService
 from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
+from ECL.java.queries import JavaQueries
 from ECL.plugins import PluginManager
 from ECL.services.account import AccountManager, WardrobeStore
 from ECL.services.custom_downloads import CustomDownloadService
@@ -518,7 +519,11 @@ def create_application(
             game_operations=game,
             instance_profiles=game.instance_profile_transactions,
             operations=operations,
+            java_queries=JavaQueries(java),
+            java_manager=java,
             instance_roots=lambda: _plugin_instance_roots(config),
+            account_snapshot=accounts.plugin_account_snapshot,
+            public_config=config.get_config,
         )
         created.append(plugins)
         plugins.initialize(

@@ -49,6 +49,7 @@ from ECL.api.plugin_models import (
     PluginPermissionResources,
     PluginPermissionUpdate,
 )
+from ECL.java.models import JavaError
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.dependency_lock import PluginDependencyError
@@ -137,7 +138,7 @@ class PluginHandlers(_FrontendState):
             query = PluginFileRecoveriesQuery.model_validate(body)
             result = await asyncio.to_thread(self.plugins.worker_service.profile_recoveries, query.cursor, query.limit)
             return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
+        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_instance_profile_recovery_resolve(
@@ -163,7 +164,7 @@ class PluginHandlers(_FrontendState):
                 caller,
             )
             return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
+        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_permissions_get(
@@ -182,7 +183,7 @@ class PluginHandlers(_FrontendState):
             service = self.plugins.worker_service
             name = service.name_for_installation(query.installation_id)
             return {"success": True, "data": await asyncio.to_thread(service.permissions, name)}
-        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
+        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_permissions_update(
@@ -208,10 +209,12 @@ class PluginHandlers(_FrontendState):
                 tuple(request.decisions),
                 caller,
                 request.resource_revision,
+                request.java_resource_revision,
+                request.account_resource_revision,
             )
             self.plugins.events.emit("plugin:status_changed", {"plugin": name})
             return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
+        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_permission_resources(
@@ -240,7 +243,7 @@ class PluginHandlers(_FrontendState):
                 request.capability,
             )
             return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError) as exc:
+        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_runtime_info(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:

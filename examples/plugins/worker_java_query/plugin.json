@@ -1,0 +1,26 @@
+{
+  "name": "worker_java_query",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "Java 查询与安装示例",
+  "description": "仅在明确调用命令后查询、校验或安装官方 Java，启用时不扫描或执行 Java。",
+  "entry_point": "main:Plugin",
+  "permissions": [
+    {
+      "capability": "java.read",
+      "required": false
+    },
+    {
+      "capability": "java.use",
+      "required": false
+    },
+    {
+      "capability": "java.catalog.read",
+      "required": false
+    },
+    {
+      "capability": "java.install",
+      "required": false
+    }
+  ]
+}
