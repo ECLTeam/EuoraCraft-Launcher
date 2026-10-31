@@ -104,6 +104,40 @@ def test_automatic_icon_uses_version_type_and_preserves_override(tmp_path, versi
     assert store.enrich_version(game_path, version)["icon"] == {"type": "loader", "value": "fabric"}
 
 
+def test_resolve_icon_prefers_persisted_icon_and_falls_back_to_automatic(tmp_path) -> None:
+    game_path, instance_path = _instance(tmp_path)
+    store = InstanceProfileStore(tmp_path / "data", VersionStatsStore())
+
+    assert store.resolve_icon(game_path, "1.21.8", version_type="snapshot", primary_loader="Vanilla") == {
+        "type": "builtin",
+        "value": "command",
+    }
+    assert store.resolve_icon(game_path, "1.21.8", version_type="release", primary_loader="Fabric") == {
+        "type": "loader",
+        "value": "fabric",
+    }
+
+    store.set_icon(game_path, "1.21.8", "builtin", value="chest")
+    assert store.resolve_icon(game_path, "1.21.8", version_type="snapshot", primary_loader="Vanilla") == {
+        "type": "builtin",
+        "value": "chest",
+    }
+
+    image_path = tmp_path / "icon.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 8 + struct.pack(">II", 32, 32) + b"payload")
+    store.set_icon(game_path, "1.21.8", "local", source_path=image_path)
+    assert store.resolve_icon(game_path, "1.21.8", version_type="release", primary_loader="Vanilla") == {
+        "type": "local",
+        "value": str(instance_path / ".ecl" / "icon.png"),
+    }
+
+    (instance_path / ".ecl" / "instance.json").write_text('{"icon": 1}', encoding="utf-8")
+    assert store.resolve_icon(game_path, "1.21.8", version_type="snapshot", primary_loader="Vanilla") == {
+        "type": "builtin",
+        "value": "command",
+    }
+
+
 def test_local_icon_is_validated_and_copied_into_ecl_directory(tmp_path) -> None:
     game_path, instance_path = _instance(tmp_path)
     store = InstanceProfileStore(tmp_path / "data", VersionStatsStore())

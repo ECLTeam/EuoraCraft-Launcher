@@ -7,8 +7,10 @@
 #
 # 公开接口：
 #   - class InstanceProfilePolicy — 保存实例资料字段与内置分类规则。
+#       - automatic_icon(version_type, primary_loader) -> dict[str, str] — 计算未设置图标时的自动图标。
 #   - class InstanceProfileStore — 管理 ECL 自有实例资料、分类和第三方只读元数据的解析结果。
 #       - read_profile(game_path, version_id) — 严格读取完整资料，损坏或待恢复时明确失败。
+#       - resolve_icon(game_path, version_id, *, version_type, primary_loader) -> dict[str, str] — 解析实例当前生效的图标，未设置时回退自动图标。
 #       - snapshot(game_path, version_id, deadline) — 读取绑定完整原始字节的物理版本。
 #       - parse_local_fields(document) — 纯解析公开本地资料字段，不读取外部来源或同步统计。
 #       - patch_profile(game_path, version_id, patch) -> dict[str, Any] — 合并实例资料覆盖字段，显式 ``False`` 会按原值保存。
@@ -80,6 +82,23 @@ class InstanceProfilePolicy:
         {"id": "modpack", "name": "整合包", "color": "#d58b45", "order": 30, "builtin": True},
         {"id": "test", "name": "测试", "color": "#d55d72", "order": 40, "builtin": True},
     )
+
+    @classmethod
+    def automatic_icon(cls, version_type: Any, primary_loader: Any) -> dict[str, str]:
+        """
+        计算没有显式设置图标时的自动图标。
+
+        模组实例用加载器图标，原版实例按版本类型取内置图标；未知类型回退草方块，
+        与实例列表的自动图标规则保持同一来源。
+
+        :param version_type: 原版版本类型，如 ``release``、``snapshot``
+        :param primary_loader: 主加载器名称，如 ``Vanilla``、``Fabric``
+        :return: 归一化图标配置
+        """
+        loader = str(primary_loader or "").strip()
+        if loader.casefold() not in {"", "vanilla"}:
+            return {"type": "loader", "value": loader.casefold()}
+        return {"type": "builtin", "value": cls.version_icons.get(str(version_type or "").casefold(), "grass")}
 
 
 def _default_profile() -> dict[str, Any]:
@@ -248,6 +267,40 @@ class InstanceProfileStore:
         """
         snapshot = self.snapshot(game_path, version_id, monotonic() + 5)
         return {**_default_profile(), **snapshot.document}
+
+    def resolve_icon(
+        self,
+        game_path: Path,
+        version_id: str,
+        *,
+        version_type: str,
+        primary_loader: str,
+    ) -> dict[str, str]:
+        """
+        解析实例当前生效的图标，供不加载完整实例资料的界面复用。
+
+        优先使用 ECL 资料中用户设置的图标；未设置或资料不可读时回退到自动图标
+        （模组实例用加载器图标，原版实例按版本类型取内置图标）。第三方来源图标需要
+        完整扫描上下文，由实例列表按自身规则解析，此处不参与。
+
+        :param game_path: Minecraft 游戏根目录
+        :param version_id: 具体实例目录名
+        :param version_type: 原版版本类型，如 ``release``、``snapshot``
+        :param primary_loader: 主加载器名称，如 ``Vanilla``、``Fabric``
+        :return: 归一化图标配置；本地图片已解析为实例 ``.ecl`` 目录下的绝对路径
+        """
+        try:
+            snapshot = self.snapshot(game_path, version_id, monotonic() + 5)
+        except InstanceReadError as exc:
+            self._logger.warning("读取实例图标失败 %s: %s（%s）", version_id, exc, exc.error_code)
+            return InstanceProfilePolicy.automatic_icon(version_type, primary_loader)
+        icon = snapshot.document.get("icon")
+        if not isinstance(icon, dict):
+            return InstanceProfilePolicy.automatic_icon(version_type, primary_loader)
+        resolved = self._resolve_icon(icon, game_path, version_id)
+        if not isinstance(resolved, dict) or not isinstance(resolved.get("type"), str):
+            return InstanceProfilePolicy.automatic_icon(version_type, primary_loader)
+        return {"type": str(resolved["type"]), "value": str(resolved.get("value") or "")}
 
     def _write_profile(self, game_path: Path, version_id: str, profile: dict[str, Any]) -> None:
         profile_path = self._profile_path(game_path, version_id)
@@ -576,14 +629,7 @@ class InstanceProfileStore:
             "hidden": False,
             "categoryId": self._automatic_category(version),
             "tags": [],
-            "icon": {
-                "type": "loader"
-                if str(version.get("primaryLoader") or "Vanilla").casefold() != "vanilla"
-                else "builtin",
-                "value": str(version.get("primaryLoader") or "grass").casefold()
-                if str(version.get("primaryLoader") or "Vanilla").casefold() != "vanilla"
-                else InstanceProfilePolicy.version_icons.get(str(version.get("versionType") or "").casefold(), "grass"),
-            },
+            "icon": InstanceProfilePolicy.automatic_icon(version.get("versionType"), version.get("primaryLoader")),
             "cover": None,
             "pinOrder": 2**31 - 1,
         }

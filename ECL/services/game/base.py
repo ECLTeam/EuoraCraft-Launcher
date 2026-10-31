@@ -89,6 +89,7 @@ class _RunningGame:
     token: str
     version_id: str
     loader: str
+    version_type: str
     game_path: Path
     game_directory: Path
     started_at: float

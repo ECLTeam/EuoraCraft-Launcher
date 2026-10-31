@@ -924,6 +924,7 @@ class LaunchCoordinator(_GameState):
         scanned_versions = await to_thread.run_sync(lambda: self._search_factory(path).search_minecraft())
         version_info = scanned_versions.get(version_name, {}) if isinstance(scanned_versions, dict) else {}
         loader = str(version_info.get("LoaderType") or "Vanilla").strip() or "Vanilla"
+        version_type = str(version_info.get("VanillaType") or "").strip() or "release"
         required_java_value = str(version_info.get("RequestJava") or "")
         required_java = int(required_java_value) if required_java_value.isdigit() else None
         if required_java is None:
@@ -1004,8 +1005,7 @@ class LaunchCoordinator(_GameState):
                 self._emit_launch_progress("account_ready", "外置登录令牌已就绪", 17)
             else:
                 self._emit_launch_progress("account_ready", "离线账户已就绪", 17)
-            if cancel_event.is_set():
-                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
+            self._ensure_launch_not_cancelled(cancel_event)
 
             authlib_path = None
             auth_server = None
@@ -1042,6 +1042,8 @@ class LaunchCoordinator(_GameState):
                                 "subtask": "download_files",
                             },
                         )
+                    # 组件下载是同步网络请求，取消信号无法打断，开始前再确认一次。
+                    self._ensure_launch_not_cancelled(cancel_event)
                     authlib_path = await to_thread.run_sync(self.authlib_injector.ensure)
                     if authlib_task_id is not None:
                         self.events.emit(
@@ -1088,6 +1090,7 @@ class LaunchCoordinator(_GameState):
             )
             self._emit_launch_progress("environment_ready", "Java 与实例运行环境校验完成", 24)
 
+            self._ensure_launch_not_cancelled(cancel_event)
             self._emit_launch_progress("checking", "正在检查游戏文件", 25)
             if inherited_version:
                 inherited_candidates = (
@@ -1118,9 +1121,9 @@ class LaunchCoordinator(_GameState):
                             f"实例缺少基础版本 {inherited_version} 的版本元数据",
                             "INHERITED_VERSION_MISSING",
                         )
+            self._ensure_launch_not_cancelled(cancel_event)
             download_list = await to_thread.run_sync(context.files_checker.check_files, path, version_name)
-            if cancel_event.is_set():
-                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
+            self._ensure_launch_not_cancelled(cancel_event)
             self._emit_launch_progress(
                 "files_checked",
                 f"文件检查完成，共需补全 {len(download_list)} 个文件",
@@ -1177,8 +1180,7 @@ class LaunchCoordinator(_GameState):
                 finally:
                     with self._lock:
                         self._active_downloads.pop("__launch__", None)
-                if cancel_event.is_set():
-                    raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
+                self._ensure_launch_not_cancelled(cancel_event)
                 if failed_entries:
                     failed_url, failed_path = next(iter(failed_entries))
                     raise GameServiceError(
@@ -1196,8 +1198,7 @@ class LaunchCoordinator(_GameState):
                 version_document,
             )
             renderer_agent = await self._ensure_renderer_agent(selected_renderer)
-            if cancel_event.is_set():
-                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
+            self._ensure_launch_not_cancelled(cancel_event)
             self._emit_launch_progress("building_args", "正在生成启动参数", 72)
             launch_context = LaunchContext(
                 version_id=version_name,
@@ -1240,8 +1241,7 @@ class LaunchCoordinator(_GameState):
                 command = f"{command} {formatted_args}"
             command = _apply_wrapper(wrapper_text, command)
             self._emit_launch_progress("args_built", "启动参数生成完成", 84)
-            if cancel_event.is_set():
-                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
+            self._ensure_launch_not_cancelled(cancel_event)
 
             self._emit_launch_progress("about_to_launch", "即将启动游戏", 94)
             if command_before_launch:
@@ -1251,8 +1251,7 @@ class LaunchCoordinator(_GameState):
                 await to_thread.run_sync(self._set_high_performance_gpu_preference, java)
             # 启动前命令最长可阻塞数十秒且内部不检查取消，此处必须重新确认，
             # 否则用户取消后进程仍会被创建。
-            if cancel_event.is_set():
-                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
+            self._ensure_launch_not_cancelled(cancel_event)
             self._emit_launch_progress("launching", "正在创建游戏进程", 97)
             run_token = uuid4().hex
             if plugin_control is not None:
@@ -1261,6 +1260,7 @@ class LaunchCoordinator(_GameState):
                 token=run_token,
                 version_id=version_name,
                 loader=loader,
+                version_type=version_type,
                 game_path=path,
                 game_directory=game_directory,
                 started_at=monotonic(),
@@ -1345,6 +1345,14 @@ class LaunchCoordinator(_GameState):
                         run.pending = False
                 raise
             assert process is not None
+            if plugin_control is None and cancel_event.is_set():
+                # 取消信号可能在进程创建期间到达：仍然结束刚启动的游戏，取消必须赢下这次竞争。
+                # 插件启动有自己的取消契约，这里不介入其进程归属。
+                with self._lock:
+                    run.pending = False
+                    run.stopping = True
+                await to_thread.run_sync(self._stop_launched_process, instance_id)
+                raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
             self.launch_hooks.post_launch(launch_context)
 
             with self._lock:
@@ -1445,6 +1453,31 @@ class LaunchCoordinator(_GameState):
             downloader.stop()
         self.logger.info("已请求取消游戏启动，等待执行方清理")
         return True
+
+    @staticmethod
+    def _ensure_launch_not_cancelled(cancel_event: Event) -> None:
+        """
+        在每个耗时步骤前后确认启动仍未被取消。
+
+        取消信号只在检查点生效，因此网络请求、文件校验、natives 解压等阻塞步骤
+        前后都要确认，避免用户取消后仍继续执行下一步。
+
+        :param cancel_event: 本次启动的取消信号
+        :raises GameServiceError: 已请求取消时抛出 ``LAUNCH_CANCELLED``
+        """
+        if cancel_event.is_set():
+            raise GameServiceError("启动已取消", "LAUNCH_CANCELLED")
+
+    def _stop_launched_process(self, instance_id: str) -> None:
+        """
+        结束刚创建的游戏进程，供取消路径在进程创建后立即回收。
+
+        取消信号可能在进程创建期间到达，此时启动已经无法回退，必须显式结束该进程，
+        否则用户取消后游戏仍会出现在桌面上。
+
+        :param instance_id: 刚创建的游戏实例标识
+        """
+        self.instances.stop_instance(instance_id, wait_timeout=3.0)
 
     def _emit_instance_change(self, run: _RunningGame, action: str) -> None:
         if not run.instance_id:
@@ -1598,6 +1631,10 @@ class LaunchCoordinator(_GameState):
     def list_instances(self) -> list[dict[str, Any]]:
         """
         返回由启动器管理的运行中 Minecraft 实例。
+
+        每个实例附带当前生效的图标：优先使用资料中用户设置的图标，未设置时按版本类型
+        和加载器取自动图标。实例未登记在本次会话或资料不可读时 ``icon`` 为 ``None``，
+        由前端回退，避免单个实例的资料问题影响整个列表。
         """
         raw_instances = self.instances.get_instances_info()
         with self._lock:
@@ -1637,6 +1674,16 @@ class LaunchCoordinator(_GameState):
                     "versionId": version_id,
                     "loader": run.loader if run is not None else "Vanilla",
                     "gamePath": str(run.game_path) if run is not None else "",
+                    "icon": (
+                        self._instance_profiles.resolve_icon(
+                            run.game_path,
+                            version_id,
+                            version_type=run.version_type,
+                            primary_loader=run.loader,
+                        )
+                        if run is not None
+                        else None
+                    ),
                 }
             )
         return result

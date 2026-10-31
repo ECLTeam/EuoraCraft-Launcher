@@ -696,6 +696,7 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
             "versionId": "1.21.8",
             "loader": "NeoForge",
             "gamePath": str(game_path.resolve()),
+            "icon": {"type": "loader", "value": "neoforge"},
         }
     ]
     stats_file = version_path / "eclversion.json"
@@ -1748,6 +1749,68 @@ def test_cancel_launch_stops_active_file_download(tmp_path, monkeypatch) -> None
 
     assert error.error_code == "LAUNCH_CANCELLED"
     assert str(error) == "启动已取消"
+
+
+def test_cancel_launch_stops_before_file_check(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.8"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    service = _build_service()
+    checked: list[bool] = []
+
+    def cancel_after_environment(*_args, **_kwargs):
+        assert service.cancel_launch() is True
+
+    monkeypatch.setattr(service, "_validate_launch_environment", cancel_after_environment)
+    monkeypatch.setattr(
+        service,
+        "_context",
+        lambda *_args: SimpleNamespace(
+            files_checker=SimpleNamespace(check_files=lambda *_args, **_kwargs: checked.append(True) or [])
+        ),
+    )
+
+    with pytest.raises(GameServiceError) as error:
+        asyncio.run(service.launch_instance({"version_id": "1.21.8"}, game_path=game_path, java_path=java_path))
+
+    assert error.value.error_code == "LAUNCH_CANCELLED"
+    # 取消后不再进入耗时的文件校验。
+    assert checked == []
+
+
+def test_cancel_launch_during_process_creation_stops_the_game(tmp_path, monkeypatch) -> None:
+    game_path = tmp_path / ".minecraft"
+    version_path = game_path / "versions" / "1.21.8"
+    version_path.mkdir(parents=True)
+    (version_path / "1.21.8.json").write_text("{}", encoding="utf-8")
+    java_path = tmp_path / "java.exe"
+    java_path.write_bytes(b"")
+    instances = FakeInstances()
+    service = _build_service(
+        instances_manager=instances,
+        command_builder=lambda _config: '"java.exe" game.Main',
+    )
+    original_create = instances.create_instance
+
+    def create_then_cancel(**options):
+        result = original_create(**options)
+        # 模拟用户恰好在进程创建期间点取消。
+        assert service.cancel_launch() is True
+        return result
+
+    monkeypatch.setattr(instances, "create_instance", create_then_cancel)
+
+    with pytest.raises(GameServiceError) as error:
+        asyncio.run(service.launch_instance({"version_id": "1.21.8"}, game_path=game_path, java_path=java_path))
+
+    assert error.value.error_code == "LAUNCH_CANCELLED"
+    # 已经创建的游戏进程必须被结束，不能留在桌面上。
+    assert instances.exit_requests == [("minecraft-instance", {"wait_timeout": 3.0})]
+    assert instances.items[0]["Instance"].running is False
+    assert service.list_instances() == []
 
 
 def test_launch_retries_only_failed_game_file_from_alternate_source(tmp_path, monkeypatch) -> None:
