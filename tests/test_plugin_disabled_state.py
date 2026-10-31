@@ -71,11 +71,16 @@ def test_enable_clears_disabled_choice_only_after_review(framework, tmp_path):
     assert "example" not in json.loads((tmp_path / "data/plugin_state.json").read_text())["disabled"]
 
 
-def test_third_party_injection_is_rejected_even_with_forged_name(framework):
-    framework._on_html_injected("example", "slot", "<script>bad()</script>", None)
-    framework._on_vue_slot_registered("example", "slot", "bad", "<div />", "bad()", "")
+def test_third_party_injection_requires_known_plugin(framework):
+    # 未登记的来源仍被拒绝，避免伪造名称写入插槽。
+    framework._on_html_injected("unknown", "slot", "<div />", None)
+    framework._on_vue_slot_registered("unknown", "slot", "bad", "<div />", "", "")
     assert framework.get_slots() == {}
     assert framework.get_vue_slots() == {}
+    # 已登记插件的内容进入收集路径；是否获准由 Broker 按 ui.inject 判定，
+    # 第三方注入已按用户决定开放，不再在注册表层一律拒绝。
+    framework._on_html_injected("example", "slot", "<div>ok</div>", None)
+    assert framework.get_slots()["slot"][0]["plugin"] == "example"
 
 
 def test_system_route_registration_remains_idempotent(tmp_path):
