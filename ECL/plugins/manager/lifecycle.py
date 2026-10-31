@@ -610,6 +610,7 @@ class PluginLifecycle(_PluginState):
                 self.logger.exception("退出时卸载插件失败: %s", name)
 
         if self._event_handlers_registered:
+            self.events.unsubscribe("config:updated", self._on_plugins_config_changed)
             self.events.unsubscribe("plugin:html_injected", self._on_html_injected)
             self.events.unsubscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
             self._event_handlers_registered = False

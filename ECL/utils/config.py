@@ -95,6 +95,8 @@ default_config: dict[str, JsonValue] = {
     },
     "download": {"mirror_source": "official", "mod_source": "official"},
     "connector": {"mode": "automatic", "nodes": []},
+    # 插件界面注入总开关：关闭后不渲染任何第三方插件注入的主窗口内容。
+    "plugins": {"allow_ui_injection": True},
     "ui": {
         "locale": "zh-CN",
         "theme": {

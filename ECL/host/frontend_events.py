@@ -111,6 +111,9 @@ class FrontendEventPolicy:
                 },
             )
         ],
+        "plugin:slots_cleared": [
+            ("plugin:slots_cleared", lambda plugin: {"plugin": plugin}),
+        ],
         "plugin:vue_route_registered": [
             (
                 "plugin:vue_route_registered",

@@ -121,6 +121,22 @@ def test_vue_slot_rejects_oversized_template(tmp_path: Path) -> None:
         session.close()
 
 
+def test_master_switch_blocks_slot_and_allows_clear(tmp_path: Path) -> None:
+    from ECL.plugins.worker_service import PluginWorkerService
+
+    received: list[tuple[str, dict]] = []
+    service = PluginWorkerService(
+        tmp_path,
+        slot_sink=lambda name, payload: received.append((name, payload)),
+        ui_injection_allowed=lambda: False,
+    )
+    with pytest.raises(ProtocolError) as error:
+        service._publish_slot("demo", {"kind": "html", "slot_id": "plugin-slot-content-bottom"})
+    assert error.value.error_code == "PLUGIN_UI_INJECTION_DISABLED"
+    service._publish_slot("demo", {"kind": "clear"})
+    assert received == [("demo", {"kind": "clear"})]
+
+
 def test_slot_registration_requires_host_sink(tmp_path: Path) -> None:
     broker, session, _received = _broker(tmp_path, allow=True, with_sink=False)
     try:

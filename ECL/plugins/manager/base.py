@@ -72,6 +72,7 @@ class _PluginState:
         java_manager: JavaManager | None = None,
         account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
         public_config: Callable[[], JsonValue] | None = None,
+        ui_injection_allowed: Callable[[], bool] | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -93,6 +94,7 @@ class _PluginState:
         :param public_config: 当前配置快照，仅在宿主边界投影公开字段
         :param instance_roots: 当前配置中的游戏根目录快照
         :param game_operations: 应用唯一游戏业务入口
+        :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
@@ -107,6 +109,7 @@ class _PluginState:
         self._java_manager = java_manager
         self._account_snapshot = account_snapshot
         self._public_config = public_config
+        self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
         self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
         self._instance_roots = instance_roots
@@ -183,8 +186,10 @@ class _PluginState:
             account_snapshot=self._account_snapshot,
             public_config=self._public_config,
             slot_sink=self._on_worker_slot,
+            ui_injection_allowed=self._ui_injection_allowed,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
+        self.events.subscribe("config:updated", self._on_plugins_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
         self._plugin_dir = self._data_path / "plugins"
         self._plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -253,6 +258,18 @@ class _PluginState:
             len(self._plugins),
             len(self._disabled_plugins),
         )
+
+    def _on_plugins_config_changed(self, section: str, value: object) -> None:
+        """
+        用户关闭界面注入总开关后立即撤销全部第三方插槽内容。
+
+        :param section: 变更的配置分区
+        :param value: 该分区的新值
+        """
+        if section != "plugins" or self._ui_injection_allowed():
+            return
+        if self.worker_service is not None:
+            self.worker_service.clear_all_slots()
 
     def _on_worker_slot(self, name: str, payload: dict[str, object]) -> None:
         """

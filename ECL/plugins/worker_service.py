@@ -104,6 +104,7 @@ class PluginWorkerService:
         account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
         public_config: Callable[[], JsonValue] | None = None,
         slot_sink: Callable[[str, dict[str, JsonValue]], None] | None = None,
+        ui_injection_allowed: Callable[[], bool] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -120,9 +121,11 @@ class PluginWorkerService:
         :param public_config: 应用当前配置快照，公开字段由边界白名单投影
         :param instance_roots: 有效配置的游戏根目录快照
         :param slot_sink: 已获准插槽内容的可信接收方；未提供时不开放界面注入
+        :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
+        self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -593,7 +596,20 @@ class PluginWorkerService:
         """
         if self._slot_sink is None:
             raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
+        if payload.get("kind") != "clear" and not self._ui_injection_allowed():
+            raise ProtocolError("界面注入已被用户关闭", "PLUGIN_UI_INJECTION_DISABLED")
         self._slot_sink(name, payload)
+
+    def clear_all_slots(self) -> None:
+        """
+        撤销全部第三方插槽内容，用户关闭总开关后立即生效。
+
+        只清理第三方安装；系统插件的界面不受该开关影响。
+        """
+        if self._slot_sink is None:
+            return
+        for name in tuple(self._entries):
+            self._slot_sink(name, {"kind": "clear"})
 
     def _clear_slots(self, name: str) -> None:
         """
