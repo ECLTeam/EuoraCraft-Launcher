@@ -20,6 +20,7 @@ def test_builtin_theme_ids_cover_skins_and_catppuccin_flavors() -> None:
     assert ThemeCatalog.builtin_theme_ids == (
         "classic",
         "folia",
+        "absolutely",
         "catppuccin-latte",
         "catppuccin-frappe",
         "catppuccin-macchiato",
@@ -33,6 +34,7 @@ def test_normalize_theme_id_accepts_builtin_and_rejects_unknown() -> None:
     assert normalize_theme_id("classic") == "classic"
     assert normalize_theme_id("folia") == "folia"
     assert normalize_theme_id("catppuccin-mocha") == "catppuccin-mocha"
+    assert normalize_theme_id("absolutely") == "absolutely"
 
     # 未知值、None 与大小写不一致的值一律回退到默认皮肤。
     assert normalize_theme_id("untrusted") == "classic"
