@@ -26,6 +26,46 @@ from typing import Any
 
 from ECL.utils import get_logger
 
+# 第三方分析回调的输入输出上限：崩溃输出可能很大，截断后再跨进程传递。
+limit_output_characters = 8000
+limit_reasons = 16
+limit_reason_text = 512
+reason_keys = frozenset({"title", "detail", "severity", "source"})
+
+
+def sanitize_extension_result(payload: object) -> dict[str, Any]:
+    """
+    只保留第三方回调可写的字段，其余键丢弃、文本截断。
+
+    回调来自不可信进程，返回值不能直接并入分析结果：只接受追加的 reasons
+    列表与一段 summary 文本，避免覆盖宿主结论或塞入无关字段。
+
+    :param payload: 插件回调返回值
+    :return: 可安全并入结果的字典
+    """
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, Any] = {}
+    summary = payload.get("summary")
+    if isinstance(summary, str) and summary:
+        result["summary"] = summary[:limit_reason_text]
+    reasons = payload.get("reasons")
+    if isinstance(reasons, list):
+        items: list[dict[str, str]] = []
+        for item in reasons[:limit_reasons]:
+            if not isinstance(item, dict):
+                continue
+            entry = {
+                key: value[:limit_reason_text]
+                for key, value in item.items()
+                if key in reason_keys and isinstance(value, str)
+            }
+            if entry:
+                items.append(entry)
+        if items:
+            result["reasons"] = items
+    return result
+
 
 @dataclass(frozen=True)
 class CrashAnalysisContext:

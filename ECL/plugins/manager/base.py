@@ -24,7 +24,13 @@ from ECL.java.queries import JavaQueries
 from ECL.plugin_api.contracts import JsonValue
 from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.plugins.connector import ConnectorExtensionRegistry
-from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
+from ECL.plugins.crash_extensions import (
+    CrashAnalysisContext,
+    CrashAnalysisExtensionRegistry,
+    limit_output_characters,
+    limit_reasons,
+    sanitize_extension_result,
+)
 from ECL.plugins.dependencies import DependencyResolution
 from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
@@ -188,6 +194,7 @@ class _PluginState:
             public_config=self._public_config,
             slot_sink=self._on_worker_slot,
             hook_sink=self._on_worker_hook,
+            crash_sink=self._on_worker_crash,
             ui_injection_allowed=self._ui_injection_allowed,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
@@ -285,6 +292,47 @@ class _PluginState:
             required=required,
             **{attribute: self._worker_hook_callable(name, phase, callback_ref)},
         )
+
+    def _on_worker_crash(self, name: str, callback_ref: str | None) -> None:
+        """
+        登记或撤销第三方崩溃分析回调。
+
+        :param name: 安装名称
+        :param callback_ref: 本运行登记的回调标识；None 表示撤销
+        """
+        if callback_ref is None:
+            self.crash_extensions.unregister_owner(name)
+            return
+        self.crash_extensions.register(name, "worker", self._worker_crash_callable(name, callback_ref))
+
+    def _worker_crash_callable(self, name: str, callback_ref: str):
+        """
+        构造转发到插件进程的分析回调，只投递有界上下文并净化返回值。
+
+        :param name: 安装名称
+        :param callback_ref: 本运行登记的回调标识
+        :return: 注册表可调用的分析函数
+        """
+
+        def enrich(context: CrashAnalysisContext, _result: dict[str, object]) -> dict[str, object]:
+            if self.worker_service is None:
+                return {}
+            payload = {
+                "report_id": context.report_id,
+                "version_id": context.version_id,
+                "exit_code": context.exit_code,
+                "detected_by": list(context.detected_by)[:8],
+                "reasons": [
+                    {key: str(value)[:512] for key, value in item.items()}
+                    for item in context.reasons[:limit_reasons]
+                    if isinstance(item, dict)
+                ],
+                "output": context.output[:limit_output_characters],
+            }
+            value = self.worker_service.invoke_hook(name, callback_ref, payload, 5.0)
+            return sanitize_extension_result(value)
+
+        return enrich
 
     def _worker_hook_callable(self, name: str, phase: str, callback_ref: str | None):
         """

@@ -14,6 +14,7 @@
 #       - define_html_slot / define_vue_slot — 向主窗口插槽提交界面内容。
 #       - list_plugin_commands / call_plugin_command — 发现并调用其他插件导出的命令。
 #       - register_launch_hook — 登记启动前后与退出阶段的回调。
+#       - register_crash_analyzer — 登记崩溃分析回调。
 # ============================================================
 
 from __future__ import annotations
@@ -310,6 +311,24 @@ class Plugin:
             "hooks.register",
             {"phase": phase, "callback_ref": reference, "required": required},
         )
+        return reference
+
+    def register_crash_analyzer(
+        self,
+        callback: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
+    ) -> str:
+        """
+        登记崩溃分析回调，需已获准查看游戏。
+
+        回调只收到报告标识、版本、退出码、已命中分析器、已有原因与截断后的
+        进程输出，不含任何路径；返回值只接受追加的 reasons 与 summary。
+
+        :param callback: 处理崩溃上下文的回调
+        :return: 本运行登记的回调标识
+        :raises HostApiError: 未获准或宿主未提供分析时抛出
+        """
+        reference = self.register_callback(callback)
+        self.host.call("crash.register", {"callback_ref": reference})
         return reference
 
     def list_plugin_commands(self) -> list[dict[str, JsonValue]]:

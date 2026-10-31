@@ -1,0 +1,9 @@
+{
+  "name": "worker_crash_analyzer",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "崩溃分析示例",
+  "description": "在崩溃分析中补充一条原因，只读取有界上下文，不访问任何路径。",
+  "entry_point": "main:Plugin",
+  "permissions": [{ "capability": "game", "required": false }]
+}

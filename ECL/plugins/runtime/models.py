@@ -373,6 +373,14 @@ class LaunchHookDefinition(RequestModel):
     required: StrictBool = False
 
 
+class CrashExtensionDefinition(RequestModel):
+    """
+    崩溃分析回调登记：只保留回调标识，报告内容由宿主按需投递。
+    """
+
+    callback_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
 class HtmlSlotDefinition(RequestModel):
     """
     主窗口 HTML 插槽内容，只允许文本片段，不接受脚本标签外的宿主对象。

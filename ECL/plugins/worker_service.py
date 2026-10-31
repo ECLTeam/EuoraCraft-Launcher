@@ -109,6 +109,7 @@ class PluginWorkerService:
         slot_sink: Callable[[str, dict[str, JsonValue]], None] | None = None,
         ui_injection_allowed: Callable[[], bool] | None = None,
         hook_sink: Callable[[str, str | None, str | None, bool], None] | None = None,
+        crash_sink: Callable[[str, str | None], None] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -127,11 +128,13 @@ class PluginWorkerService:
         :param slot_sink: 已获准插槽内容的可信接收方；未提供时不开放界面注入
         :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
         :param hook_sink: 启动钩子接收方；阶段为 None 表示撤销该安装全部钩子
+        :param crash_sink: 崩溃分析接收方；回调标识为 None 表示撤销该安装全部回调
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
         self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
         self._hook_sink = hook_sink
+        self._crash_sink = crash_sink
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -564,6 +567,7 @@ class PluginWorkerService:
                     else None,
                     slot_sink=partial(self._publish_slot, name),
                     hook_sink=partial(self._publish_hook, name),
+                    crash_sink=partial(self._publish_crash, name),
                     cross_plugin=CrossPluginChannel(
                         list_commands=partial(self._cross_plugin_list, name),
                         call=partial(self._cross_plugin_call, name),
@@ -621,6 +625,26 @@ class PluginWorkerService:
         if self._hook_sink is None:
             raise ProtocolError("当前宿主未提供启动钩子", "PLUGIN_API_METHOD_NOT_FOUND")
         self._hook_sink(name, phase, callback_ref, required)
+
+    def _publish_crash(self, name: str, callback_ref: str | None) -> None:
+        """
+        把已获准的崩溃分析回调登记交给管理器。
+
+        :param name: 安装名称
+        :param callback_ref: 本运行登记的回调标识，None 表示撤销
+        """
+        if self._crash_sink is None:
+            raise ProtocolError("当前宿主未提供崩溃分析", "PLUGIN_API_METHOD_NOT_FOUND")
+        self._crash_sink(name, callback_ref)
+
+    def _clear_crash(self, name: str) -> None:
+        """
+        撤销该安装登记的全部分析回调，禁用或卸载后不再参与分析。
+
+        :param name: 安装名称
+        """
+        if self._crash_sink is not None:
+            self._crash_sink(name, None)
 
     def _clear_hooks(self, name: str) -> None:
         """
@@ -779,6 +803,7 @@ class PluginWorkerService:
             entry.broker = None
             self._clear_slots(name)
             self._clear_hooks(name)
+            self._clear_crash(name)
             entry.state = "disabled"
             entry.cleanup_state = "completed"
             if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:
