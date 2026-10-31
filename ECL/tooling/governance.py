@@ -477,10 +477,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"治理检查通过，已检查数量：{report.checked}")
     except (GovernanceError, OSError, ValueError, subprocess.SubprocessError) as error:
-        print(
-            f"治理检查失败：{error if isinstance(error, GovernanceError) else '工具执行或输入读取失败'}",
-            file=sys.stderr,
-        )
+        message = f"治理检查失败：{error if isinstance(error, GovernanceError) else '工具执行或输入读取失败'}"
+        # Windows runner 会丢失子进程 stderr，同时写 stdout 保证失败原因在日志中可见。
+        print(message)
+        print(message, file=sys.stderr)
         return 1
     return 0
 
