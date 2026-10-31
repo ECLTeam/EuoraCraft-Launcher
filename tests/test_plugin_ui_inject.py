@@ -10,6 +10,7 @@
 #   - test_html_slot_forwards_valid_content(tmp_path) -> None
 #   - test_vue_slot_rejects_oversized_template(tmp_path) -> None
 #   - test_slot_registration_requires_host_sink(tmp_path) -> None
+#   - test_master_switch_change_clears_then_reloads_injection_plugins() -> None
 # ============================================================
 
 from __future__ import annotations
@@ -150,3 +151,41 @@ def test_slot_registration_requires_host_sink(tmp_path: Path) -> None:
     finally:
         broker.close()
         session.close()
+
+
+def test_master_switch_change_clears_then_reloads_injection_plugins() -> None:
+    """
+    关闭总开关立即撤销插槽内容，重新打开时重载插件让界面恢复，重复变更不重复重载。
+    """
+    from ECL.plugins.manager import PluginManager
+
+    calls: list[str] = []
+
+    class _Service:
+        def clear_all_slots(self) -> None:
+            calls.append("clear")
+
+        def reload_ui_injection_plugins(self) -> None:
+            calls.append("reload")
+
+    manager = PluginManager.__new__(PluginManager)
+    manager.worker_service = _Service()
+    allowed = {"value": True}
+    manager._ui_injection_allowed = lambda: allowed["value"]
+    manager._ui_injection_was_allowed = True
+
+    # 无关分区不触发任何动作
+    manager._on_plugins_config_changed("ui", {"allow_ui_injection": False})
+    assert calls == []
+
+    allowed["value"] = False
+    manager._on_plugins_config_changed("plugins", {"allow_ui_injection": False})
+    assert calls == ["clear"]
+
+    allowed["value"] = True
+    manager._on_plugins_config_changed("plugins", {"allow_ui_injection": True})
+    assert calls == ["clear", "reload"]
+
+    # 保持打开时再次收到配置变更不应重复重载插件
+    manager._on_plugins_config_changed("plugins", {"allow_ui_injection": True})
+    assert calls == ["clear", "reload"]

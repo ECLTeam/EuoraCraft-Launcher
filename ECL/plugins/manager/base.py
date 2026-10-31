@@ -110,6 +110,7 @@ class _PluginState:
         self._account_snapshot = account_snapshot
         self._public_config = public_config
         self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
+        self._ui_injection_was_allowed = self._ui_injection_allowed()
         self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
         self._instance_roots = instance_roots
@@ -311,15 +312,26 @@ class _PluginState:
 
     def _on_plugins_config_changed(self, section: str, value: object) -> None:
         """
-        用户关闭界面注入总开关后立即撤销全部第三方插槽内容。
+        界面注入总开关变化时立即生效：关闭撤销全部插槽内容，重新打开则重载插件。
+
+        插槽内容只在插件加载时登记，因此重新打开后必须让已获准注入的插件重跑一次
+        加载，界面才会重新出现，不需要重启启动器。
 
         :param section: 变更的配置分区
         :param value: 该分区的新值
         """
-        if section != "plugins" or self._ui_injection_allowed():
+        if section != "plugins":
             return
-        if self.worker_service is not None:
+        allowed = self._ui_injection_allowed()
+        was_allowed = self._ui_injection_was_allowed
+        self._ui_injection_was_allowed = allowed
+        if self.worker_service is None:
+            return
+        if not allowed:
             self.worker_service.clear_all_slots()
+            return
+        if not was_allowed:
+            self.worker_service.reload_ui_injection_plugins()
 
     def _on_worker_slot(self, name: str, payload: dict[str, object]) -> None:
         """
