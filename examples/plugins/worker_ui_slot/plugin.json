@@ -1,0 +1,9 @@
+{
+  "name": "worker_ui_slot",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "界面注入示例",
+  "description": "演示向主窗口插槽注册 HTML 与 Vue 组件，需要用户单独批准界面注入权限。",
+  "entry_point": "main:Plugin",
+  "permissions": [{ "capability": "ui.inject", "required": false }]
+}
