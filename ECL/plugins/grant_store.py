@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from time import time
+from time import monotonic, time
 from typing import ClassVar
 from uuid import uuid4
 
@@ -112,6 +112,7 @@ class _SessionState:
     expired_capabilities: set[str] = field(default_factory=set)
     blocked_error: str | None = None
     is_closed: bool = False
+    content_verified_at: float = 0.0
 
 
 class PluginGrantSession:
@@ -235,12 +236,14 @@ class PluginGrantSession:
 
     def check(self, lease: GrantLease) -> None:
         """
-        在锁外复核内容和磁盘，再于短授权锁中拒绝失效租约。
+        在锁外强制复核内容和磁盘，再于短授权锁中拒绝失效租约。
+
+        副作用提交前必须看到最新字节，因此不复用内容复核窗口。
 
         :param lease: 入队时的可信准入
         :raises PluginGrantError: 内容、期限、范围或代次失效时抛出
         """
-        self.view()
+        self._store._view(self, force_recheck=True)
         with self._store._lock:
             self._check_locked(lease)
 
@@ -251,7 +254,7 @@ class PluginGrantSession:
         :param leases: 受信调用方捕获的非空准入集合
         :raises PluginGrantError: 任一准入失效或来源、代次不同则抛出
         """
-        self.view()
+        self._store._view(self, force_recheck=True)
         with self._store._lock:
             self._check_all_locked(leases)
 
@@ -328,6 +331,9 @@ class PluginGrantStore:
 
     max_record_bytes: ClassVar[int] = 2 * 1024 * 1024
     token_pattern: ClassVar[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}\Z")
+    # 一次宿主 API 调用会多次取视图，内容字节复核按此窗口复用；
+    # 授权记录本身每次重读，撤销与版本变化仍然立即生效。
+    content_recheck_interval_seconds: ClassVar[float] = 0.5
 
     def __init__(
         self,
@@ -648,17 +654,40 @@ class PluginGrantStore:
             ):
                 raise PluginGrantError("不能授予已经到期的许可", "PLUGIN_GRANT_INVALID")
 
-    def _view(self, session: PluginGrantSession) -> GrantView:
+    def _view(self, session: PluginGrantSession, *, force_recheck: bool = False) -> GrantView:
         """
         在每内容 I/O 锁内复核磁盘和代码，再短时发布版本和到期状态。
+
+        内容字节复核按 `content_recheck_interval_seconds` 复用：一次宿主 API 调用
+        会多次取视图，重复哈希整棵代码树会让插件延迟随体积线性增长。授权记录
+        仍然每次重读，撤销、版本回退与过期屏障都不受该窗口影响。
+
+        提交前的 `check` 传 `force_recheck`，保证副作用落地前一定看到最新字节。
+
+        :param session: 当前运行会话
+        :param force_recheck: 忽略复用窗口，强制重新校验内容字节
+        :return: 当前有效许可视图
         """
         state = self._state(session)
         with self._record_lock(state):
             with self._lock:
-                should_refresh = not state.is_closed and state.blocked_error is None
-            if should_refresh:
+                is_open = not state.is_closed and state.blocked_error is None
+                should_verify_content = is_open and (
+                    force_recheck
+                    or monotonic() - state.content_verified_at >= self.content_recheck_interval_seconds
+                )
+            if should_verify_content:
                 try:
                     self._verify_content(state)
+                except PluginGrantError as exc:
+                    with self._lock:
+                        self._block(state, exc.error_code)
+                    is_open = False
+                else:
+                    with self._lock:
+                        state.content_verified_at = monotonic()
+            if is_open:
+                try:
                     record = self._read(state)
                     with self._lock:
                         if not state.is_closed and state.blocked_error is None:
