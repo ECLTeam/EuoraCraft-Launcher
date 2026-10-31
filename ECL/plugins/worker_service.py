@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from threading import Event, RLock, Thread
+from time import monotonic
 from typing import TYPE_CHECKING, Literal
 
 from ECL.plugin_api._rpc import RpcRequest
@@ -49,6 +50,9 @@ if TYPE_CHECKING:
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
+# 生命周期钩子允许插件完成模块导入与资源索引；超过上限按执行失败回收进程树。
+lifecycle_hook_timeout_seconds = 30.0
+
 
 @dataclass(slots=True)
 class _WorkerEntry:
@@ -72,6 +76,9 @@ class PluginWorkerService:
 
     此服务的同步操作由管理 API 和启动后台边界执行；不创建桌面或业务服务副本。
     """
+
+    # 实例资源目录只需在许可生效期间保持最新；进程退出检测仍按 250ms 节奏。
+    resource_refresh_interval_seconds: float = 2.0
 
     def __init__(
         self,
@@ -106,6 +113,7 @@ class PluginWorkerService:
         self._executable = executable
         self._closed = Event()
         self._monitor_thread: Thread | None = None
+        self._resource_refreshed_at = 0.0
         self._operations = operations
         self._game_operations = game_operations
         self._file_storage = PluginFileStorage(data_path)
@@ -385,7 +393,11 @@ class PluginWorkerService:
 
     @staticmethod
     def _phase(entry: _WorkerEntry, phase: str, previous: str) -> None:
-        reply = entry.supervisor.request("lifecycle.invoke", {"phase": phase, "run_state": previous})
+        reply = entry.supervisor.request(
+            "lifecycle.invoke",
+            {"phase": phase, "run_state": previous},
+            timeout=lifecycle_hook_timeout_seconds,
+        )
         if reply.get("ok") is not True:
             raise ProtocolError("插件生命周期执行失败", "PLUGIN_WORKER_EXECUTION_FAILED")
 
@@ -673,17 +685,26 @@ class PluginWorkerService:
     def _monitor(self) -> None:
         """
         在运行中检测实际进程退出、通信故障和必要授权失效，不依赖页面轮询清理。
+
+        进程存活与授权检查保持 250ms 节奏；实例资源目录刷新按
+        `resource_refresh_interval_seconds` 降频，避免声明实例权限的插件
+        让宿主常驻线程以 4Hz 全量校验目录。
         """
         while not self._closed.wait(0.25):
             with self._lock:
                 entries = tuple(self._entries.items())
-            if any(
-                any(
-                    item.capability in PermissionDeclaration.host_selected_capabilities
-                    for item in entry.manifest.permissions
+            should_refresh_resources = (
+                monotonic() - self._resource_refreshed_at >= self.resource_refresh_interval_seconds
+                and any(
+                    any(
+                        item.capability in PermissionDeclaration.host_selected_capabilities
+                        for item in entry.manifest.permissions
+                    )
+                    for _, entry in entries
                 )
-                for _, entry in entries
-            ):
+            )
+            if should_refresh_resources:
+                self._resource_refreshed_at = monotonic()
                 try:
                     self.refresh_resources()
                 except InstanceReadError:

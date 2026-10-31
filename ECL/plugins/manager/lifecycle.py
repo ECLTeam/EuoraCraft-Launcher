@@ -195,25 +195,28 @@ class PluginLifecycle(_PluginState):
 
     def _disable_worker(self, name: str, persist_state: bool) -> PluginActionResult:
         """
-        在调用方的安装操作锁内停止第三方 Worker，并独立保存用户禁用选择。
+        先保存用户禁用选择，再尽力停止第三方 Worker。
+
+        禁用偏好与进程回收是两件事：停止失败只影响本次运行状态，返回 "stopping"
+        让调用方提示重试，不会因为进程树回收失败而丢掉用户已表达的禁用意图。
         """
+        if persist_state:
+            self._disabled_plugins.add(name)
+            self._save_plugin_state()
+            if name in self._package_entries and self._package_store:
+                self._package_store.set_enabled(name, False)
         try:
             assert self.worker_service is not None
             if self._status.get(name) != "unsupported":
                 self.worker_service.stop(name)
-            if persist_state:
-                self._disabled_plugins.add(name)
-                self._save_plugin_state()
-                if name in self._package_entries and self._package_store:
-                    self._package_store.set_enabled(name, False)
-            if self._status.get(name) != "unsupported":
-                self._status[name] = "disabled"
-            self.events.emit("plugin:status_changed", {"plugin": name, "status": "disabled"})
-            return PluginActionResult(name, PluginAction.DISABLE, "disabled")
         except (OSError, ValueError, WindowsRuntimeError) as exc:
             return PluginActionResult(
                 name, PluginAction.DISABLE, "stopping", getattr(exc, "error_code", "PLUGIN_JOB_STOP_PENDING")
             )
+        if self._status.get(name) != "unsupported":
+            self._status[name] = "disabled"
+        self.events.emit("plugin:status_changed", {"plugin": name, "status": "disabled"})
+        return PluginActionResult(name, PluginAction.DISABLE, "disabled")
 
     def unload(self, name: str, _persist_state: bool = True) -> PluginActionResult:
         """
@@ -581,10 +584,18 @@ class PluginLifecycle(_PluginState):
     def close(self) -> None:
         """
         按依赖拓扑的逆序卸载已加载插件并解除框架事件订阅。
+
+        Worker 未能全部停止时只记录失败，仍然完成包、订阅与命令线程池的本地
+        清理，最后再向上抛出：退出流程不能因为进程树回收失败而遗留悬挂资源。
         """
         self.events.unsubscribe("config:updated", self._on_instance_config_changed)
+        worker_failure: Exception | None = None
         if self.worker_service is not None:
-            self.worker_service.close()
+            try:
+                self.worker_service.close()
+            except Exception as exc:
+                worker_failure = exc
+                self.logger.exception("插件 Worker 未能全部停止，继续释放本地资源")
         self._close_packages()
         loaded_plugins = set(self._plugins)
         plugin_names = [name for name in reversed(self._dependency_resolution.load_order) if name in loaded_plugins]
@@ -614,4 +625,6 @@ class PluginLifecycle(_PluginState):
         self._disabled_plugins.clear()
         self._sidebar_collapsed = None
         self._command_executor.shutdown(wait=False)
+        if worker_failure is not None:
+            raise worker_failure
         self.logger.info("插件框架已退出")
