@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -150,11 +151,16 @@ class Adapter:
         ``WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`` 环境变量，而代码设置的标志
         不受此限制。未指定端口时不修改窗口配置，保证发布运行与既有行为一致。
 
+        WebView2 的浏览器进程按用户数据目录复用：同一目录已有实例占用时，
+        新进程会附着到旧浏览器并忽略本次标志，端口因此不会监听。调试运行
+        固定使用独立目录，让标志真正生效，不影响正常运行的会话数据。
+
         :param window_config: 待提交给 Tauri 的主窗口配置
         """
         if self.webview_debug_port is None:
             return
         window_config["additionalBrowserArgs"] = f"--remote-debugging-port={self.webview_debug_port}"
+        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(self.context.state.data_path / "webview-debug")
         self.logger.warning("已开启 WebView2 远程调试：端口：%s；仅供开发期调试使用", self.webview_debug_port)
 
     def _register_commands(self) -> None:
