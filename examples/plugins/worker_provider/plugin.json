@@ -1,0 +1,9 @@
+{
+  "name": "worker_provider",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "跨插件提供方示例",
+  "description": "导出 echo 命令，供其他插件发现并调用。",
+  "entry_point": "main:Plugin",
+  "permissions": []
+}

@@ -12,6 +12,7 @@
 #       - define_command — 登记本插件命令。
 #       - define_panel — 登记由宿主渲染的声明式面板。
 #       - define_html_slot / define_vue_slot — 向主窗口插槽提交界面内容。
+#       - list_plugin_commands / call_plugin_command — 发现并调用其他插件导出的命令。
 # ============================================================
 
 from __future__ import annotations
@@ -279,6 +280,45 @@ class Plugin:
                 "context_key": context_key,
             },
         )
+
+    def list_plugin_commands(self) -> list[dict[str, JsonValue]]:
+        """
+        列出其他已启用插件导出的命令，只含公开描述。
+
+        :return: 每项含 plugin、command、description 与字段 schema
+        :raises HostApiError: 宿主未提供跨插件通道时抛出
+        """
+        result = self.host.call("plugins.list", {})
+        commands = result.get("plugins")
+        if not isinstance(commands, list):
+            raise ProtocolError("宿主跨插件发现结果无效")
+        return commands
+
+    def call_plugin_command(
+        self,
+        plugin: str,
+        command: str,
+        arguments: dict[str, JsonValue] | None = None,
+        *,
+        timeout: float = 30.0,
+    ) -> JsonValue:
+        """
+        调用其他插件已导出的命令，输入输出由目标插件自身 schema 校验。
+
+        目标未启用、未导出该命令或调用层数超限时明确失败，不返回半份结果。
+
+        :param plugin: 目标安装名称
+        :param command: 目标导出的命令名
+        :param arguments: 输入参数，缺省为空
+        :param timeout: 最长等待秒数
+        :return: 目标命令的输出
+        :raises HostApiError: 目标拒绝或通道不可用时抛出
+        """
+        result = self.host.call(
+            "plugins.call",
+            {"plugin": plugin, "command": command, "args": arguments or {}},
+        )
+        return result.get("value")
 
     def _invoke_callback(self, reference: str, arguments: dict[str, JsonValue]) -> JsonValue:
         """

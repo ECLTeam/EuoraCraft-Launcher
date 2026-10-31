@@ -68,6 +68,19 @@ if TYPE_CHECKING:
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
 
+@dataclass(frozen=True, slots=True)
+class CrossPluginChannel:
+    """
+    跨插件发现与调用的宿主通道，由运行服务实现并保证双方准入。
+
+    发现只返回已导出命令的公开描述；调用在目标插件进程内按自身命令
+    schema 校验，调用方拿不到对方的回调、凭据或对象。
+    """
+
+    list_commands: Callable[[], list[dict[str, JsonValue]]]
+    call: Callable[[str, str, dict[str, JsonValue], float], JsonValue]
+
+
 @dataclass(slots=True)
 class _Receipt:
     fingerprint: str
@@ -168,6 +181,7 @@ class PluginHostBroker:
         java: RuntimeJava | None = None,
         public_queries: RuntimePublicQueries | None = None,
         slot_sink: Callable[[dict[str, JsonValue]], None] | None = None,
+        cross_plugin: CrossPluginChannel | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -185,12 +199,14 @@ class PluginHostBroker:
         :param java: 当前运行的 Java 查询及实际探测资源，缺失时拒绝 Java 方法
         :param public_queries: 明确选定账户与公开配置的白名单查询
         :param slot_sink: 可信界面插槽接收方；未提供时拒绝界面注入方法
+        :param cross_plugin: 跨插件发现与调用通道；未提供时拒绝相关方法
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
         self._invoke = invoke
         self._run_state = run_state
         self._slot_sink = slot_sink
+        self._cross_plugin = cross_plugin
         self._resources = resources
         self.game_catalog: RuntimeGameCatalog | None = (
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
@@ -409,6 +425,8 @@ class PluginHostBroker:
             return self._panel_service(request)
         if method.startswith("ui."):
             return self._ui_service(request)
+        if method.startswith("plugins."):
+            return self._cross_plugin_service(request)
         return self._control_service(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
@@ -633,8 +651,6 @@ class PluginHostBroker:
         """
         lease = self.session.authorize("plugin.base")
         definition = CommandDefinition.model_validate(params)
-        if definition.exported:
-            raise ProtocolError("跨插件命令尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
         reference, registration = uuid4().hex, uuid4().hex
 
         def register() -> None:
@@ -702,6 +718,49 @@ class PluginHostBroker:
         self._check_open()
         self.session.check(lease)
         return result
+
+    def exported_commands(self) -> list[dict[str, JsonValue]]:
+        """
+        返回本运行已导出命令的公开描述，供其他插件发现。
+
+        :return: 仅含名称、说明与字段 schema 的列表
+        :raises ProtocolError: 运行已关闭或授权失效时抛出
+        """
+        self.session.authorize("plugin.base")
+        with self._lock:
+            return [
+                {
+                    "command": definition.name,
+                    "description": definition.description,
+                    "input_fields": [item.model_dump(mode="json") for item in definition.input_fields],
+                    "output_fields": [item.model_dump(mode="json") for item in definition.output_fields],
+                }
+                for _, definition, _ in self._commands.values()
+                if definition.exported
+            ]
+
+    def _cross_plugin_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只开放已导出命令的发现与调用；未提供通道时明确失败。
+
+        :param request: 已通过变更检查的请求
+        :return: 发现结果或目标命令返回值
+        :raises ProtocolError: 通道缺失、参数无效或目标拒绝时抛出
+        """
+        self.session.authorize("plugin.base")
+        if self._cross_plugin is None:
+            raise ProtocolError("当前宿主未提供跨插件通道", "PLUGIN_API_METHOD_NOT_FOUND")
+        if request.method == "plugins.list":
+            self._keys(request.params, set())
+            return {"plugins": self._cross_plugin.list_commands()}
+        if request.method == "plugins.call":
+            self._keys(request.params, {"plugin", "command", "args"})
+            target, command, args = request.params["plugin"], request.params["command"], request.params["args"]
+            if not isinstance(target, str) or not isinstance(command, str) or not isinstance(args, dict):
+                raise ProtocolError("跨插件调用参数无效", "PLUGIN_SCHEMA_INVALID")
+            timeout = min(max(0.001, request.deadline - monotonic()), 30.0)
+            return {"value": self._cross_plugin.call(target, command, args, timeout)}
+        raise ProtocolError("此跨插件方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
 
     def command_names(self) -> list[str]:
         """

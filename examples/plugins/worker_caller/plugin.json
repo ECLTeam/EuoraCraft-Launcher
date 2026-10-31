@@ -1,0 +1,9 @@
+{
+  "name": "worker_caller",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "跨插件调用方示例",
+  "description": "发现并调用其他插件导出的命令。",
+  "entry_point": "main:Plugin",
+  "permissions": []
+}
