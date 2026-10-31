@@ -44,6 +44,13 @@ from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepar
 resource_reference = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]
 InstanceCapability = Literal["instances.read", "instances.manage"]
 
+# 面向插件作者与用户的合并权限：清单里写一项，宿主展开为内部细项。
+# 细项名称继续有效，需要精确范围时可直接声明。
+expanded_capabilities: dict[str, tuple[str, ...]] = {
+    "game": ("instances.read", "instances.manage"),
+    "java": ("java.read", "java.use", "java.catalog.read", "java.install"),
+}
+
 
 class _PermissionScope(BaseModel):
     """
@@ -61,6 +68,8 @@ class _PermissionScope(BaseModel):
         "java.install",
         "accounts.read",
         "ui.inject",
+        "game",
+        "java",
     ]
     resource_refs: tuple[resource_reference, ...] = Field(default=(), max_length=128)
 
@@ -99,6 +108,8 @@ class PermissionDeclaration(_PermissionScope):
             "java.install",
             "accounts.read",
             "ui.inject",
+            "game",
+            "java",
         }:
             raise ValueError("插件权限声明不受支持，请更新插件权限清单")
         return value

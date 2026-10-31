@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Self
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator, model_validator
 
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.environment_pool import _exclusive_lock
-from ECL.plugins.grant_models import PermissionDeclaration
+from ECL.plugins.grant_models import PermissionDeclaration, expanded_capabilities
 from ECL.utils import atomic_write_text
 
 
@@ -50,6 +50,28 @@ class WorkerManifest(BaseModel):
     reserved_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
     )
+
+    @model_validator(mode="after")
+    def expand_permissions(self) -> Self:
+        """
+        把 game、java 两项合并权限展开为内部细项。
+
+        清单只写一项时用户审阅面与插件作者面都更短；展开保持声明顺序并去重，
+        细项名称继续有效，需要精确范围时可直接声明。
+
+        :return: 展开后的清单
+        """
+        expanded: list[PermissionDeclaration] = []
+        seen: set[tuple[str, tuple[str, ...]]] = set()
+        for declaration in self.permissions:
+            for capability in expanded_capabilities.get(declaration.capability, (declaration.capability,)):
+                item = declaration.model_copy(update={"capability": capability})
+                key = (capability, tuple(item.resource_refs))
+                if key in seen:
+                    continue
+                seen.add(key)
+                expanded.append(item)
+        return self.model_copy(update={"permissions": tuple(expanded)})
 
     @field_validator("name")
     @classmethod

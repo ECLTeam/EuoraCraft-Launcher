@@ -8,6 +8,25 @@ import pytest
 from ECL.plugins.installation_store import PluginInstallationError, PluginInstallationStore, WorkerManifest
 
 
+def test_manifest_expands_merged_permissions() -> None:
+    """清单写 game、java 两项时展开为内部细项，细项名称继续有效。"""
+    manifest = WorkerManifest.model_validate(
+        {
+            "api_version": 2,
+            "name": "demo",
+            "permissions": [{"capability": "game"}, {"capability": "java"}],
+        }
+    )
+    assert [item.capability for item in manifest.permissions] == [
+        "instances.read",
+        "instances.manage",
+        "java.read",
+        "java.use",
+        "java.catalog.read",
+        "java.install",
+    ]
+
+
 def test_installation_survives_restart_and_reinstall_never_inherits_identity(tmp_path: Path) -> None:
     store = PluginInstallationStore(tmp_path)
     first = store.ensure("example", "directory")
