@@ -119,7 +119,7 @@ def patch(broker, before, values, key=None):
 
 
 def test_profile_patch_preserves_unrelated_fields_and_returns_current_version(profiles):
-    broker, manager, store, _, root, before, notified, _ = profiles
+    broker, manager, _, _, root, before, notified, _ = profiles
     result = finish(broker, manager, patch(broker, before, {"description": "New", "favorite": False, "tags": []}))
     assert result["state"] == "completed", result
     assert result["effect"] == "committed" and not result["cleanup_pending"]
@@ -129,7 +129,7 @@ def test_profile_patch_preserves_unrelated_fields_and_returns_current_version(pr
     assert "hidden" not in json.dumps(result["result"])
     current = call(broker, "instances.get", {"instance_ref": before["instance_ref"]})
     assert current["profile_etag"] == result["result"]["profile_etag"] != before["profile_etag"]
-    assert notified == [root] and not store.transactions.has_pending()
+    assert notified == [root]
 
 
 def test_full_version_includes_unexposed_fields_and_same_content_new_object(profiles):
@@ -158,14 +158,14 @@ def test_cancel_queued_profile_releases_real_occupancy_without_writing(profiles)
     blocker = manager._executor.submit(gate.wait, 5)
     try:
         receipt = patch(broker, before, {"alias": "Cancelled"})
-        assert store.transactions.has_pending(root, "one")
+        assert store.transactions.has_active(root, "one")
         call(broker, "operations.cancel", {"operation_ref": receipt["operation_ref"]})
     finally:
         gate.set()
         blocker.result(5)
     result = finish(broker, manager, receipt)
     assert result["state"] == "cancelled" and not result["cleanup_pending"]
-    assert path.read_bytes() == original and not store.transactions.has_pending()
+    assert path.read_bytes() == original and not store.transactions.has_active()
 
 
 @pytest.mark.parametrize("reason", ["instances.read", "instances.manage", "deadline"])
@@ -194,7 +194,7 @@ def test_queued_profile_rechecks_original_dual_permission_and_total_deadline(pro
     result = finish(broker, manager, receipt)
     assert result["state"] in {"failed", "cancelled"} and result["effect"] == "none"
     assert not result["cleanup_pending"] and path.read_bytes() == original
-    assert not store.transactions.has_pending()
+    assert not store.transactions.has_active()
 
 
 def test_same_profile_mutation_key_returns_one_task_and_read_revocation_hides_result(profiles):
@@ -229,88 +229,23 @@ def test_profile_write_rejects_nonwritable_or_shared_file_without_data_loss(prof
         path.chmod(stat.S_IWRITE | stat.S_IREAD)
 
 
-@pytest.mark.parametrize("action", ["save_as", "discard", "restore"])
-def test_foreign_profile_is_retained_and_only_trusted_recovery_finishes_original(profiles, monkeypatch, action):
-    broker, manager, store, _, root, before, _, _ = profiles
-    path = root / "versions/one/.ecl/instance.json"
-    original = path.read_bytes()
-    publish = FileHandle.publish
-
-    def compete(stream, name):
-        if name == "instance.json":
-            path.write_text('{"alias":"External"}', encoding="utf-8")
-        return publish(stream, name)
-
-    with monkeypatch.context() as change:
-        change.setattr(FileHandle, "publish", compete)
-        result = finish(broker, manager, patch(broker, before, {"alias": "New"}))
-    assert result["effect"] == "unknown" and result["cleanup_pending"]
-    assert path.read_text(encoding="utf-8") == '{"alias":"External"}'
-    with pytest.raises(InstanceReadError):
-        store.patch_profile(root, "one", {"alias": "Desktop"})
-    if action == "restore":
-        path.unlink()
-        with monkeypatch.context() as change:
-            change.setattr(store.transactions, "refresh", lambda *args: None)
-            row = store.transactions.page()["items"][0]
-    else:
-        row = store.transactions.page()["items"][0]
-    receipt = store.transactions.resolve(
-        row["recovery_ref"], row["revision"], row["etag"], action, "original" if action == "save_as" else None, manager
-    )
-    manager._operations[receipt["operationId"]].future.result(5)
-    assert manager.get(receipt["operationId"])["status"] == "completed"
-    if action == "restore":
-        assert path.read_bytes() == original
-    else:
-        assert path.read_text(encoding="utf-8") == '{"alias":"External"}'
-    if action == "save_as":
-        assert (path.parent / "recovered-profile-original.json").read_bytes() == original
-    assert not store.transactions.has_pending()
-
-
-@pytest.mark.parametrize("phase", ["prepared", "old_saved", "published"])
-def test_profile_record_failure_preserves_original_or_actual_publication(profiles, monkeypatch, phase):
-    broker, manager, store, _, root, before, _, _ = profiles
-    path = root / "versions/one/.ecl/instance.json"
-    original = path.read_bytes()
-    save = store.transactions._save
-
-    def fail(item):
-        if item.record.phase == phase:
-            raise OSError("record unavailable")
-        return save(item)
-
-    with monkeypatch.context() as change:
-        change.setattr(store.transactions, "_save", fail)
-        result = finish(broker, manager, patch(broker, before, {"alias": "Published"}))
-    assert result["state"] == "failed"
-    assert result["effect"] == ("unknown" if phase == "published" else "none")
-    assert not result["cleanup_pending"]
-    assert (
-        (json.loads(path.read_bytes())["alias"] == "Published")
-        if phase == "published"
-        else path.read_bytes() == original
-    )
-
-
 @pytest.mark.parametrize("has_native_flag", [False, True])
 def test_native_publication_confirmation_loss_never_reports_zero_effect(profiles, monkeypatch, has_native_flag):
     broker, manager, store, _, root, before, notified, _ = profiles
-    publish = FileHandle.publish
+    replace = FileHandle.replace
 
     def lost(stream, name):
-        publish(stream, name)
+        replace(stream, name)
         if name == "instance.json":
             stream.is_published = has_native_flag
             raise OSError("publication confirmation unavailable")
 
     with monkeypatch.context() as change:
-        change.setattr(FileHandle, "publish", lost)
+        change.setattr(FileHandle, "replace", lost)
         result = finish(broker, manager, patch(broker, before, {"alias": "Published"}))
     assert result["effect"] == "unknown" and not result["cleanup_pending"]
     assert json.loads((root / "versions/one/.ecl/instance.json").read_bytes())["alias"] == "Published"
-    assert notified == [root] and not store.transactions.has_pending()
+    assert notified == [root] and not store.transactions.has_active()
 
 
 def test_notification_failure_retries_only_notification_without_repeating_write(profiles, monkeypatch):
@@ -321,7 +256,6 @@ def test_notification_failure_retries_only_notification_without_repeating_write(
         )
         result = finish(broker, manager, patch(broker, before, {"alias": "Published"}))
         assert result["effect"] == "committed" and result["cleanup_pending"]
-        assert store.transactions.has_pending(root, "one")
     path = root / "versions/one/.ecl/instance.json"
     # 用外部后来版本证明恢复通知不会再写业务。
     path.write_text('{"alias":"Later"}', encoding="utf-8")
@@ -339,77 +273,3 @@ def test_management_permission_view_exposes_only_runtime_root_refs(profiles):
     management = next(item for item in public["items"] if item["capability"] == "instances.manage")
     root_ref = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
     assert management["resource_refs"] == [root_ref] and management["resource_refs"] != persistent
-
-
-def test_profile_metadata_handle_keeps_reservation_until_actual_backup_disappearance(profiles):
-    import ctypes
-    from ctypes import wintypes
-
-    broker, manager, store, _, root, before, _, _ = profiles
-    path = root / "versions/one/.ecl/instance.json"
-    create = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
-    create.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        ctypes.c_void_p,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.HANDLE,
-    ]
-    create.restype = wintypes.HANDLE
-    handle = create(str(path), 0x100080, 7, None, 3, 0x200000, None)
-    assert handle != ctypes.c_void_p(-1).value
-    try:
-        result = finish(broker, manager, patch(broker, before, {"alias": "Published"}))
-        assert result["effect"] == "committed" and result["cleanup_pending"]
-        assert store.transactions.has_pending(root, "one")
-        with pytest.raises(InstanceReadError):
-            store.patch_profile(root, "one", {"alias": "Desktop"})
-        assert json.loads(path.read_bytes())["alias"] == "Published"
-    finally:
-        close = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
-        close.argtypes = [wintypes.HANDLE]
-        assert close(handle)
-    assert broker.operations.is_idle()
-    assert not store.transactions.has_pending()
-    assert json.loads(path.read_bytes())["alias"] == "Published"
-
-
-def test_recovery_rechecks_foreign_version_and_failed_choice_has_stable_receipt(profiles, monkeypatch):
-    broker, manager, store, _, root, before, _, _ = profiles
-    path = root / "versions/one/.ecl/instance.json"
-    original = path.read_bytes()
-    publish = FileHandle.publish
-
-    def compete(stream, name):
-        if name == "instance.json":
-            path.write_text('{"alias":"External"}', encoding="utf-8")
-        return publish(stream, name)
-
-    with monkeypatch.context() as change:
-        change.setattr(FileHandle, "publish", compete)
-        result = finish(broker, manager, patch(broker, before, {"alias": "New"}))
-    assert result["cleanup_pending"]
-    row = store.transactions.page()["items"][0]
-    gate = Event()
-    blocker = manager._executor.submit(gate.wait, 5)
-    arguments = (row["recovery_ref"], row["revision"], row["etag"], "save_as", "saved", manager)
-    try:
-        receipt = store.transactions.resolve(*arguments)
-        path.write_text('{"alias":"Changed"}', encoding="utf-8")
-    finally:
-        gate.set()
-        blocker.result(5)
-    manager._operations[receipt["operationId"]].future.result(5)
-    assert manager.get(receipt["operationId"])["status"] == "failed"
-    assert store.transactions.resolve(*arguments) == receipt
-    refreshed = store.transactions.page()["items"][0]
-    assert refreshed["revision"] > row["revision"]
-    retried = store.transactions.resolve(
-        refreshed["recovery_ref"], refreshed["revision"], refreshed["etag"], "save_as", "saved", manager
-    )
-    manager._operations[retried["operationId"]].future.result(5)
-    assert manager.get(retried["operationId"])["status"] == "completed"
-    assert path.read_text(encoding="utf-8") == '{"alias":"Changed"}'
-    assert (path.parent / "recovered-profile-saved.json").read_bytes() == original

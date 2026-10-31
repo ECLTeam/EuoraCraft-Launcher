@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
-from time import monotonic, sleep
 
 import pytest
 
@@ -65,116 +63,3 @@ def test_ecl_junction_cannot_publish_outside_selected_instance(tmp_path):
         assert list(outside.iterdir()) == []
     finally:
         assert native.close()
-
-
-def test_original_move_publish_and_conflict_restore_are_never_overwriting(tmp_path):
-    native = NativeProfileTarget(target(tmp_path))
-    streams = []
-    try:
-        native.open(initialize=True, admit=lambda: None)
-        directory = native.profile_directory
-        initial = directory.file(".initial", create=True, on_create=streams.append)
-        initial.write(0, b"original")
-        initial.flush()
-        initial.publish("instance.json")
-        initial.close()
-        original = directory.delete_target("instance.json", streams.append)
-        original.move(".backup")
-        foreign = directory.file("instance.json", create=True, on_create=streams.append)
-        foreign.write(0, b"foreign")
-        foreign.close()
-        with pytest.raises(FileBoundaryError):
-            original.move("instance.json")
-        assert original.read(0, 8) == b"original"
-        original.move("recovered-profile-test.json")
-        original.close()
-        assert (tmp_path / "versions/人工实例/.ecl/instance.json").read_bytes() == b"foreign"
-        assert directory.entry_identity(".backup", monotonic() + 1) is None
-    finally:
-        for stream in reversed(streams):
-            stream.close()
-        assert native.close()
-
-
-@pytest.mark.parametrize(
-    "has_original,point",
-    [
-        *(
-            (True, point)
-            for point in (
-                "before_prepared",
-                "prepared",
-                "after_move",
-                "old_saved",
-                "after_publish",
-                "published",
-                "after_backup_deleted",
-                "conflict",
-            )
-        ),
-        *((False, point) for point in ("before_prepared", "prepared", "after_publish", "published", "conflict")),
-    ],
-)
-def test_actual_process_exit_recovers_shared_profile_and_never_replays_patch(tmp_path, has_original, point):
-    from ECL.foundation import EventBus
-    from ECL.services.game.instance_profiles import InstanceProfileStore
-    from ECL.services.game.version_stats import VersionStatsStore
-    from ECL.services.operations import OperationManager
-
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "tests.instance_profile_crash_helper",
-            str(tmp_path),
-            point,
-            "existing" if has_original else "first",
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    try:
-        end = monotonic() + 15
-        while not (tmp_path / "ready").exists():
-            if process.poll() is not None:
-                pytest.fail(process.communicate(timeout=1)[1].decode("utf-8", errors="replace"))
-            assert monotonic() < end
-            sleep(0.025)
-    finally:
-        process.terminate()
-        process.communicate(timeout=5)
-    notified = []
-    store = InstanceProfileStore(tmp_path / "data", VersionStatsStore(), on_changed=notified.append)
-    manager = OperationManager(tmp_path / "data", EventBus())
-    path = tmp_path / "game/versions/one/.ecl/instance.json"
-    try:
-        page = store.transactions.page()
-        if point == "conflict":
-            assert json.loads(path.read_bytes())["alias"] == "External"
-            if has_original:
-                row = page["items"][0]
-                receipt = store.transactions.resolve(
-                    row["recovery_ref"], row["revision"], row["etag"], "save_as", "original", manager
-                )
-                manager._operations[receipt["operationId"]].future.result(5)
-                assert manager.get(receipt["operationId"])["status"] == "completed"
-                assert json.loads((path.parent / "recovered-profile-original.json").read_bytes())["alias"] == "Original"
-            else:
-                assert page["items"] == []
-        else:
-            assert page["items"] == []
-            if point in {"after_publish", "published", "after_backup_deleted"}:
-                assert json.loads(path.read_bytes())["alias"] == "Published"
-            elif has_original:
-                assert json.loads(path.read_bytes())["alias"] == "Original"
-            else:
-                assert not path.exists()
-        if point != "before_prepared":
-            assert not list(path.parent.glob(".profile-new-*"))
-            assert notified == [tmp_path / "game"]
-        assert not store.transactions.has_pending()
-    finally:
-        manager.close()
-        assert store.transactions.close()

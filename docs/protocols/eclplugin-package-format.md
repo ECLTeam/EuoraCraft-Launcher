@@ -149,9 +149,7 @@ receipt = host.call("instances.profile_patch", {
 
 提交最多 5 秒；任务 `plugin_instance_profile_patch` 的总截止为 30 秒，包含排队。成功视图为 `{instance_ref,alias,profile:{description,favorite,tags},profile_etag}`，绑定真实提交后的完整版本，交付前再次验证原始管理准入和物理实例；失权时 result 为 null，不改写 effect。完整版本冲突返回 `PLUGIN_INSTANCE_PROFILE_CONFLICT`，调用方不得自动读新版本强制覆盖或换键重放。
 
-仅支持 Windows x64、本地 NTFS。宿主固定原目录和文件对象，保留原对象备份后不覆盖发布，原资料名称可能短暂缺失，不承诺一次原子覆盖。实际占用和备份清理完成前保持 cleanup_pending；重启只恢复或清理登记对象，不恢复旧 Worker、旧任务或旧补丁。外部文件占名时保留双方数据，从“文件恢复 → 实例资料”选择原位置恢复、受限后缀另存为 `recovered-profile-{suffix}.json`，或经二次确认丢弃原备份。成功提交不提供旧版本撤销。
-
-仅可信主 WebView 可调用 `plugin_instance_profile_recoveries_list({cursor?,limit?})` 和 `plugin_instance_profile_recovery_resolve({recovery_ref,expected_revision,expected_etag,action,saved_suffix?})`；Worker、其他窗口及 Dev Channel 均被拒绝。action 为 restore/save_as/discard，save_as 必须提供 1—64 位 ASCII 字母、数字、下划线或连字符后缀，其余动作不接受后缀。查询 DTO 为 `{items:[{recovery_ref,name,revision,etag,state,actions}],next_cursor}`，不含主机路径或原始资料；处理返回应用用户任务回执，关闭弹窗不取消已接纳任务。孤立安装和已移出配置的原目录仍可恢复，但实际物理身份必须一致。
+仅支持 Windows x64、本地 NTFS。宿主固定原目录和文件对象，核对原资料版本后释放其独占句柄，再用**原子替换**发布新资料：要么旧资料完整保留，要么新资料完整可见，不会出现半写或名称缺失。替换成功后旧版本不可找回，宿主不保留备份、不登记恢复记录。暂存或句柄尚未实际释放时保持 cleanup_pending；重启不恢复旧 Worker、旧任务或旧补丁。
 
 示例见 [worker_instance_profile](../../examples/plugins/worker_instance_profile/README.md)，边界及验收见 实例资料修改方案。
 
@@ -179,7 +177,7 @@ commit 返回 `{operation_ref,state:"queued"}`，表示已接纳；实际结果�
 
 files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放配额或允许重新启用。
 
-同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换登记事务按下节恢复。参见 完整协议与验收 和可安装的 [worker_snapshot 示例](../../examples/plugins/worker_snapshot/README.md)。
+同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换事务按下节原子替换。参见 完整协议与验收 和可安装的 [worker_snapshot 示例](../../examples/plugins/worker_snapshot/README.md)。
 
 ### 按版本删除私有文件
 
@@ -197,17 +195,13 @@ RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；�
 
 `files.replace_begin({target:FileRef,expected_etag,total_bytes})` 使用本运行基础准入，返回与新建相同的 `{write_ref,max_chunk_bytes}`。随后使用既有write_chunk、write_commit、write_abort；上传始终绑定原始基础准入，运行或代次失效后不能复活旧上传。原、新文件均至多8 MiB，分块32 KiB；不接受overwrite、force或真实路径。begin不初始化缺失空间或目标。已有文件和新暂存同时计入配额。
 
-commit创建plugin_file_replace任务，从提交起共30秒，包含排队。执行时从原句柄完整核对原对象与expected_etag，最终接纳前复核原lease、取消、截止及审计。先持久保存事务凭据，再把原对象不覆盖移到内部备份，最后不覆盖发布新暂存。**原名称可能短暂不存在，不承诺一次原子覆盖。** 新建与下载继续禁止覆盖。
+commit创建plugin_file_replace任务，从提交起共30秒，包含排队。执行时从原句柄完整核对原对象与expected_etag，最终接纳前复核原lease、取消、截止及审计。核对通过后释放原对象独占句柄，用**原子替换**把暂存发布为原名：要么旧内容完整保留，要么新内容完整可见，不会出现半写文件。新建与下载继续禁止覆盖。
 
-接受前失败保留原文件；接受后按真实结果报告effect。失败若原名称仍空缺，只按原对象不覆盖恢复；后来文件占用名称时保留外部文件及原备份，effect保持unknown，cleanup_pending保持true。旧备份、暂存、记录和实际句柄全部结束后才释放名称及预留；外部元数据句柄延迟删除时，新文件可以正常读取，清理仍保留pending。成功替换不提供历史撤销。
+替换成功后旧内容不可找回，宿主不保留备份、不登记恢复记录，也不阻塞该路径的后续写入。接受前失败保留原文件；替换本身失败按真实结果报告effect，失败时原文件内容不变、暂存由任务收尾清理，`cleanup_pending` 只在暂存或句柄尚未实际释放时保持。
 
-重启仅处理有严格凭据的登记事务，核对原根、卷和文件ID及完整SHA-256；不继续旧上传，不恢复旧run控制引用，不扫描删除未知残留。NTFS复用名称可能继承原创建时间，替换恢复只识别本次新对象的明确创建时间过渡，不放宽公开FileRef版本规则。无法核实的记录或对象保留，并阻止相关安装重新启用、覆盖登记或卸载。
+崩溃语义：替换前中断，目标保持旧内容（`.upload-*` 暂存残留计入空间，不自动恢复或删除）；替换后中断，目标是新内容。重启不继续旧上传、不恢复旧run控制引用，也不扫描删除未知残留。
 
-可信主窗口“文件恢复”可查看孤立安装记录，选择仅在缺失时恢复原位置、按明确新名称另存原文件，或二次确认永久丢弃原备份。`plugin_file_recoveries_list({cursor?,limit?})` 默认50、最多100项；返回当前宿主opaque recovery_ref、revision、etag、状态及可执行动作，不返回宿主路径和内部名称。状态为pending、conflict、cleanup或invalid；后两者无破坏性操作。
-
-`plugin_file_recovery_resolve({recovery_ref,expected_revision,expected_etag,action,saved_name?})` 仅原生注册主WebView可调用，返回应用任务回执。action为restore/save_as/discard，只有save_as可且必须提供saved_name。执行前重新核对记录及实际文件，同一审阅选择返回同一任务；失败后刷新取得新版本才可再次尝试。关闭弹窗不停止已接纳任务，成功提示以实际任务终态为准。Worker和Dev Channel均不能调用恢复管理入口。
-
-示例见 [worker_file_replace](../../examples/plugins/worker_file_replace/README.md)，设计及验收见 替换实施方案。
+示例见 [worker_file_replace](../../examples/plugins/worker_file_replace/README.md)。
 
 ## 只读网络请求
 

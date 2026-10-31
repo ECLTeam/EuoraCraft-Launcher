@@ -481,9 +481,19 @@ class RuntimeFiles:
                     raise FileBoundaryError("原文件版本已变化", "PLUGIN_FILE_CHANGED")
                 self._check(upload.lease, deadline)
                 context.check_cancelled()
-                context.finalize(
-                    lambda: self._storage.replacements.commit(upload, original, old, information, actual, old_digest)
-                )
+                # 版本已核对：释放原对象独占句柄，随后按原子替换发布。
+                # 替换要么保留完整旧内容、要么呈现完整新内容，不保留备份也不再登记恢复。
+                original.close()
+                upload.original = None
+
+                def replace() -> None:
+                    assert upload.stream is not None
+                    try:
+                        upload.stream.replace(upload.target.relative_path)
+                    except FileBoundaryError as exc:
+                        raise OperationCommitRejectedError("替换未完成，原文件已保留", exc.error_code) from exc
+
+                context.finalize(replace)
                 return _PublishedFile(upload.target, space.identity, upload.stream.information(), actual)
 
             def publish() -> None:

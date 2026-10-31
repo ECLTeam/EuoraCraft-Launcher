@@ -222,17 +222,17 @@ class InstanceProfileStore:
 
     def snapshot(self, game_path: Path, version_id: str, deadline: float) -> InstanceProfileSnapshot:
         """
-        在资料唯一锁内读取完整版本；待恢复不能被解释为首次缺少文件。
+        在资料唯一锁内读取完整版本。
 
         :param game_path: 宿主已确定的游戏根目录
         :param version_id: 具体实例目录名
         :param deadline: 本次读取的有限截止
         :return: 完整原始资料及物理版本
-        :raises InstanceReadError: 资料损坏、超限、变化或存在待恢复事务
+        :raises InstanceReadError: 资料损坏或超过上限
         """
         with self._lock:
-            if self.transactions.has_pending(game_path, version_id):
-                raise InstanceReadError("实例资料等待实际收尾或恢复", "PLUGIN_INSTANCE_PROFILE_RECOVERY_REQUIRED")
+            if self.transactions.has_active(game_path, version_id):
+                raise InstanceReadError("实例资料正在处理", "PLUGIN_INSTANCE_PROFILE_BUSY")
             return read_profile_snapshot(InstanceReadBoundary(game_path, deadline), version_id)
 
     def read_profile(self, game_path: Path, version_id: str) -> dict[str, JsonValue]:

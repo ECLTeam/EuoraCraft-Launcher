@@ -719,6 +719,19 @@ class FileHandle:
             raise FileBoundaryError("文件已经发布", "PLUGIN_FILE_INVALID")
         self._rename(name, replace=False)
 
+    def replace(self, name: str) -> None:
+        """
+        以原子替换方式发布暂存，覆盖同名目标且不保留原文件。
+
+        调用方必须先核对原对象版本并释放其独占句柄：替换是最后一步，要么旧内容
+        完整保留，要么新内容完整可见，不会出现半写文件。替换成功后旧内容不可找回。
+
+        :param name: 已校验的最终单个文件名
+        """
+        if self.is_published:
+            raise FileBoundaryError("文件已经发布", "PLUGIN_FILE_INVALID")
+        self._rename(name, replace=True)
+
     def move(self, name: str) -> None:
         """
         按原对象句柄不覆盖移动，供正式文件备份和恢复使用。

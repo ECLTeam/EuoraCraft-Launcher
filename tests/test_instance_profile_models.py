@@ -103,29 +103,6 @@ def test_desktop_patch_retains_valid_unknown_fields(tmp_path):
     assert json.loads(path.read_bytes())["private"] == {"retained": [1, False]}
 
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"expected_revision": True},
-        {"expected_etag": "bad"},
-        {"recovery_ref": "bad"},
-        {"action": "overwrite"},
-        {"action": "save_as"},
-        {"saved_suffix": None},
-        {"action": "save_as", "saved_suffix": "../outside"},
-        {"action": "save_as", "saved_suffix": "name.json"},
-        {"action": "save_as", "saved_suffix": "x" * 65},
-        {"path": "C:/private"},
-    ],
-)
-def test_profile_recovery_rejects_ambiguous_or_path_input(changes):
-    from ECL.api.plugin_models import PluginInstanceProfileRecoveryResolve
-
-    request = {"recovery_ref": "a" * 32, "expected_revision": 1, "expected_etag": "b" * 64, "action": "restore"}
-    with pytest.raises(ValidationError):
-        PluginInstanceProfileRecoveryResolve.model_validate({**request, **changes})
-
-
 def test_alias_limit_applies_after_trimming_without_type_conversion():
     assert InstanceProfilePatch(alias=" " * 120 + "Alias" + " " * 120).alias == "Alias"
     with pytest.raises(ValidationError):

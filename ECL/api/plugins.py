@@ -9,8 +9,6 @@
 #   - class PluginHandlers — 处理插件的启用、禁用、路由、插槽和命令调用请求。
 #       - plugin_permission_resources(body, webview_window) — 只为原生主窗口发现可审阅实例资源。
 #       - plugin_permissions_get/update — 查询和保存本安装的内容及精确范围授权。
-#       - plugin_file_recoveries_list / plugin_file_recovery_resolve — 主窗口私有文件恢复查询与处理。
-#       - plugin_instance_profile_recoveries_list / plugin_instance_profile_recovery_resolve — 主窗口共享实例资料恢复。
 #       - plugin_runtime_info — 查询实际 Worker 和清理状态。
 #       - plugin_list(body) -> dict[str, Any] — 获取插件列表。
 #       - plugin_info(body) -> dict[str, Any] — 获取插件信息。
@@ -45,9 +43,6 @@ from uuid import uuid4
 from ECL.api.bridge import WebviewWindow
 from ECL.api.contracts import failure
 from ECL.api.plugin_models import (
-    PluginFileRecoveriesQuery,
-    PluginFileRecoveryResolve,
-    PluginInstanceProfileRecoveryResolve,
     PluginPermissionQuery,
     PluginPermissionResources,
     PluginPermissionUpdate,
@@ -81,94 +76,6 @@ class PluginHandlers(_FrontendState):
         ):
             raise PluginGrantError("此入口不能管理插件授权", "PLUGIN_MANAGEMENT_CALLER_DENIED")
         return PermissionManagementCaller.main_webview
-
-    async def plugin_file_recoveries_list(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        向真实主窗口查询待恢复文件，包含已经移除插件代码的孤立安装。
-
-        :param body: 有界分页参数
-        :param webview_window: 原生注入的实际窗口
-        :return: 不包含路径的恢复视图
-        """
-        try:
-            self._permission_caller(webview_window)
-            query = PluginFileRecoveriesQuery.model_validate(body)
-            result = await asyncio.to_thread(self.plugins.worker_service.file_recoveries, query.cursor, query.limit)
-            return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError) as exc:
-            return failure(str(exc), exc.error_code)
-
-    async def plugin_file_recovery_resolve(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        接纳主窗口明确选择的恢复任务，等待超时不等于任务没有接纳。
-
-        :param body: 当前恢复引用、版本及动作
-        :param webview_window: 原生注入的实际窗口
-        :return: 既有应用用户任务回执
-        """
-        try:
-            caller = self._permission_caller(webview_window)
-            query = PluginFileRecoveryResolve.model_validate(body)
-            result = await asyncio.to_thread(
-                self.plugins.worker_service.resolve_file_recovery,
-                query.recovery_ref,
-                query.expected_revision,
-                query.expected_etag,
-                query.action,
-                query.saved_name,
-                caller,
-            )
-            return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError) as exc:
-            return failure(str(exc), exc.error_code)
-
-    async def plugin_instance_profile_recoveries_list(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        只向已注册原生主窗口查询共享实例资料的登记恢复。
-
-        :param body: 当前宿主的有界分页参数
-        :param webview_window: 原生注入的实际窗口
-        :return: 不含路径或资料正文的恢复页面
-        """
-        try:
-            self._permission_caller(webview_window)
-            query = PluginFileRecoveriesQuery.model_validate(body)
-            result = await asyncio.to_thread(self.plugins.worker_service.profile_recoveries, query.cursor, query.limit)
-            return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
-            return failure(str(exc), exc.error_code)
-
-    async def plugin_instance_profile_recovery_resolve(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        接纳用户明确的实例原资料恢复选择，提交超时不代表没有实际任务。
-
-        :param body: 恢复引用、审阅版本、动作和可选受限另存后缀
-        :param webview_window: 原生注入的实际调用身份
-        :return: 应用任务接纳回执
-        """
-        try:
-            caller = self._permission_caller(webview_window)
-            query = PluginInstanceProfileRecoveryResolve.model_validate(body)
-            result = await asyncio.to_thread(
-                self.plugins.worker_service.resolve_profile_recovery,
-                query.recovery_ref,
-                query.expected_revision,
-                query.expected_etag,
-                query.action,
-                query.saved_suffix,
-                caller,
-            )
-            return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
-            return failure(str(exc), exc.error_code)
 
     async def plugin_permissions_get(
         self, body: dict[str, Any], webview_window: WebviewWindow = None

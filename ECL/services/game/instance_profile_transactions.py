@@ -3,19 +3,18 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：固定共享实例资料的原生目录对象并协调不覆盖提交及登记恢复。
+# 文件作用：固定共享实例资料的原生目录对象并协调原子替换提交。
 #
 # 公开接口：
 #   - class InstanceProfileTarget — 宿主确认的根、实例及物理授权身份。
 #   - class NativeProfileTarget — 相对固定目录打开资料，持有明确关闭归属。
-#   - class InstanceProfileTransactions — 拥有实际资料事务、凭据及可信恢复。
+#   - class InstanceProfileTransactions — 拥有实际资料事务、版本核对与原子替换。
 # ============================================================
 
 from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,12 +23,9 @@ from time import monotonic
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from ECL.plugin_api.contracts import JsonValue
-from ECL.services.operations import OperationCommitRejectedError, OperationContext, OperationManager
+from ECL.services.operations import OperationCommitRejectedError, OperationContext
 from ECL.utils.instance_reading import DirectoryIdentity, InstanceReadBoundary, InstanceReadError
-from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity
+from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle
 
 from .instance_profile_models import InstanceProfilePatch, InstanceProfileSnapshot, read_profile_snapshot
 
@@ -118,49 +114,6 @@ class NativeProfileTarget:
         return True
 
 
-class _ProfileRecord(BaseModel):
-    """
-    登记一次有限共享资料提交的完整对象凭据，阶段不能单独授权删除。
-    """
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-    schema_version: Literal[1] = 1
-    record_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    installation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    root_path: str = Field(min_length=1, max_length=32768)
-    version_id: str = Field(min_length=1, max_length=64)
-    python_root: DirectoryIdentity
-    python_instance: DirectoryIdentity
-    directories: tuple[FileIdentity, ...] = Field(min_length=4, max_length=4)
-    old_identity: FileIdentity | None
-    old_etag: str | None = Field(pattern=r"^[0-9a-f]{64}$")
-    old_sha256: str | None = Field(pattern=r"^[0-9a-f]{64}$")
-    new_identity: FileIdentity
-    new_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    temporary_name: str = Field(pattern=r"^\.profile-new-[0-9a-f]{32}$")
-    backup_name: str = Field(pattern=r"^\.profile-old-[0-9a-f]{32}$")
-    phase: Literal["prepared", "old_saved", "published"] = "prepared"
-    revision: int = Field(default=0, ge=0, le=2**53 - 1)
-    resolution: Literal["restore", "save_as", "discard"] | None = None
-    saved_suffix: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
-
-    @model_validator(mode="after")
-    def validate_record(self) -> _ProfileRecord:
-        """
-        只接受明确存在状态、完整旧凭据及合法共享实例组件。
-        """
-        FileDirectory._component(self.version_id)
-        if self.version_id.endswith((".", " ")) or not Path(self.root_path).is_absolute():
-            raise ValueError("资料位置无效")
-        if (self.old_identity is None) != (self.old_etag is None) or (self.old_identity is None) != (
-            self.old_sha256 is None
-        ):
-            raise ValueError("原资料凭据不完整")
-        if (self.resolution == "save_as") != (self.saved_suffix is not None):
-            raise ValueError("另存选择不完整")
-        return self
-
-
 @dataclass(slots=True)
 class _ProfileTransaction:
     """
@@ -171,22 +124,14 @@ class _ProfileTransaction:
     installation_id: str
     reference: str = field(default_factory=lambda: uuid4().hex)
     native: NativeProfileTarget | None = None
-    record: _ProfileRecord | None = None
     original: FileHandle | None = None
     stream: FileHandle | None = None
-    journal: FileHandle | None = None
-    journal_identity: FileIdentity | None = None
-    is_journal_verified: bool = False
     owner: Literal["queued", "worker", "cleanup"] = "queued"
     has_published: bool = False
     is_settled: bool = False
     needs_notification: bool = False
     has_notification_error: bool = False
     temporary_name: str = field(default_factory=lambda: ".profile-new-" + uuid4().hex)
-    temporary_identity: FileIdentity | None = None
-    decision_key: tuple[int, str, str, str | None] | None = None
-    receipt: dict[str, str] | None = None
-    manager: OperationManager | None = None
 
 
 class InstanceProfileTransactions:
@@ -196,7 +141,7 @@ class InstanceProfileTransactions:
 
     def __init__(self, data_path: Path, lock: RLock, on_changed: Callable[[Path], None] | None = None) -> None:
         """
-        绑定唯一资料存储，构造不打开目录或执行恢复。
+        绑定唯一资料存储，构造不打开目录。
 
         :param data_path: 宿主数据根，不能来自插件请求
         :param lock: InstanceProfileStore拥有的资料锁
@@ -206,109 +151,7 @@ class InstanceProfileTransactions:
         self._lock = lock
         self._on_changed = on_changed
         self._items: dict[str, _ProfileTransaction] = {}
-        self._invalid: set[str] = set()
-        self._receipts: dict[str, _ProfileTransaction] = {}
-        self._records: FileDirectory | None = None
         self._data: FileDirectory | None = None
-        self._is_loaded = False
-
-    def _directory(self, initialize: bool = False) -> FileDirectory | None:
-        """
-        仅接受已获准事务初始化宿主固定记录目录，读取不创建首次数据。
-        """
-        if self._records is not None:
-            return self._records
-        records_path = self._data_path / "instance_profile_transactions"
-        if not initialize and not records_path.exists() and not records_path.is_symlink():
-            return None
-        if not self._data_path.exists():
-            if not initialize:
-                return None
-            self._data_path.mkdir(parents=True, exist_ok=True)
-        if self._data is None:
-            self._data = FileDirectory.open(self._data_path)
-        try:
-            self._records = self._data.child("instance_profile_transactions")
-        except FileBoundaryError as exc:
-            if exc.error_code != "PLUGIN_RESOURCE_NOT_FOUND":
-                raise
-            if initialize:
-                self._records = self._data.child("instance_profile_transactions", create=True)
-        return self._records
-
-    @staticmethod
-    def _parse(content: bytes) -> _ProfileRecord:
-        """
-        严格解析持久边界，拒绝重复字段及隐式结构转换。
-        """
-
-        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
-            result: dict[str, object] = {}
-            for name, value in pairs:
-                if name in result:
-                    raise ValueError("事务字段重复")
-                result[name] = value
-            return result
-
-        return _ProfileRecord.model_validate_json(json.dumps(json.loads(content, object_pairs_hook=unique)))
-
-    def discover(self) -> None:
-        """
-        只发现当前格式登记记录，不恢复旧任务或扫描游戏目录残留。
-        """
-        with self._lock:
-            if self._is_loaded or sys.platform != "win32":
-                return
-            directory = self._directory()
-            if directory is not None:
-                for name in directory.names(monotonic() + 5):
-                    stream = None
-                    try:
-                        stream = directory.file(name)
-                        if stream.information().size > 65536:
-                            raise ValueError("事务记录超限")
-                        record = self._parse(stream.read(0, 65537))
-                        if name != record.record_id + ".json":
-                            raise ValueError("事务名称不符")
-                        target = InstanceProfileTarget(
-                            Path(record.root_path), record.version_id, record.python_root, record.python_instance
-                        )
-                        item = _ProfileTransaction(
-                            target,
-                            record.installation_id,
-                            record=record,
-                            owner="cleanup",
-                            temporary_name=record.temporary_name,
-                            temporary_identity=record.new_identity,
-                            needs_notification=True,
-                        )
-                        self._items[item.reference] = item
-                    except (ValueError, RecursionError, FileBoundaryError):
-                        self._invalid.add(uuid4().hex)
-                    finally:
-                        if stream is not None:
-                            stream.close()
-            self._is_loaded = True
-
-    def has_pending(
-        self, root_path: Path | None = None, version_id: str | None = None, installation_id: str | None = None
-    ) -> bool:
-        """
-        查询实际未收尾资源；未知记录保持拒绝，不能从缺名推导首次未设置。
-
-        :param root_path: 可选的具体根范围
-        :param version_id: 可选的实例名称
-        :param installation_id: 生命周期使用的原安装范围
-        :return: 此范围仍需收尾或可信恢复
-        """
-        self.discover()
-        with self._lock:
-            return bool(self._invalid) or any(
-                (root_path is None or item.target.root_path == root_path)
-                and (version_id is None or item.target.version_id.casefold() == version_id.casefold())
-                and (installation_id is None or item.installation_id == installation_id)
-                for item in self._items.values()
-            )
 
     def reserve(self, target: InstanceProfileTarget, installation_id: str) -> _ProfileTransaction:
         """
@@ -317,55 +160,39 @@ class InstanceProfileTransactions:
         :param target: 宿主已解析的实际资源
         :param installation_id: 由宿主绑定的安装身份
         :return: 任务必须持有并最终收尾的资源
-        :raises InstanceReadError: 待恢复、同目标占用或容量耗尽
+        :raises InstanceReadError: 同目标占用或容量耗尽
         """
         with self._lock:
-            if self.has_pending(target.root_path, target.version_id):
-                raise InstanceReadError("实例资料正在处理或等待恢复", "PLUGIN_INSTANCE_PROFILE_RECOVERY_REQUIRED")
+            if any(
+                item.target.root_path == target.root_path
+                and item.target.version_id.casefold() == target.version_id.casefold()
+                for item in self._items.values()
+            ):
+                raise InstanceReadError("实例资料正在处理", "PLUGIN_INSTANCE_PROFILE_BUSY")
             if len(self._items) >= 32:
                 raise InstanceReadError("实例资料任务资源已满", "PLUGIN_RATE_LIMITED")
             item = _ProfileTransaction(target, installation_id)
             self._items[item.reference] = item
             return item
 
-    def _save(self, item: _ProfileTransaction) -> None:
+    def has_active(
+        self, root_path: Path | None = None, version_id: str | None = None, installation_id: str | None = None
+    ) -> bool:
         """
-        原子保存完整凭据之后才允许移动正式原资料。
-        """
-        assert item.record is not None
-        directory = self._directory(True)
-        assert directory is not None
-        content = item.record.model_dump_json().encode()
-        if len(content) > 65536:
-            raise InstanceReadError("事务记录超限", "PLUGIN_MESSAGE_TOO_LARGE")
-        directory.save_record(item.record.record_id + ".json", content)
+        查询是否存在占用同一资料的在途事务。
 
-    @staticmethod
-    def _matches(stream: FileHandle, identity: FileIdentity, digest: str, etag: str | None = None) -> bool:
+        :param root_path: 可选的具体根范围
+        :param version_id: 可选的实例名称
+        :param installation_id: 生命周期使用的原安装范围
+        :return: 该范围内是否仍有未收尾的事务
         """
-        用同一句柄验证普通对象、完整内容及可选的严格旧版本。
-        """
-        before = stream.information()
-        if before.identity != identity or before.size > 65536:
-            return False
-        actual = stream.digest(monotonic() + 5, 65536)
-        return before == stream.information() and actual == digest and (etag is None or before.etag(actual) == etag)
-
-    @staticmethod
-    def _new_matches(stream: FileHandle, record: _ProfileRecord) -> bool:
-        """
-        仅允许本次发布的新对象继承原名称创建时间，仍核对卷、文件ID及完整摘要。
-        """
-        identity = stream.information().identity
-        created = {record.new_identity.created}
-        if record.old_identity is not None:
-            created.add(record.old_identity.created)
-        if (identity.volume, identity.index) != (
-            record.new_identity.volume,
-            record.new_identity.index,
-        ) or identity.created not in created:
-            return False
-        return InstanceProfileTransactions._matches(stream, identity, record.new_sha256)
+        with self._lock:
+            return any(
+                (root_path is None or item.target.root_path == root_path)
+                and (version_id is None or item.target.version_id.casefold() == version_id.casefold())
+                and (installation_id is None or item.installation_id == installation_id)
+                for item in self._items.values()
+            )
 
     def patch(
         self,
@@ -436,19 +263,19 @@ class InstanceProfileTransactions:
                 stream = directory.file(
                     item.temporary_name, create=True, on_create=lambda value: setattr(item, "stream", value)
                 )
-                item.temporary_identity = stream.identity
                 stream.write(0, content)
                 stream.flush()
                 context.check_cancelled()
                 admit()
                 if monotonic() >= deadline:
                     raise InstanceReadError("实例资料任务已超时", "PLUGIN_DEADLINE_EXCEEDED")
-                context.finalize(lambda: self._commit(item, before, hashlib.sha256(content).hexdigest()))
+                digest = hashlib.sha256(content).hexdigest()
+                context.finalize(lambda: self._commit(item, digest))
                 try:
                     published = read_profile_snapshot(
                         InstanceReadBoundary(item.target.root_path, deadline), item.target.version_id
                     )
-                    if published.sha256 == hashlib.sha256(content).hexdigest():
+                    if published.sha256 == digest:
                         return published
                 except InstanceReadError:
                     pass  # 发布已完成，结果无法确认只隐藏视图，不能重写或回滚业务。
@@ -456,42 +283,27 @@ class InstanceProfileTransactions:
             finally:
                 item.owner = "cleanup"
 
-    def _commit(self, item: _ProfileTransaction, before: InstanceProfileSnapshot, digest: str) -> None:
+    def _commit(self, item: _ProfileTransaction, digest: str) -> None:
         """
-        先持久登记，再按原句柄备份和不覆盖发布；失败不将原资料交给discard。
+        按原子替换发布实例资料，覆盖原文件且不保留备份。
+
+        替换是最后一步：要么旧资料完整保留，要么新资料完整可见。替换成功后旧内容
+        不可找回，因此不再登记恢复，也不阻塞后续提交。
         """
         assert item.native is not None and item.stream is not None
-        old = item.original.information() if item.original else None
-        item.record = _ProfileRecord(
-            record_id=uuid4().hex,
-            installation_id=item.installation_id,
-            root_path=str(item.target.root_path),
-            version_id=item.target.version_id,
-            python_root=item.target.root_identity,
-            python_instance=item.target.instance_identity,
-            directories=tuple(directory.identity for directory in item.native.directories),
-            old_identity=old.identity if old else None,
-            old_etag=old.etag(before.sha256) if old else None,
-            old_sha256=before.sha256,
-            new_identity=item.stream.information().identity,
-            new_sha256=digest,
-            temporary_name=item.temporary_name,
-            backup_name=".profile-old-" + uuid4().hex,
-        )
         try:
-            self._save(item)
+            # 版本已核对：释放原对象独占句柄，替换才能进行。
             if item.original is not None:
-                item.original.move(item.record.backup_name)
-                item.needs_notification = True
-                item.record = item.record.model_copy(update={"phase": "old_saved", "revision": 1})
-                self._save(item)
-            item.stream.publish("instance.json")
+                item.original.close()
+                item.original = None
+            item.stream.replace("instance.json")
             item.has_published = True
             item.needs_notification = True
-            item.record = item.record.model_copy(update={"phase": "published", "revision": 2})
-            self._save(item)
             item.stream.close()
         except Exception as exc:
+            if not item.has_published and self._target_holds(item):
+                item.has_published = True
+                item.needs_notification = True
             if not item.has_published and not item.stream.is_published:
                 has_cleaned = self._cleanup_locked(item)
                 if has_cleaned and not item.has_published:
@@ -500,163 +312,20 @@ class InstanceProfileTransactions:
                     ) from exc
             raise
 
-    def _reopen(self, item: _ProfileTransaction) -> FileDirectory:
-        """
-        新宿主仅按完整目录凭据重新固定原目标，不因路径相同重新授权。
-        """
-        assert item.record is not None
-        if item.native is None or item.native.profile_directory is None:
-            if item.native is not None and not item.native.close():
-                raise FileBoundaryError("资料目录等待关闭", "PLUGIN_FILE_BUSY")
-            item.native = NativeProfileTarget(item.target)
-            item.native.open()
-        if tuple(directory.identity for directory in item.native.directories) != item.record.directories:
-            raise InstanceReadError("恢复资料目录身份不符", "PLUGIN_INSTANCE_PROFILE_RECOVERY_INVALID")
-        assert item.native.profile_directory is not None
-        return item.native.profile_directory
-
-    def _old(self, item: _ProfileTransaction, directory: FileDirectory) -> FileHandle:
-        """
-        先登记句柄再验证原备份，未知对象不提供破坏性动作。
-        """
-        record = item.record
-        assert record is not None and record.old_identity is not None and record.old_sha256 is not None
-        if item.original is None or item.original.is_closed:
-            directory.delete_target(record.backup_name, lambda stream: setattr(item, "original", stream))
-        assert item.original is not None
-        if not self._matches(item.original, record.old_identity, record.old_sha256, record.old_etag):
-            raise InstanceReadError("原资料备份无法核实", "PLUGIN_INSTANCE_PROFILE_RECOVERY_INVALID")
-        return item.original
-
-    def _settle(self, item: _ProfileTransaction, directory: FileDirectory) -> bool:
-        """
-        按真实对象恢复旧资料或清理已发布备份，不继续旧上传或覆盖后来文件。
-        """
-        record = item.record
-        assert record is not None
-        backup = directory.entry_identity(record.backup_name, monotonic() + 1)
-        target = directory.entry_identity("instance.json", monotonic() + 1)
-        if backup is not None:
-            if backup != record.old_identity:
-                return False
-            original = self._old(item, directory)
-            if record.resolution == "discard":
-                original.mark_deletion(True)
-                original.close()
-                return directory.entry_identity(record.backup_name, monotonic() + 1) != record.old_identity
-            if record.resolution == "save_as":
-                original.move("recovered-profile-" + record.saved_suffix + ".json")
-                original.close()
-                item.needs_notification = True
-                return True
-            if item.has_published or self._is_new_target(directory, record):
-                original.mark_deletion(True)
-                original.close()
-                return directory.entry_identity(record.backup_name, monotonic() + 1) != record.old_identity
-            if target is not None:
-                return False
-            original.move("instance.json")
-            original.close()
-            item.needs_notification = True
-            return True
-        if item.original is not None and not item.original.is_closed:
-            item.original.close()
-        if record.old_identity is None or record.resolution == "discard" or item.has_published:
-            return True
-        if self._is_new_target(directory, record):
-            return True
-        name = (
-            "recovered-profile-" + record.saved_suffix + ".json" if record.resolution == "save_as" else "instance.json"
-        )
-        identity = directory.entry_identity(name, monotonic() + 1)
-        if identity is None or (identity.volume, identity.index) != (
-            record.old_identity.volume,
-            record.old_identity.index,
-        ):
-            return False
-        directory.delete_target(name, lambda stream: setattr(item, "original", stream))
-        assert item.original is not None and record.old_sha256 is not None
-        # 恢复到曾被外部占位的名称可能继承创建时间；这里只证明原数据仍被保留，不删除它。
-        matches = self._matches(item.original, identity, record.old_sha256)
-        item.original.close()
-        return matches
-
     @staticmethod
-    def _is_new_target(directory: FileDirectory, record: _ProfileRecord) -> bool:
+    def _target_holds(item: _ProfileTransaction) -> bool:
         """
-        只用实际新对象及完整内容证明曾经发布，阶段记录本身不是清理授权。
+        按实际目录项判断本次新对象是否已经占用资料名称。
+
+        替换成功但确认丢失时不能让上层误报「未生效」。
         """
-        if directory.entry_identity("instance.json", monotonic() + 1) is None:
+        if item.stream is None or item.native is None or item.native.profile_directory is None:
             return False
-        stream = directory.file("instance.json")
         try:
-            return InstanceProfileTransactions._new_matches(stream, record)
-        finally:
-            stream.close()
-
-    def _remove_record(self, item: _ProfileTransaction) -> bool:
-        """
-        只有资料和暂存实际收尾后删除同一完整记录，关闭成功后仍确认目录项消失。
-        """
-        assert item.record is not None
-        directory = self._directory()
-        if directory is None:
-            return True
-        name = item.record.record_id + ".json"
-        current = directory.entry_identity(name, monotonic() + 1)
-        if current is None:
-            return True
-        if item.journal is None:
-            directory.delete_target(name, lambda stream: setattr(item, "journal", stream))
-            item.journal_identity = item.journal.identity
-        if current != item.journal_identity:
+            current = item.native.profile_directory.entry_identity("instance.json", monotonic() + 1)
+        except (FileBoundaryError, InstanceReadError):
             return False
-        if not item.is_journal_verified:
-            if item.journal.information().size > 65536:
-                return False
-            saved = self._parse(item.journal.read(0, 65537))
-            changes = {"phase", "revision", "resolution", "saved_suffix"}
-            if saved.model_dump(exclude=changes) != item.record.model_dump(exclude=changes):
-                return False
-            item.is_journal_verified = True
-        if not item.journal.is_closed:
-            item.journal.mark_deletion(True)
-            item.journal.close()
-        return directory.entry_identity(name, monotonic() + 1) != item.journal_identity
-
-    def _cleanup_temporary(self, item: _ProfileTransaction, directory: FileDirectory) -> bool:
-        """
-        仅删除本事务登记的暂存对象，实际目录项消失才归还资源。
-        """
-        identity = directory.entry_identity(item.temporary_name, monotonic() + 1)
-        if identity is not None:
-            expected = item.record.new_identity if item.record else item.temporary_identity
-            if identity != expected:
-                return False
-            if item.stream is None:
-                directory.delete_target(item.temporary_name, lambda stream: setattr(item, "stream", stream))
-            if not item.stream.is_closed:
-                if item.record and not self._matches(item.stream, expected, item.record.new_sha256):
-                    return False
-                item.stream.mark_deletion(True)
-                item.stream.close()
-            if directory.entry_identity(item.temporary_name, monotonic() + 1) == expected:
-                return False
-        return True
-
-    def _observe_publication(self, item: _ProfileTransaction, directory: FileDirectory) -> None:
-        """
-        原生发布确认丢失时，从仍持有的新对象及目标目录项证明真实效果，绝不按阶段猜测。
-        """
-        if item.stream is None or item.stream.is_closed or item.record is None:
-            return
-        identity = item.stream.information().identity
-        if directory.entry_identity("instance.json", monotonic() + 1) == identity and self._new_matches(
-            item.stream, item.record
-        ):
-            item.has_published = True
-            item.needs_notification = True
-            item.stream.close()
+        return current is not None and current == item.stream.identity
 
     def _cleanup_locked(self, item: _ProfileTransaction) -> bool:
         """
@@ -665,23 +334,15 @@ class InstanceProfileTransactions:
         if item.is_settled:
             return True
         try:
-            if item.stream is not None and item.stream.is_published:
-                item.needs_notification = True
-                item.stream.close()
-            directory = item.native.profile_directory if item.native else None
-            if item.record is not None:
-                directory = self._reopen(item)
-                self._observe_publication(item, directory)
-                if not self._settle(item, directory):
-                    return False
+            if item.stream is not None and not item.stream.is_closed:
+                # has_published 是本次提交按实际目录项得出的结论，优先于句柄自身的标记
+                if item.has_published or item.stream.is_published:
+                    item.needs_notification = True
+                    item.stream.close()
+                else:
+                    item.stream.discard()
             if item.original is not None and not item.original.is_closed:
                 item.original.close()
-            if directory is not None and not self._cleanup_temporary(item, directory):
-                return False
-            if item.stream is not None:
-                item.stream.close()
-            if item.record is not None and not self._remove_record(item):
-                return False
             if item.native is not None and not item.native.close():
                 return False
             item.is_settled = True
@@ -691,9 +352,9 @@ class InstanceProfileTransactions:
 
     def cleanup(self, item: _ProfileTransaction) -> bool:
         """
-        原对象、暂存、记录及目录句柄都结束后归还占用，通知失败仅重试通知。
+        原对象、暂存与目录句柄都结束后归还占用，通知失败仅重试通知。
 
-        :param item: 原任务或可信恢复持有的同一资源
+        :param item: 原任务持有的同一资源
         :return: 实际资源与缓存通知均结束
         """
         with self._lock:
@@ -713,193 +374,17 @@ class InstanceProfileTransactions:
         with self._lock:
             item.needs_notification = False
             self._items.pop(item.reference, None)
-            if item.receipt is not None:
-                self._receipts[item.reference] = item
-                if len(self._receipts) > 128:
-                    self._receipts.pop(next(iter(self._receipts)))
             return True
-
-    def refresh(self, installation_id: str | None = None) -> None:
-        """
-        只重试登记收尾，不创建旧Worker任务或重放资料修改。
-
-        :param installation_id: 生命周期可限定原安装范围
-        """
-        self.discover()
-        with self._lock:
-            items = tuple(self._items.values())
-        for item in items:
-            if item.owner == "cleanup" and (installation_id is None or item.installation_id == installation_id):
-                self.cleanup(item)
-
-    def _view(self, item: _ProfileTransaction) -> dict[str, JsonValue]:
-        """
-        为主窗口构造当前实际对象快照，不投影路径、JSON内容或内部名称。
-        """
-        record = item.record
-        assert record is not None
-        if (
-            item.receipt
-            and item.manager
-            and item.decision_key
-            and record.revision == item.decision_key[0]
-            and (item.manager.get(item.receipt["operationId"])["status"] in {"failed", "cancelled"})
-        ):
-            previous = record
-            item.record = record.model_copy(update={"revision": record.revision + 1})
-            try:
-                self._save(item)
-            except Exception:
-                item.record = previous
-                raise
-            record = item.record
-        facts: list[object] = [record.model_dump(mode="json")]
-        actions: list[JsonValue] = []
-        state = "invalid"
-        if item.is_settled or item.has_published:
-            state = "cleanup"
-        else:
-            directory = self._reopen(item)
-            target = directory.entry_identity("instance.json", monotonic() + 1)
-            facts.append(target.model_dump() if target else None)
-            if target is not None:
-                stream = directory.file("instance.json")
-                try:
-                    before = stream.information()
-                    digest = stream.digest(monotonic() + 5, 65536)
-                    if before != stream.information():
-                        raise InstanceReadError("当前资料已变化")
-                    facts.append(before.etag(digest))
-                finally:
-                    stream.close()
-            if (
-                record.old_identity is not None
-                and directory.entry_identity(record.backup_name, monotonic() + 1) == record.old_identity
-            ):
-                original = self._old(item, directory)
-                facts.append(original.information().etag(original.digest(monotonic() + 5, 65536)))
-                if item.has_published or self._is_new_target(directory, record):
-                    state = "cleanup"
-                else:
-                    state = "pending" if target is None else "conflict"
-                    actions = ["restore", "save_as", "discard"] if target is None else ["save_as", "discard"]
-        return {
-            "recovery_ref": item.reference,
-            "name": record.version_id,
-            "revision": record.revision,
-            "etag": hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest(),
-            "state": state,
-            "actions": actions,
-        }
-
-    def page(self, cursor: str | None = None, limit: int = 50) -> dict[str, JsonValue]:
-        """
-        有界查询全部登记资料恢复，包含已卸载插件或不再配置的原目录。
-
-        :param cursor: 当前宿主的分页引用
-        :param limit: 1至100项
-        :return: 脱敏的恢复页面
-        """
-        self.refresh()
-        with self._lock:
-            references = [
-                item.reference for item in self._items.values() if item.owner == "cleanup" and item.record
-            ] + sorted(self._invalid)
-            if cursor is not None and cursor not in references:
-                raise InstanceReadError("恢复游标已失效", "PLUGIN_CURSOR_INVALID")
-            start = references.index(cursor) + 1 if cursor else 0
-            rows: list[JsonValue] = []
-            for reference in references[start : start + limit]:
-                item = self._items.get(reference)
-                try:
-                    row = self._view(item) if item else None
-                except (FileBoundaryError, InstanceReadError, ValueError):
-                    row = None
-                rows.append(
-                    row
-                    or {
-                        "recovery_ref": reference,
-                        "name": item.target.version_id if item else "",
-                        "revision": item.record.revision if item and item.record else 0,
-                        "etag": "0" * 64,
-                        "state": "invalid",
-                        "actions": [],
-                    }
-                )
-            next_cursor = references[start + limit - 1] if start + limit < len(references) else None
-            return {"items": rows, "next_cursor": next_cursor}
-
-    def resolve(
-        self, reference: str, revision: int, etag: str, action: str, suffix: str | None, manager: OperationManager
-    ) -> dict[str, str]:
-        """
-        接纳可信主窗口的原对象恢复选择；重复相同审阅返回原接纳回执。
-
-        :param reference: 当前宿主的恢复引用
-        :param revision: 审阅时的记录版本
-        :param etag: 审阅时实际对象摘要
-        :param action: restore、save_as或discard
-        :param suffix: 另存受限文件名的显式后缀
-        :param manager: 应用唯一任务执行器
-        :return: 稳定的接纳回执，实际结果由任务查询确认
-        """
-        with self._lock:
-            item = self._items.get(reference) or self._receipts.get(reference)
-            if item is None or item.record is None:
-                raise InstanceReadError("恢复引用已失效", "PLUGIN_RESOURCE_NOT_FOUND")
-            key = (revision, etag, action, suffix)
-            if item.receipt:
-                if item.decision_key == key:
-                    return item.receipt
-                if item.is_settled or manager.get(item.receipt["operationId"])["status"] not in {"failed", "cancelled"}:
-                    raise InstanceReadError("恢复状态已变化", "PLUGIN_INSTANCE_PROFILE_CONFLICT")
-
-            def work(context: OperationContext) -> bool:
-                with self._lock:
-                    context.check_cancelled()
-                    view = self._view(item)
-                    if view["revision"] != revision or view["etag"] != etag or action not in view["actions"]:
-                        raise InstanceReadError("恢复状态已变化", "PLUGIN_INSTANCE_PROFILE_CONFLICT")
-
-                    def accept() -> None:
-                        previous = item.record
-                        item.record = _ProfileRecord.model_validate(
-                            {
-                                **previous.model_dump(),
-                                "resolution": action,
-                                "saved_suffix": suffix,
-                                "revision": previous.revision + 1,
-                            }
-                        )
-                        try:
-                            self._save(item)
-                        except Exception:
-                            item.record = previous
-                            raise
-                        if not self._cleanup_locked(item):
-                            raise InstanceReadError("资料恢复等待实际收尾", "PLUGIN_INSTANCE_PROFILE_RECOVERY_REQUIRED")
-
-                    context.finalize(accept)
-                if not self.cleanup(item):
-                    raise InstanceReadError("资料恢复等待通知收尾", "PLUGIN_INSTANCE_PROFILE_RECOVERY_REQUIRED")
-                return True
-
-            item.decision_key = key
-            item.manager = manager
-            receipt = manager.submit("plugin_instance_profile_recovery", work)
-            item.receipt = {"operationId": receipt["operationId"], "status": "pending"}
-            return item.receipt
 
     def close(self) -> bool:
         """
-        未收尾时保留真实资源，不在关闭路径初始化目录或放弃备份。
+        未收尾时保留真实资源，不在关闭路径初始化目录。
 
         :return: 当前已经登记的全部资源均可关闭
         """
         with self._lock:
-            if self._items or self._invalid:
+            if self._items:
                 return False
-            for directory in (self._records, self._data):
-                if directory is not None:
-                    directory.close()
+            if self._data is not None:
+                self._data.close()
             return True

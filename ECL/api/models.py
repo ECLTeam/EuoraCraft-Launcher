@@ -148,9 +148,6 @@ from pydantic import (
 )
 
 from ECL.api.plugin_models import (
-    PluginFileRecoveriesQuery,
-    PluginFileRecoveryResolve,
-    PluginInstanceProfileRecoveryResolve,
     PluginPermissionQuery,
     PluginPermissionResources,
     PluginPermissionUpdate,
@@ -1073,10 +1070,6 @@ class RequestModelRegistry:
         "game_modpack_install": ModpackInstallRequest,
         "plugin_permissions_get": PluginPermissionQuery,
         "plugin_permission_resources": PluginPermissionResources,
-        "plugin_file_recoveries_list": PluginFileRecoveriesQuery,
-        "plugin_file_recovery_resolve": PluginFileRecoveryResolve,
-        "plugin_instance_profile_recoveries_list": PluginFileRecoveriesQuery,
-        "plugin_instance_profile_recovery_resolve": PluginInstanceProfileRecoveryResolve,
         "plugin_permissions_update": PluginPermissionUpdate,
         "plugin_runtime_info": PluginPermissionQuery,
         "search_mods": OnlineResourceSearchRequest,

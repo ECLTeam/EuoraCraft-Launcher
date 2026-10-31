@@ -66,11 +66,10 @@ class ProfileCoordinator(_GameState):
 
     def _close_instance_profiles(self) -> None:
         """
-        关闭时只恢复登记资源并尝试实际收尾，未完成不能丢弃备份或句柄归属。
+        关闭时尝试释放资料目录句柄，未完成的任务保留真实资源。
         """
-        self._instance_profiles.transactions.refresh()
         if not self._instance_profiles.transactions.close():
-            self.logger.warning("实例资料资源尚未实际收尾，保留登记记录等待恢复")
+            self.logger.warning("实例资料资源尚未实际收尾，保留资源等待重试")
 
     def _notify_profile_changed(self, game_path: Path) -> None:
         """
