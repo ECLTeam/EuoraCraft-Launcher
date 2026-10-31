@@ -53,6 +53,7 @@ from ECL.plugins.runtime.models import (
     PanelNode,
     PanelSettingNode,
     SettingDefinition,
+    ToolDefinition,
     VueSlotDefinition,
     validate_fields,
 )
@@ -69,6 +70,18 @@ from ECL.utils.instance_reading import InstanceReadError
 if TYPE_CHECKING:
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
+
+
+@dataclass(frozen=True, slots=True)
+class ToolChannel:
+    """
+    受管工具通道，由运行服务实现命令拼装、归属校验与进程回收。
+
+    ``run`` 只接受已声明工具与有界参数；``stop`` 只允许停止归属一致的进程。
+    """
+
+    run: Callable[[str, ToolDefinition, tuple[str, ...]], str]
+    stop: Callable[[str], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +204,7 @@ class PluginHostBroker:
         hook_sink: Callable[[str, str, bool], None] | None = None,
         crash_sink: Callable[[str], None] | None = None,
         compat_sink: Callable[[str, str, str], None] | None = None,
+        tool_channel: ToolChannel | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -212,6 +226,7 @@ class PluginHostBroker:
         :param hook_sink: 启动钩子接收方；未提供时拒绝钩子登记
         :param crash_sink: 崩溃分析回调接收方；未提供时拒绝登记
         :param compat_sink: 实例兼容来源接收方；未提供时拒绝登记
+        :param tool_channel: 受管工具通道；未提供时拒绝工具调用
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -222,6 +237,8 @@ class PluginHostBroker:
         self._hook_sink = hook_sink
         self._crash_sink = crash_sink
         self._compat_sink = compat_sink
+        self._tool_channel = tool_channel
+        self._tools: dict[str, ToolDefinition] = {}
         self._resources = resources
         self.game_catalog: RuntimeGameCatalog | None = (
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
@@ -448,6 +465,8 @@ class PluginHostBroker:
             return self._crash_service(request)
         if method.startswith("compat."):
             return self._compat_service(request)
+        if method.startswith("tools."):
+            return self._tool_service(request)
         return self._control_service(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
@@ -797,6 +816,44 @@ class PluginHostBroker:
         definition = LaunchHookDefinition.model_validate(request.params)
         self._hook_sink(definition.phase, definition.callback_ref, definition.required)
         return {"registered": True}
+
+    def _tool_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只允许调用本插件已声明的工具，进程归属由宿主校验。
+
+        :param request: 已通过变更检查的请求
+        :return: 登记结果、进程标识或停止结果
+        :raises ProtocolError: 未声明工具、通道缺失或归属不符时抛出
+        """
+        self.session.authorize("plugin.base")
+        if self._tool_channel is None:
+            raise ProtocolError("当前宿主未提供受管工具", "PLUGIN_API_METHOD_NOT_FOUND")
+        if request.method == "tools.register":
+            definition = ToolDefinition.model_validate(request.params)
+            if definition.name in self._tools:
+                raise ProtocolError("工具已登记", "PLUGIN_REGISTRATION_CONFLICT")
+            self._tools[definition.name] = definition
+            return {"registered": True}
+        if request.method == "tools.run":
+            self._keys(request.params, {"tool", "args"})
+            name = request.params["tool"]
+            args = request.params.get("args", [])
+            if not isinstance(name, str) or not isinstance(args, list):
+                raise ProtocolError("工具调用参数无效", "PLUGIN_SCHEMA_INVALID")
+            definition = self._tools.get(name)
+            if definition is None:
+                raise ProtocolError("工具未声明", "PLUGIN_TOOL_NOT_DECLARED")
+            extra = tuple(item for item in args if isinstance(item, str))
+            if len(extra) != len(args) or len(extra) > 16 or any(len(item) > 256 for item in extra):
+                raise ProtocolError("工具参数无效", "PLUGIN_SCHEMA_INVALID")
+            return {"process_ref": self._tool_channel.run(name, definition, extra)}
+        if request.method == "tools.stop":
+            self._keys(request.params, {"process_ref"})
+            reference = request.params["process_ref"]
+            if not isinstance(reference, str):
+                raise ProtocolError("进程标识无效", "PLUGIN_SCHEMA_INVALID")
+            return {"stopped": self._tool_channel.stop(reference)}
+        raise ProtocolError("此工具方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
 
     def _compat_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         """

@@ -21,7 +21,7 @@ import httpx
 from ECL.foundation import EventBus
 from ECL.java.manager import JavaManager
 from ECL.java.queries import JavaQueries
-from ECL.plugin_api.contracts import JsonValue
+from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.plugins.connector import ConnectorExtensionRegistry
 from ECL.plugins.crash_extensions import (
@@ -201,6 +201,8 @@ class _PluginState:
             hook_sink=self._on_worker_hook,
             crash_sink=self._on_worker_crash,
             compat_sink=self._on_worker_compat,
+            tool_spawner=self._spawn_worker_tool,
+            tool_stopper=self._stop_worker_tool,
             ui_injection_allowed=self._ui_injection_allowed,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
@@ -298,6 +300,36 @@ class _PluginState:
             required=required,
             **{attribute: self._worker_hook_callable(name, phase, callback_ref)},
         )
+
+    def _spawn_worker_tool(self, owner: str, title: str, argv: list[str], cwd: str) -> str:
+        """
+        以插件归属启动工具进程，游戏实例不经过这条路径。
+
+        :param owner: 安装名称，作为进程归属标识
+        :param title: 面向用户显示的名称
+        :param argv: 完整命令行
+        :param cwd: 工作目录，固定为插件包目录
+        :return: 进程标识
+        :raises ProtocolError: 宿主未提供进程服务时抛出
+        """
+        if self.processes is None:
+            raise ProtocolError("当前宿主未提供进程服务", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self.processes.spawn(name=title, type_=f"plugin:{owner}", args=argv, cwd=cwd, owner=owner)
+
+    def _stop_worker_tool(self, owner: str, process_ref: str) -> bool:
+        """
+        只允许停止归属一致的进程，游戏实例与其他插件的工具一律拒绝。
+
+        :param owner: 安装名称
+        :param process_ref: 进程标识
+        :return: 是否已确认停止
+        :raises ProtocolError: 归属不符或宿主未提供进程服务时抛出
+        """
+        if self.processes is None:
+            raise ProtocolError("当前宿主未提供进程服务", "PLUGIN_API_METHOD_NOT_FOUND")
+        if not self.processes.owned_by(process_ref, owner):
+            raise ProtocolError("只能停止自己的工具进程", "PLUGIN_TOOL_OWNERSHIP_DENIED")
+        return self.processes.stop(process_ref, force=True)
 
     def _on_worker_compat(self, name: str, source: str | None, title: str | None, callback_ref: str | None) -> None:
         """

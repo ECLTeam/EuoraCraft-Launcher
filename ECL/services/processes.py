@@ -82,6 +82,7 @@ class ProcessService:
         args: str | list[str],
         cwd: str | None = None,
         stdin: bool = False,
+        owner: str | None = None,
     ) -> str:
         """
         启动一个子进程实例并登记内部元数据。
@@ -91,6 +92,7 @@ class ProcessService:
         :param args: 可执行文件及参数
         :param cwd: 可选的工作目录
         :param stdin: 是否开启标准输入管道
+        :param owner: 进程归属标识；插件工具必须填写，游戏实例为空
         :raises ValueError: 名称、类型或参数为空时
         :return: 生成的实例标识
         """
@@ -105,7 +107,7 @@ class ProcessService:
             std_in=stdin,
         )
         with self._lock:
-            self._meta[instance_id] = {"name": name, "type": type_, "stdin": stdin}
+            self._meta[instance_id] = {"name": name, "type": type_, "stdin": stdin, "owner": owner}
             self._buffers[instance_id] = deque(maxlen=self.buffer_limit)
             trace = current_operation()
             if trace is not None:
@@ -113,6 +115,18 @@ class ProcessService:
         self._logger.info("子进程已创建；实例编号：%s；进程号：%s", instance_id, _process.pid)
         self._events.emit("process:instances_changed", self.list())
         return instance_id
+
+    def owned_by(self, instance_id: str, owner: str) -> bool:
+        """
+        判断实例是否由指定归属创建，供插件只能操作自己的工具进程。
+
+        :param instance_id: 实例标识
+        :param owner: 归属标识
+        :return: 归属一致时为 True；游戏实例与其他插件进程均为 False
+        """
+        with self._lock:
+            meta = self._meta.get(instance_id)
+        return bool(meta) and meta.get("owner") == owner
 
     def send_stdin(self, instance_id: str, data: str) -> bool:
         """

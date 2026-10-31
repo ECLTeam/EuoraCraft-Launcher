@@ -16,13 +16,14 @@
 #       - register_launch_hook — 登记启动前后与退出阶段的回调。
 #       - register_crash_analyzer — 登记崩溃分析回调。
 #       - register_instance_source — 登记实例识别来源。
+#       - define_tool / run_tool / stop_tool — 声明并运行受管工具进程。
 # ============================================================
 
 from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from threading import RLock
 from typing import ClassVar
 from uuid import uuid4
@@ -313,6 +314,53 @@ class Plugin:
             {"phase": phase, "callback_ref": reference, "required": required},
         )
         return reference
+
+    def define_tool(
+        self,
+        name: str,
+        title: str,
+        executable: str,
+        args: Sequence[str] = (),
+    ) -> None:
+        """
+        声明一个受管工具，可执行文件必须位于插件包内。
+
+        声明只是登记身份；实际启动由 run_tool 触发，宿主按包内路径复核文件，
+        越界或不存在时拒绝执行。
+
+        :param name: 工具标识，小写字母开头
+        :param title: 面向用户显示的名称
+        :param executable: 相对插件包的可执行文件路径
+        :param args: 每次启动都附加的固定参数
+        :raises HostApiError: 工具已声明或路径越界时抛出
+        """
+        self.host.call(
+            "tools.register",
+            {"name": name, "title": title, "executable": executable, "args": list(args)},
+        )
+
+    def run_tool(self, name: str, args: Sequence[str] = ()) -> str:
+        """
+        启动已声明的受管工具，进程归属为当前插件。
+
+        :param name: 已声明的工具标识
+        :param args: 本次追加参数，最多 16 个、每个 256 字符
+        :return: 进程标识，可用于 stop_tool 与进程列表
+        :raises HostApiError: 未声明、参数越界或文件无效时抛出
+        """
+        result = self.host.call("tools.run", {"tool": name, "args": list(args)})
+        return str(result.get("process_ref", ""))
+
+    def stop_tool(self, process_ref: str) -> bool:
+        """
+        停止本插件启动的工具进程，不能停止游戏或其他插件的进程。
+
+        :param process_ref: run_tool 返回的进程标识
+        :return: 是否已确认停止
+        :raises HostApiError: 归属不符时抛出
+        """
+        result = self.host.call("tools.stop", {"process_ref": process_ref})
+        return result.get("stopped") is True
 
     def register_instance_source(
         self,

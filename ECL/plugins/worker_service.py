@@ -42,7 +42,7 @@ from ECL.plugins.installation_store import PluginInstallationStore, WorkerManife
 from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.package_preparation import PluginPackagePreparer, current_plugin_target
 from ECL.plugins.resource_catalog import PluginResourceCatalog
-from ECL.plugins.runtime.broker import CrossPluginChannel, PluginHostBroker
+from ECL.plugins.runtime.broker import CrossPluginChannel, PluginHostBroker, ToolChannel
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.java_api import RuntimeJava
@@ -111,6 +111,8 @@ class PluginWorkerService:
         hook_sink: Callable[[str, str | None, str | None, bool], None] | None = None,
         crash_sink: Callable[[str, str | None], None] | None = None,
         compat_sink: Callable[[str, str | None, str | None, str | None], None] | None = None,
+        tool_spawner: Callable[[str, str, list[str], str], str] | None = None,
+        tool_stopper: Callable[[str, str], bool] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -131,6 +133,8 @@ class PluginWorkerService:
         :param hook_sink: 启动钩子接收方；阶段为 None 表示撤销该安装全部钩子
         :param crash_sink: 崩溃分析接收方；回调标识为 None 表示撤销该安装全部回调
         :param compat_sink: 实例兼容来源接收方；来源为 None 表示撤销该安装全部来源
+        :param tool_spawner: 受管工具启动方；未提供时拒绝工具调用
+        :param tool_stopper: 受管工具停止方；未提供时拒绝停止
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
@@ -138,6 +142,8 @@ class PluginWorkerService:
         self._hook_sink = hook_sink
         self._crash_sink = crash_sink
         self._compat_sink = compat_sink
+        self._tool_spawner = tool_spawner
+        self._tool_stopper = tool_stopper
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -572,6 +578,12 @@ class PluginWorkerService:
                     hook_sink=partial(self._publish_hook, name),
                     crash_sink=partial(self._publish_crash, name),
                     compat_sink=partial(self._publish_compat, name),
+                    tool_channel=ToolChannel(
+                        run=partial(self._tool_run, name),
+                        stop=partial(self._tool_stop, name),
+                    )
+                    if self._tool_spawner is not None and self._tool_stopper is not None
+                    else None,
                     cross_plugin=CrossPluginChannel(
                         list_commands=partial(self._cross_plugin_list, name),
                         call=partial(self._cross_plugin_call, name),
@@ -640,6 +652,41 @@ class PluginWorkerService:
         if self._crash_sink is None:
             raise ProtocolError("当前宿主未提供崩溃分析", "PLUGIN_API_METHOD_NOT_FOUND")
         self._crash_sink(name, callback_ref)
+
+    def _tool_run(self, name: str, definition: object, args: tuple[str, ...]) -> str:
+        """
+        拼装受管工具命令并启动进程，可执行文件必须落在插件包内。
+
+        :param name: 安装名称
+        :param definition: 已校验的工具声明
+        :param args: 调用方追加的参数
+        :return: 进程标识
+        :raises ProtocolError: 通道缺失、文件越界或不存在时抛出
+        """
+        if self._tool_spawner is None:
+            raise ProtocolError("当前宿主未提供受管工具", "PLUGIN_API_METHOD_NOT_FOUND")
+        entry = self._entry(name)
+        root = entry.root_path.resolve()
+        executable = str(getattr(definition, "executable", ""))
+        target = (root / executable).resolve()
+        if not target.is_relative_to(root) or not target.is_file():
+            raise ProtocolError("工具可执行文件不在插件包内", "PLUGIN_TOOL_INVALID")
+        title = str(getattr(definition, "title", "tool"))
+        fixed = tuple(getattr(definition, "args", ()))
+        return self._tool_spawner(name, title, [str(target), *fixed, *args], str(root))
+
+    def _tool_stop(self, name: str, process_ref: str) -> bool:
+        """
+        停止本插件启动的工具进程，归属不符时拒绝。
+
+        :param name: 安装名称
+        :param process_ref: 进程标识
+        :return: 是否已确认停止
+        :raises ProtocolError: 通道缺失或归属不符时抛出
+        """
+        if self._tool_stopper is None:
+            raise ProtocolError("当前宿主未提供受管工具", "PLUGIN_API_METHOD_NOT_FOUND")
+        return self._tool_stopper(name, process_ref)
 
     def _publish_compat(self, name: str, source: str | None, title: str | None, callback_ref: str | None) -> None:
         """

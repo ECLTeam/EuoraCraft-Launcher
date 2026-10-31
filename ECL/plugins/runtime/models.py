@@ -373,6 +373,31 @@ class LaunchHookDefinition(RequestModel):
     required: StrictBool = False
 
 
+class ToolDefinition(RequestModel):
+    """
+    受管工具声明：可执行文件必须位于插件包内，参数模型固定且数量有界。
+    """
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    title: str = Field(min_length=1, max_length=64)
+    executable: str = Field(pattern=r"^[A-Za-z0-9._/-]{1,200}$")
+    args: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("executable")
+    @classmethod
+    def validate_executable(cls, value: str) -> str:
+        """
+        只接受包内相对路径，拒绝绝对路径与上跳目录。
+
+        :param value: 声明的可执行文件路径
+        :return: 校验通过的相对路径
+        :raises ValueError: 路径为绝对路径或含上跳段时抛出
+        """
+        if value.startswith("/") or ".." in value.split("/"):
+            raise ValueError("工具可执行文件必须是包内相对路径")
+        return value
+
+
 class CompatSourceDefinition(RequestModel):
     """
     实例兼容来源登记：标识、标题与回调，不包含任何路径。
