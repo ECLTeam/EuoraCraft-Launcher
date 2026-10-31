@@ -13,6 +13,7 @@
 #       - define_panel — 登记由宿主渲染的声明式面板。
 #       - define_html_slot / define_vue_slot — 向主窗口插槽提交界面内容。
 #       - list_plugin_commands / call_plugin_command — 发现并调用其他插件导出的命令。
+#       - register_launch_hook — 登记启动前后与退出阶段的回调。
 # ============================================================
 
 from __future__ import annotations
@@ -280,6 +281,36 @@ class Plugin:
                 "context_key": context_key,
             },
         )
+
+    def register_launch_hook(
+        self,
+        phase: str,
+        callback: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
+        *,
+        required: bool = False,
+    ) -> str:
+        """
+        登记启动钩子，需已获准 launch.hooks。
+
+        回调只收到版本、加载器与隔离标记三项有界上下文；prepare 阶段可返回
+        ``{"jvm_args": [...], "game_args": [...], "env": {...}}`` 追加参数，
+        越界整体拒绝。required 只对 prepare 与 pre_launch 生效：失败会阻止
+        本次启动，其余阶段失败只记录。
+
+        :param phase: prepare / pre_launch / post_launch / exit
+        :param callback: 无副作用地处理上下文的回调
+        :param required: 前置阶段失败时是否阻止启动
+        :return: 本运行登记的回调标识
+        :raises HostApiError: 未获准或阶段无效时抛出
+        """
+        if phase not in {"prepare", "pre_launch", "post_launch", "exit"}:
+            raise ProtocolError("启动钩子阶段无效")
+        reference = self.register_callback(callback)
+        self.host.call(
+            "hooks.register",
+            {"phase": phase, "callback_ref": reference, "required": required},
+        )
+        return reference
 
     def list_plugin_commands(self) -> list[dict[str, JsonValue]]:
         """

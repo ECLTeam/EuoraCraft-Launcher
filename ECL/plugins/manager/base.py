@@ -28,7 +28,7 @@ from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.dependencies import DependencyResolution
 from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
-from ECL.plugins.launch_hooks import LaunchHookRegistry
+from ECL.plugins.launch_hooks import LaunchContext, LaunchHookRegistry, apply_remote_modifications
 from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
 from ECL.plugins.runtime.resources import InstanceQueries
@@ -186,6 +186,7 @@ class _PluginState:
             account_snapshot=self._account_snapshot,
             public_config=self._public_config,
             slot_sink=self._on_worker_slot,
+            hook_sink=self._on_worker_hook,
             ui_injection_allowed=self._ui_injection_allowed,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
@@ -258,6 +259,55 @@ class _PluginState:
             len(self._plugins),
             len(self._disabled_plugins),
         )
+
+    def _on_worker_hook(self, name: str, phase: str | None, callback_ref: str | None, required: bool) -> None:
+        """
+        登记或撤销第三方启动钩子，阶段到注册表回调名的映射在此固定。
+
+        :param name: 安装名称
+        :param phase: 钩子阶段；None 表示撤销该安装全部钩子
+        :param callback_ref: 本运行登记的回调标识
+        :param required: 前置失败时是否阻止启动
+        """
+        if phase is None:
+            self.launch_hooks.unregister_owner(name)
+            return
+        attribute = {
+            "prepare": "on_prepare",
+            "pre_launch": "pre_launch",
+            "post_launch": "post_launch",
+            "exit": "on_exit",
+        }[phase]
+        self.launch_hooks.register(
+            owner=name,
+            name=f"worker:{phase}",
+            required=required,
+            **{attribute: self._worker_hook_callable(name, phase, callback_ref)},
+        )
+
+    def _worker_hook_callable(self, name: str, phase: str, callback_ref: str | None):
+        """
+        构造转发到插件进程的钩子回调，只传有界上下文并限制可修改项。
+
+        :param name: 安装名称
+        :param phase: 钩子阶段
+        :param callback_ref: 本运行登记的回调标识
+        :return: 注册表可调用的钩子函数
+        """
+
+        def call(context: LaunchContext) -> None:
+            if callback_ref is None or self.worker_service is None:
+                return
+            payload = {
+                "version_id": context.version_id,
+                "loader": context.loader,
+                "version_isolation": context.version_isolation,
+            }
+            value = self.worker_service.invoke_hook(name, callback_ref, payload, 5.0)
+            if phase == "prepare" and isinstance(value, dict):
+                apply_remote_modifications(context, value)
+
+        return call
 
     def _on_plugins_config_changed(self, section: str, value: object) -> None:
         """

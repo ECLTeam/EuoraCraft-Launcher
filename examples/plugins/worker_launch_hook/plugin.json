@@ -1,0 +1,9 @@
+{
+  "name": "worker_launch_hook",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "启动钩子示例",
+  "description": "在启动参数准备阶段追加 JVM 参数与环境变量，并响应游戏退出。",
+  "entry_point": "main:Plugin",
+  "permissions": [{ "capability": "instances.manage", "required": false }]
+}

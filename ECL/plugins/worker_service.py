@@ -108,6 +108,7 @@ class PluginWorkerService:
         public_config: Callable[[], JsonValue] | None = None,
         slot_sink: Callable[[str, dict[str, JsonValue]], None] | None = None,
         ui_injection_allowed: Callable[[], bool] | None = None,
+        hook_sink: Callable[[str, str | None, str | None, bool], None] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -125,10 +126,12 @@ class PluginWorkerService:
         :param instance_roots: 有效配置的游戏根目录快照
         :param slot_sink: 已获准插槽内容的可信接收方；未提供时不开放界面注入
         :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
+        :param hook_sink: 启动钩子接收方；阶段为 None 表示撤销该安装全部钩子
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
         self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
+        self._hook_sink = hook_sink
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -560,6 +563,7 @@ class PluginWorkerService:
                     if self._catalog is not None and self._instance_queries is not None
                     else None,
                     slot_sink=partial(self._publish_slot, name),
+                    hook_sink=partial(self._publish_hook, name),
                     cross_plugin=CrossPluginChannel(
                         list_commands=partial(self._cross_plugin_list, name),
                         call=partial(self._cross_plugin_call, name),
@@ -604,6 +608,49 @@ class PluginWorkerService:
         if payload.get("kind") != "clear" and not self._ui_injection_allowed():
             raise ProtocolError("界面注入已被用户关闭", "PLUGIN_UI_INJECTION_DISABLED")
         self._slot_sink(name, payload)
+
+    def _publish_hook(self, name: str, phase: str | None, callback_ref: str | None, required: bool) -> None:
+        """
+        把已获准的启动钩子登记交给管理器；未绑定接收方时明确失败。
+
+        :param name: 安装名称
+        :param phase: 钩子阶段，None 表示撤销全部
+        :param callback_ref: 本运行登记的回调标识
+        :param required: 前置失败时是否阻止启动
+        """
+        if self._hook_sink is None:
+            raise ProtocolError("当前宿主未提供启动钩子", "PLUGIN_API_METHOD_NOT_FOUND")
+        self._hook_sink(name, phase, callback_ref, required)
+
+    def _clear_hooks(self, name: str) -> None:
+        """
+        撤销该安装登记的启动钩子，禁用或卸载后不再触发。
+
+        :param name: 安装名称
+        """
+        if self._hook_sink is not None:
+            self._hook_sink(name, None, None, False)
+
+    def invoke_hook(
+        self, name: str, callback_ref: str, payload: dict[str, JsonValue], timeout: float = 5.0
+    ) -> JsonValue:
+        """
+        宿主调用插件登记的钩子回调，失败按命令失败上报。
+
+        :param name: 安装名称
+        :param callback_ref: 本运行登记的回调标识
+        :param payload: 有界启动上下文
+        :param timeout: 最长等待秒数
+        :return: 回调返回值
+        :raises ProtocolError: 插件未启用或回调失败时抛出
+        """
+        entry = self._entry(name)
+        if entry.state != "enabled" or entry.broker is None:
+            raise ProtocolError("插件未启用", "PLUGIN_TARGET_DISABLED")
+        reply = entry.broker.invoke_callback(callback_ref, payload, timeout)
+        if reply.get("ok") is not True or not isinstance(reply.get("data"), dict):
+            raise ProtocolError("启动钩子执行失败", "PLUGIN_COMMAND_FAILED")
+        return reply["data"].get("value")
 
     def _cross_plugin_list(self, caller: str) -> list[dict[str, JsonValue]]:
         """
@@ -703,6 +750,7 @@ class PluginWorkerService:
                 raise
             entry.broker = None
             self._clear_slots(name)
+            self._clear_hooks(name)
             entry.state = "disabled"
             entry.cleanup_state = "completed"
             if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:

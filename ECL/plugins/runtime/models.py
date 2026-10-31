@@ -363,6 +363,16 @@ class PanelData(RequestModel):
         return lists
 
 
+class LaunchHookDefinition(RequestModel):
+    """
+    启动钩子登记：阶段与回调标识，实际回调留在插件进程内。
+    """
+
+    phase: Literal["prepare", "pre_launch", "post_launch", "exit"]
+    callback_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+    required: StrictBool = False
+
+
 class HtmlSlotDefinition(RequestModel):
     """
     主窗口 HTML 插槽内容，只允许文本片段，不接受脚本标签外的宿主对象。

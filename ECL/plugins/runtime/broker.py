@@ -44,6 +44,7 @@ from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.models import (
     CommandDefinition,
     HtmlSlotDefinition,
+    LaunchHookDefinition,
     PanelData,
     PanelDefinition,
     PanelGroupNode,
@@ -142,6 +143,7 @@ class PluginHostBroker:
             "commands.unregister",
             "panels.register",
             "ui.register_html",
+            "hooks.register",
             "ui.register_vue",
             "settings.define",
             "settings.set",
@@ -182,6 +184,7 @@ class PluginHostBroker:
         public_queries: RuntimePublicQueries | None = None,
         slot_sink: Callable[[dict[str, JsonValue]], None] | None = None,
         cross_plugin: CrossPluginChannel | None = None,
+        hook_sink: Callable[[str, str, bool], None] | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -200,6 +203,7 @@ class PluginHostBroker:
         :param public_queries: 明确选定账户与公开配置的白名单查询
         :param slot_sink: 可信界面插槽接收方；未提供时拒绝界面注入方法
         :param cross_plugin: 跨插件发现与调用通道；未提供时拒绝相关方法
+        :param hook_sink: 启动钩子接收方；未提供时拒绝钩子登记
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -207,6 +211,7 @@ class PluginHostBroker:
         self._run_state = run_state
         self._slot_sink = slot_sink
         self._cross_plugin = cross_plugin
+        self._hook_sink = hook_sink
         self._resources = resources
         self.game_catalog: RuntimeGameCatalog | None = (
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
@@ -427,6 +432,8 @@ class PluginHostBroker:
             return self._ui_service(request)
         if method.startswith("plugins."):
             return self._cross_plugin_service(request)
+        if method.startswith("hooks."):
+            return self._hook_service(request)
         return self._control_service(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
@@ -719,6 +726,17 @@ class PluginHostBroker:
         self.session.check(lease)
         return result
 
+    def invoke_callback(self, reference: str, arguments: dict[str, JsonValue], timeout: float) -> dict[str, JsonValue]:
+        """
+        宿主主动调用本运行登记的回调，超时或授权失效时明确失败。
+
+        :param reference: 本运行登记的回调标识
+        :param arguments: 回调参数
+        :param timeout: 最长等待秒数
+        :return: 回调应答
+        """
+        return self._invoke_callback({"callback_ref": reference, "args": arguments}, timeout)
+
     def exported_commands(self) -> list[dict[str, JsonValue]]:
         """
         返回本运行已导出命令的公开描述，供其他插件发现。
@@ -738,6 +756,33 @@ class PluginHostBroker:
                 for _, definition, _ in self._commands.values()
                 if definition.exported
             ]
+
+    def _hook_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只接受启动钩子登记；阶段与回调标识在登记入口校验。
+
+        :param request: 已通过变更检查的请求
+        :return: 登记结果
+        :raises ProtocolError: 未获准、通道缺失或阶段无效时抛出
+        """
+        permission = next(
+            (
+                item
+                for item in self.session.view().items
+                if item.capability == "instances.manage" and item.decision == "allow" and item.resource_refs
+            ),
+            None,
+        )
+        if permission is None:
+            raise ProtocolError("插件未获准管理游戏", "PLUGIN_PERMISSION_DENIED")
+        self.session.authorize("instances.manage", tuple(permission.resource_refs))
+        if request.method != "hooks.register":
+            raise ProtocolError("此钩子方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+        if self._hook_sink is None:
+            raise ProtocolError("当前宿主未提供启动钩子", "PLUGIN_API_METHOD_NOT_FOUND")
+        definition = LaunchHookDefinition.model_validate(request.params)
+        self._hook_sink(definition.phase, definition.callback_ref, definition.required)
+        return {"registered": True}
 
     def _cross_plugin_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         """
