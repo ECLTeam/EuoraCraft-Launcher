@@ -11,6 +11,7 @@
 #   - class Plugin — Worker 内的插件基类及生命周期。
 #       - define_command — 登记本插件命令。
 #       - define_panel — 登记由宿主渲染的声明式面板。
+#       - define_html_slot / define_vue_slot — 向主窗口插槽提交界面内容。
 # ============================================================
 
 from __future__ import annotations
@@ -214,6 +215,70 @@ class Plugin:
         if not isinstance(references, list) or not references or not isinstance(references[0], str):
             raise ProtocolError("宿主面板登记结果无效")
         return references[0]
+
+    def define_html_slot(
+        self,
+        slot_id: str,
+        html: str,
+        *,
+        key: str | None = None,
+        context_key: str | None = None,
+    ) -> None:
+        """
+        向主窗口插槽提交一段 HTML 片段，需已获准 ui.inject。
+
+        内容与主窗口同文档渲染，可读取页面上已显示的数据；插件不得在此
+        假设自己仍受 Broker 保护，业务调用仍须走 Host API。
+
+        :param slot_id: 目标插槽标识，形如 plugin-slot-content-bottom
+        :param html: 片段内容，上限 60000 字符
+        :param key: 同一插槽内的稳定更新键，省略时追加
+        :param context_key: 插槽上下文键，省略表示全部上下文
+        :raises HostApiError: 未获准界面注入或内容越界时抛出
+        """
+        self.host.call(
+            "ui.register_html",
+            {"slot_id": slot_id, "html": html, "key": key, "context_key": context_key},
+        )
+
+    def define_vue_slot(
+        self,
+        slot_id: str,
+        component_name: str,
+        template: str,
+        *,
+        script: str = "",
+        style: str = "",
+        key: str | None = None,
+        context_key: str | None = None,
+    ) -> None:
+        """
+        向主窗口插槽提交一个 Vue 组件，模板与脚本由宿主在渲染期编译执行。
+
+        组件脚本在主窗口运行时执行，等价于获得该窗口的完整能力；只在确实
+        需要自有布局与交互时使用，简单界面优先用 define_panel。
+
+        :param slot_id: 目标插槽标识
+        :param component_name: 组件名，同一插件内唯一
+        :param template: Vue 模板源码，上限 60000 字符
+        :param script: 组件脚本，按 module.exports 形式求值
+        :param style: 组件样式，作用域由宿主限定
+        :param key: 同一插槽内的稳定更新键
+        :param context_key: 插槽上下文键
+        :raises HostApiError: 未获准界面注入或内容越界时抛出
+        """
+        self.host.call(
+            "ui.register_vue",
+            {
+                "slot_id": slot_id,
+                "component_name": component_name,
+                "template": template,
+                "script": script,
+                "style": style,
+                "key": key,
+                "context_key": context_key,
+            },
+        )
 
     def _invoke_callback(self, reference: str, arguments: dict[str, JsonValue]) -> JsonValue:
         """

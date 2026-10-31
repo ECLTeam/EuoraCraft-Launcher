@@ -60,6 +60,7 @@ class _PermissionScope(BaseModel):
         "java.catalog.read",
         "java.install",
         "accounts.read",
+        "ui.inject",
     ]
     resource_refs: tuple[resource_reference, ...] = Field(default=(), max_length=128)
 
@@ -97,6 +98,7 @@ class PermissionDeclaration(_PermissionScope):
             "java.catalog.read",
             "java.install",
             "accounts.read",
+            "ui.inject",
         }:
             raise ValueError("插件权限声明不受支持，请更新插件权限清单")
         return value

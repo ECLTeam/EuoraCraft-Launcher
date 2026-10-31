@@ -254,11 +254,35 @@ class PluginRegistry(_PluginState):
         """
         return list(self._vue_routes)
 
+    def clear_plugin_slots(self, plugin_name: str) -> None:
+        """
+        移除该插件注册的插槽内容，禁用、撤销或卸载后不再渲染。
+
+        :param plugin_name: 插件名称
+        """
+        for slot_id, entries in list(self._slots.items()):
+            remaining = [entry for entry in entries if entry.get("plugin") != plugin_name]
+            if remaining:
+                self._slots[slot_id] = remaining
+            else:
+                del self._slots[slot_id]
+        for slot_id, entries in list(self._vue_slots.items()):
+            remaining = [entry for entry in entries if entry.get("plugin") != plugin_name]
+            if remaining:
+                self._vue_slots[slot_id] = remaining
+            else:
+                del self._vue_slots[slot_id]
+        for component_name, entry in list(self._vue_components.items()):
+            if entry.get("plugin") == plugin_name:
+                del self._vue_components[component_name]
+        self.events.emit("plugin:slots_cleared", plugin_name)
+
     def _on_html_injected(
         self, plugin_name: str, slot_id: str, html: str, key: str | None, context_key: str | None = None
     ) -> None:
         # 收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加。
-        if not self._candidate_map.get(plugin_name, {}).get("is_system", False):
+        # 第三方内容已在 Broker 按 ui.inject 授权校验，这里只拒绝未知来源。
+        if plugin_name not in self._candidate_map and plugin_name not in self._plugins:
             return
         entries = self._slots.setdefault(slot_id, [])
         entry = {"plugin": plugin_name, "html": html}
@@ -285,7 +309,7 @@ class PluginRegistry(_PluginState):
         context_key: str | None = None,
     ) -> None:
         # 收集 Vue 组件注册事件到插槽，并在全局组件表中登记以供路由引用。
-        if not self._candidate_map.get(plugin_name, {}).get("is_system", False):
+        if plugin_name not in self._candidate_map and plugin_name not in self._plugins:
             return
         entries = self._vue_slots.setdefault(slot_id, [])
         entry = {

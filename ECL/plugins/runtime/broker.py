@@ -43,12 +43,14 @@ from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
 from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.models import (
     CommandDefinition,
+    HtmlSlotDefinition,
     PanelData,
     PanelDefinition,
     PanelGroupNode,
     PanelNode,
     PanelSettingNode,
     SettingDefinition,
+    VueSlotDefinition,
     validate_fields,
 )
 from ECL.plugins.runtime.modpacks import RuntimeModpacks
@@ -107,6 +109,7 @@ class PluginHostBroker:
             "java.catalog.read",
             "java.install",
             "accounts.read",
+            "ui.inject",
         }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
@@ -125,6 +128,8 @@ class PluginHostBroker:
             "commands.register",
             "commands.unregister",
             "panels.register",
+            "ui.register_html",
+            "ui.register_vue",
             "settings.define",
             "settings.set",
             "events.subscribe",
@@ -162,6 +167,7 @@ class PluginHostBroker:
         game_operations: PluginGameCoordinator | None = None,
         java: RuntimeJava | None = None,
         public_queries: RuntimePublicQueries | None = None,
+        slot_sink: Callable[[dict[str, JsonValue]], None] | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -178,11 +184,13 @@ class PluginHostBroker:
         :param game_operations: 应用唯一游戏业务入口，未提供时拒绝游戏方法
         :param java: 当前运行的 Java 查询及实际探测资源，缺失时拒绝 Java 方法
         :param public_queries: 明确选定账户与公开配置的白名单查询
+        :param slot_sink: 可信界面插槽接收方；未提供时拒绝界面注入方法
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
         self._invoke = invoke
         self._run_state = run_state
+        self._slot_sink = slot_sink
         self._resources = resources
         self.game_catalog: RuntimeGameCatalog | None = (
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
@@ -399,6 +407,8 @@ class PluginHostBroker:
             return self._query_service(request)
         if method.startswith("panels."):
             return self._panel_service(request)
+        if method.startswith("ui."):
+            return self._ui_service(request)
         return self._control_service(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
@@ -783,6 +793,24 @@ class PluginHostBroker:
         data = PanelData.model_validate(reply["data"].get("value"))
         self.session.check(lease)
         return data.model_dump(mode="json")
+
+    def _ui_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只接受已批准界面注入的插槽内容，实际渲染与失效由可信界面负责。
+        """
+        self.session.authorize("ui.inject")
+        if self._slot_sink is None:
+            raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
+        if request.method == "ui.register_html":
+            definition = HtmlSlotDefinition.model_validate(request.params)
+            payload: dict[str, JsonValue] = {"kind": "html", **definition.model_dump(mode="json")}
+        elif request.method == "ui.register_vue":
+            definition = VueSlotDefinition.model_validate(request.params)
+            payload = {"kind": "vue", **definition.model_dump(mode="json")}
+        else:
+            raise ProtocolError("此界面方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+        self._slot_sink(payload)
+        return {"registered": True}
 
     def _invoke_callback(self, params: dict[str, JsonValue], timeout: float) -> dict[str, JsonValue]:
         """

@@ -16,6 +16,7 @@ import platform
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from functools import partial
 from pathlib import Path
 from threading import Event, RLock, Thread
 from time import monotonic
@@ -102,6 +103,7 @@ class PluginWorkerService:
         java_manager: JavaManager | None = None,
         account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
         public_config: Callable[[], JsonValue] | None = None,
+        slot_sink: Callable[[str, dict[str, JsonValue]], None] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -117,8 +119,10 @@ class PluginWorkerService:
         :param account_snapshot: 不刷新认证的账户领域最小摘要
         :param public_config: 应用当前配置快照，公开字段由边界白名单投影
         :param instance_roots: 有效配置的游戏根目录快照
+        :param slot_sink: 已获准插槽内容的可信接收方；未提供时不开放界面注入
         """
         self.data_path: Path = data_path
+        self._slot_sink = slot_sink
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -551,6 +555,7 @@ class PluginWorkerService:
                     )
                     if self._catalog is not None and self._instance_queries is not None
                     else None,
+                    slot_sink=partial(self._publish_slot, name),
                 )
                 entry.supervisor.authorize_load(
                     entry.session, entry.manifest.entry_file, entry.dependency, entry_class=entry.manifest.entry_class
@@ -577,6 +582,27 @@ class PluginWorkerService:
         )
         if reply.get("ok") is not True:
             raise ProtocolError("插件生命周期执行失败", "PLUGIN_WORKER_EXECUTION_FAILED")
+
+    def _publish_slot(self, name: str, payload: dict[str, JsonValue]) -> None:
+        """
+        把已获准的插槽内容交给可信界面；未绑定接收方时明确失败。
+
+        :param name: 安装名称
+        :param payload: 已通过边界校验的插槽内容
+        :raises ProtocolError: 宿主未提供界面注入时抛出
+        """
+        if self._slot_sink is None:
+            raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
+        self._slot_sink(name, payload)
+
+    def _clear_slots(self, name: str) -> None:
+        """
+        撤销该安装已注入的主窗口内容，禁用或卸载后不再保留。
+
+        :param name: 安装名称
+        """
+        if self._slot_sink is not None:
+            self._slot_sink(name, {"kind": "clear"})
 
     def stop(self, name: str) -> None:
         """
@@ -610,6 +636,7 @@ class PluginWorkerService:
                 entry.error_code = getattr(exc, "error_code", "PLUGIN_JOB_STOP_PENDING")
                 raise
             entry.broker = None
+            self._clear_slots(name)
             entry.state = "disabled"
             entry.cleanup_state = "completed"
             if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:

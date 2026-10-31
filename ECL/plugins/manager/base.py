@@ -182,6 +182,7 @@ class _PluginState:
             java_manager=self._java_manager,
             account_snapshot=self._account_snapshot,
             public_config=self._public_config,
+            slot_sink=self._on_worker_slot,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
@@ -252,6 +253,44 @@ class _PluginState:
             len(self._plugins),
             len(self._disabled_plugins),
         )
+
+    def _on_worker_slot(self, name: str, payload: dict[str, object]) -> None:
+        """
+        接收第三方已获准的插槽内容，与系统插件走同一收集与渲染路径。
+
+        内容在 Broker 处已按 `ui.inject` 授权校验；这里只负责转发与清理，
+        不重新判断权限，也不把内容写入磁盘。
+
+        :param name: 安装名称
+        :param payload: 插槽内容或清理指令
+        """
+        kind = payload.get("kind")
+        if kind == "clear":
+            self.clear_plugin_slots(name)
+            return
+        if kind == "html":
+            self.events.emit(
+                "plugin:html_injected",
+                name,
+                payload.get("slot_id"),
+                payload.get("html"),
+                payload.get("key"),
+                payload.get("context_key"),
+            )
+            return
+        if kind == "vue":
+            self.events.emit(
+                "plugin:vue_slot_registered",
+                name,
+                payload.get("slot_id"),
+                payload.get("component_name"),
+                payload.get("template"),
+                payload.get("script", ""),
+                payload.get("style", ""),
+                payload.get("context_key"),
+            )
+            return
+        self.logger.warning("插件插槽内容类型无效，已忽略: %s", kind)
 
     def _on_instance_config_changed(self, section: str, value: object) -> None:
         """

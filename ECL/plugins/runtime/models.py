@@ -363,6 +363,31 @@ class PanelData(RequestModel):
         return lists
 
 
+class HtmlSlotDefinition(RequestModel):
+    """
+    主窗口 HTML 插槽内容，只允许文本片段，不接受脚本标签外的宿主对象。
+    """
+
+    slot_id: str = Field(pattern=r"^plugin-slot-[a-z0-9-]{1,60}$")
+    html: str = Field(min_length=1, max_length=60000)
+    key: str | None = Field(default=None, max_length=64)
+    context_key: str | None = Field(default=None, max_length=64)
+
+
+class VueSlotDefinition(RequestModel):
+    """
+    主窗口 Vue 插槽组件，模板与脚本由宿主在渲染期编译执行。
+    """
+
+    slot_id: str = Field(pattern=r"^plugin-slot-[a-z0-9-]{1,60}$")
+    component_name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+    template: str = Field(min_length=1, max_length=60000)
+    script: str = Field(default="", max_length=60000)
+    style: str = Field(default="", max_length=60000)
+    key: str | None = Field(default=None, max_length=64)
+    context_key: str | None = Field(default=None, max_length=64)
+
+
 def validate_fields(fields: list[FieldSpec], values: dict[str, JsonValue]) -> None:
     """
     校验完整命令载荷，拒绝额外字段、缺少必要字段或值不符合约束。
