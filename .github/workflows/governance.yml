@@ -58,7 +58,9 @@ jobs:
 
   frontend-audit:
     name: Frontend audit and accessibility
-    runs-on: ubuntu-latest
+    # ubuntu-latest 已滚动到 26.04，而当前锁定的 Playwright 只发布到 24.04 的
+    # Chromium 构建；审计环境需要可复现，故固定到仍受支持的 LTS 标签。
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
