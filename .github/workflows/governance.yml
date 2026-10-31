@@ -34,7 +34,9 @@ jobs:
         run: |
           import os, pathlib, subprocess, sys
           subprocess.check_call([sys.executable, "-m", "pip", "install", "pip-audit==2.10.1"])
-          subprocess.check_call([sys.executable, "-m", "venv", "build/governance/target"])
+          # venv 自带的 pip 落后于当前安全版本，而审计会把它计入依赖清单；
+          # 先升级工具链，避免 pip 自身的历史公告污染应用依赖的结论。
+          subprocess.check_call([sys.executable, "-m", "venv", "--upgrade-deps", "build/governance/target"])
           target = pathlib.Path("build/governance/target") / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
           requirement = ".[dev]" if "${{ matrix.environment }}" == "all" else "."
           subprocess.check_call([str(target), "-m", "pip", "install", requirement])
