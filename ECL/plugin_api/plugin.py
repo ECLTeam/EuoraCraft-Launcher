@@ -9,6 +9,8 @@
 #   - class HostApiError — Host API 明确返回的稳定失败类别。
 #   - class HostClient — 只通过已绑定 RPC 连接访问宿主服务。
 #   - class Plugin — Worker 内的插件基类及生命周期。
+#       - define_command — 登记本插件命令。
+#       - define_panel — 登记由宿主渲染的声明式面板。
 # ============================================================
 
 from __future__ import annotations
@@ -175,6 +177,43 @@ class Plugin:
         if not isinstance(command_ref, str) or not command_ref:
             raise ProtocolError("宿主命令登记结果无效")
         return command_ref
+
+    def define_panel(
+        self,
+        key: str,
+        title: str,
+        nodes: tuple[dict[str, JsonValue], ...],
+        *,
+        description: str = "",
+        data_callback: Callable[[], JsonValue | Awaitable[JsonValue]] | None = None,
+    ) -> str:
+        """
+        向宿主提交一个声明式面板，界面由宿主渲染而不是插件注入脚本。
+
+        面板中的设置节点必须在调用前通过 settings.define 定义；按钮只引用
+        本插件已登记的命令名。数据回调留在本 Worker，只在宿主拉取时执行。
+
+        :param key: 本插件命名空间内的面板标识
+        :param title: 面板标题
+        :param nodes: 受限节点树，类型与上限由宿主复核
+        :param description: 面板说明
+        :param data_callback: 可选的列表与任务数据回调，无参且返回 PanelData 结构
+        :return: 宿主登记的面板引用
+        :raises HostApiError: 未授权、节点越界或标识冲突时抛出
+        """
+        panel: dict[str, JsonValue] = {
+            "key": key,
+            "title": title,
+            "description": description,
+            "nodes": list(nodes),
+        }
+        if data_callback is not None:
+            panel["data_callback_ref"] = self.register_callback(data_callback)
+        result = self.host.call("panels.register", {"panels": [panel]})
+        references = result.get("panel_refs")
+        if not isinstance(references, list) or not references or not isinstance(references[0], str):
+            raise ProtocolError("宿主面板登记结果无效")
+        return references[0]
 
     def _invoke_callback(self, reference: str, arguments: dict[str, JsonValue]) -> JsonValue:
         """

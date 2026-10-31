@@ -1,0 +1,9 @@
+{
+  "name": "worker_panel",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "面板示例",
+  "description": "演示声明式操作面板：文本、分组、按钮、设置、列表与任务进度。",
+  "entry_point": "main:Plugin",
+  "permissions": []
+}

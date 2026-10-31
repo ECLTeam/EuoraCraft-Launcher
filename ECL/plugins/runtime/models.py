@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import ClassVar, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 from pydantic import JsonValue as PydanticJsonValue
@@ -179,6 +179,188 @@ class SettingDefinition(RequestModel):
         if not self.accepts(self.default) or len(set(self.options)) != len(self.options):
             raise ValueError("设置默认值或选项无效")
         return self
+
+
+class PanelTextNode(RequestModel):
+    """
+    面板纯文本段落，不解析 Markdown、HTML 或任何模板。
+    """
+
+    type: Literal["text"]
+    text: str = Field(min_length=1, max_length=2000)
+    tone: Literal["default", "muted", "warning"] = "default"
+
+
+class PanelGroupNode(RequestModel):
+    """
+    带可选标题的分组容器，子节点与父节点受同一总上限约束。
+    """
+
+    type: Literal["group"]
+    title: str = Field(default="", max_length=120)
+    children: list[PanelNode] = Field(min_length=1, max_length=16)
+
+
+class PanelButtonNode(RequestModel):
+    """
+    按钮只指向本插件已登记命令，不接受回调标识或宿主入口。
+    """
+
+    type: Literal["button"]
+    label: str = Field(min_length=1, max_length=60)
+    command: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+    args: dict[str, str | int | float | bool] = Field(default_factory=dict, max_length=16)
+    tone: Literal["default", "primary", "danger"] = "default"
+    confirm: str = Field(default="", max_length=200)
+
+
+class PanelSettingNode(RequestModel):
+    """
+    设置控件复用插件自己的设置定义，键在注册时与当前 schema 核对。
+    """
+
+    type: Literal["setting"]
+    key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+
+
+class PanelColumn(RequestModel):
+    """
+    列表列的键与显示标题，不携带格式化表达式或渲染指令。
+    """
+
+    key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+    label: str = Field(min_length=1, max_length=60)
+
+
+class PanelListNode(RequestModel):
+    """
+    表格节点，行数据只来自面板数据回调的同名列表。
+    """
+
+    type: Literal["list"]
+    source: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+    columns: list[PanelColumn] = Field(min_length=1, max_length=8)
+    empty_text: str = Field(default="", max_length=200)
+
+    @field_validator("columns")
+    @classmethod
+    def unique_columns(cls, columns: list[PanelColumn]) -> list[PanelColumn]:
+        """
+        拒绝同名列造成的渲染歧义。
+
+        :param columns: 列定义
+        :return: 无重复键的列定义
+        :raises ValueError: 键重复时抛出
+        """
+        if len({item.key for item in columns}) != len(columns):
+            raise ValueError("面板列表列名重复")
+        return columns
+
+
+class PanelTaskNode(RequestModel):
+    """
+    任务进度节点，进度只来自面板数据回调的同名任务。
+    """
+
+    type: Literal["task"]
+    source: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+
+
+PanelNode = Annotated[
+    PanelTextNode | PanelGroupNode | PanelButtonNode | PanelSettingNode | PanelListNode | PanelTaskNode,
+    Field(discriminator="type"),
+]
+PanelGroupNode.model_rebuild()
+
+
+def _count_panel_nodes(nodes: list[PanelNode]) -> int:
+    """
+    统计节点树总数，用于在注册前拒绝超限结构。
+
+    :param nodes: 当前层节点
+    :return: 含子节点的总数
+    """
+    total = 0
+    for node in nodes:
+        total += 1
+        if isinstance(node, PanelGroupNode):
+            total += _count_panel_nodes(node.children)
+    return total
+
+
+def _panel_node_depth(nodes: list[PanelNode]) -> int:
+    """
+    计算节点树深度，分组嵌套层数受固定上限约束。
+
+    :param nodes: 当前层节点
+    :return: 最大嵌套层数，没有分组时为 1
+    """
+    deepest = 1
+    for node in nodes:
+        if isinstance(node, PanelGroupNode):
+            deepest = max(deepest, 1 + _panel_node_depth(node.children))
+    return deepest
+
+
+class PanelDefinition(RequestModel):
+    """
+    声明式面板的完整描述，节点树有界且不含可执行内容。
+    """
+
+    key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    nodes: list[PanelNode] = Field(min_length=1, max_length=48)
+    data_callback_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+
+    @model_validator(mode="after")
+    def bounded_tree(self) -> PanelDefinition:
+        """
+        在注册入口拒绝超限节点树，避免渲染期才发现结构不可用。
+
+        :return: 已校验面板定义
+        :raises ValueError: 节点总数或嵌套深度超过上限时抛出
+        """
+        if _count_panel_nodes(self.nodes) > 48 or _panel_node_depth(self.nodes) > 3:
+            raise ValueError("面板节点数量或嵌套深度超过上限")
+        return self
+
+
+class PanelTaskProgress(RequestModel):
+    """
+    单个任务进度的只读快照，状态与百分比由插件声明。
+    """
+
+    state: Literal["pending", "running", "succeeded", "failed"]
+    percent: StrictInt = Field(default=0, ge=0, le=100)
+    detail: str = Field(default="", max_length=200)
+
+
+class PanelData(RequestModel):
+    """
+    面板列表与任务进度的只读数据，按请求拉取，不做后台推送。
+    """
+
+    lists: dict[str, list[dict[str, str]]] = Field(default_factory=dict, max_length=8)
+    tasks: dict[str, PanelTaskProgress] = Field(default_factory=dict, max_length=16)
+
+    @field_validator("lists")
+    @classmethod
+    def bounded_lists(cls, lists: dict[str, list[dict[str, str]]]) -> dict[str, list[dict[str, str]]]:
+        """
+        拒绝超行数、超列数或超长单元格的数据，避免渲染与传输失控。
+
+        :param lists: 按名称分组的行数据
+        :return: 已校验行数据
+        :raises ValueError: 行数、列数或单元格长度超限时抛出
+        """
+        for rows in lists.values():
+            if len(rows) > 100:
+                raise ValueError("面板列表行数超过上限")
+            for row in rows:
+                if len(row) > 8 or any(len(key) > 63 or len(value) > 200 for key, value in row.items()):
+                    raise ValueError("面板列表列数或单元格长度超过上限")
+        return lists
 
 
 def validate_fields(fields: list[FieldSpec], values: dict[str, JsonValue]) -> None:

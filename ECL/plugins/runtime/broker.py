@@ -41,7 +41,16 @@ from ECL.plugins.runtime.game_queries import RuntimeGameCatalog
 from ECL.plugins.runtime.game_resources import RuntimeGameResources
 from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
 from ECL.plugins.runtime.java_api import RuntimeJava
-from ECL.plugins.runtime.models import CommandDefinition, SettingDefinition, validate_fields
+from ECL.plugins.runtime.models import (
+    CommandDefinition,
+    PanelData,
+    PanelDefinition,
+    PanelGroupNode,
+    PanelNode,
+    PanelSettingNode,
+    SettingDefinition,
+    validate_fields,
+)
 from ECL.plugins.runtime.modpacks import RuntimeModpacks
 from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
@@ -65,6 +74,20 @@ class _Receipt:
     result: dict[str, JsonValue] | None = None
     error_code: str | None = None
     is_owner_control: bool = False
+
+
+def _panel_setting_keys(nodes: list[PanelNode]) -> Iterator[str]:
+    """
+    收集面板树引用的设置键，供注册时与当前设置 schema 核对。
+
+    :param nodes: 面板节点树
+    :return: 设置键迭代器，不包含其他节点类型
+    """
+    for node in nodes:
+        if isinstance(node, PanelSettingNode):
+            yield node.key
+        elif isinstance(node, PanelGroupNode):
+            yield from _panel_setting_keys(node.children)
 
 
 class PluginHostBroker:
@@ -101,6 +124,7 @@ class PluginHostBroker:
             "modpacks.export",
             "commands.register",
             "commands.unregister",
+            "panels.register",
             "settings.define",
             "settings.set",
             "events.subscribe",
@@ -218,6 +242,7 @@ class PluginHostBroker:
         self._idle.set()
         self._active_requests = 0
         self._commands: dict[str, tuple[str, CommandDefinition, GrantLease]] = {}
+        self._panels: dict[str, tuple[PanelDefinition, GrantLease]] = {}
         self._definitions: dict[str, SettingDefinition] = {}
         self._subscriptions: dict[str, tuple[str, GrantLease]] = {}
         self._receipts: dict[str, _Receipt] = {}
@@ -357,7 +382,7 @@ class PluginHostBroker:
         return receipt.result
 
     def _dispatch(self, request: RpcRequest) -> dict[str, JsonValue]:
-        method, params = request.method, request.params
+        method = request.method
         if method.startswith(("game.", "mods.", "resourcepacks.", "shaders.", "modpacks.")):
             return self._game_service(request)
         if method.startswith(("files.", "java.", "accounts.", "config.")) or method in {
@@ -372,6 +397,15 @@ class PluginHostBroker:
             "downloads.submit",
         }:
             return self._query_service(request)
+        if method.startswith("panels."):
+            return self._panel_service(request)
+        return self._control_service(request)
+
+    def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        处理运行信息、变更回执、权限视图与自身命令、设置、事件登记。
+        """
+        method, params = request.method, request.params
         if method == "runtime.info":
             self._keys(params, set())
             return {
@@ -667,6 +701,88 @@ class PluginHostBroker:
         """
         with self._lock:
             return [item[1].name for item in self._commands.values()]
+
+    def _panel_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只分派面板注册、列举与数据拉取，面板动作仍走命令回调通道。
+        """
+        if request.method == "panels.register":
+            return self._register_panels(request.params)
+        if request.method == "panels.list":
+            self._keys(request.params, set())
+            return {"panels": self.panels_view()}
+        if request.method == "panels.data":
+            return self._panel_data(request)
+        raise ProtocolError("此面板方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+
+    def _register_panels(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """
+        在授权接受点原子登记本运行面板，设置引用与当前 schema 一并核对。
+        """
+        self._keys(params, {"panels"})
+        lease = self.session.authorize("plugin.base")
+        raw = params["panels"]
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 8:
+            raise ProtocolError("面板注册数量无效", "PLUGIN_SCHEMA_INVALID")
+        definitions = [PanelDefinition.model_validate(item) for item in raw]
+        if len({item.key for item in definitions}) != len(definitions):
+            raise ProtocolError("面板标识重复", "PLUGIN_SCHEMA_INVALID")
+        if any(key not in self._definitions for item in definitions for key in _panel_setting_keys(item.nodes)):
+            raise ProtocolError("面板引用了未定义的设置", "PLUGIN_SETTING_NOT_DEFINED")
+        references = [uuid4().hex for _ in definitions]
+
+        def register() -> None:
+            with self._lock:
+                self._ensure_accepting()
+                if len(self._panels) + len(definitions) > 16:
+                    raise ProtocolError("面板数量超过上限", "PLUGIN_RATE_LIMITED")
+                registered = {item[0].key for item in self._panels.values()}
+                if any(definition.key in registered for definition in definitions):
+                    raise ProtocolError("面板已登记", "PLUGIN_REGISTRATION_CONFLICT")
+                for reference, definition in zip(references, definitions, strict=True):
+                    self._panels[reference] = (definition, lease)
+
+        self.session.accept(lease, register)
+        return {"panel_refs": references}
+
+    def panels_view(self) -> list[dict[str, JsonValue]]:
+        """
+        返回本运行已登记面板定义，供可信管理页渲染。
+
+        :return: 不含回调标识以外实现细节的面板定义
+        :raises ProtocolError: 运行已关闭或授权失效时抛出
+        """
+        self.session.authorize("plugin.base")
+        with self._lock:
+            return [
+                definition.model_dump(mode="json", exclude={"data_callback_ref"})
+                for definition, _ in self._panels.values()
+            ]
+
+    def _panel_data(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        按请求拉取面板列表与任务快照，未声明数据回调时返回空结构。
+        """
+        self._keys(request.params, {"key"})
+        lease = self.session.authorize("plugin.base")
+        key = request.params["key"]
+        if not isinstance(key, str):
+            raise ProtocolError("面板标识无效", "PLUGIN_SCHEMA_INVALID")
+        with self._lock:
+            item = next(((item[0], item[1]) for item in self._panels.values() if item[0].key == key), None)
+        if item is None:
+            raise ProtocolError("面板不属于本运行", "PLUGIN_RESOURCE_NOT_FOUND")
+        definition, panel_lease = item
+        self.session.check(panel_lease)
+        if definition.data_callback_ref is None:
+            return {"lists": {}, "tasks": {}}
+        timeout = min(max(0.001, request.deadline - monotonic()), 5.0)
+        reply = self._invoke_callback({"callback_ref": definition.data_callback_ref, "args": {}}, timeout)
+        if reply.get("ok") is not True or not isinstance(reply.get("data"), dict):
+            raise ProtocolError("面板数据回调失败", "PLUGIN_COMMAND_FAILED")
+        data = PanelData.model_validate(reply["data"].get("value"))
+        self.session.check(lease)
+        return data.model_dump(mode="json")
 
     def _invoke_callback(self, params: dict[str, JsonValue], timeout: float) -> dict[str, JsonValue]:
         """

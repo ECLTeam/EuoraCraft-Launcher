@@ -25,6 +25,9 @@
 #       - plugin_get_vue_slots(body) -> dict[str, Any] — 获取插件 Vue 插槽。
 #       - plugin_get_vue_components(body) -> dict[str, Any] — 获取插件 Vue 组件。
 #       - plugin_call_command(body) -> dict[str, Any] — 调用插件命令。
+#       - plugin_panels_get(body) -> dict[str, Any] — 获取插件声明式面板定义。
+#       - plugin_panel_data(body) -> dict[str, Any] — 拉取面板列表与任务快照。
+#       - plugin_panel_action(body) -> dict[str, Any] — 执行面板按钮指向的命令。
 #       - plugin_get_settings(body) -> dict[str, Any] — 获取插件设置。
 #       - plugin_update_setting(body) -> dict[str, Any] — 更新插件设置。
 #       - plugin_notify_sidebar_state(body) -> dict[str, Any] — 通知插件侧栏的折叠状态。
@@ -424,6 +427,63 @@ class PluginHandlers(_FrontendState):
             result = await asyncio.to_thread(self.plugins.call_command, command, body.get("params", {}))
         except PluginCommandError as exc:
             return {"success": False, "message": str(exc), "errorCode": "PLUGIN_COMMAND_FAILED"}
+        return {"success": True, "data": result}
+
+    async def plugin_panels_get(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        获取插件声明式面板定义，供可信管理页渲染。
+
+        :param body: 前端传入的 IPC 请求参数
+        """
+        service = self.plugins.worker_service
+        if service is None:
+            return failure("插件运行服务不可用", "PLUGIN_RUNTIME_UNAVAILABLE")
+        try:
+            panels = await asyncio.to_thread(service.broker(body.get("plugin_name")).panels_view)
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
+        return {"success": True, "data": {"panels": panels}}
+
+    async def plugin_panel_data(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        拉取面板列表与任务快照，失败时不返回半份数据。
+
+        :param body: 前端传入的 IPC 请求参数
+        """
+        service = self.plugins.worker_service
+        if service is None:
+            return failure("插件运行服务不可用", "PLUGIN_RUNTIME_UNAVAILABLE")
+        try:
+            data = await asyncio.to_thread(
+                service.broker(body.get("plugin_name")).handle,
+                RpcRequest(
+                    "panels.data",
+                    {"key": body.get("key")},
+                    monotonic() + 5,
+                    uuid4().hex,
+                ),
+            )
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
+        return {"success": True, "data": data}
+
+    async def plugin_panel_action(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        执行面板按钮指向的本插件命令，结果仍由命令输出 schema 校验。
+
+        :param body: 前端传入的 IPC 请求参数
+        """
+        service = self.plugins.worker_service
+        command = body.get("command")
+        args = body.get("args", {})
+        if service is None:
+            return failure("插件运行服务不可用", "PLUGIN_RUNTIME_UNAVAILABLE")
+        if not isinstance(command, str) or not isinstance(args, dict):
+            return failure("面板动作参数无效", "PLUGIN_SCHEMA_INVALID")
+        try:
+            result = await asyncio.to_thread(service.broker(body.get("plugin_name")).call_command, command, args, 30.0)
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
         return {"success": True, "data": result}
 
     async def plugin_get_settings(self, body: dict[str, Any]) -> dict[str, Any]:
