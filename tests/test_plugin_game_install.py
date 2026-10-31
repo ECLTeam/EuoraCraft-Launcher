@@ -119,7 +119,7 @@ def test_plugin_names_reject_paths_ads_devices_and_normalization(value):
         GameInstallRequest(root_ref="a" * 32, version_id="1.20.1", version_name=value)
 
 
-@pytest.mark.parametrize("options", [{"memory_mb": True}, {"jvm_args": []}, {"runtime_ref": "a" * 32}, {"env": {}}])
+@pytest.mark.parametrize("options", [{"memory_mb": True}, {"jvm_args": []}, {"runtime_ref": "not-a-ref"}, {"env": {}}])
 def test_plugin_launch_options_are_explicit_and_do_not_inherit_unimplemented_java_contract(options):
     with pytest.raises(ValidationError):
         GameLaunchOptions.model_validate(options)

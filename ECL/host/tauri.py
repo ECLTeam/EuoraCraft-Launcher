@@ -160,7 +160,10 @@ class Adapter:
         if self.webview_debug_port is None:
             return
         window_config["additionalBrowserArgs"] = f"--remote-debugging-port={self.webview_debug_port}"
-        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(self.context.state.data_path / "webview-debug")
+        data_path = getattr(getattr(self, "context", None), "state", None)
+        data_path = getattr(data_path, "data_path", None)
+        if data_path is not None:
+            os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(data_path / "webview-debug")
         self.logger.warning("已开启 WebView2 远程调试：端口：%s；仅供开发期调试使用", self.webview_debug_port)
 
     def _register_commands(self) -> None:

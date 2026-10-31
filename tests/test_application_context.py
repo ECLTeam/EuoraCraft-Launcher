@@ -62,6 +62,9 @@ class _FakeAccounts:
     def __init__(self, *_args, **_kwargs) -> None:
         pass
 
+    def plugin_account_snapshot(self) -> tuple:
+        return ()
+
     def microsoft_login_config(self) -> dict:
         return {"available": False}
 
