@@ -23,9 +23,13 @@ def broker_setup(tmp_path: Path):
     root = tmp_path / "code"
     root.mkdir()
     (root / "main.py").write_text("value = 1", encoding="utf-8")
+    # 需要用户选定具体资源的能力不在这里授予：本文件不覆盖它们，
+    # 而授权校验要求必须带资源引用，凭空授权会被拒绝。
+    ref_required = PermissionDeclaration.host_selected_capabilities | {"java.read", "java.use", "accounts.read"}
+    granted = tuple(sorted(PluginHostBroker.implemented_capabilities - ref_required))
     declarations = tuple(
         PermissionDeclaration(capability=c, resource_refs=("https:example.com:443",) if c == "network.read" else ())
-        for c in sorted(PluginHostBroker.implemented_capabilities)
+        for c in granted
     )
     binding = PluginContentBinding.capture(root, declarations, "windows-x86_64-cp311")
     store = PluginGrantStore(tmp_path, implemented_capabilities=PluginHostBroker.implemented_capabilities)
@@ -36,7 +40,7 @@ def broker_setup(tmp_path: Path):
             PermissionDecision(
                 capability=c, decision="allow", resource_refs=("https:example.com:443",) if c == "network.read" else ()
             )
-            for c in PluginHostBroker.implemented_capabilities
+            for c in granted
         ),
         expected_revision=0,
         content_digest=binding.content_digest,
