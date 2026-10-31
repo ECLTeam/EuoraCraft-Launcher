@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Windows runner 默认 cp1252，审计工具的中文结论会在打印时抛 UnicodeEncodeError，
+  # 让通过的检查表现为非零退出。统一用 UTF-8 模式运行。
+  PYTHONUTF8: "1"
+
 jobs:
   python-audit:
     name: Python audit (${{ matrix.os }}, ${{ matrix.environment }})
