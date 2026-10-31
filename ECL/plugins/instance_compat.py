@@ -67,6 +67,39 @@ class ExternalInstanceMetadata:
     warnings: list[str] = field(default_factory=list)
 
 
+# 第三方来源返回的元数据上限：字段数量与文本长度都要有界。
+limit_metadata_fields = 32
+limit_metadata_text = 256
+limit_metadata_warnings = 8
+
+
+def sanitize_external_metadata(payload: object, source: str) -> ExternalInstanceMetadata | None:
+    """
+    把第三方来源的返回值收敛为受控元数据，越界项丢弃而不是整体失败。
+
+    :param payload: 插件回调返回值
+    :param source: 来源标识，由宿主填入而不是采信插件
+    :return: 受控元数据，无有效内容时为空
+    """
+    if not isinstance(payload, dict):
+        return None
+    fields = payload.get("fields")
+    if not isinstance(fields, dict):
+        return None
+    cleaned: dict[str, str] = {}
+    for key, value in list(fields.items())[:limit_metadata_fields]:
+        if isinstance(key, str) and isinstance(value, str):
+            cleaned[key[:64]] = value[:limit_metadata_text]
+    warnings = [
+        item[:limit_metadata_text]
+        for item in (payload.get("warnings") or [])[:limit_metadata_warnings]
+        if isinstance(item, str)
+    ]
+    if not cleaned and not warnings:
+        return None
+    return ExternalInstanceMetadata(source=source, modified_ns=0, fields=cleaned, warnings=warnings)
+
+
 InstanceMetadataReader = Callable[[InstanceCompatibilityContext], ExternalInstanceMetadata | None]
 InstanceWatchPathResolver = Callable[[Mapping[str, Any]], Iterable[str | Path]]
 

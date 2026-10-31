@@ -251,6 +251,21 @@ class PluginResourceCatalog:
                 item.resource_id for item in self._record.resources if item.is_active and item.version_id is None
             )
 
+    def instance_ref_for(self, root_path: Path, version_id: str) -> str | None:
+        """
+        按游戏根与版本名查找已索引的实例身份，供宿主换算授权引用。
+
+        :param root_path: 实例所属游戏根
+        :param version_id: 实例版本目录名
+        :return: 已索引的实例资源 ID，未索引时为空
+        """
+        target = str(Path(root_path))
+        with self._lock:
+            for item in self._record.resources:
+                if item.is_active and item.version_id == version_id and item.root_path == target:
+                    return item.resource_id
+        return None
+
     def default_root_ref(self) -> str | None:
         """
         返回配置提供器按当前选择排序后的首个有效根，仅用于确认界面的默认选择。

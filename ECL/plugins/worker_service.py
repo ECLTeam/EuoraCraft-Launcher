@@ -110,6 +110,7 @@ class PluginWorkerService:
         ui_injection_allowed: Callable[[], bool] | None = None,
         hook_sink: Callable[[str, str | None, str | None, bool], None] | None = None,
         crash_sink: Callable[[str, str | None], None] | None = None,
+        compat_sink: Callable[[str, str | None, str | None, str | None], None] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -129,12 +130,14 @@ class PluginWorkerService:
         :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
         :param hook_sink: 启动钩子接收方；阶段为 None 表示撤销该安装全部钩子
         :param crash_sink: 崩溃分析接收方；回调标识为 None 表示撤销该安装全部回调
+        :param compat_sink: 实例兼容来源接收方；来源为 None 表示撤销该安装全部来源
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
         self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
         self._hook_sink = hook_sink
         self._crash_sink = crash_sink
+        self._compat_sink = compat_sink
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -568,6 +571,7 @@ class PluginWorkerService:
                     slot_sink=partial(self._publish_slot, name),
                     hook_sink=partial(self._publish_hook, name),
                     crash_sink=partial(self._publish_crash, name),
+                    compat_sink=partial(self._publish_compat, name),
                     cross_plugin=CrossPluginChannel(
                         list_commands=partial(self._cross_plugin_list, name),
                         call=partial(self._cross_plugin_call, name),
@@ -636,6 +640,59 @@ class PluginWorkerService:
         if self._crash_sink is None:
             raise ProtocolError("当前宿主未提供崩溃分析", "PLUGIN_API_METHOD_NOT_FOUND")
         self._crash_sink(name, callback_ref)
+
+    def _publish_compat(self, name: str, source: str | None, title: str | None, callback_ref: str | None) -> None:
+        """
+        把已获准的实例兼容来源交给管理器。
+
+        :param name: 安装名称
+        :param source: 来源标识，None 表示撤销
+        :param title: 来源标题
+        :param callback_ref: 本运行登记的回调标识
+        """
+        if self._compat_sink is None:
+            raise ProtocolError("当前宿主未提供实例兼容", "PLUGIN_API_METHOD_NOT_FOUND")
+        self._compat_sink(name, source, title, callback_ref)
+
+    def _clear_compat(self, name: str) -> None:
+        """
+        撤销该安装登记的全部实例兼容来源，禁用或卸载后不再参与识别。
+
+        :param name: 安装名称
+        """
+        if self._compat_sink is not None:
+            self._compat_sink(name, None, None, None)
+
+    def instance_ref(self, root_path: Path, version_id: str) -> str | None:
+        """
+        把实例路径换算成已索引的资源引用，未索引时返回空。
+
+        :param root_path: 实例所属游戏根
+        :param version_id: 实例版本目录名
+        :return: 资源引用或空
+        """
+        if self._catalog is None:
+            return None
+        return self._catalog.instance_ref_for(root_path, version_id)
+
+    def granted_instance_refs(self, name: str) -> frozenset[str]:
+        """
+        返回该安装当前获准的游戏资源引用，供宿主判断能否投递实例上下文。
+
+        :param name: 安装名称
+        :return: 已获准的实例或目录引用
+        """
+        entry = self._entry(name)
+        if entry.state != "enabled" or entry.session is None:
+            return frozenset()
+        view = entry.session.view()
+        return frozenset(
+            ref
+            for item in view.items
+            if item.capability in {"instances.read", "instances.manage"}
+            and item.decision == "allow"
+            for ref in item.resource_refs
+        )
 
     def _clear_crash(self, name: str) -> None:
         """
@@ -804,6 +861,7 @@ class PluginWorkerService:
             self._clear_slots(name)
             self._clear_hooks(name)
             self._clear_crash(name)
+            self._clear_compat(name)
             entry.state = "disabled"
             entry.cleanup_state = "completed"
             if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:

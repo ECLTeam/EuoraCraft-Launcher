@@ -1,0 +1,9 @@
+{
+  "name": "worker_instance_source",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "实例识别示例",
+  "description": "为已获准的实例补充一条来源元数据，只拿到引用与相对目录，不接触绝对路径。",
+  "entry_point": "main:Plugin",
+  "permissions": [{ "capability": "game", "required": false }]
+}

@@ -43,6 +43,7 @@ from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
 from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.models import (
     CommandDefinition,
+    CompatSourceDefinition,
     CrashExtensionDefinition,
     HtmlSlotDefinition,
     LaunchHookDefinition,
@@ -146,6 +147,7 @@ class PluginHostBroker:
             "ui.register_html",
             "hooks.register",
             "crash.register",
+            "compat.register",
             "ui.register_vue",
             "settings.define",
             "settings.set",
@@ -188,6 +190,7 @@ class PluginHostBroker:
         cross_plugin: CrossPluginChannel | None = None,
         hook_sink: Callable[[str, str, bool], None] | None = None,
         crash_sink: Callable[[str], None] | None = None,
+        compat_sink: Callable[[str, str, str], None] | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -208,6 +211,7 @@ class PluginHostBroker:
         :param cross_plugin: 跨插件发现与调用通道；未提供时拒绝相关方法
         :param hook_sink: 启动钩子接收方；未提供时拒绝钩子登记
         :param crash_sink: 崩溃分析回调接收方；未提供时拒绝登记
+        :param compat_sink: 实例兼容来源接收方；未提供时拒绝登记
         """
         self.session: PluginGrantSession = session
         self.error_code: str | None = None
@@ -217,6 +221,7 @@ class PluginHostBroker:
         self._cross_plugin = cross_plugin
         self._hook_sink = hook_sink
         self._crash_sink = crash_sink
+        self._compat_sink = compat_sink
         self._resources = resources
         self.game_catalog: RuntimeGameCatalog | None = (
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
@@ -441,6 +446,8 @@ class PluginHostBroker:
             return self._hook_service(request)
         if method.startswith("crash."):
             return self._crash_service(request)
+        if method.startswith("compat."):
+            return self._compat_service(request)
         return self._control_service(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
@@ -789,6 +796,35 @@ class PluginHostBroker:
             raise ProtocolError("当前宿主未提供启动钩子", "PLUGIN_API_METHOD_NOT_FOUND")
         definition = LaunchHookDefinition.model_validate(request.params)
         self._hook_sink(definition.phase, definition.callback_ref, definition.required)
+        return {"registered": True}
+
+    def _compat_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只接受实例兼容来源登记，按插件已获准的游戏范围准入。
+
+        :param request: 已通过变更检查的请求
+        :return: 登记结果
+        :raises ProtocolError: 未获准查看游戏或通道缺失时抛出
+        """
+        permission = next(
+            (
+                item
+                for item in self.session.view().items
+                if item.capability in {"instances.read", "instances.manage"}
+                and item.decision == "allow"
+                and item.resource_refs
+            ),
+            None,
+        )
+        if permission is None:
+            raise ProtocolError("插件未获准查看游戏", "PLUGIN_PERMISSION_DENIED")
+        self.session.authorize(permission.capability, tuple(permission.resource_refs))
+        if request.method != "compat.register":
+            raise ProtocolError("此兼容方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+        if self._compat_sink is None:
+            raise ProtocolError("当前宿主未提供实例兼容", "PLUGIN_API_METHOD_NOT_FOUND")
+        definition = CompatSourceDefinition.model_validate(request.params)
+        self._compat_sink(definition.source, definition.title, definition.callback_ref)
         return {"registered": True}
 
     def _crash_service(self, request: RpcRequest) -> dict[str, JsonValue]:

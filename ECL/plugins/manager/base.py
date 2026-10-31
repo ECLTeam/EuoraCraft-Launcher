@@ -33,7 +33,12 @@ from ECL.plugins.crash_extensions import (
 )
 from ECL.plugins.dependencies import DependencyResolution
 from ECL.plugins.host_dependencies import HostDependencyPolicy
-from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
+from ECL.plugins.instance_compat import (
+    ExternalInstanceMetadata,
+    InstanceCompatibilityContext,
+    InstanceCompatibilityRegistry,
+    sanitize_external_metadata,
+)
 from ECL.plugins.launch_hooks import LaunchContext, LaunchHookRegistry, apply_remote_modifications
 from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
@@ -195,6 +200,7 @@ class _PluginState:
             slot_sink=self._on_worker_slot,
             hook_sink=self._on_worker_hook,
             crash_sink=self._on_worker_crash,
+            compat_sink=self._on_worker_compat,
             ui_injection_allowed=self._ui_injection_allowed,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
@@ -292,6 +298,57 @@ class _PluginState:
             required=required,
             **{attribute: self._worker_hook_callable(name, phase, callback_ref)},
         )
+
+    def _on_worker_compat(self, name: str, source: str | None, title: str | None, callback_ref: str | None) -> None:
+        """
+        登记或撤销第三方实例兼容来源，未获准的实例不会被投递。
+
+        :param name: 安装名称
+        :param source: 来源标识；None 表示撤销
+        :param title: 面向用户显示的来源名称
+        :param callback_ref: 本运行登记的回调标识
+        """
+        if source is None or callback_ref is None:
+            self.instance_compatibility.unregister_owner(name)
+            return
+        self.instance_compatibility.register(
+            owner=name,
+            source=source,
+            title=title or source,
+            reader=self._worker_compat_reader(name, source, callback_ref),
+        )
+
+    def _worker_compat_reader(self, name: str, source: str, callback_ref: str):
+        """
+        构造转发到插件进程的实例读取器，只投递已获准实例的引用与相对目录。
+
+        :param name: 安装名称
+        :param source: 来源标识
+        :param callback_ref: 本运行登记的回调标识
+        :return: 注册表可调用的读取器
+        """
+
+        def read(context: InstanceCompatibilityContext) -> ExternalInstanceMetadata | None:
+            if self.worker_service is None:
+                return None
+            reference = self.worker_service.instance_ref(context.game_path, context.version_id)
+            if reference is None or reference not in self.worker_service.granted_instance_refs(name):
+                return None
+            try:
+                instance_rel = context.instance_path.relative_to(context.game_path).as_posix()
+            except ValueError:
+                instance_rel = ""
+            payload = {
+                "root_ref": reference,
+                "instance_rel": instance_rel,
+                "version_id": context.version_id,
+                "vanilla_name": context.vanilla_name,
+                "primary_loader": context.primary_loader,
+            }
+            value = self.worker_service.invoke_hook(name, callback_ref, payload, 5.0)
+            return sanitize_external_metadata(value, source)
+
+        return read
 
     def _on_worker_crash(self, name: str, callback_ref: str | None) -> None:
         """

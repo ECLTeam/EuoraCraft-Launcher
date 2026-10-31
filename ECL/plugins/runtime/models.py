@@ -373,6 +373,16 @@ class LaunchHookDefinition(RequestModel):
     required: StrictBool = False
 
 
+class CompatSourceDefinition(RequestModel):
+    """
+    实例兼容来源登记：标识、标题与回调，不包含任何路径。
+    """
+
+    source: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    title: str = Field(min_length=1, max_length=64)
+    callback_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
 class CrashExtensionDefinition(RequestModel):
     """
     崩溃分析回调登记：只保留回调标识，报告内容由宿主按需投递。

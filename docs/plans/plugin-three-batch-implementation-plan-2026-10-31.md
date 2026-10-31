@@ -116,5 +116,5 @@ Java 查询/校验存在另一工作树提交 `6a52497`，但该提交不是当�
 | 批次 | 当前状态 | 记录 |
 | --- | --- | --- |
 | 第一批：游戏与 Java 业务能力 | 已实现并集成本地 `main`，Windows x64 源码与实际桌面验收通过 | [第一批交付与验收](plugin-first-batch-delivery-2026-10-31.md) |
-| 第二批：界面与扩展能力 | 进行中（权限已按用户要求合并为 game/java 等 5 项，细项仍可用）：声明式面板、主窗口注入（含总开关）、跨插件命令调用、第三方启动钩子与崩溃分析已实现；实例兼容、独立窗口与其余项未实施 | [面板契约](../designs/plugin-declarative-panel-design.md)、[注入决策](../designs/plugin-main-window-injection-decision.md)、[跨插件调用](../designs/plugin-cross-plugin-invocation-design.md) |
+| 第二批：界面与扩展能力 | 进行中（权限已按用户要求合并为 game/java 等 5 项，细项仍可用）：声明式面板、主窗口注入（含总开关）、跨插件命令调用、启动钩子、崩溃分析、实例识别已实现（第三方只拿引用与相对目录）；独立窗口与其余项未实施 | [面板契约](../designs/plugin-declarative-panel-design.md)、[注入决策](../designs/plugin-main-window-injection-decision.md)、[跨插件调用](../designs/plugin-cross-plugin-invocation-design.md) |
 | 第三批：跨平台与分发闭环 | 尚未实施 | 依第 5 节继续，真实平台与冻结验收分别记录 |

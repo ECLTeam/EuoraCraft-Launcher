@@ -15,6 +15,7 @@
 #       - list_plugin_commands / call_plugin_command — 发现并调用其他插件导出的命令。
 #       - register_launch_hook — 登记启动前后与退出阶段的回调。
 #       - register_crash_analyzer — 登记崩溃分析回调。
+#       - register_instance_source — 登记实例识别来源。
 # ============================================================
 
 from __future__ import annotations
@@ -311,6 +312,28 @@ class Plugin:
             "hooks.register",
             {"phase": phase, "callback_ref": reference, "required": required},
         )
+        return reference
+
+    def register_instance_source(
+        self,
+        source: str,
+        title: str,
+        callback: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
+    ) -> str:
+        """
+        登记实例识别来源，需已获准查看游戏。
+
+        回调只收到实例引用、相对目录、版本、原版名与主加载器；绝对路径不出
+        宿主。未获准的实例不会被投递，插件在该实例上表现为无识别结果。
+
+        :param source: 稳定来源标识，小写字母开头
+        :param title: 面向用户显示的来源名称
+        :param callback: 处理单个实例上下文的回调
+        :return: 本运行登记的回调标识
+        :raises HostApiError: 未获准或来源标识无效时抛出
+        """
+        reference = self.register_callback(callback)
+        self.host.call("compat.register", {"source": source, "title": title, "callback_ref": reference})
         return reference
 
     def register_crash_analyzer(
