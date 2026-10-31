@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Windows runner 默认 cp1252，审计工具的中文结论会在打印时抛 UnicodeEncodeError，
+  # 让通过的检查表现为非零退出。统一用 UTF-8 模式运行。
+  PYTHONUTF8: "1"
+
 jobs:
   python-audit:
     name: Python audit (${{ matrix.os }}, ${{ matrix.environment }})
@@ -34,7 +39,9 @@ jobs:
         run: |
           import os, pathlib, subprocess, sys
           subprocess.check_call([sys.executable, "-m", "pip", "install", "pip-audit==2.10.1"])
-          subprocess.check_call([sys.executable, "-m", "venv", "build/governance/target"])
+          # venv 自带的 pip 落后于当前安全版本，而审计会把它计入依赖清单；
+          # 先升级工具链，避免 pip 自身的历史公告污染应用依赖的结论。
+          subprocess.check_call([sys.executable, "-m", "venv", "--upgrade-deps", "build/governance/target"])
           target = pathlib.Path("build/governance/target") / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
           requirement = ".[dev]" if "${{ matrix.environment }}" == "all" else "."
           subprocess.check_call([str(target), "-m", "pip", "install", requirement])
@@ -58,7 +65,9 @@ jobs:
 
   frontend-audit:
     name: Frontend audit and accessibility
-    runs-on: ubuntu-latest
+    # ubuntu-latest 已滚动到 26.04，而当前锁定的 Playwright 只发布到 24.04 的
+    # Chromium 构建；审计环境需要可复现，故固定到仍受支持的 LTS 标签。
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7

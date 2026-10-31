@@ -290,8 +290,32 @@ class ResourceCoordinator(ModSourceAware):
     identity_slots: BoundedSemaphore = BoundedSemaphore(2)
     identity_cache: dict[tuple[str, str], tuple[float, ResourceIdentity]] = {}
 
+    digest_cache: dict[str, tuple[int, int, str]] = {}
+    digest_cache_limit: int = 4096
+
     resourcepack_icon_max_bytes: int = 1024 * 1024
     resourcepack_icon_max_dimension: int = 4096
+
+    def _cached_sha512(self, path: Path) -> str:
+        """
+        按 (大小, 修改时间) 复用资源文件摘要，文件被替换后自动失效。
+
+        资源列表每次进入页面都会重算全部摘要，数百个模组需要完整读取每个文件；
+        大小或修改时间变化即视为新内容，与"刷新后可见文件替换"的既有语义一致。
+
+        :param path: 待计算摘要的资源文件
+        :return: SHA-512 十六进制摘要
+        """
+        stat = path.stat()
+        key = str(path)
+        cached = self.digest_cache.get(key)
+        if cached is not None and cached[0] == stat.st_size and cached[1] == stat.st_mtime_ns:
+            return cached[2]
+        digest = _sha512(path)
+        if len(self.digest_cache) >= self.digest_cache_limit:
+            self.digest_cache.clear()
+        self.digest_cache[key] = (stat.st_size, stat.st_mtime_ns, digest)
+        return digest
 
     def _read_resourcepack_icon(self, pack_path: Path) -> str | None:
         """
@@ -449,7 +473,7 @@ class ResourceCoordinator(ModSourceAware):
             )
             if resource_type == "resourcepack":
                 metadata["iconData"] = self._read_resourcepack_icon(path)
-            digest = _sha512(path) if path.is_file() else None
+            digest = self._cached_sha512(path) if path.is_file() else None
             recorded = self._resource_source(manifest, resource_type, path.name, digest)
             resources.append(
                 {

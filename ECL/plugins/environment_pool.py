@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
+from typing import IO
 from uuid import uuid4
 
 from packaging.requirements import Requirement
@@ -45,12 +46,34 @@ safe_component_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 lock_wait_seconds = 120
 
 
+def _open_lock_file(lock_path: Path, deadline: float) -> IO[bytes]:
+    """
+    在等待预算内打开锁文件。
+
+    并发打开同一文件在 Windows 上可能短暂返回拒绝访问，属于文件系统过滤驱动
+    竞争而非永久权限错误；按预算重试，超时后抛出领域异常并保留原始 OSError。
+
+    :param lock_path: 受控目录内的锁文件
+    :param deadline: monotonic 时间戳的等待上限
+    :return: 以追加读写方式打开的文件对象
+    :raises PluginDependencyError: 预算内始终无法打开时抛出
+    """
+    while True:
+        try:
+            return lock_path.open("a+b")
+        except OSError as exc:
+            if monotonic() >= deadline:
+                raise PluginDependencyError("等待插件安装锁超时") from exc
+            sleep(0.1)
+
+
 @contextmanager
 def _exclusive_lock(lock_path: Path, *, wait_seconds: float = lock_wait_seconds) -> Iterator[None]:
     """
     对同一安装键使用有界跨进程文件锁，防止多个启动器覆盖目录。
 
     Windows 和 POSIX 分别使用平台文件锁；进程退出时由系统释放。
+    打开与加锁共用同一等待预算，避免把瞬时竞争当成永久失败。
 
     :param lock_path: 受控目录内的锁文件
     :param wait_seconds: 等待上限；授权短事务可使用更短预算
@@ -60,9 +83,9 @@ def _exclusive_lock(lock_path: Path, *, wait_seconds: float = lock_wait_seconds)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     if lock_path.is_symlink():
         raise PluginDependencyError("插件安装锁不能是符号链接")
-    with lock_path.open("a+b") as lock_file:
+    deadline = monotonic() + wait_seconds
+    with _open_lock_file(lock_path, deadline) as lock_file:
         lock_file.seek(0)
-        deadline = monotonic() + wait_seconds
         if os.name == "nt":
             import msvcrt
 

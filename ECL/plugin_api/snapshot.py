@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import ClassVar
 
@@ -44,6 +44,9 @@ class CodeSnapshot:
     files: tuple[CodeFile, ...]
     max_files: ClassVar[int] = 10000
     max_bytes: ClassVar[int] = 256 * 1024 * 1024
+    # 最近一次确认的 (大小, 修改时间) 清单，只用于跳过重复的字节哈希。
+    # 不参与摘要、比较与序列化：授权身份仍然只由 files 决定。
+    _verified_metadata: dict[str, tuple[int, int]] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
     def capture(cls, root_path: Path) -> CodeSnapshot:
@@ -67,17 +70,18 @@ class CodeSnapshot:
         names = [entry.relative_to(root_path).as_posix() for entry in file_paths]
         if len({name.casefold() for name in names}) != len(names) or any(not _relative_name(name) for name in names):
             raise ProtocolError("插件快照路径无效或重复", "PLUGIN_CONTENT_CHANGED")
-        files = tuple(
-            CodeFile(
-                entry.relative_to(root_path).as_posix(),
-                entry.stat().st_size,
-                hashlib.sha256(entry.read_bytes()).hexdigest(),
-            )
-            for entry in file_paths
-        )
+        files = []
+        metadata: dict[str, tuple[int, int]] = {}
+        for entry in file_paths:
+            name = entry.relative_to(root_path).as_posix()
+            stat = entry.stat()
+            files.append(CodeFile(name, stat.st_size, hashlib.sha256(entry.read_bytes()).hexdigest()))
+            metadata[name] = (stat.st_size, stat.st_mtime_ns)
         if len(files) > cls.max_files or sum(item.size for item in files) > cls.max_bytes:
             raise ProtocolError("插件快照超过数量或大小上限", "PLUGIN_CONTENT_CHANGED")
-        return cls(root_path, files)
+        snapshot = cls(root_path, tuple(files))
+        snapshot._verified_metadata.update(metadata)
+        return snapshot
 
     def digest(self) -> str:
         """
@@ -128,12 +132,50 @@ class CodeSnapshot:
         """
         在执行入口前复核全部文件与清单，发现变化时拒绝加载。
 
+        先用 (大小, 修改时间) 元数据比对，全部一致时跳过重复的字节哈希：
+        授权检查在每次宿主 API 调用前执行，全量重读整棵代码树会让插件延迟
+        随体积线性增长。新增、删除或元数据变化仍走完整字节复核。
+
+        伪造元数据需要主动改写时间戳，与本文档声明的"不能阻止同用户恶意磁盘
+        篡改"边界一致，不引入新的信任假设。
+
         :param expected_digest: 宿主批准的内容摘要
         :raises ProtocolError: 清单或实际文件与许可不符时抛出
         """
+        if self._metadata_unchanged():
+            return
         actual = self.capture(self.root_path)
         if self.digest() != expected_digest or actual.files != self.files:
             raise ProtocolError("插件内容与已批准快照不一致", "PLUGIN_CONTENT_CHANGED")
+        self._verified_metadata.clear()
+        self._verified_metadata.update(actual._verified_metadata)
+
+    def _metadata_unchanged(self) -> bool:
+        """
+        只用文件元数据判断代码树是否与上次确认的清单一致。
+
+        文件数量、相对路径、大小与修改时间全部一致时才复用上次的字节复核结果。
+
+        :return: 可以跳过字节哈希时为 True
+        """
+        known = self._verified_metadata
+        if not known or len(known) != len(self.files):
+            return False
+        try:
+            file_count = 0
+            for entry in self.root_path.rglob("*"):
+                # 出现链接一律退回完整复核，由 capture 给出明确的拒绝原因。
+                if entry.is_symlink():
+                    return False
+                if not entry.is_file():
+                    continue
+                file_count += 1
+                stat = entry.stat()
+                if known.get(entry.relative_to(self.root_path).as_posix()) != (stat.st_size, stat.st_mtime_ns):
+                    return False
+        except OSError:
+            return False
+        return file_count == len(self.files)
 
 
 def _relative_name(name: str) -> bool:
