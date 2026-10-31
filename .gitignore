@@ -89,6 +89,9 @@ Desktop.ini
 # Legacy standalone UI checkout
 /EuoraCraftLauncher-UI/
 
+# QML 风格前端本地移植目录，含依赖与构建产物，暂不纳入版本管理
+/qml/
+
 /.vite/
 /.memory/
 .memory/
