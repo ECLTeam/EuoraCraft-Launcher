@@ -81,10 +81,7 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
   "api_version": 2,
   "version": "1.0.0",
   "entry_point": "main:Plugin",
-  "permissions": [
-    { "capability": "commands.register", "required": true },
-    { "capability": "commands.execute", "required": true }
-  ]
+  "permissions": []
 }
 ```
 
@@ -116,9 +113,19 @@ class Plugin(BasePlugin):
 
 完整示例见 [worker_echo](../../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](../guides/headless-runtime.md)，总体契约与后续能力见 [Worker/API v2 设计](../designs/plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
 
+### 权限与启用
+
+基础能力随确认启用当前内容获得：自身命令、设置、自身设置事件、私有数据文件及固定来源的游戏版本目录不再逐项声明。`plugin.base` 是绑定当前安装、内容和运行的内部准入，不能写进权限清单或作为用户授权项。
+
+清单只接受 `instances.read`（查看游戏）、`instances.manage`（管理游戏）和 `network.read`（联网）。管理游戏包含查看、安装、资料修改、启动和停止本运行创建的游戏；游戏授权统一选择根目录，覆盖其中现有及以后新增的实例。只读插件不能据此管理游戏。需要只读降级的插件可以同时声明必要查看和可选管理，管理生效时包含同一范围的查看能力。
+
+基础插件点击启用即确认当前内容；业务插件在一个游戏目录选择区和联网站点说明中完成“同意并启用”。当前有效游戏目录可预选，但须在确认前显示。授权已保存而启动失败时可以直接重试启用；已启用插件保存访问范围不等于重新启用。授权继续绑定完整内容，不继承到更新后的不同内容。
+
+旧细分权限声明明确拒绝，插件作者须更新清单，不做别名、自动合并或迁移。旧摘要的授权记录和插件数据原地保留，新清单使用现有的新内容摘要记录。完整方案见[权限简化方案 B](../plans/plugin-permission-simplification-plan-2026-10-30.md)。
+
 ### 获准实例读取
 
-清单请求 `{"capability":"instances.read","required":true}`，不能自报本机资源 ID。用户在可信主窗口选择目录全部实例（包含以后新增）或指定实例，未选择不满足必要能力。`host.call("resources.list", {"capability":"instances.read"})` 只返回当前 run 的获准目录/实例引用；目录引用用于 `instances.scan`，实例引用用于 `instances.get`，单实例许可不能扫描父目录。完整运行示例见 [instance_reader](../../examples/plugins/instance_reader/README.md)。
+清单请求 `{"capability":"instances.read","required":true}` 或 `instances.manage`，不能自报本机资源 ID。用户在可信主窗口选择游戏根目录，未选择不满足必要能力。`host.call("resources.list", {"capability":"instances.read"})` 返回当前运行获准根引用；用 `instances.scan` 取得具体实例引用，再调用 `instances.get`。管理权限直接支持这些查看方法，无需额外声明读取。示例见 [instance_reader](../../examples/plugins/instance_reader/README.md)。
 
 资源和扫描列表均返回 `{items,next_cursor}`，可提交 `cursor`、`limit`（1—100，默认 50）。扫描另接受 `force`，仅刷新本次只读快照。单个摘要返回 `instance_ref`、`version_id`、`alias`、`loader`、`game_version`、`profile:{description,favorite,tags}`、`profile_etag`、`running_count`；不返回真实路径或完整实例配置。etag 绑定完整本地资料的存在状态、物理身份、稳定元数据和原始字节摘要，不是递增 revision；其他字段变化或同名同内容重建也会使其失效。令牌本身不授予写权限。
 
@@ -126,7 +133,7 @@ class Plugin(BasePlugin):
 
 ### 获准实例资料修改
 
-清单分别声明 `instances.read` 与 `instances.write`，两者的声明 `resource_refs` 均为空。用户在可信主窗口分别选择范围：读取可以覆盖整个目录，写入只能勾选具体实例，不能覆盖目录及以后新增的实例。持有实例运行引用仍需同时满足原始读、写许可；不能由读目录许可推导写权限。`permissions.list` 的写范围只投影有独立读权限的当前运行引用，不返回持久资源 ID。
+清单声明 `instances.manage`，声明中的 `resource_refs` 为空。用户批准游戏根后，可修改该根中实例的允许资料字段，操作和结果投影始终绑定同一原始管理准入。`permissions.list` 只投影当前运行根引用，不返回持久资源 ID。
 
 ```python
 before = host.call("instances.get", {"instance_ref": instance_ref})
@@ -140,7 +147,7 @@ receipt = host.call("instances.profile_patch", {
 
 只允许 `alias`、`description`、`favorite`、`tags`，至少一项，拒绝 null、额外字段和类型转换。别名去空白后 1—120 字符；描述至多 1000 字符，允许空字符串；收藏为严格布尔；标签至多 20 项，每项去空白后 1—40 字符，按大小写去重并保留第一项文本。未提供字段保持原值，false 和空数组会保存。原资料的其他合法字段完整保留，不提供任意 JSON、图标、启动设置或存档写入。原、新资料均至多 64 KiB；损坏 JSON、重复字段、未知显式版本和字段类型异常会明确失败并保留原文件。
 
-提交最多 5 秒；任务 `plugin_instance_profile_patch` 的总截止为 30 秒，包含排队。成功视图为 `{instance_ref,alias,profile:{description,favorite,tags},profile_etag}`，绑定真实提交后的完整版本，交付前再次验证原始读许可和物理实例；失权时 result 为 null，不改写 effect。完整版本冲突返回 `PLUGIN_INSTANCE_PROFILE_CONFLICT`，调用方不得自动读新版本强制覆盖或换键重放。
+提交最多 5 秒；任务 `plugin_instance_profile_patch` 的总截止为 30 秒，包含排队。成功视图为 `{instance_ref,alias,profile:{description,favorite,tags},profile_etag}`，绑定真实提交后的完整版本，交付前再次验证原始管理准入和物理实例；失权时 result 为 null，不改写 effect。完整版本冲突返回 `PLUGIN_INSTANCE_PROFILE_CONFLICT`，调用方不得自动读新版本强制覆盖或换键重放。
 
 仅支持 Windows x64、本地 NTFS。宿主固定原目录和文件对象，保留原对象备份后不覆盖发布，原资料名称可能短暂缺失，不承诺一次原子覆盖。实际占用和备份清理完成前保持 cleanup_pending；重启只恢复或清理登记对象，不恢复旧 Worker、旧任务或旧补丁。外部文件占名时保留双方数据，从“文件恢复 → 实例资料”选择原位置恢复、受限后缀另存为 `recovered-profile-{suffix}.json`，或经二次确认丢弃原备份。成功提交不提供旧版本撤销。
 
@@ -160,7 +167,7 @@ TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cance
 
 ## 私有文件与新建事务
 
-声明 `filesystem.read`、`filesystem.write`、`filesystem.delete` 或 `filesystem.replace`，清单及授权的 resource_refs 必须为空；范围固定为本安装的私有文件空间。四种能力独立，write只允许新建文件，替换已有文件必须单独授予replace；不允许建子目录或访问用户选择的目录。首轮限 Windows x64、本地 NTFS；其他文件系统明确拒绝。
+私有文件属于启用后可用的基础能力，不在清单中声明额外文件权限。通过 `resources.list({capability:"plugin.base"})` 取得本安装的私有数据根引用，随后调用现有文件 API。读取、新建、替换和删除共用原始基础准入；新建仍禁止覆盖，替换仍要求目标版本。范围固定为自身空间，不允许创建子目录或访问用户游戏目录。实际文件事务仅支持 Windows x64、本地 NTFS。
 
 先调用 resources.list，capability 为上述独立文件能力，取得当前 run 的 root_ref。FileRef 为 `{root_ref,relative_path}`，文件名为 1—120 个 ASCII 字符，须以字母或数字开始，后续仅允许字母、数字、点、下划线和连字符；拒绝设备名、尾点和路径组件。空名称只用于私有根 stat/list。引用不能跨 run/授权代次重用，任何接口都不返回宿主路径。
 
@@ -176,19 +183,19 @@ files.write_abort `{write_ref}` 不消耗变更回执，失去可选文件权限
 
 ### 按版本删除私有文件
 
-`files.delete({target:FileRef,expected_etag:64位小写十六进制})` 需要独立 filesystem.delete；不要求同时有 read/write。目标必须是当前私有根内非空名称的普通单链接文件，至多8 MiB。拒绝目录、ADS、链接、递归、force、额外字段和真实路径；目标缺失返回 PLUGIN_RESOURCE_NOT_FOUND，超大返回 PLUGIN_FILE_TOO_LARGE。根发现和删除均不初始化首次空间。
+`files.delete({target:FileRef,expected_etag:64位小写十六进制})` 使用本运行基础准入，无独立删除开关。目标必须是当前私有根内非空名称的普通单链接文件，至多8 MiB。拒绝目录、ADS、链接、递归、force、额外字段和真实路径；目标缺失返回 PLUGIN_RESOURCE_NOT_FOUND，超大返回 PLUGIN_FILE_TOO_LARGE。根发现和删除均不初始化首次空间。
 
 RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；任务 plugin_file_delete 从本次提交起共30秒，包含排队。上传、下载和删除共用大小写不敏感目标占用，冲突为 PLUGIN_FILE_BUSY。每run至多4个、宿主32个未释放删除资源，与上传字节预留独立。
 
 执行时相对原根独占打开目标，在同一句柄计算完整SHA-256并核对身份、长度、修改时间和expected_etag；同名同内容重建也拒绝。原lease、取消及截止均在最终接受前复核，先保存committing审计，再设置内核删除标记。接受前取消/失权/审计失败保留原文件。标记或关闭失败只有原句柄撤回标记并确认后才报告零效果；无法确认则保留unknown和待清理资源。
 
-成功必须确认原对象目录项已消失，最终仅返回 `{deleted:true}`。该无内容确认绑定原删除lease，失权后result为null，effect不改。自身CloseHandle成功不代表实际删除；外部元数据句柄可能延迟移除，超时返回 PLUGIN_FILE_DELETE_PENDING、effect=unknown、cleanup_pending=true。内核删除仍可能晚到完成；后续只观察原对象身份，不重开名称补删，不触及同名新对象。实际清理完成可以清除cleanup_pending，但不把unknown改报成功。
+成功必须确认原对象目录项已消失，最终仅返回 `{deleted:true}`。该无内容确认绑定原基础准入，失权后result为null，effect不改。自身CloseHandle成功不代表实际删除；外部元数据句柄可能延迟移除，超时返回 PLUGIN_FILE_DELETE_PENDING、effect=unknown、cleanup_pending=true。内核删除仍可能晚到完成；后续只观察原对象身份，不重开名称补删，不触及同名新对象。实际清理完成可以清除cleanup_pending，但不把unknown改报成功。
 
 这是直接删除，成功后不可恢复，不进入回收站，不提供跨重启恢复。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 实施与验收 和 [显式清理示例](../../examples/plugins/worker_file_cleanup/README.md)。
 
 ### 按版本替换私有文件
 
-`files.replace_begin({target:FileRef,expected_etag,total_bytes})` 需要独立filesystem.replace，返回与新建相同的 `{write_ref,max_chunk_bytes}`。随后使用既有write_chunk、write_commit、write_abort；上传始终绑定原replace许可，不能换成write许可继续。原、新文件均至多8 MiB，分块32 KiB；不接受overwrite、force或真实路径。begin不初始化缺失空间或目标。已有文件和新暂存同时计入配额。
+`files.replace_begin({target:FileRef,expected_etag,total_bytes})` 使用本运行基础准入，返回与新建相同的 `{write_ref,max_chunk_bytes}`。随后使用既有write_chunk、write_commit、write_abort；上传始终绑定原始基础准入，运行或代次失效后不能复活旧上传。原、新文件均至多8 MiB，分块32 KiB；不接受overwrite、force或真实路径。begin不初始化缺失空间或目标。已有文件和新暂存同时计入配额。
 
 commit创建plugin_file_replace任务，从提交起共30秒，包含排队。执行时从原句柄完整核对原对象与expected_etag，最终接纳前复核原lease、取消、截止及审计。先持久保存事务凭据，再把原对象不覆盖移到内部备份，最后不覆盖发布新暂存。**原名称可能短暂不存在，不承诺一次原子覆盖。** 新建与下载继续禁止覆盖。
 
@@ -222,28 +229,28 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 `downloads.submit({url,target:FileRef,overwrite:false,expected_sha256?})` 只向已批准的精确公网站点发送 GET，将完整 HTTP 200 实体新建到当前安装私有根。URL 至多4096字节，文件至多8 MiB；文件名规则与 FileRef 相同，必须非空。overwrite 必须显式严格 false，拒绝覆盖、任意路径、子目录、请求体、自定义请求头、Range、续传或解压。expected_sha256 可省略，提供时须为64位小写十六进制，不接受 null。
 
-必须同时拥有原始 network.read 与 filesystem.write 许可。每跳重新核验许可、DNS/IP/peer/TLS 与总截止，最多5次重定向、不降级、不重试、不继承代理/Cookie/账户。仅最终200进入文件写入；204、206、304和错误状态不发布文件，返回 PLUGIN_DOWNLOAD_FAILED。固定长度响应须完整匹配，缺少长度允许到 EOF；实体和原始收包分别限制8 MiB、每跳9 MiB，分块开销过大也明确失败。network.request 仍保持32 KiB实体、256 KiB每跳原始收包和30秒限制。
+必须同时拥有原始 network.read 许可与基础私有数据准入。每跳重新核验许可、DNS/IP/peer/TLS 与总截止，最多5次重定向、不降级、不重试、不继承代理/Cookie/账户。仅最终200进入文件写入；204、206、304和错误状态不发布文件，返回 PLUGIN_DOWNLOAD_FAILED。固定长度响应须完整匹配，缺少长度允许到 EOF；实体和原始收包分别限制8 MiB、每跳9 MiB，分块开销过大也明确失败。network.request 仍保持32 KiB实体、256 KiB每跳原始收包和30秒限制。
 
 提交 RPC 至多5秒，返回 `{operation_ref,state:"queued"}`，通过 `operations.get/list/cancel` 查询与取消，不能把接纳当成文件已经保存。整个任务从首次提交开始最多1800秒，含排队与最终提交前校验；每个网络阶段至多5秒。队列不占网络/DNS名额，但预留目标和8 MiB空间，与上传共用每run4个暂存、32 MiB预留、宿主128 MiB预留和安装64 MiB空间。空间不足8 MiB时小文件也可能被拒绝；实际资源释放前不提前归还对应名额。
 
 同一 run 的 mutation_key 和相同请求只接纳一次。RPC 等待超时用原键查询 mutations.get，不换键自动重放；任务控制回执不因业务授权变更而恢复执行许可。下载的原网络和写 lease 必须共同有效，最终发布按同一授权锁与任务锁排序；取消/撤销先于提交接受则无目标文件，发布接受先发生则按真实结果完成，不伪造回滚。
 
-成功为 completed、effect committed；最终 result 使用发布前捕获的 FileView，仅有提交时独立 filesystem.read lease 且交付时仍有效才返回，否则为 null。重新允许读取不会恢复旧结果 lease；可以通过当前 files API 重新读取。摘要始终计算并从原生暂存复核，可选期望摘要不符为 PLUGIN_HASH_MISMATCH。未知长度接收阶段不伪造百分比；只有文件发布完成才到100%。
+成功为 completed、effect committed；最终 result 使用发布前捕获的 FileView，仅在提交时的原始基础准入于交付时仍有效才返回，否则为 null。重新启用不会恢复旧结果准入；可以通过当前 files API 重新读取。摘要始终计算并从原生暂存复核，可选期望摘要不符为 PLUGIN_HASH_MISMATCH。未知长度接收阶段不伪造百分比；只有文件发布完成才到100%。
 
 失败、排队取消和审计失败都尝试清理暂存与实际网络工作；系统 DNS 尚未返回、关闭/删除失败或审计未保存时保持 cleanup pending，阻止同安装重新启用。清理重试不会重做 HTTP 或发布，不删除成功文件，不扫描清除崩溃残留，不恢复旧run控制权。其余稳定错误沿用网络、文件和任务接口。参见 完整下载方案与验收 和 [worker_download](../../examples/plugins/worker_download/README.md)。
 
 ## 获准游戏目录、安装与进程控制
 
-声明 `game.catalog.read`、`instances.install`、`instances.launch`、`instances.stop`。目录能力不接收资源范围；其余能力在清单中也不得提供宿主资源标识，由可信主窗口分别选择。安装只批准游戏根目录，启动和停止只批准具体实例，读取沿用独立的 `instances.read`；任一能力不隐含其他能力。修改权限后旧租约失效，重新批准不复活旧操作的结果读取许可。
+公开版本和加载器目录属于基础能力，由宿主固定来源提供，不接收插件指定地址。安装、启动、运行管理和停止使用 `instances.manage`，统一由可信主窗口批准游戏根；管理包含查看，不需要再声明其他游戏细项。修改授权使原始准入失效，重新批准不复活旧任务及结果。
 
 | 方法 | 请求 | 结果及限制 |
 | --- | --- | --- |
 | `game.catalog` | `{type?:"release"\|"snapshot",cursor?,limit?:1..100}` | `{items:[{version_id,type,release_time}],next_cursor}`；不含旧Alpha/Beta分类或下载地址 |
 | `game.loaders` | `{game_version,loader:"fabric"\|"forge"\|"neoforge"\|"quilt",cursor?,limit?:1..100}` | `{items:[{loader_version,is_latest}],next_cursor}`；版本降序，最新标记与安装默认选择一致 |
-| `game.install` | `{root_ref,version_id,version_name?,loader?:"vanilla"\|"fabric"\|"forge"\|"neoforge"\|"quilt",loader_version?}` | `{operation_ref,state:"queued"}`；成功结果为允许读取的 `InstanceView`，否则为null |
-| `game.launch` | `{instance_ref,options?:LaunchOptions}` | 自身任务回执；必须同时拥有该实例的读取与启动许可，成功结果为 `GameRunView` |
+| `game.install` | `{root_ref,version_id,version_name?,loader?:"vanilla"\|"fabric"\|"forge"\|"neoforge"\|"quilt",loader_version?}` | `{operation_ref,state:"queued"}`；原始管理准入仍有效时，成功结果为 `InstanceView` |
+| `game.launch` | `{instance_ref,options?:LaunchOptions}` | 自身任务回执；需要所属游戏根的管理准入，成功结果为 `GameRunView` |
 | `game.running` | `{instance_ref}` | `{items:[GameRunView]}`；只返回当前Worker运行创建的进程记录，包含保留的实际退出码 |
-| `game.stop` | `{game_run_ref}` | 自身任务回执；独立停止许可仅控制本运行创建的确切进程，成功结果读取仍需独立读取许可 |
+| `game.stop` | `{game_run_ref}` | 自身任务回执；管理准入只控制本运行创建的确切进程，结果绑定同一原始管理准入 |
 
 所有请求严格拒绝未知字段和错误类型。分页默认50，目录最多10000项；游标绑定当前运行、查询和授权代次，120秒过期，不跨运行复用。查询最多30秒，使用宿主当前有效下载源及已有目录服务，不接受URL、代理、源配置或账户信息。显式加载器版本必须存在于该游戏版本的目录；省略时由宿主选择兼容的最高版本。
 
@@ -251,7 +258,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 `GameRunView` 为 `{game_run_ref,instance_ref,pid,running,exit_code}`。引用是本运行随机引用，不返回路径、命令、日志、账户、内部任务编号或内部进程token。宿主按原始进程对象与所有者校验停止目标，不按PID、名称或可复用的实例编号找进程。每运行最多保留128条进程记录；跨运行查询不交付别人的进程，外来停止引用返回 `PLUGIN_OWNER_MISMATCH`。
 
-安装、启动、停止沿用 `mutation_key` 去重和 `operations.get/list/cancel`，接纳RPC至多5秒；安装总截止1800秒、启动180秒、停止30秒，均含排队。等待超时使用原键查询 `mutations.get`，不换键自动重放。接纳、请求取消、实际结束和清理完成相互独立。Worker任务视图的 `stage` 返回实际业务阶段，可信主窗口任务中心显示相同任务及安装权威快照；结果只显式投影并复核原始读取租约。
+安装、启动、停止沿用 `mutation_key` 去重和 `operations.get/list/cancel`，接纳RPC至多5秒；安装总截止1800秒、启动180秒、停止30秒，均含排队。等待超时使用原键查询 `mutations.get`，不换键自动重放。接纳、请求取消、实际结束和清理完成相互独立。Worker任务视图的 `stage` 返回实际业务阶段，可信主窗口任务中心显示相同任务及安装权威快照；结果只显式投影并复核原始管理准入。
 
 安装只支持Windows x64本地NTFS。新实例名称须为安全的单个目录组件，不允许路径、ADS、设备名、尾点或空白归一化。原生目录句柄固定游戏根和目标身份；同一物理根及名称的占位由界面安装、整合包基础安装和插件共用，实际线程与句柄清理完成前不释放。已有用户实例拒绝覆盖；失败文件原地保留，只允许同一运行对同一物理身份及相同安装请求继续。插件关闭不删除文件，新运行不接管旧残留。写入开始后失败如实为 `effect:"partial"`，完整安装完成才为 `committed`。
 

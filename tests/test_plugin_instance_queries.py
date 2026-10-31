@@ -177,22 +177,47 @@ def invoke(resources, method, **params):
     return resources.handle(method, params, monotonic() + 5)
 
 
-def test_scoped_resources_do_not_expose_persistent_ids_and_cannot_scan_parent(shared):
-    service, _, _ = shared
-    root_page = candidates(service)
-    root_id = root_page["items"][0]["resource_id"]
-    page = candidates(service, root_id)
-    selected = page["items"][0]["resource_id"]
-    allow(service, [selected], page["catalog_revision"])
+def test_management_only_scans_and_reads_existing_and_future_games(shared):
+    service, _, root = shared
+    entry = service._entry("reader")
+    metadata = json.loads((entry.root_path / "plugin.json").read_bytes())
+    metadata["permissions"] = [{"capability": "instances.manage", "required": True}]
+    (entry.root_path / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
+    service.register(metadata, entry.root_path, "directory")
+    view = service.permissions("reader")
+    page = service.permission_resources("reader", view["content_digest"], None, "", None, 100, "instances.manage")
+    service.update_permissions(
+        "reader",
+        view["content_digest"],
+        view["revision"],
+        (
+            PermissionDecision(
+                capability="instances.manage", decision="allow", resource_refs=(page["items"][0]["resource_id"],)
+            ),
+        ),
+        PermissionManagementCaller.main_webview,
+        page["catalog_revision"],
+    )
     resources = runtime(service)
-    listed = invoke(resources, "resources.list", capability="instances.read")["items"]
-    ref = listed[0]["instance_ref"]
-    assert ref != selected
-    assert invoke(resources, "instances.get", instance_ref=ref)["version_id"] == "one"
-    with pytest.raises(ProtocolError, match="类别"):
-        invoke(resources, "instances.scan", root_ref=ref)
-    with pytest.raises(ProtocolError):
-        invoke(runtime(service), "instances.get", instance_ref=ref)
+    root_ref = invoke(resources, "resources.list", capability="instances.manage")["items"][0]["root_ref"]
+    instance(root, "future")
+    instances = invoke(resources, "instances.scan", root_ref=root_ref)["items"]
+    future = next(item for item in instances if item["version_id"] == "future")
+    assert invoke(resources, "instances.get", instance_ref=future["instance_ref"])["version_id"] == "future"
+
+
+def test_root_grant_exposes_only_run_refs_and_covers_current_instances(shared):
+    service, _, _ = shared
+    page = candidates(service)
+    identity = page["items"][0]["resource_id"]
+    allow(service, [identity], page["catalog_revision"])
+    resources = runtime(service)
+    root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
+    assert root_ref != identity
+    instances = invoke(resources, "instances.scan", root_ref=root_ref)["items"]
+    assert {item["version_id"] for item in instances} == {"one", "two"}
+    with pytest.raises(ValueError):
+        invoke(resources, "instances.get", instance_ref=identity)
 
 
 def test_invalid_query_is_rejected_before_reading_any_resource(shared, monkeypatch):
@@ -273,84 +298,62 @@ def test_catalog_corruption_preserves_file_and_denies_instances(shared):
     assert not service.permissions("reader")["required_satisfied"]
 
 
-def test_instance_recreated_at_same_name_does_not_inherit_grant(shared):
+def test_recreated_instance_rejects_old_reference_but_root_allows_fresh_discovery(shared):
     service, _, root = shared
-    root_page = candidates(service)
-    root_id = root_page["items"][0]["resource_id"]
-    children = candidates(service, root_id)
-    original_id = children["items"][0]["resource_id"]
-    allow(service, [original_id], children["catalog_revision"])
-    (root / "versions/one").rename(root / "versions/preserved-old")
-    instance(root, "one")
-    refreshed = candidates(service, root_id)
-    assert not service.permissions("reader")["required_satisfied"]
-    assert any(item["resource_id"] == original_id and not item["available"] for item in refreshed["items"])
-    assert (
-        next(item for item in refreshed["items"] if item["available"] and item["version_id"] == "one")["resource_id"]
-        != original_id
+    page = candidates(service)
+    allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
+    resources = runtime(service)
+    root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
+    first = next(
+        item for item in invoke(resources, "instances.scan", root_ref=root_ref)["items"] if item["version_id"] == "one"
     )
+    (root / "versions/one").rename(root / "versions/previous-one")
+    instance(root, "one")
+    with pytest.raises(ValueError):
+        invoke(resources, "instances.get", instance_ref=first["instance_ref"])
+    second = next(
+        item
+        for item in invoke(resources, "instances.scan", root_ref=root_ref, force=True)["items"]
+        if item["version_id"] == "one"
+    )
+    assert first["instance_ref"] != second["instance_ref"]
 
 
 def test_revocation_during_actual_query_discards_late_result(shared, monkeypatch):
     service, _, _ = shared
-    root_page = candidates(service)
-    root_id = root_page["items"][0]["resource_id"]
-    page = candidates(service, root_id)
+    page = candidates(service)
     allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
     resources = runtime(service)
-    ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["instance_ref"]
-    started, release = Event(), Event()
+    root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
+    ref = invoke(resources, "instances.scan", root_ref=root_ref)["items"][0]["instance_ref"]
+    entered, release = Event(), Event()
     original = service._instance_queries.query_instance_summary
 
-    def slow(*args, **kwargs):
-        started.set()
+    def blocked(*args, **kwargs):
+        entered.set()
         assert release.wait(5)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(service._instance_queries, "query_instance_summary", slow)
+    monkeypatch.setattr(service._instance_queries, "query_instance_summary", blocked)
     with ThreadPoolExecutor(1) as executor:
-        pending = executor.submit(invoke, resources, "instances.get", instance_ref=ref)
+        future = executor.submit(invoke, resources, "instances.get", instance_ref=ref)
         try:
-            assert started.wait(3)
-            view = service.permissions("reader")
-            service.update_permissions(
-                "reader",
-                view["content_digest"],
-                view["revision"],
-                (PermissionDecision(capability="instances.read", decision="deny"),),
-                PermissionManagementCaller.main_webview,
-            )
+            assert entered.wait(3)
+            allow(service, [], service.refresh_resources())
         finally:
             release.set()
         with pytest.raises(ValueError):
-            pending.result(5)
-    assert not service.permissions("reader")["required_satisfied"]
-    with pytest.raises(ValueError):
-        invoke(resources, "resources.list", capability="instances.read")
+            future.result(5)
 
 
-def test_catalog_does_not_hold_resource_lock_while_scanning_instances(shared, monkeypatch):
-    service, roots, _ = shared
-    root_id = candidates(service)["items"][0]["resource_id"]
-    started, release = Event(), Event()
-    original = service._catalog._names
+def test_root_permission_review_does_not_scan_game_metadata(shared, monkeypatch):
+    service, _, _ = shared
 
-    def slow(*args):
-        started.set()
-        assert release.wait(5)
-        return original(*args)
+    def unexpected(*_args):
+        raise AssertionError("权限确认不应扫描实例")
 
-    monkeypatch.setattr(service._catalog, "_names", slow)
-    with ThreadPoolExecutor(1) as executor:
-        pending = executor.submit(candidates, service, root_id)
-        try:
-            assert started.wait(3)
-            roots.clear()
-            service.refresh_resources()
-        finally:
-            release.set()
-        with pytest.raises(InstanceReadError):
-            pending.result(5)
+    monkeypatch.setattr(service._instance_queries, "query_instance_names", unexpected)
+    assert candidates(service)["items"]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows junction 实测")
@@ -415,18 +418,12 @@ def test_completed_single_pages_do_not_exhaust_snapshot_capacity():
     assert not pages._snapshots
 
 
-def test_overlapping_root_and_instance_permissions_share_one_runtime_reference(shared):
+def test_permission_review_rejects_instance_navigation(shared):
     service, _, _ = shared
     page = candidates(service)
-    root_id = page["items"][0]["resource_id"]
-    children = candidates(service, root_id)
-    allow(service, [root_id, children["items"][0]["resource_id"]], children["catalog_revision"])
-    resources = runtime(service)
-    listed = invoke(resources, "resources.list", capability="instances.read")["items"]
-    root_ref = next(item["root_ref"] for item in listed if item["kind"] == "instance_root")
-    direct_ref = next(item["instance_ref"] for item in listed if item["kind"] == "instance")
-    scanned = invoke(resources, "instances.scan", root_ref=root_ref)["items"]
-    assert next(item["instance_ref"] for item in scanned if item["version_id"] == "one") == direct_ref
+    with pytest.raises(ProtocolError) as error:
+        candidates(service, page["items"][0]["resource_id"])
+    assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
 
 
 def test_static_symlink_metadata_is_never_read(tmp_path, queries):
@@ -445,44 +442,22 @@ def test_static_symlink_metadata_is_never_read(tmp_path, queries):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="真实 Worker 仅支持 Windows")
-def test_real_worker_can_query_only_reviewed_instance(shared):
-
+@pytest.mark.skipif(sys.platform != "win32", reason="真实Worker仅支持Windows x64")
+def test_real_worker_reads_instances_through_approved_root(shared):
     service, _, _ = shared
-    page = candidates(service)
-    root_id = page["items"][0]["resource_id"]
-    children = candidates(service, root_id)
-    allow(service, [children["items"][0]["resource_id"]], children["catalog_revision"])
     entry = service._entry("reader")
-    # 宿主侧验证真实 API 通道；测试载荷不取得宿主 Python 对象。
-    code = """from ECL.plugin_api import Plugin as BasePlugin
-class Plugin(BasePlugin):
-    def on_load(self):
-        resources = self.host.call('resources.list', {'capability':'instances.read'})
-        ref = resources['items'][0]['instance_ref']
-        value = self.host.call('instances.get', {'instance_ref':ref})
-        self.define_command('result', lambda: {'value':value['version_id']}, output_fields=({'name':'value','type':'string'},))
+    code = """from ECL.plugin_api import Plugin as Base
+class Plugin(Base):
+ def on_load(self):
+  roots=self.host.call('resources.list',{'capability':'instances.read'})
+  values=self.host.call('instances.scan',{'root_ref':roots['items'][0]['root_ref']})
+  value=self.host.call('instances.get',{'instance_ref':values['items'][0]['instance_ref']})
+  self.define_command('result',lambda:{'value':value['version_id']},output_fields=({'name':'value','type':'string'},))
 """
-    metadata_path = entry.root_path / "plugin.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata["permissions"].append({"capability": "commands.register", "required": True})
-    metadata["permissions"].append({"capability": "commands.execute", "required": True})
-    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     (entry.root_path / "main.py").write_text(code, encoding="utf-8")
+    metadata = json.loads((entry.root_path / "plugin.json").read_bytes())
     service.register(metadata, entry.root_path, "directory")
-    view = service.permissions("reader")
-    service.update_permissions(
-        "reader",
-        view["content_digest"],
-        view["revision"],
-        (
-            PermissionDecision(
-                capability="instances.read", decision="allow", resource_refs=(children["items"][0]["resource_id"],)
-            ),
-            PermissionDecision(capability="commands.register", decision="allow"),
-            PermissionDecision(capability="commands.execute", decision="allow"),
-        ),
-        PermissionManagementCaller.main_webview,
-        service.refresh_resources(),
-    )
+    page = candidates(service)
+    allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
     service.enable("reader")
-    assert service.broker("reader").call_command("result", {}, 5) == {"value": "one"}
+    assert service.broker("reader").call_command("result", {})["value"] in {"one", "two"}

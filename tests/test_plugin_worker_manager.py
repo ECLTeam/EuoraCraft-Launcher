@@ -18,10 +18,7 @@ def make_plugin(root: Path, marker: Path, *, api_version=2):
         "name": "example",
         "version": "1.0.0",
         "api_version": api_version,
-        "permissions": [
-            {"capability": c, "required": True}
-            for c in ("commands.register", "commands.execute", "settings.write", "settings.read")
-        ],
+        "permissions": [{"capability": c, "required": True} for c in ()],
     }
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (root / "main.py").write_text(
@@ -80,9 +77,9 @@ def test_manager_real_worker_review_command_settings_revoke_and_restart(tmp_path
         assert manager.call_command("example:echo", {"value": "hello"}) == {"value": "hello"}
         assert manager.get_settings("example")["values"] == {"greeting": "hello"}
         original_run = manager.worker_service.runtime_info("example")["run_id"]
-        review(manager, (PermissionDecision(capability="commands.execute", decision="deny"),))
-        assert manager.worker_service.runtime_info("example")["run_state"] == "disabled"
-        assert not manager.enable("example").success
+        review(manager, ())
+        assert manager.worker_service.runtime_info("example")["run_state"] == "enabled"
+        assert manager.disable("example").success
         review(manager)
         assert manager.list_plugins()[0]["error"] is None
         assert manager.enable("example").success
@@ -307,7 +304,7 @@ def test_install_waits_for_concurrent_enable_then_stops_old_worker(tmp_path: Pat
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
-def test_revoke_reports_pending_until_accepted_host_write_has_finished(tmp_path: Path, monkeypatch):
+def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path: Path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
@@ -341,9 +338,12 @@ def test_revoke_reports_pending_until_accepted_host_write_has_finished(tmp_path:
                 ),
             )
             assert write_started.wait(2)
-            result = review(manager, (PermissionDecision(capability="settings.write", decision="deny"),))
-            assert result["persisted"] is True
-            assert result["cleanup_state"] == "pending"
+            from ECL.plugin_api._windows import WindowsRuntimeError
+
+            with pytest.raises(WindowsRuntimeError) as error:
+                manager.worker_service.stop("example")
+            assert error.value.error_code == "PLUGIN_HOST_CLEANUP_PENDING"
+            assert manager.worker_service.runtime_info("example")["cleanup_state"] == "pending"
             assert not writing.done()
             release_write.set()
             assert writing.result(5) == {"revision": 1}

@@ -6,7 +6,10 @@ import os
 import platform
 import subprocess
 import sys
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from urllib.parse import urlsplit
 
 import httpx
@@ -46,8 +49,11 @@ async def _connect(data_path: Path, process: subprocess.Popen, log_path: Path):
             await asyncio.sleep(0.1)
 
 
-async def _native_channel(profile_path: Path, process: subprocess.Popen, log_path: Path):
+async def _native_channel(
+    profile_path: Path, process: subprocess.Popen, log_path: Path, frontend_url: str | None = None
+):
     port_file = profile_path / "EBWebView" / "DevToolsActivePort"
+    expected_origin = urlsplit(frontend_url).netloc if frontend_url else "tauri.localhost"
     page_origins: list[str] = []
     try:
         async with asyncio.timeout(90), httpx.AsyncClient(trust_env=False) as client:
@@ -67,7 +73,7 @@ async def _native_channel(profile_path: Path, process: subprocess.Popen, log_pat
                         (
                             item
                             for item in pages
-                            if item.get("type") == "page" and "tauri.localhost" in item.get("url", "")
+                            if item.get("type") == "page" and urlsplit(item.get("url", "")).netloc == expected_origin
                         ),
                         None,
                     )
@@ -192,13 +198,34 @@ async def _check_user_task_cancel(native, data_path: Path) -> None:
             await asyncio.gather(*tuple(connections))
 
 
+@pytest.fixture
+def source_frontend_url():
+    if not os.environ.get("ECL_PLUGIN_SMOKE_SOURCE"):
+        yield None
+        return
+    frontend_path = Path(__file__).resolve().parents[1] / "frontend/dist"
+    assert (frontend_path / "index.html").is_file()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(frontend_path)))
+    thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
 @pytest.mark.skipif(
     not os.environ.get("ECL_PLUGIN_SMOKE_EXECUTABLE")
     or platform.system() != "Windows"
     or platform.machine().casefold() not in {"amd64", "x86_64"},
     reason="需要真实 Windows x64 发行物；其他平台第三方运行明确不支持",
 )
-async def test_packaged_launcher_installs_offline_wheels_and_loads_native_extension(tmp_path: Path) -> None:
+async def test_packaged_launcher_installs_offline_wheels_and_loads_native_extension(
+    tmp_path: Path, source_frontend_url: str | None
+) -> None:
     executable_path = Path(os.environ["ECL_PLUGIN_SMOKE_EXECUTABLE"]).resolve()
     wheelhouse_path = Path(os.environ["ECL_PLUGIN_SMOKE_WHEELS"]).resolve()
     native_wheels = tuple(wheelhouse_path.glob("xxhash-3.6.0-*.whl"))
@@ -248,7 +275,9 @@ class Plugin(BasePlugin):
                 raise AssertionError('unapproved site accepted')
             network_checked = True
         resources = self.host.call('resources.list', {'capability':'instances.read'})['items']
-        value = self.host.call('instances.get', {'instance_ref':resources[0]['instance_ref']})
+        instances = self.host.call('instances.scan', {'root_ref':resources[0]['root_ref']})['items']
+        selected = next(item for item in instances if item['version_id'] == 'permitted')
+        value = self.host.call('instances.get', {'instance_ref':selected['instance_ref']})
         profile_receipt = self.host.call('instances.profile_patch', {
             'instance_ref':value['instance_ref'], 'expected_profile_etag':value['profile_etag'],
             'patch':{'alias':'Worker profile','favorite':False,'tags':[]}}, mutation_key='profile-update')
@@ -348,7 +377,7 @@ class Plugin(BasePlugin):
             'network_checked':network_checked,
             'download_checked':download_checked,
             'tasks':len(self.host.call('operations.list')['items']),
-            'count':len(resources), 'first':value['version_id'],
+            'count':len(instances), 'first':value['version_id'],
             'resource':importlib.resources.files('ecl_smoke_resource').joinpath('value.txt').read_text(),
             'native':xxhash.xxh64(b'ecl').hexdigest(), 'native_path':xxhash.__file__}
 """
@@ -364,16 +393,8 @@ class Plugin(BasePlugin):
         wheel_paths=(pure_wheel, *native_wheels),
         dependencies=("ecl-smoke-resource==1.0.0", "xxhash==3.6.0"),
         permissions=(
-            {"capability": "commands.register", "required": True},
-            {"capability": "commands.execute", "required": True},
             {"capability": "instances.read", "required": True},
-            {"capability": "instances.write", "required": True},
-            {"capability": "settings.write", "required": True},
-            {"capability": "settings.read", "required": True},
-            {"capability": "filesystem.read", "required": True},
-            {"capability": "filesystem.write", "required": True},
-            {"capability": "filesystem.delete", "required": True},
-            {"capability": "filesystem.replace", "required": True},
+            {"capability": "instances.manage", "required": True},
             {
                 "capability": "network.read",
                 "required": True,
@@ -405,7 +426,12 @@ class Plugin(BasePlugin):
         )
         with log_path.open("wb") as log_file:
             launcher = (
-                [sys.executable, str(Path(__file__).resolve().parents[1] / "main.py")]
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parents[1] / "main.py"),
+                    "--frontend-dist",
+                    source_frontend_url,
+                ]
                 if os.environ.get("ECL_PLUGIN_SMOKE_SOURCE")
                 else [str(executable_path)]
             )
@@ -425,7 +451,7 @@ class Plugin(BasePlugin):
                 info = await _request(websocket, 1, "launcher.info")
                 # 开发者通道先于窗口启动；等待浏览器创建完成后才能安装并结束首阶段，
                 # 否则终止进程时 WebView2 仍可能创建未纳入清理快照的子进程。
-                native = await _native_channel(profile_path, process, log_path)
+                native = await _native_channel(profile_path, process, log_path, source_frontend_url)
                 if phase == "install":
                     result = await _request(
                         websocket,
@@ -474,10 +500,8 @@ class Plugin(BasePlugin):
                             "parent_ref": roots["data"]["items"][0]["resource_id"],
                         },
                     )
-                    assert children["success"], children
-                    selected = next(
-                        item["resource_id"] for item in children["data"]["items"] if item["version_id"] == "permitted"
-                    )
+                    assert not children["success"] and children["errorCode"] == "PLUGIN_SCHEMA_INVALID", children
+                    selected = roots["data"]["items"][0]["resource_id"]
                     result = await _native_invoke(
                         native,
                         2,
@@ -491,12 +515,12 @@ class Plugin(BasePlugin):
                                     "capability": item["capability"],
                                     "decision": "allow",
                                     "resource_refs": [selected]
-                                    if item["capability"] in {"instances.read", "instances.write"}
+                                    if item["capability"] in {"instances.read", "instances.manage"}
                                     else item["requested_resource_refs"],
                                 }
                                 for item in view["items"]
                             ],
-                            "resource_revision": children["data"]["catalog_revision"],
+                            "resource_revision": roots["data"]["catalog_revision"],
                         },
                     )
                     assert result["success"] and result["data"]["persisted"], result
@@ -507,7 +531,7 @@ class Plugin(BasePlugin):
                     probe = result["data"]
                     assert probe["pid"] != info["pid"]
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
-                    assert probe["count"] == 1 and probe["first"] == "permitted"
+                    assert probe["count"] == 2 and probe["first"] == "permitted"
                     assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
                     assert (
                         probe["tasks"] == (7 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 5)

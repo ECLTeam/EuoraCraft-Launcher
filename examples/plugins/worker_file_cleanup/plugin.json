@@ -5,9 +5,5 @@
   "title": "私有文件按版本清理示例",
   "description": "显式传入目标、版本和保留的去重键，查询实际删除与清理状态。",
   "entry_point": "main:Plugin",
-  "permissions": [
-    { "capability": "commands.register", "required": true },
-    { "capability": "commands.execute", "required": true },
-    { "capability": "filesystem.delete", "required": false }
-  ]
+  "permissions": []
 }

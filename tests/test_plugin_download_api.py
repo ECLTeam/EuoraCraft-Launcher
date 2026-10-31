@@ -148,13 +148,11 @@ def test_unknown_length_over_limit_cleans_all_staging(downloads, tmp_path):
         assert not list(directory(tmp_path, broker).iterdir())
 
 
-@pytest.mark.parametrize("permission", ["network.read", "filesystem.write"])
+@pytest.mark.parametrize("permission", ["network.read"])
 def test_missing_either_permission_rejects_before_network_or_staging(downloads, tmp_path, permission):
     create, _, storage, _ = downloads
     dialer = MappedDialer()
-    broker = create(
-        ["https:example.com:443"], allowed={"network.read", "filesystem.write"} - {permission}, dialer=dialer
-    )
+    broker = create(["https:example.com:443"], allowed={"network.read"} - {permission}, dialer=dialer)
     params = {
         "url": "https://example.com/x",
         "target": {"root_ref": "a" * 32, "relative_path": "x"},
@@ -181,7 +179,7 @@ def test_same_mutation_key_concurrently_returns_one_task(downloads, tmp_path):
         assert call(broker, "mutations.get", {"mutation_key": "same-download"})["result"] == receipts[0]
 
 
-@pytest.mark.parametrize("action", ["cancel", "network.read", "filesystem.write", "close"])
+@pytest.mark.parametrize("action", ["cancel", "network.read", "plugin.base", "close"])
 def test_blocked_read_is_woken_without_false_idle(downloads, tmp_path, action):
     create, manager, storage, store = downloads
     entered, release = Event(), Event()
@@ -275,17 +273,17 @@ def test_commit_acceptance_orders_cancel_and_preserves_real_result(downloads, tm
         assert (directory(tmp_path, broker) / "download.bin").exists() == (point == "after")
 
 
-def test_hash_mismatch_and_write_only_result_are_independent(downloads, tmp_path):
+def test_hash_mismatch_and_basic_result_remains_bound_to_original_epoch(downloads, tmp_path):
     create, manager, _, _ = downloads
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") as (port, _, _):
         refs = [f"http:p10.example.test:{port}"]
-        broker = create(refs, allowed={"network.read", "filesystem.write"})
+        broker = create(refs, allowed={"network.read"})
         url = f"http://p10.example.test:{port}/"
         failed = finish(broker, manager, submit(broker, url, expected_sha256="0" * 64))
         assert failed["error_code"] == "PLUGIN_HASH_MISMATCH" and failed["effect"] == "none"
         view = finish(broker, manager, submit(broker, url))
-        assert view["state"] == "completed" and view["result"] is None
-        decide(broker, downloads[3], "filesystem.read", "allow")
+        assert view["state"] == "completed" and view["result"] is not None
+        decide(broker, downloads[3], "plugin.base", "allow")
         assert call(broker, "operations.get", {"operation_ref": view["operation_ref"]})["result"] is None
 
 
@@ -312,7 +310,7 @@ def test_dual_lease_acceptance_rechecks_under_one_lock(downloads, monkeypatch):
     create, _, _, store = downloads
     broker = create(["https:example.com:443"])
     leases = (
-        broker.session.authorize("filesystem.write"),
+        broker.session.authorize("plugin.base"),
         broker.session.authorize("network.read", ("https:example.com:443",)),
     )
     accepted = Event()
@@ -431,7 +429,7 @@ def test_connection_and_tls_revoke_never_send_http(downloads, stage):
     dialer = MappedDialer()
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", is_tls=True) as (port, requests, _):
         broker = create([f"https:p10.example.test:{port}"], dialer=dialer)
-        setattr(dialer, stage, lambda: decide(broker, store, "filesystem.write"))
+        setattr(dialer, stage, lambda: decide(broker, store, "plugin.base"))
         view = finish(broker, manager, submit(broker, f"https://p10.example.test:{port}/"))
         assert view["state"] == "failed" and view["effect"] == "none"
         assert not requests

@@ -333,6 +333,10 @@ def _plugin_instance_roots(config: ConfigStore) -> tuple[Path, ...]:
         if not isinstance(value, str) or not value.strip():
             raise InstanceReadError("游戏目录配置格式无效", "PLUGIN_RESOURCE_CATALOG_INVALID")
         roots.append(Path(value))
+    active_path = game_config.get("active_path")
+    if isinstance(active_path, str) and active_path.strip():
+        active_root = Path(active_path).expanduser()
+        roots.sort(key=lambda candidate: candidate.expanduser() != active_root)
     return tuple(roots)
 
 

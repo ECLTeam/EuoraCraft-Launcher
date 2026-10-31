@@ -27,19 +27,23 @@ def setup_grants(tmp_path: Path):
     code_path.mkdir()
     (code_path / "main.py").write_text("value = 1", encoding="utf-8")
     declarations = (
-        PermissionDeclaration(capability="settings.read", required=True),
+        PermissionDeclaration(capability="network.read", required=True, resource_refs=("https:example.com:443",)),
         # 通用范围集合测试使用自定义测试能力；文件能力现仅允许固定私有空间。
-        PermissionDeclaration(capability="test.resources", resource_refs=("root-a", "root-b")),
-        PermissionDeclaration(capability="ui.custom.execute"),
+        PermissionDeclaration(capability="instances.read"),
+        PermissionDeclaration(capability="instances.manage"),
     )
     binding = PluginContentBinding.capture(code_path, declarations, "windows-x86_64-cp311")
-    store = PluginGrantStore(tmp_path / "data", implemented_capabilities=frozenset({"settings.read", "test.resources"}))
+    store = PluginGrantStore(tmp_path / "data", implemented_capabilities=frozenset({"network.read", "instances.read"}))
+    store.update_resource_scope(frozenset({"a" * 32, "b" * 32}))
     session = store.open_session(store.new_installation_id(), binding)
     return store, session, binding
 
 
 def grant(store, session, **kwargs):
-    decisions = kwargs.pop("decisions", (PermissionDecision(capability="settings.read", decision="allow"),))
+    decisions = kwargs.pop(
+        "decisions",
+        (PermissionDecision(capability="network.read", decision="allow", resource_refs=("https:example.com:443",)),),
+    )
     view = session.view()
     return store.update(
         session,
@@ -60,7 +64,7 @@ def test_declarations_never_grant_permission(setup_grants) -> None:
     assert not session.view().required_satisfied
     assert all(item.decision == "deny" for item in session.view().items)
     with pytest.raises(PluginGrantError, match="必要授权"):
-        session.authorize("settings.read")
+        session.authorize("network.read", ("https:example.com:443",))
     assert not (store.data_path / "plugin_grants").exists()
 
 
@@ -68,7 +72,7 @@ def test_permanent_grants_are_bound_to_installation_and_content(setup_grants) ->
     store, session, binding = setup_grants
     view = grant(store, session)
     assert view.revision == 1 and view.required_satisfied
-    session.authorize("settings.read")
+    session.authorize("network.read", ("https:example.com:443",))
     reopened = PluginGrantStore(store.data_path, implemented_capabilities=store.implemented_capabilities)
     same_install = reopened.open_session(view.installation_id, binding)
     assert same_install.view().required_satisfied
@@ -76,7 +80,7 @@ def test_permanent_grants_are_bound_to_installation_and_content(setup_grants) ->
     assert not reinstall.view().required_satisfied
     changed_permissions = PluginContentBinding.capture(
         binding.snapshot.root_path,
-        (*binding.declarations, PermissionDeclaration(capability="network.http")),
+        (binding.declarations[-1],),
         binding.target_tag,
     )
     new_content = reopened.open_session(view.installation_id, changed_permissions)
@@ -85,7 +89,9 @@ def test_permanent_grants_are_bound_to_installation_and_content(setup_grants) ->
 
 def test_session_grant_does_not_survive_new_worker_or_host(setup_grants) -> None:
     store, session, binding = setup_grants
-    decision = PermissionDecision(capability="settings.read", decision="allow", lifetime="session")
+    decision = PermissionDecision(
+        capability="network.read", decision="allow", lifetime="session", resource_refs=("https:example.com:443",)
+    )
     grant(store, session, decisions=(decision,))
     assert session.view().required_satisfied
     assert json.loads(record_file(store, session).read_text(encoding="utf-8"))["grants"] == []
@@ -104,7 +110,14 @@ def test_switching_permanent_to_session_removes_persisted_allow(setup_grants) ->
     grant(
         store,
         session,
-        decisions=(PermissionDecision(capability="settings.read", decision="allow", lifetime="session"),),
+        decisions=(
+            PermissionDecision(
+                capability="network.read",
+                decision="allow",
+                lifetime="session",
+                resource_refs=("https:example.com:443",),
+            ),
+        ),
     )
     session.close()
     assert not store.open_session(session.view().installation_id, binding).view().required_satisfied
@@ -130,20 +143,20 @@ def test_only_trusted_main_context_can_update(setup_grants, caller) -> None:
 def test_resource_grants_are_exact_subsets_and_required_scopes_are_complete(setup_grants) -> None:
     store, session, _binding = setup_grants
     decisions = (
-        PermissionDecision(capability="settings.read", decision="allow"),
-        PermissionDecision(capability="test.resources", decision="allow", resource_refs=("root-a",)),
+        PermissionDecision(capability="network.read", decision="allow", resource_refs=("https:example.com:443",)),
+        PermissionDecision(capability="instances.read", decision="allow", resource_refs=("a" * 32,)),
     )
     grant(store, session, decisions=decisions)
-    session.authorize("test.resources", ("root-a",))
-    for references in ((), ("root-a-subdir",), ("root-b",), ("root-a", "root-a")):
+    session.authorize("instances.read", ("a" * 32,))
+    for references in ((), ("root-a-subdir",), ("b" * 32,), ("a" * 32, "a" * 32)):
         with pytest.raises(PluginGrantError) as error:
-            session.authorize("test.resources", references)
+            session.authorize("instances.read", references)
         assert error.value.error_code == "PLUGIN_RESOURCE_DENIED"
     with pytest.raises(PluginGrantError):
         grant(
             store,
             session,
-            decisions=(PermissionDecision(capability="test.resources", decision="allow", resource_refs=("other",)),),
+            decisions=(PermissionDecision(capability="instances.read", decision="allow", resource_refs=("other",)),),
         )
 
 
@@ -153,19 +166,19 @@ def test_unsupported_custom_frontend_stays_denied_even_after_approval(setup_gran
         store,
         session,
         decisions=(
-            PermissionDecision(capability="settings.read", decision="allow"),
-            PermissionDecision(capability="ui.custom.execute", decision="allow"),
+            PermissionDecision(capability="network.read", decision="allow", resource_refs=("https:example.com:443",)),
+            PermissionDecision(capability="instances.manage", decision="allow"),
         ),
     )
     with pytest.raises(PluginGrantError) as error:
-        session.authorize("ui.custom.execute")
+        session.authorize("instances.manage")
     assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
 
 
 def test_every_epoch_change_invalidates_existing_leases(setup_grants) -> None:
     store, session, binding = setup_grants
     grant(store, session)
-    lease = session.authorize("settings.read")
+    lease = session.authorize("network.read", ("https:example.com:443",))
     session.check(lease)
     other = store.open_session(session.view().installation_id, binding)
     with pytest.raises(PluginGrantError):
@@ -175,14 +188,20 @@ def test_every_epoch_change_invalidates_existing_leases(setup_grants) -> None:
     grant(
         store,
         session,
-        decisions=(PermissionDecision(capability="test.resources", decision="allow", resource_refs=("root-a",)),),
+        decisions=(PermissionDecision(capability="instances.read", decision="allow", resource_refs=("a" * 32,)),),
     )
     with pytest.raises(PluginGrantError) as error:
         session.check(lease)
     assert error.value.error_code == "PLUGIN_GRANT_EXPIRED"
-    lease = session.authorize("settings.read")
+    lease = session.authorize("network.read", ("https:example.com:443",))
     grant(
-        store, session, decisions=(PermissionDecision(capability="settings.read", decision="deny", lifetime="session"),)
+        store,
+        session,
+        decisions=(
+            PermissionDecision(
+                capability="network.read", decision="deny", lifetime="session", resource_refs=("https:example.com:443",)
+            ),
+        ),
     )
     with pytest.raises(PluginGrantError):
         session.check(lease)
@@ -196,7 +215,7 @@ def test_atomic_failure_preserves_disk_but_blocks_all_matching_runs(setup_grants
     target_path = record_file(store, session)
     original = target_path.read_bytes()
     other = store.open_session(session.view().installation_id, binding)
-    lease = other.authorize("settings.read")
+    lease = other.authorize("network.read", ("https:example.com:443",))
 
     def failed_write(*_args):
         assert not session.view().required_satisfied
@@ -205,7 +224,15 @@ def test_atomic_failure_preserves_disk_but_blocks_all_matching_runs(setup_grants
 
     monkeypatch.setattr("ECL.plugins.grant_store.atomic_write_text", failed_write)
     with pytest.raises(PluginGrantError) as error:
-        grant(store, session, decisions=(PermissionDecision(capability="settings.read", decision="deny"),))
+        grant(
+            store,
+            session,
+            decisions=(
+                PermissionDecision(
+                    capability="network.read", decision="deny", resource_refs=("https:example.com:443",)
+                ),
+            ),
+        )
     assert error.value.error_code == "PLUGIN_GRANT_PERSIST_FAILED"
     assert target_path.read_bytes() == original
     assert session.view().error_code == "PLUGIN_GRANT_PERSIST_FAILED"
@@ -237,7 +264,7 @@ def test_corrupted_files_deny_without_silently_overwriting(setup_grants, raw) ->
         {"installation_id": "f" * 32},
         {"content_digest": "f" * 64},
         {"unknown": "allow"},
-        {"grants": [{"capability": "settings.read", "decision": "allow", "lifetime": "session"}]},
+        {"grants": [{"capability": "network.read", "decision": "allow", "lifetime": "session"}]},
     ],
 )
 def test_untrusted_record_shapes_are_rejected(setup_grants, change) -> None:
@@ -253,10 +280,16 @@ def test_untrusted_record_shapes_are_rejected(setup_grants, change) -> None:
 def test_revision_conflict_and_external_revoke_do_not_get_overwritten(setup_grants) -> None:
     store, session, binding = setup_grants
     grant(store, session)
-    lease = session.authorize("settings.read")
+    lease = session.authorize("network.read", ("https:example.com:443",))
     independent = PluginGrantStore(store.data_path, implemented_capabilities=store.implemented_capabilities)
     other = independent.open_session(session.view().installation_id, binding)
-    grant(independent, other, decisions=(PermissionDecision(capability="settings.read", decision="deny"),))
+    grant(
+        independent,
+        other,
+        decisions=(
+            PermissionDecision(capability="network.read", decision="deny", resource_refs=("https:example.com:443",)),
+        ),
+    )
     with pytest.raises(PluginGrantError) as error:
         grant(store, session, expected_revision=1)
     assert error.value.error_code == "PLUGIN_GRANT_REVISION_CONFLICT"
@@ -270,7 +303,13 @@ def test_runtime_rejects_record_revision_rollback(setup_grants) -> None:
     grant(store, session)
     target_path = record_file(store, session)
     old = target_path.read_bytes()
-    grant(store, session, decisions=(PermissionDecision(capability="settings.read", decision="deny"),))
+    grant(
+        store,
+        session,
+        decisions=(
+            PermissionDecision(capability="network.read", decision="deny", resource_refs=("https:example.com:443",)),
+        ),
+    )
     target_path.write_bytes(old)
     assert session.view().error_code == "PLUGIN_GRANT_STORE_CORRUPTED"
     assert not session.view().required_satisfied
@@ -284,9 +323,15 @@ def test_expiry_invalidates_once_and_never_restores_on_clock_rollback(setup_gran
     )
     session = store.open_session(session.view().installation_id, binding)
     grant(
-        store, session, decisions=(PermissionDecision(capability="settings.read", decision="allow", expires_at=150.0),)
+        store,
+        session,
+        decisions=(
+            PermissionDecision(
+                capability="network.read", decision="allow", expires_at=150.0, resource_refs=("https:example.com:443",)
+            ),
+        ),
     )
-    lease = session.authorize("settings.read")
+    lease = session.authorize("network.read", ("https:example.com:443",))
     clock_value[0] = 150.0
     view = session.view()
     assert not view.required_satisfied
@@ -300,7 +345,7 @@ def test_expiry_invalidates_once_and_never_restores_on_clock_rollback(setup_gran
 def test_content_lock_permissions_and_abi_all_contribute_to_identity(setup_grants) -> None:
     store, session, binding = setup_grants
     grant(store, session)
-    lease = session.authorize("settings.read")
+    lease = session.authorize("network.read", ("https:example.com:443",))
     changed_target = PluginContentBinding.capture(
         binding.snapshot.root_path, binding.declarations, "linux-x86_64-cp311"
     )
@@ -328,11 +373,11 @@ import sys
 from pathlib import Path
 from ECL.plugins.grant_models import PermissionDeclaration, PermissionDecision, PermissionManagementCaller, PluginContentBinding
 from ECL.plugins.grant_store import PluginGrantStore, PluginGrantError
-binding = PluginContentBinding.capture(Path(sys.argv[1]), (PermissionDeclaration(capability='settings.read',required=True),PermissionDeclaration(capability='test.resources',resource_refs=('root-a','root-b')),PermissionDeclaration(capability='ui.custom.execute')), 'windows-x86_64-cp311')
-store = PluginGrantStore(Path(sys.argv[2]), implemented_capabilities=frozenset({'settings.read','test.resources'}))
+binding = PluginContentBinding.capture(Path(sys.argv[1]), (PermissionDeclaration(capability='network.read',required=True,resource_refs=('https:example.com:443',)),PermissionDeclaration(capability='instances.read'),PermissionDeclaration(capability='instances.manage')), 'windows-x86_64-cp311')
+store = PluginGrantStore(Path(sys.argv[2]), implemented_capabilities=frozenset({'network.read','instances.read'}))
 session = store.open_session(sys.argv[3], binding)
 try:
-    store.update(session,(PermissionDecision(capability='settings.read',decision='deny'),),expected_revision=1,content_digest=binding.content_digest,caller=PermissionManagementCaller.main_webview)
+    store.update(session,(PermissionDecision(capability='network.read',decision='deny'),),expected_revision=1,content_digest=binding.content_digest,caller=PermissionManagementCaller.main_webview)
 except PluginGrantError as error:
     print(error.error_code)
     print(session.view().required_satisfied)
@@ -363,7 +408,7 @@ else:
 )
 def test_declaration_validation_is_strict(fields) -> None:
     with pytest.raises(ValidationError):
-        PermissionDeclaration(capability="settings.read", **fields)
+        PermissionDeclaration(capability="network.read", **fields)
 
 
 def test_same_revision_cannot_silently_replace_permission_content(setup_grants) -> None:
@@ -379,7 +424,7 @@ def test_same_revision_cannot_silently_replace_permission_content(setup_grants) 
 def test_full_lock_bytes_and_archive_preparation_are_bound(tmp_path: Path) -> None:
     archive_path = make_package(tmp_path, "grant-package", "1.0.0", code="value = 1\n")
     prepared = PluginPackagePreparer(tmp_path / "data").prepare(archive_path, confirm_unverified_source=True)
-    declarations = (PermissionDeclaration(capability="settings.read"),)
+    declarations = (PermissionDeclaration(capability="network.read", resource_refs=("https:example.com:443",)),)
     binding = PluginContentBinding.from_prepared(prepared, declarations)
     binding.verify()
     assert binding.lock_file is None

@@ -201,6 +201,7 @@ class PluginRegistry(_PluginState):
             review_required=permissions["revision"] == 0,
             required_satisfied=permissions["required_satisfied"],
             cleanup_state=runtime["cleanup_state"],
+            requested_permissions=[item["capability"] for item in permissions["items"]],
         )
         if not entry["pending_restart"]:
             if runtime["run_state"] in {"enabled", "failed", "stopping", "disabled"}:

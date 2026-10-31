@@ -16,7 +16,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.grant_store import PluginGrantSession
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -68,11 +68,9 @@ class RuntimeGameInstall:
         if self._closed.is_set():
             raise ProtocolError("游戏安装运行已关闭", "PLUGIN_SESSION_EXPIRED")
         query = GameInstallRequest.model_validate(params)
-        target, write = self._resources.game_target(query.root_ref, "instances.install", submission_deadline)
-        try:
-            read = self._session.authorize("instances.read", write.resource_refs)
-        except PluginGrantError:
-            read = None
+        target, write = self._resources.game_target(query.root_ref, "instances.manage", submission_deadline)
+        if target.version_id is not None:
+            raise ProtocolError("安装需要游戏根目录", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
         try:
             reservation = self._game.reserve_install_target(target.root_path, query.version_name or query.version_id)
         except GameServiceError as exc:
@@ -84,9 +82,9 @@ class RuntimeGameInstall:
             self._resources.verify_game_target(target, write, min(deadline, monotonic() + 5))
 
         def project(value: object) -> JsonValue:
-            if read is None or not isinstance(value, InstalledGame):
+            if not isinstance(value, InstalledGame):
                 return None
-            return self._resources.installed_instance(value, read, monotonic() + 5)
+            return self._resources.installed_instance(value, write, monotonic() + 5)
 
         def cleanup() -> bool:
             released = self._game.release_install_target(reservation)
@@ -108,7 +106,7 @@ class RuntimeGameInstall:
                     verify,
                 ),
                 write,
-                result_lease=read,
+                result_lease=write,
                 project_result=project,
                 cleanup=cleanup,
                 deadline=deadline,

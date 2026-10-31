@@ -16,7 +16,7 @@ from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.runtime.models import FileReplaceBeginRequest
 from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
 from tests.test_plugin_file_delete import published
-from tests.test_plugin_host_files import call, chunk, commit, deny, files, finish, root
+from tests.test_plugin_host_files import call, chunk, commit, files, finish, invalidate_base
 
 __all__ = ["files"]
 
@@ -117,22 +117,18 @@ def test_recovery_choice_has_strict_action_and_version_boundary(change):
         PluginFileRecoveryResolve.model_validate(request | change)
 
 
-def test_replace_permission_is_independent_and_result_requires_read(files, tmp_path):
+def test_basic_replacement_returns_version_and_does_not_rebind_old_reference(files, tmp_path):
     broker, manager, _, store, _ = files
     target, etag = published(broker, manager)
-    deny(broker, store, "filesystem.write")
-    deny(broker, store, "filesystem.delete")
-    deny(broker, store, "filesystem.read")
-    target["root_ref"] = root(broker, "filesystem.replace")
     upload = replace_begin(broker, target, etag)
     chunk(broker, upload, b"new bytes")
     result = finish(broker, manager, commit(broker, upload, b"new bytes"))
-    assert result["state"] == "completed" and result["result"] is None
+    assert result["state"] == "completed" and result["result"]["etag"] != etag
     assert next(tmp_path.glob("plugin_data/*/files/target.bin")).read_bytes() == b"new bytes"
-    deny(broker, store, "filesystem.replace")
+    invalidate_base(broker, store)
     with pytest.raises(ProtocolError) as error:
         replace_begin(broker, target, etag)
-    assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
+    assert error.value.error_code == "PLUGIN_RESOURCE_NOT_FOUND"
 
 
 @pytest.mark.parametrize("reason", ["cancel", "revoke", "deadline"])
@@ -157,7 +153,7 @@ def test_queued_replace_keeps_original_and_actual_reservation_until_stopped(file
         if reason == "cancel":
             call(broker, "operations.cancel", {"operation_ref": receipt["operation_ref"]})
         elif reason == "revoke":
-            deny(broker, store, "filesystem.replace")
+            invalidate_base(broker, store)
         else:
             now = monotonic() + 31
             monkeypatch.setattr(api_module, "monotonic", lambda: now)
@@ -354,7 +350,7 @@ def test_revocation_during_original_hash_prevents_acceptance(files, tmp_path, mo
         result = original_digest(stream, deadline, max_bytes)
         calls += 1
         if calls == 2:
-            deny(broker, grants, "filesystem.replace")
+            invalidate_base(broker, grants)
         return result
 
     monkeypatch.setattr(FileHandle, "digest", revoke_on_original)

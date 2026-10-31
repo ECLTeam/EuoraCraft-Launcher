@@ -46,7 +46,9 @@ class Plugin(BasePlugin):
                     continue
                 scan_cursor = None
                 while True:
-                    scanned = self.host.call("instances.scan", {"root_ref": resource["root_ref"], "cursor": scan_cursor})
+                    scanned = self.host.call(
+                        "instances.scan", {"root_ref": resource["root_ref"], "cursor": scan_cursor}
+                    )
                     for value in scanned["items"]:
                         names[value["instance_ref"]] = value["alias"]
                     scan_cursor = scanned["next_cursor"]

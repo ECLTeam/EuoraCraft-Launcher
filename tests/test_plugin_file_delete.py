@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.runtime.models import FileDeleteRequest
 from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
-from tests.test_plugin_host_files import begin, call, chunk, commit, deny, files, finish, root
+from tests.test_plugin_host_files import begin, call, chunk, commit, files, finish, invalidate_base
 
 __all__ = ["files"]
 
@@ -77,18 +77,16 @@ def test_changed_version_and_same_bytes_replacement_are_preserved(files, tmp_pat
     assert target_path.read_bytes() == b"hello"
 
 
-def test_delete_permission_is_independent_and_result_does_not_need_read(files):
+def test_basic_deletion_returns_confirmation_and_old_epoch_hides_it(files):
     broker, manager, _, store, _ = files
     target, etag = published(broker, manager)
-    deny(broker, store, "filesystem.read")
-    target["root_ref"] = root(broker, "filesystem.delete")
     view = finish(broker, manager, delete(broker, target, etag))
     assert view["result"] == {"deleted": True}
-    deny(broker, store, "filesystem.delete")
+    invalidate_base(broker, store)
     assert call(broker, "operations.get", {"operation_ref": view["operation_ref"]})["result"] is None
     with pytest.raises(ProtocolError) as error:
         delete(broker, target, etag)
-    assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
+    assert error.value.error_code == "PLUGIN_RESOURCE_NOT_FOUND"
 
 
 def test_queued_delete_reserves_name_but_does_not_open_target_and_cancels(files, tmp_path):
@@ -243,7 +241,7 @@ def test_revocation_before_acceptance_preserves_file(files, tmp_path, monkeypatc
 
     def revoke(stream, deadline, max_bytes=8388608):
         digest = original(stream, deadline, max_bytes)
-        deny(broker, store, "filesystem.delete")
+        invalidate_base(broker, store)
         return digest
 
     monkeypatch.setattr(FileHandle, "digest", revoke)
@@ -359,7 +357,7 @@ def test_revocation_after_native_acceptance_does_not_undo_delete(files, tmp_path
     def revoke_after_mark(stream, pending):
         mark(stream, pending)
         if pending:
-            deny(broker, store, "filesystem.delete")
+            invalidate_base(broker, store)
 
     monkeypatch.setattr(FileHandle, "mark_deletion", revoke_after_mark)
     view = finish(broker, manager, delete(broker, target, etag))

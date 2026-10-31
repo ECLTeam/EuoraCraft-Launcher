@@ -38,6 +38,12 @@ class Plugin(BasePlugin):
             output_fields=({"name": "json", "type": "string"},),
         )
         self.define_command(
+            "scan",
+            self.scan,
+            input_fields=({"name": "root_ref", "type": "string"},),
+            output_fields=({"name": "json", "type": "string"},),
+        )
+        self.define_command(
             "cancel",
             self.cancel,
             input_fields=({"name": "operation_ref", "type": "string"},),
@@ -61,6 +67,15 @@ class Plugin(BasePlugin):
             input_fields=({"name": "game_run_ref", "type": "string"}, {"name": "mutation_key", "type": "string"}),
             output_fields=({"name": "json", "type": "string"},),
         )
+
+    def scan(self, root_ref: str) -> dict[str, str]:
+        """
+        列出明确选择的获准根中的游戏，由调用方选择实际启动实例。
+
+        :param root_ref: discover 返回且由用户选定的游戏根引用
+        :return: 实例分页的 JSON
+        """
+        return {"json": json.dumps(self.host.call("instances.scan", {"root_ref": root_ref}))}
 
     def discover(self, capability: str) -> dict[str, str]:
         """

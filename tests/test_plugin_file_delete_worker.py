@@ -32,7 +32,7 @@ def test_real_worker_delete_version_cancel_and_no_automatic_cleanup(tmp_path, is
     )
     example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_file_cleanup"
     metadata = json.loads((example / "plugin.json").read_bytes())
-    metadata["permissions"] += [{"capability": c} for c in ("filesystem.read", "filesystem.write")]
+    metadata["permissions"] += [{"capability": c} for c in ()]
     code_path = tmp_path / "code"
     code_path.mkdir()
     (code_path / "main.py").write_bytes((example / "main.py").read_bytes())
@@ -93,7 +93,7 @@ def test_real_worker_delete_version_cancel_and_no_automatic_cleanup(tmp_path, is
         service.enable(metadata["name"])
         broker = service.broker(metadata["name"])
         assert saved.read_bytes() == b"hello"
-        assert root(broker, "filesystem.delete") != target["root_ref"]
+        assert root(broker, "plugin.base") != target["root_ref"]
     finally:
         gate.set()
         service.close()

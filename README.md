@@ -1,7 +1,5 @@
 <div align="center">
 
-<!--<img src="https://capsule-render.vercel.app/api?type=waving&color=0:f9c440,100:40c9c0&height=200&section=header&text=EuoraCraft%20Launcher&fontSize=50&fontColor=ffffff&fontAlignY=36&desc=Modern%20and%20Extensible%20Minecraft%20Launcher&descAlignY=58&descSize=18&animation=twinkling" width="100%" alt="EuoraCraft Launcher" />-->
-
 <img src="./resources/img/logo.ico" width="320" alt="EuoraCraft Launcher Logo" />
 
 **一个使用 Python 编写的现代化 Minecraft 第三方启动器，支持插件拓展功能，构建出自己的启动器吧**
@@ -11,7 +9,6 @@
 [![Release](https://img.shields.io/github/v/release/ECLTeam/EuoraCraft-Launcher?style=flat-square&logo=github&label=Release&color=40c9c0)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
 [![Stars](https://img.shields.io/github/stars/ECLTeam/EuoraCraft-Launcher?style=flat-square&logo=github&label=Stars&color=f0b429)](https://github.com/ECLTeam/EuoraCraft-Launcher/stargazers)
 [![License](https://img.shields.io/badge/License-GPL--3.0-3fb950?style=flat-square)](./LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20%7C%20Linux%20%7C%20macOS-64748b?style=flat-square)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
 
 <br>
@@ -29,29 +26,32 @@
 
 ## 介绍
 
-**EuoraCraft Launcher**（ECL）是一款现代化、可扩展的 Minecraft 第三方启动器。它面向希望管理多个游戏实例、账户与社区资源的玩家，并提供联机和插件扩展能力。
+**EuoraCraft Launcher** 是一款 Minecraft 第三方启动器，帮助你安装和启动游戏、管理不同版本与整合包，也支持与好友联机。初次接触 Minecraft，也可以从下方的「快速开始」入手。
 
 ---
 
 ## 功能特性
 
-| **实例管理** | **多类型账户** | **整合包与资源** |
-|:---:|:---:|:---:|
-| 集中管理本地游戏实例，轻松查看与启动 | 支持微软正版、离线与外置（authlib-injector）登录 | 在线浏览与安装整合包，管理 Mod 等游戏资源 |
-| **联机游玩** | **插件扩展** | **崩溃分析** |
-| 基于 EasyTier 虚拟组网，与好友轻松联机 | 灵活的插件系统，打造属于你的启动器 | 内置崩溃收集与分析，快速定位问题原因 |
+- **管理游戏**：集中查看和启动不同版本的游戏与整合包。
+- **添加账户**：支持微软账户、离线账户和第三方登录服务。
+- **安装整合包与模组**：在线查找和安装整合包，管理游戏模组（Mod）等资源。
+- **好友联机**：与好友一起游玩。
+- **插件扩展**：按需要添加插件，丰富启动器功能。
+- **崩溃分析**：游戏出错时，帮助查找可能的原因。
 
 ---
 
 ## 快速开始
 
-1. 前往 [GitHub Releases](https://github.com/ECLTeam/EuoraCraft-Launcher/releases) 下载对应平台的最新版本，支持 **Windows / Linux / macOS**。
-2. 安装并启动 EuoraCraft Launcher启动器，按引导添加你的账户。
-3. 安装游戏或整合包，开始游玩吧！
+1. 打开[下载页面](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)，选择适合自己电脑系统的版本（**Windows / Linux / macOS**）。
+2. 安装并打开 EuoraCraft Launcher，按界面提示添加账户。
+3. 安装想玩的游戏版本或整合包，完成后启动游戏。
 
 > 首次使用、常见问题与各功能的详细说明，请参阅[文档站](https://docs.euora.cn)。
 
-开发与自动化场景可通过 `--gui` / `--headless` 切换运行模式。例如 `python main.py --headless --task runtime-check` 会检查运行环境并输出 JSON；无控制台产物可使用 `--result-file` 保存结果。参数、输出协议与后续插件子进程的扩展边界见[无头运行说明](docs/guides/headless-runtime.md)。
+## 遇到问题或有建议？
+
+可以先查看[使用文档与常见问题](https://docs.euora.cn)，也可以[反馈问题或提出建议](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/new/choose)。反馈时请说明遇到了什么、之前做了哪些操作，并按需要附上截图；提交前记得遮住密码等个人信息。
 
 ---
 
@@ -63,7 +63,7 @@
 
 ## 参与贡献
 
-欢迎通过 [Issue 表单](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/new/choose)报告问题或提出功能建议，也欢迎提交 Pull Request。提交前请查阅[贡献指南](CONTRIBUTING.md)，搜索已有 Issue，并对日志与附件脱敏；不要在公开 Issue 中提交凭据或敏感漏洞细节。涉及使用与功能的问题，请优先查阅[文档站](https://docs.euora.cn)。
+欢迎帮助完善翻译、文档或代码，具体方式见[贡献指南](CONTRIBUTING.md)。开发相关说明见[项目文档](docs/README.md)。
 
 ## 贡献者们
 
@@ -77,9 +77,8 @@
 
 ## 致谢
 
-- [pytauri](https://github.com/pytauri/pytauri) — Python + Tauri 桌面框架
-- [Naive UI](https://github.com/tusen-ai/naive-ui) — Vue 3 组件库
-- [EasyTier](https://easytier.cn/) — 虚拟网络与联机能力
+- [pytauri](https://github.com/pytauri/pytauri)、[Naive UI](https://github.com/tusen-ai/naive-ui) — 为启动器提供支持
+- [EasyTier](https://easytier.cn/) — 提供联机支持
 - 所有贡献者和社区支持者
 
 ---
@@ -89,8 +88,6 @@
 本项目基于 [GNU General Public License v3.0](./LICENSE) 开源。
 
 <div align="center">
-
-<!--<img src="https://capsule-render.vercel.app/api?type=waving&color=0:40c9c0,100:f9c440&height=120&section=footer" width="100%" alt="" />-->
 
 **EuoraCraft Launcher** · ECLTeam
 

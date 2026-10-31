@@ -7,23 +7,7 @@
   "entry_point": "main:Plugin",
   "permissions": [
     {
-      "capability": "commands.register",
-      "required": true
-    },
-    {
-      "capability": "commands.execute",
-      "required": true
-    },
-    {
-      "capability": "game.catalog.read",
-      "required": false
-    },
-    {
-      "capability": "instances.read",
-      "required": false
-    },
-    {
-      "capability": "instances.install",
+      "capability": "instances.manage",
       "required": false
     }
   ]

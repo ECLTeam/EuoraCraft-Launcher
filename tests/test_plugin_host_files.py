@@ -63,7 +63,7 @@ def test_create_only_requires_explicit_strict_false(overwrite):
 
 
 def test_filesystem_declaration_cannot_select_host_paths():
-    for capability in ("filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"):
+    for capability in ():
         with pytest.raises(ValidationError):
             PermissionDeclaration(capability=capability, resource_refs=("host-path",))
 
@@ -75,7 +75,7 @@ def files(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "main.py").write_text("value = 1", encoding="utf-8")
-    capabilities = {"filesystem.read", "filesystem.write", "filesystem.delete", "filesystem.replace"}
+    capabilities = set()
     binding = PluginContentBinding.capture(
         code, tuple(PermissionDeclaration(capability=c) for c in sorted(capabilities)), "windows-x86_64-cp311"
     )
@@ -120,7 +120,7 @@ def call(broker, method, params=None, key=None):
     return broker.handle(RpcRequest(method, params or {}, monotonic() + 30, key or uuid4().hex))
 
 
-def root(broker, capability="filesystem.write"):
+def root(broker, capability="plugin.base"):
     result = call(broker, "resources.list", {"capability": capability})
     return result["items"][0]["root_ref"]
 
@@ -153,6 +153,16 @@ def finish(broker, manager, receipt):
     return call(broker, "operations.get", {"operation_ref": reference})
 
 
+def invalidate_base(broker, store):
+    store.update(
+        broker.session,
+        (),
+        expected_revision=broker.session.view().revision,
+        content_digest=broker.session.binding.content_digest,
+        caller=PermissionManagementCaller.main_webview,
+    )
+
+
 def deny(broker, store, capability):
     store.update(
         broker.session,
@@ -165,7 +175,7 @@ def deny(broker, store, capability):
 
 def test_first_read_has_no_writes_and_zero_length_commit_is_real(files, tmp_path):
     broker, manager, storage, _, _ = files
-    reference = root(broker, "filesystem.read")
+    reference = root(broker, "plugin.base")
     target = {"root_ref": reference, "relative_path": ""}
     assert call(broker, "files.stat", {"target": target})["kind"] == "directory"
     assert call(broker, "files.list", {"directory": target}) == {"items": [], "next_cursor": None}
@@ -244,19 +254,18 @@ def test_strict_chunks_reject_invalid_or_oversized_base64(files, encoded):
     assert call(broker, "files.write_abort", {"write_ref": write_ref}) == {"released": False}
 
 
-def test_write_only_cannot_receive_result_and_read_revocation_hides_snapshot(files):
+def test_basic_private_access_returns_result_and_old_epoch_hides_snapshot(files):
     broker, manager, _, store, create = files
-    writer = create(allowed={"filesystem.write"})
+    writer = create(allowed=set())
     target, write_ref = begin(writer)
     chunk(writer, write_ref)
-    assert finish(writer, manager, commit(writer, write_ref))["result"] is None
-    with pytest.raises(ProtocolError):
-        call(writer, "files.stat", {"target": target})
-    target, write_ref = begin(broker)
+    assert finish(writer, manager, commit(writer, write_ref))["result"] is not None
+    assert call(writer, "files.stat", {"target": target})["size"] == 5
+    _, write_ref = begin(broker)
     chunk(broker, write_ref)
     receipt = commit(broker, write_ref, key="accepted")
     assert finish(broker, manager, receipt)["result"] is not None
-    deny(broker, store, "filesystem.read")
+    invalidate_base(broker, store)
     assert call(broker, "operations.get", {"operation_ref": receipt["operation_ref"]})["result"] is None
     assert call(broker, "mutations.get", {"mutation_key": "accepted"})["result"] == receipt
 
@@ -265,7 +274,7 @@ def test_permission_change_and_full_receipt_table_still_allow_abort(files):
     broker, _, storage, store, _ = files
     _, write_ref = begin(broker)
     broker.max_receipts = len(broker._receipts)
-    deny(broker, store, "filesystem.write")
+    invalidate_base(broker, store)
     assert call(broker, "files.write_abort", {"write_ref": write_ref}) == {"released": True}
     assert not storage.uploads(broker.session.run_id)
 
@@ -457,7 +466,7 @@ def test_revoked_before_publication_removes_only_own_staging(files, tmp_path, mo
     receipt = commit(broker, write_ref)
     try:
         assert entered.wait(3)
-        deny(broker, store, "filesystem.write")
+        invalidate_base(broker, store)
         broker.refresh_permissions()
     finally:
         release.set()
@@ -497,7 +506,7 @@ def test_same_install_restart_preserves_data_reinstall_uses_new_space(files, tmp
     with pytest.raises(ProtocolError) as error:
         call(restarted, "files.stat", {"target": target})
     assert error.value.error_code == "PLUGIN_RESOURCE_NOT_FOUND"
-    new_target = {**target, "root_ref": root(restarted, "filesystem.read")}
+    new_target = {**target, "root_ref": root(restarted, "plugin.base")}
     assert call(restarted, "files.stat", {"target": new_target})["size"] == 5
     reinstalled = create()
     assert (
@@ -507,7 +516,7 @@ def test_same_install_restart_preserves_data_reinstall_uses_new_space(files, tmp
     assert not (tmp_path / "plugin_data" / reinstalled.session.view().installation_id).exists()
 
 
-def test_unrecorded_space_and_nonempty_permission_scope_refused(files, tmp_path):
+def test_unrecorded_space_is_preserved_and_base_cannot_be_separately_granted(files, tmp_path):
     broker, _, _, store, _ = files
     identity = broker.session.view().installation_id
     (tmp_path / "plugin_data" / identity / "files").mkdir(parents=True)
@@ -517,7 +526,7 @@ def test_unrecorded_space_and_nonempty_permission_scope_refused(files, tmp_path)
     with pytest.raises(ValueError):
         store.update(
             broker.session,
-            (PermissionDecision(capability="filesystem.write", decision="allow", resource_refs=("host-directory",)),),
+            (PermissionDecision(capability="plugin.base", decision="allow"),),
             expected_revision=broker.session.view().revision,
             content_digest=broker.session.binding.content_digest,
             caller=PermissionManagementCaller.main_webview,

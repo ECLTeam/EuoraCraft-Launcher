@@ -30,7 +30,7 @@ def submit_download(host: HostClient, url: str, name: str, mutation_key: str, sh
     """
     if not mutation_key:
         raise HostApiError("下载必须提供提交去重键", "PLUGIN_SCHEMA_INVALID")
-    roots = host.call("resources.list", {"capability": "filesystem.write"}).get("items")
+    roots = host.call("resources.list", {"capability": "plugin.base"}).get("items")
     if not isinstance(roots, list) or not roots or not isinstance(roots[0], dict):
         raise HostApiError("私有文件根不可用", "PLUGIN_SCHEMA_INVALID")
     root_ref = roots[0].get("root_ref")

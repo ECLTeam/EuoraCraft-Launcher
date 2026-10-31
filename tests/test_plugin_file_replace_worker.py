@@ -32,7 +32,6 @@ def test_actual_worker_replace_and_cancel_without_automatic_rewrite(tmp_path, is
     )
     example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_file_replace"
     metadata = json.loads((example / "plugin.json").read_bytes())
-    metadata["permissions"].append({"capability": "filesystem.write"})
     code = tmp_path / "code"
     code.mkdir()
     (code / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")

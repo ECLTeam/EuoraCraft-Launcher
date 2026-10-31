@@ -6,8 +6,12 @@
   "description": "审阅精确站点后读取小型公开资源，不接收宿主凭据。",
   "entry_point": "main:Plugin",
   "permissions": [
-    { "capability": "commands.register", "required": true },
-    { "capability": "commands.execute", "required": true },
-    { "capability": "network.read", "required": false, "resource_refs": ["https:connectivitycheck.gstatic.com:443"] }
+    {
+      "capability": "network.read",
+      "required": false,
+      "resource_refs": [
+        "https:connectivitycheck.gstatic.com:443"
+      ]
+    }
   ]
 }

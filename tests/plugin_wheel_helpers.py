@@ -68,14 +68,7 @@ def make_package(
     permissions: tuple[dict[str, str], ...] | None = None,
 ) -> Path:
     if permissions is None:
-        permissions = (
-            (
-                {"capability": "commands.register", "required": True},
-                {"capability": "commands.execute", "required": True},
-            )
-            if code is None
-            else ()
-        )
+        permissions = ()
     source_path = folder_path / f"{name}-{version}-source"
     source_path.mkdir(parents=True)
     (source_path / "plugin.json").write_text(

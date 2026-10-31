@@ -62,7 +62,7 @@ def test_snapshot_example_uses_real_worker_upload_commit_read_and_restart(tmp_pa
         service.stop("worker_snapshot")
         service.enable("worker_snapshot")
         broker = service.broker("worker_snapshot")
-        roots = broker.handle(RpcRequest("resources.list", {"capability": "filesystem.read"}, monotonic() + 5))
+        roots = broker.handle(RpcRequest("resources.list", {"capability": "plugin.base"}, monotonic() + 5))
         assert roots["items"][0]["root_ref"] != receipt["root_ref"]
         assert exported.exists()
     finally:

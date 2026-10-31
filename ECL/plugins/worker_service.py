@@ -132,13 +132,11 @@ class PluginWorkerService:
             revision = self._catalog.refresh()
         except (OSError, ValueError) as exc:
             if not isinstance(exc, InstanceReadError) or exc.error_code != "PLUGIN_RESOURCE_REVISION_CONFLICT":
-                self.grants.update_resource_scope(frozenset(), frozenset())
+                self.grants.update_resource_scope(frozenset())
             if isinstance(exc, InstanceReadError):
                 raise
             raise InstanceReadError("实例资源目录刷新失败", "PLUGIN_RESOURCE_CATALOG_INVALID") from exc
-        self.grants.update_resource_scope(
-            self._catalog.active_refs(), self._catalog.active_instance_refs(), self._catalog.active_root_refs()
-        )
+        self.grants.update_resource_scope(self._catalog.active_root_refs())
         return revision
 
     def _refresh_declared_resources(self, session: PluginGrantSession) -> None:
@@ -186,12 +184,10 @@ class PluginWorkerService:
             raise ProtocolError("插件未申请此实例能力", "PLUGIN_PERMISSION_DENIED")
         if self._catalog is None:
             raise ProtocolError("当前宿主未提供实例资源", "PLUGIN_API_METHOD_NOT_FOUND")
-        if capability == "instances.install" and parent_ref is not None:
-            raise ProtocolError("安装只能选择游戏根目录", "PLUGIN_SCHEMA_INVALID")
+        if parent_ref is not None:
+            raise ProtocolError("游戏权限只选择根目录", "PLUGIN_SCHEMA_INVALID")
         revision = self._catalog.refresh(discover=cursor is None, parent_ref=parent_ref)
-        self.grants.update_resource_scope(
-            self._catalog.active_refs(), self._catalog.active_instance_refs(), self._catalog.active_root_refs()
-        )
+        self.grants.update_resource_scope(self._catalog.active_root_refs())
         selected = entry.session.selected_resources(capability)
         signature = json.dumps([entry.installation_id, content_digest, capability, parent_ref, search, limit])
 
@@ -212,15 +208,10 @@ class PluginWorkerService:
         """
         assert self._catalog is not None
         resources = self._catalog.resources()
-        root = self._catalog.resolve(parent_ref) if parent_ref else None
+        default_ref = self._catalog.default_root_ref()
         items: list[dict[str, JsonValue]] = []
         for item in resources:
-            if capability == "instances.install" and item.version_id is not None:
-                continue
-            if root is not None:
-                if item.root_path != root.root_path or item.version_id is None:
-                    continue
-            elif item.version_id is not None and item.resource_id not in selected:
+            if item.version_id is not None:
                 continue
             if not item.is_active and item.resource_id not in selected:
                 continue
@@ -235,6 +226,7 @@ class PluginWorkerService:
                     "version_id": item.version_id,
                     "available": item.is_active,
                     "selected": item.resource_id in selected,
+                    "is_default": item.resource_id == default_ref,
                 }
             )
         return tuple(items)

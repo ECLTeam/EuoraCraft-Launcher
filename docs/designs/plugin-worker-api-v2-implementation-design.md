@@ -1113,3 +1113,9 @@ P12按用户批准范围实施，2026-10-30完成本机验收。新增game.catal
 PluginGameCoordinator复用应用GameService及唯一OperationManager，目录查询沿用当前有效来源，安装复用Core和InstallationProgress。安装占位由普通界面、整合包和插件共享；原生句柄固定目标，线程与句柄实际收尾前保持忙，保留用户实例与失败文件。启动复用宿主既有事件循环和账户客户端，进程创建进入短提交点；同一运行记录由正常游戏列表与插件所有者索引共同引用。停止只匹配确切进程对象，关闭插件和提交后撤权不杀游戏。
 
 三类任务在可信任务中心显示真实业务阶段，Worker继续使用自身任务引用及原读许可结果投影。权限弹窗支持根安装及具体实例启动/停止，六语言同步。当前实现、接口边界和验收记录见[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)、[协议](../protocols/eclplugin-package-format.md#获准游戏目录安装与进程控制)、[安装示例](../../examples/plugins/worker_game_install/README.md)及[启动示例](../../examples/plugins/worker_game_launch/README.md)。
+
+## 30. 面向普通玩家的业务权限（2026-10-31）
+
+按方案B将实际授权收敛为查看游戏、管理游戏、联网。自身命令、设置、私有文件和宿主公开目录使用随启用获得的plugin.base运行准入，不在清单声明，也不保留旧细项授权状态。游戏授权统一为根目录，管理包含查看和已实现的安装、资料修改、启动与本运行进程停止，覆盖以后新增的实例；联网仍按声明的精确站点控制。
+
+基础插件直接确认启用，业务插件共用一个目录选择区并“同意并启用”，已保存而启用失败时可重试。保留内容绑定、撤销代次、任务真实收尾、对象身份、配额及恢复；不将Host API授权描述为系统沙箱。此前章节中独立细项的授权说明为历史设计，现行契约以[权限简化方案](../plans/plugin-permission-simplification-plan-2026-10-30.md)和[归档协议](../protocols/eclplugin-package-format.md#权限与启用)为准。
