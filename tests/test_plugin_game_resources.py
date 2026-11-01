@@ -11,8 +11,6 @@ from ECL.plugins.runtime.broker import PluginHostBroker
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_host_files import begin, call, chunk, commit, finish
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="当前受控资源文件修改要求 Windows")
-
 
 @pytest.fixture
 def assets(request):
@@ -116,7 +114,10 @@ def test_resource_directory_junction_cannot_read_or_publish_outside_instance(ass
     outside = state.root.parent / "outside-resources"
     outside.mkdir()
     (outside / "protected.jar").write_bytes(b"preserve")
-    subprocess.run(["cmd", "/c", "mklink", "/J", str(directory), str(outside)], check=True, capture_output=True)
+    if sys.platform == "win32":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(directory), str(outside)], check=True, capture_output=True)
+    else:
+        directory.symlink_to(outside, target_is_directory=True)
     with pytest.raises(ProtocolError):
         call(broker, "mods.list", {"instance_ref": state.ref})
     result = finish(

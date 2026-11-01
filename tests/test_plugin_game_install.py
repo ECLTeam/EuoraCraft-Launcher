@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
 from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
@@ -178,7 +177,6 @@ def test_install_rejects_unlisted_explicit_loader_before_writing(game_install):
     assert not (game_install.root / "versions/1.20.1").exists()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="真实Worker只支持Windows x64")
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
 def test_actual_worker_catalog_install_result_and_duplicate_submission(game_install, is_frozen):
     state = game_install
@@ -244,7 +242,7 @@ def test_actual_worker_catalog_install_result_and_duplicate_submission(game_inst
 
 
 def test_install_reservation_holds_busy_target_while_handle_close_is_pending(game_install):
-    from ECL.utils.windows_file_handles import FileBoundaryError
+    from ECL.utils.file_handles import FileBoundaryError
 
     reservation = game_install.game.reserve_install_target(game_install.root, "pending")
 
@@ -264,7 +262,6 @@ def test_install_reservation_holds_busy_target_while_handle_close_is_pending(gam
     assert game_install.game.release_install_target(reservation)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="实际插件写入仅支持Windows NTFS")
 def test_install_receipt_result_and_stage_are_accurate_without_path_leak(game_install):
     state = game_install
     snapshots = []
@@ -284,7 +281,6 @@ def test_install_receipt_result_and_stage_are_accurate_without_path_leak(game_in
     assert str(state.root) not in json.dumps(snapshots)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="实际插件写入仅支持Windows NTFS")
 def test_installed_result_reads_parent_declaration_inside_custom_instance(game_install):
     state = game_install
 
@@ -311,7 +307,6 @@ def test_installed_result_reads_parent_declaration_inside_custom_instance(game_i
     assert result["result"]["loader"] == "Fabric"
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="实际插件写入仅支持Windows NTFS")
 def test_existing_user_instance_is_preserved_with_no_effect(game_install):
     state = game_install
     target = state.root / "versions/1.20.1"
@@ -323,7 +318,6 @@ def test_existing_user_instance_is_preserved_with_no_effect(game_install):
     assert (target / "sentinel.txt").read_text() == "keep" and not state.writes
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="实际插件写入仅支持Windows NTFS")
 def test_failure_keeps_partial_files_and_only_same_run_can_retry(game_install):
     state = game_install
     original = state.builders.build_minecraft_download_list
@@ -342,7 +336,6 @@ def test_failure_keeps_partial_files_and_only_same_run_can_retry(game_install):
     assert not state.game._install_reservations
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="实际插件写入仅支持Windows NTFS")
 def test_cancellation_keeps_busy_target_until_worker_really_exits(game_install):
     state = game_install
     entered, release = Event(), Event()
@@ -369,8 +362,13 @@ def test_cancellation_keeps_busy_target_until_worker_really_exits(game_install):
     assert not state.game._install_reservations
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX明确拒绝Windows写边界")
-def test_posix_write_boundary_fails_explicitly_without_creating_instance(game_install):
+def test_unsupported_filesystem_fails_explicitly_without_creating_instance(game_install, monkeypatch):
+    from ECL.utils.file_handles import FileBoundaryError, FileDirectory
+
+    def unsupported(*_):
+        raise FileBoundaryError("文件系统未支持", "PLUGIN_RUNTIME_UNSUPPORTED")
+
+    monkeypatch.setattr(FileDirectory, "open", unsupported)
     state = game_install
     result = finish(state.broker, state.manager, install(state))
     assert result["error_code"] == "PLUGIN_RUNTIME_UNSUPPORTED"

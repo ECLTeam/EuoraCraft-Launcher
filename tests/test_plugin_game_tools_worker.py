@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import sys
 from pathlib import Path
 from time import monotonic, sleep
 from uuid import uuid4
@@ -18,7 +17,6 @@ from tests.test_plugin_host_files import call
 from tests.test_plugin_modpacks import packs, upload  # noqa: F401 - pytest fixture
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="真实 Worker 当前要求 Windows x64")
 def test_actual_worker_resources_pack_import_export_public_query_and_ownership(request):
     state, source_broker, source = request.getfixturevalue("packs")
     example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_game_tools"

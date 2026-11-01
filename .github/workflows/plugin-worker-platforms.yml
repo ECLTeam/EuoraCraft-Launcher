@@ -152,6 +152,12 @@ jobs:
           tests/test_plugin_file_delete_worker.py
           tests/test_plugin_download_worker.py
           tests/test_plugin_instance_profile_worker.py
+          tests/test_instance_profile_transactions.py
+          tests/test_plugin_game_install.py
+          tests/test_plugin_game_launch.py
+          tests/test_plugin_game_resources.py
+          tests/test_plugin_modpacks.py
+          tests/test_plugin_game_tools_worker.py
           -k 'not frozen and not test_delayed_removal_keeps_cleanup_pending_until_original_entry_gone and not test_staging_metadata_handle_delays_quota_release'
       - name: Reject incomplete file coverage
         run: |

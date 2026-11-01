@@ -7,10 +7,8 @@ from pathlib import Path
 import pytest
 
 from ECL.services.game.instance_profile_transactions import InstanceProfileTarget, NativeProfileTarget
+from ECL.utils.file_handles import FileBoundaryError
 from ECL.utils.instance_reading import InstanceReadError, directory_identity
-from ECL.utils.windows_file_handles import FileBoundaryError
-
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="真实Windows NTFS共享实例提交")
 
 
 def target(root: Path) -> InstanceProfileTarget:
@@ -28,8 +26,17 @@ def test_native_directory_identity_is_derived_from_same_handle_and_pins_every_co
         assert accepted == [True]
         assert len(native.directories) == 4
         for path in (tmp_path / "versions", tmp_path / "versions/人工实例", tmp_path / "versions/人工实例/.ecl"):
-            with pytest.raises(OSError):
-                path.rename(path.with_name(path.name + "-moved"))
+            moved = path.with_name(path.name + "-moved")
+            if sys.platform == "win32":
+                with pytest.raises(OSError):
+                    path.rename(moved)
+            else:
+                path.rename(moved)
+                try:
+                    with pytest.raises(FileBoundaryError):
+                        native.directories[-1].information()
+                finally:
+                    moved.rename(path)
         assert NativeProfileTarget.identity(native.directories[0]) == approved.root_identity
         assert NativeProfileTarget.identity(native.directories[2]) == approved.instance_identity
     finally:
@@ -55,7 +62,10 @@ def test_ecl_junction_cannot_publish_outside_selected_instance(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     junction = tmp_path / "versions/人工实例/.ecl"
-    subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)], check=True, capture_output=True)
+    if sys.platform == "win32":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(outside)], check=True, capture_output=True)
+    else:
+        junction.symlink_to(outside, target_is_directory=True)
     native = NativeProfileTarget(approved)
     try:
         with pytest.raises(FileBoundaryError):
