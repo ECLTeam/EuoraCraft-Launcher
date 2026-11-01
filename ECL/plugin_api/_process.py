@@ -147,7 +147,7 @@ def _serve(channel: LocalChannel, run_id: str, host_pid: int) -> None:
         api = WindowsApi()
         is_supervised = api.is_in_job(None, api.kernel.GetCurrentProcess())
     else:
-        is_supervised = os.getsid(0) != os.getsid(host_pid) and os.getpgrp() != os.getpgrp(host_pid)
+        is_supervised = os.getsid(0) != os.getsid(host_pid) and os.getpgrp() != os.getpgid(host_pid)
     if not is_supervised:
         raise PluginRuntimeError("Worker 不在独立监管范围内", "PLUGIN_JOB_ASSIGN_FAILED")
     channel.send(

@@ -121,7 +121,8 @@ print(json.dumps([n for n in sys.modules if
 
 
 @pytest.mark.parametrize("host_module", [None, "ECL.services", "ECL.plugin_api_extra", "ECL.bootstrap_extra"])
-def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | None) -> None:
+@pytest.mark.parametrize("worker_platform", ["win32", "linux", "darwin"])
+def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | None, worker_platform: str) -> None:
     import subprocess
 
     source = f"""
@@ -139,7 +140,10 @@ windows.WindowsApi = lambda: SimpleNamespace(
     kernel=SimpleNamespace(GetCurrentProcess=lambda: 1))
 messages = []
 channel = SimpleNamespace(send=messages.append, receive=lambda timeout: WireMessage('shutdown', {{}}))
-_process.sys.platform = 'win32'
+_process.sys.platform = {worker_platform!r}
+_process.os.getsid = lambda pid: 42 if pid == 0 else 1
+_process.os.getpgrp = lambda: 43
+_process.os.getpgid = lambda pid: 2
 _process._serve(channel, 'a' * 32, 123)
 print(json.dumps(messages[0].params['has_host_modules']))
 """
