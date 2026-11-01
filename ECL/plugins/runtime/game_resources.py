@@ -28,7 +28,7 @@ from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, RequestModel
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.services.operations import OperationCommitRejectedError, OperationContext
-from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle
+from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle
 
 if TYPE_CHECKING:
     from ECL.plugins.runtime.file_api import RuntimeFiles

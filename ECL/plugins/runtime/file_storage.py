@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.runtime.models import FileRef
 from ECL.utils import get_logger
-from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity
+from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity
 
 
 class _SpaceRecord(BaseModel):
@@ -350,7 +350,7 @@ class PluginFileStorage:
                         return False
                     stream.close()
                     deletion.needs_rollback = False
-                elif stream is not None and not stream.is_closed:
+                elif stream is not None and stream.has_pending_cleanup:
                     stream.close()
                 if deletion.needs_observation:
                     if deletion.identity is None or deletion.directory.information().identity != deletion.root_identity:
@@ -433,9 +433,7 @@ class PluginFileStorage:
                         upload.stream.close()
                     else:
                         if upload.temporary_identity is None:
-                            upload.temporary_identity = upload.stream._native.information(
-                                upload.stream._handle
-                            ).identity
+                            upload.temporary_identity = upload.stream.object_identity()
                         upload.stream.discard()
                         current = upload.directory.entry_identity(upload.temporary_name, monotonic() + 0.1)
                         if current == upload.temporary_identity:

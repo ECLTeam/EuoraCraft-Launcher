@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, RLock
 from time import monotonic
@@ -17,15 +16,13 @@ from ECL.services.game import GameService
 from ECL.services.game.instance_profiles import InstanceProfileStore
 from ECL.services.game.version_stats import VersionStatsStore
 from ECL.services.operations import OperationManager
+from ECL.utils.file_handles import FileHandle
 from ECL.utils.instance_reading import InstanceReadError
-from ECL.utils.windows_file_handles import FileHandle
 from tests.test_plugin_host_files import call, deny, finish
 
 
 @pytest.fixture
 def profiles(tmp_path):
-    if sys.platform != "win32":
-        pytest.skip("真实Windows NTFS资料提交")
     root = tmp_path / "game"
     for name in ("one", "two"):
         directory = root / "versions" / name

@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from time import monotonic
@@ -26,7 +25,7 @@ from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import FileRef, FileWriteBeginRequest
 from ECL.services.operations import OperationManager
-from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
+from ECL.utils.file_handles import FileBoundaryError, FileHandle
 
 
 @pytest.mark.parametrize(
@@ -70,8 +69,6 @@ def test_filesystem_declaration_cannot_select_host_paths():
 
 @pytest.fixture
 def files(tmp_path):
-    if sys.platform != "win32":
-        pytest.skip("真实 Windows NTFS 文件事务")
     code = tmp_path / "code"
     code.mkdir()
     (code / "main.py").write_text("value = 1", encoding="utf-8")

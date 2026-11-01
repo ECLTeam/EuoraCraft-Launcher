@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from threading import Event, RLock
 from time import monotonic, sleep
@@ -21,8 +20,6 @@ from ECL.services.operations import OperationManager
 
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
 def test_actual_profile_worker_updates_and_cancels_without_automatic_writes(tmp_path, is_frozen):
-    if sys.platform != "win32":
-        pytest.skip("第三方Worker只支持Windows x64")
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     if is_frozen and not artifact:
         pytest.skip("需要最终冻结发行物")

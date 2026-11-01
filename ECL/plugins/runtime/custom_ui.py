@@ -179,7 +179,7 @@ class RuntimeCustomUi:
         """
         lease = self._broker.session.authorize("ui.custom.execute")
         try:
-            if version("pytauri-wheel") != "0.8.0+ecl.1":
+            if version("pytauri-wheel") != "0.8.0+ecl.2":
                 raise ProtocolError("当前运行时不提供插件隔离", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
         except PackageNotFoundError:
             raise ProtocolError("缺少固定原生运行时", "PLUGIN_UI_ISOLATION_UNAVAILABLE") from None

@@ -16,6 +16,7 @@ from pytauri.ffi import webview_version
 from pytauri.ffi.webview import WebviewWindowBuilder
 from pytauri_wheel.lib import builder_factory, context_factory
 
+from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
@@ -84,19 +85,24 @@ def main() -> None:
         service.bind_window_app(handle)
 
         def run() -> None:
+            stage = "first-open"
             try:
                 opened = broker.call_command("open", {}, 20)
                 assert opened["ready"] is True
+                stage = "round-trip"
                 wait(lambda: broker.settings_view()["values"]["message"].startswith("{"))
                 result = json.loads(broker.settings_view()["values"]["message"])
                 assert result == {"text": "Hello, actual native UI", "parentDenied": True, "refused": True}, result
+                stage = "revoke"
                 decide("deny")
                 wait(broker.custom_ui.is_idle)
                 assert service._entry(name).supervisor.is_alive() and main_window.label() == "main"
                 decide("allow")
+                stage = "reopen"
                 second = broker.call_command("open", {}, 20)
                 assert second["window_ref"] != opened["window_ref"]
                 broker.custom_ui.handle("ui.windows.close", {"window_ref": second["window_ref"]})
+                stage = "close-second"
                 wait(broker.custom_ui.is_idle)
                 (root / "result.json").write_text(
                     json.dumps(
@@ -106,7 +112,7 @@ def main() -> None:
                             "revocation_closed": True,
                             "reopened_and_closed": True,
                             "wheel": version("pytauri-wheel"),
-                            "webview2": webview_version(),
+                            "engine": webview_version(),
                         },
                         indent=2,
                     ),
@@ -115,7 +121,17 @@ def main() -> None:
             except Exception as exc:
                 traceback.print_exc()
                 (root / "result.json").write_text(
-                    json.dumps({"ok": False, "error": type(exc).__name__}), encoding="utf-8"
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": type(exc).__name__,
+                            "stage": stage,
+                            "error_code": exc.error_code if isinstance(exc, ProtocolError) else None,
+                            "worker_alive": service._entry(name).supervisor.is_alive(),
+                            "window_idle": broker.custom_ui.is_idle(),
+                        }
+                    ),
+                    encoding="utf-8",
                 )
             finally:
                 service.close()

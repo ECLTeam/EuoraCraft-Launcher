@@ -22,11 +22,9 @@ from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService, GameServiceError
 from ECL.services.operations import OperationManager
 from ECL.utils.errors import AccountError
-from ECL.utils.windows_file_handles import FileBoundaryError
+from ECL.utils.file_handles import FileBoundaryError
 from tests.test_game_service import EmptySearchMinecraft, FakeAccounts
 from tests.test_plugin_host_files import call, finish
-
-native_launch = pytest.mark.skipif(sys.platform != "win32", reason="第三方游戏执行只开放Windows本地NTFS")
 
 
 @pytest.fixture
@@ -153,7 +151,6 @@ def completed_launch(state):
     return result["result"]
 
 
-@native_launch
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
 def test_actual_worker_launch_query_stop_and_close_preserves_process(game_launch, is_frozen):
     state = game_launch
@@ -236,7 +233,6 @@ def revoke_launch(state):
     state.broker.refresh_pending_work()
 
 
-@native_launch
 def test_real_child_launch_running_stop_and_retained_exit_code(game_launch):
     state = game_launch
     result = completed_launch(state)
@@ -258,7 +254,6 @@ def test_real_child_launch_running_stop_and_retained_exit_code(game_launch):
     assert repeated["state"] == "completed" and not repeated["result"]["running"]
 
 
-@native_launch
 def test_another_run_cannot_query_or_stop_foreign_game(game_launch):
     state = game_launch
     result = completed_launch(state)
@@ -328,7 +323,6 @@ def test_completed_future_timeout_is_not_mistaken_for_still_running_work(game_la
         game_launch.game.release_plugin_launch(reservation)
 
 
-@native_launch
 def test_duplicate_mutation_does_not_create_two_processes(game_launch):
     state = game_launch
     receipt = launch(state, "same-start")
@@ -338,7 +332,6 @@ def test_duplicate_mutation_does_not_create_two_processes(game_launch):
     assert len(state.game.instances.get_instances_info()) == 1
 
 
-@native_launch
 @pytest.mark.parametrize("action", ["cancel", "revoke"])
 def test_cancellation_or_revocation_before_commit_never_creates_process(game_launch, action):
     state = game_launch
@@ -367,7 +360,6 @@ def test_cancellation_or_revocation_before_commit_never_creates_process(game_lau
     assert state.game._launch_cancel_event is None
 
 
-@native_launch
 def test_revocation_after_commit_acceptance_does_not_kill_created_game(game_launch, monkeypatch):
     state = game_launch
     entered, release = Event(), Event()
@@ -393,7 +385,6 @@ def test_revocation_after_commit_acceptance_does_not_kill_created_game(game_laun
     assert len(processes) == 1 and processes[0]["Instance"].poll() is None
 
 
-@native_launch
 def test_instance_id_reuse_cannot_stop_another_process_object(game_launch):
     state = game_launch
     result = completed_launch(state)
@@ -410,7 +401,6 @@ def test_instance_id_reuse_cannot_stop_another_process_object(game_launch):
         item["Instance"] = original
 
 
-@native_launch
 def test_missing_account_is_explicit_without_creating_process(game_launch, monkeypatch):
     async def unavailable():
         raise AccountError("No account", "ACCOUNT_REQUIRED")
@@ -421,7 +411,6 @@ def test_missing_account_is_explicit_without_creating_process(game_launch, monke
     assert not game_launch.game.instances.get_instances_info()
 
 
-@native_launch
 def test_account_change_before_process_commit_is_rejected(game_launch, monkeypatch):
     original = game_launch.game._command_builder
 
@@ -435,7 +424,6 @@ def test_account_change_before_process_commit_is_rejected(game_launch, monkeypat
     assert not game_launch.game.instances.get_instances_info()
 
 
-@native_launch
 def test_post_spawn_failure_preserves_ownership_and_user_visibility(game_launch, monkeypatch):
     def fail(*_):
         raise OSError("controlled stats failure")
@@ -448,7 +436,6 @@ def test_post_spawn_failure_preserves_ownership_and_user_visibility(game_launch,
     assert game_launch.game.list_instances()[0]["pid"] == processes[0]["pid"]
 
 
-@native_launch
 def test_immediately_exited_game_remains_queryable_with_actual_exit_code(game_launch):
     game_launch.game._command_builder = lambda _: [sys.executable, "-c", "raise SystemExit(0)"]
     result = completed_launch(game_launch)
@@ -460,7 +447,6 @@ def test_immediately_exited_game_remains_queryable_with_actual_exit_code(game_la
     assert not observed["running"] and observed["exit_code"] == 0
 
 
-@native_launch
 def test_close_releases_worker_control_but_preserves_game_for_user(game_launch):
     state = game_launch
     result = completed_launch(state)
@@ -470,8 +456,13 @@ def test_close_releases_worker_control_but_preserves_game_for_user(game_launch):
     assert state.game.list_instances()[0]["pid"] == result["pid"]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX拒绝第三方游戏写边界")
-def test_posix_plugin_launch_is_explicitly_unsupported(game_launch):
+def test_unsupported_filesystem_refuses_launch_without_creating_process(game_launch, monkeypatch):
+    from ECL.utils.file_handles import FileDirectory
+
+    def unsupported(*_):
+        raise FileBoundaryError("文件系统未支持", "PLUGIN_RUNTIME_UNSUPPORTED")
+
+    monkeypatch.setattr(FileDirectory, "open", unsupported)
     result = finish(game_launch.broker, game_launch.manager, launch(game_launch))
     assert result["error_code"] == "PLUGIN_RUNTIME_UNSUPPORTED" and result["effect"] == "none", result
     assert not game_launch.game.instances.get_instances_info()

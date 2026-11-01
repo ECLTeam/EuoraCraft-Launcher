@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from time import monotonic
@@ -11,7 +12,7 @@ from pydantic import ValidationError
 
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.runtime.models import FileDeleteRequest
-from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
+from ECL.utils.file_handles import FileBoundaryError, FileHandle
 from tests.test_plugin_host_files import begin, call, chunk, commit, files, finish, invalidate_base
 
 __all__ = ["files"]
@@ -164,6 +165,7 @@ def test_native_failure_rolls_back_or_retains_unknown_until_real_cleanup(files, 
         assert view["cleanup_pending"] is False
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="验证 Windows NTFS 延迟删除句柄")
 def test_delayed_removal_keeps_cleanup_pending_until_original_entry_gone(files, tmp_path, monkeypatch):
     from ctypes import wintypes
 
@@ -318,6 +320,7 @@ def test_delete_limit_cross_source_and_upload_target_occupancy(files, tmp_path):
             finish(broker, manager, receipt)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="验证 Windows NTFS 延迟删除句柄")
 def test_staging_metadata_handle_delays_quota_release(files, tmp_path):
     from ctypes import wintypes
 

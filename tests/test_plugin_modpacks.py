@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import io
 import json
-import sys
 import zipfile
 from time import monotonic
 
@@ -13,8 +12,6 @@ from ECL.plugin_api.contracts import ProtocolError
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_game_resources import assets  # noqa: F401 - pytest fixture
 from tests.test_plugin_host_files import begin, call, chunk, commit, finish
-
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="整合包插件文件边界当前要求 Windows NTFS")
 
 
 def upload(broker, manager, name, content):

@@ -32,8 +32,8 @@ from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, NetworkRequest, RequestModel
 from ECL.plugins.runtime.resources import ResourcePages
+from ECL.utils.file_handles import FileDirectory
 from ECL.utils.operation_logging import private_transport_scope
-from ECL.utils.windows_file_handles import FileDirectory
 
 if TYPE_CHECKING:
     from ECL.plugins.runtime.file_api import RuntimeFiles

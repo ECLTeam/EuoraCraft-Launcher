@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
@@ -20,8 +19,6 @@ from tests.test_plugin_host_files import call
 
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
 def test_actual_worker_replace_and_cancel_without_automatic_rewrite(tmp_path, is_frozen):
-    if sys.platform != "win32":
-        pytest.skip("第三方Worker仅支持Windows x64")
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     if is_frozen and not artifact:
         pytest.skip("需要最终冻结发行物")

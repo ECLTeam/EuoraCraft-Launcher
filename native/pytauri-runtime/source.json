@@ -1,15 +1,25 @@
 {
   "upstream": "https://github.com/pytauri/pytauri.git",
   "commit": "734d5a1c7834935abdd39c85b53bf990a563febe",
-  "version": "0.8.0+ecl.1",
+  "version": "0.8.0+ecl.2",
   "rust_version": "1.99.0",
   "tauri": "2.8.3",
   "wry": "0.53.1",
   "pyo3": "0.25.1",
   "webview2_com": "0.38.0",
   "policy_version": 1,
-  "patch_sha256": "cee6ee8f20166319c924a577f4245211a24615c6e0c8211453c8a7ae11b5f10d",
-  "policy_sha256": "fa2ea6c4dbb73caa195cca12d92179e6dc55a630ed9a682e4ae863676433b7ad",
-  "cargo_lock_sha256": "5bc2dd445e6f87fff063ebfbf417591423d4426a88375b6b9929797811f2ad31",
-  "webview2_version": "156.0.4314.58"
+  "patch_sha256": "cc56c4fab7b43184b0d3d357c99a1944c443dd757c18a0cac67043f793149d24",
+  "cargo_lock_sha256": "b0bf27491c3c3394dd7a95faf34d1472b02ed14fa0a48ecba8d20289546f27b2",
+  "policies": {
+    "plugin_isolation.rs": "fa2ea6c4dbb73caa195cca12d92179e6dc55a630ed9a682e4ae863676433b7ad",
+    "plugin_isolation_unix.rs": "664e40df717f250828fbdc771c5555a8746ca8d262eb0a30ecd2c3268796e63a",
+    "plugin_isolation_gtk.rs": "7ce06be2728cbf9ce966d1fd0ab2c1dbdbb95b604af16d1c15c980e493ba286c",
+    "plugin_isolation_macos.rs": "f3d4512330ac5357c8b7c107eec28a08326be5c3d03fa784b39d93e5d03336f0"
+  },
+  "wkwebview_version": "21624.5.1.11.3",
+  "webview2_version": "156.0.4314.58",
+  "webview2_fixed_runtime": {
+    "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/b7919cc9-680d-4253-bf32-732988e68aa6/Microsoft.WebView2.FixedVersionRuntime.156.0.4314.58.x64.cab",
+    "sha256": "857dcfd6f7035508a29645fa2978c3a6a841f220df77cc366d318894e19f4792"
+  }
 }

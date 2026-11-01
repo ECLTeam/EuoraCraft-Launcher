@@ -378,15 +378,9 @@ def test_posix_opened_descriptor_branch_and_deadline_guard(tmp_path, queries, mo
     root = tmp_path / "game"
     target = instance(root, "x")
     if sys.platform != "linux":
-        original = Path.resolve
-
-        def resolve(path, *args, **kwargs):
-            if str(path).replace("\\", "/").startswith("/proc/self/fd/"):
-                return target / "x.json"
-            return original(path, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "resolve", resolve)
-        monkeypatch.setattr("ECL.utils.instance_reading.sys.platform", "linux")
+        monkeypatch.setattr(
+            "ECL.utils.instance_reading.InstanceReadBoundary._opened_path", staticmethod(lambda _: target / "x.json")
+        )
     assert queries.query_instance_summary(root, "x", monotonic() + 5).version_id == "x"
     with pytest.raises(InstanceReadError) as error:
         queries.query_instance_summary(root, "x", monotonic() - 1)

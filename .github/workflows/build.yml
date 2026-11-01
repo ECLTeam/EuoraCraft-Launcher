@@ -113,29 +113,30 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Build fixed plugin window runtime
-        if: ${{ runner.os == 'Windows' && runner.arch == 'X64' }}
+        if: ${{ runner.os != 'Windows' || runner.arch == 'X64' }}
         shell: pwsh
         env:
           RUSTUP_TOOLCHAIN: "1.99.0"
         run: |
           rustup toolchain install 1.99.0 --profile minimal
           if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed' }
-          ./native/pytauri-runtime/build-wheel.ps1 -Python python
+          python native/pytauri-runtime/build-wheel.py
+          if ($LASTEXITCODE -ne 0) { throw 'Fixed plugin runtime build failed' }
           python -m pip install --no-index --no-deps --require-hashes --find-links build/native-runtime/wheels -r build/native-runtime/install.txt
           if ($LASTEXITCODE -ne 0) { throw 'Fixed plugin runtime installation failed' }
 
       - name: Preserve plugin runtime build manifest
-        if: ${{ runner.os == 'Windows' && runner.arch == 'X64' }}
+        if: ${{ runner.os != 'Windows' || runner.arch == 'X64' }}
         uses: actions/upload-artifact@v7
         with:
-          name: plugin-native-runtime-${{ runner.arch }}
+          name: plugin-native-runtime-${{ runner.os }}-${{ runner.arch }}
           path: |
             build/native-runtime/build-manifest.json
             build/native-runtime/install.txt
             build/native-runtime/wheels/*.whl
             native/pytauri-runtime/source.json
             native/pytauri-runtime/runtime.patch
-            native/pytauri-runtime/plugin_isolation.rs
+            native/pytauri-runtime/plugin_isolation*.rs
           if-no-files-found: error
 
       - name: Install UPX

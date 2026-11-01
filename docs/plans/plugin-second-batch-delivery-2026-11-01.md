@@ -39,7 +39,7 @@ PyInstaller 完整启动器构建成功；使用该实际可执行文件作为 W
 
 Nuitka standalone 曾构建成功，其显式冻结 Worker 回归 17 passed；主窗口启用流程未完成验收。正式 onefile 构建遇到编译器内存不足，降低并行度重试期间，用户明确要求不再构建 Nuitka，已停止该构建及后续 Nuitka 验收。本次不将 Nuitka onefile 或主窗口标记为通过。用户取消该项验收后，按已通过的源码、真实原生运行时与 PyInstaller 结果交付第二批。源码、冻结 Worker、冻结主窗口和远端 CI 分别记录，不能互相代替。
 
-当前第三方 Worker 与独立窗口支持范围仍为 Windows x64。自定义窗口只开放实测 WebView2 156.0.4314.58；其他 build、平台或普通上游 Wheel 在执行插件代码前明确拒绝。Linux/macOS 等价原生边界、在线发现、可信签名和分发属于第三批。
+第二批交付时第三方 Worker 与独立窗口的实测范围为 Windows x64。该批自定义窗口只开放实测 WebView2 156.0.4314.58；其他 build、平台或普通上游 Wheel 在执行插件代码前明确拒绝。第三批后续 Linux/macOS 文件和等价原生窗口边界的当前状态见[跨平台交付记录](plugin-posix-files-and-webviews-2026-11-01.md)；在线发现、可信签名和分发仍按第三批范围推进。
 
 ## Git 与复现
 

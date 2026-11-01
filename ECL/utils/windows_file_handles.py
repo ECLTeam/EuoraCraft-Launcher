@@ -15,60 +15,16 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
-import json
 import os
 import sys
 from collections.abc import Callable
 from ctypes import wintypes
-from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 from time import monotonic
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
-
-from ECL.plugin_api.contracts import ProtocolError
-
-
-class FileBoundaryError(ProtocolError):
-    """
-    只暴露稳定业务错误，不包含宿主路径、原始内容或 NTSTATUS。
-    """
-
-
-class FileIdentity(BaseModel):
-    """
-    绑定目录或文件对象，不以可修改的名称代替对象身份。
-    """
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-    volume: int
-    index: int
-    created: int
-
-
-@dataclass(frozen=True, slots=True)
-class FileInformation:
-    """
-    描述句柄确认的普通对象，纳秒时间不直接放入 JSON DTO。
-    """
-
-    identity: FileIdentity
-    size: int
-    modified_ns: int
-    attributes: int
-    links: int
-
-    def etag(self, digest: str) -> str:
-        """
-        将物理身份与完整内容摘要组合为不透明版本。
-
-        :param digest: 文件完整字节的 SHA-256
-        :return: 可安全传输的版本字符串
-        """
-        value = [self.identity.model_dump(), self.size, self.modified_ns, digest]
-        return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+from ECL.utils.file_models import FileBoundaryError, FileIdentity, FileInformation
 
 
 class _UnicodeString(ctypes.Structure):
@@ -614,6 +570,14 @@ class FileHandle:
         self._is_delete_pending = False
         self._identity: FileIdentity | None = None
 
+    def object_identity(self) -> FileIdentity:
+        """
+        返回已接管对象的原始身份，供初始校验失败后的清理确认。
+
+        :return: 原对象身份，不表示它已经通过普通文件及链接数验证
+        """
+        return self._native.information(self._handle).identity
+
     @property
     def identity(self) -> FileIdentity:
         """
@@ -781,6 +745,15 @@ class FileHandle:
             )
             self._is_delete_pending = True
         self.close()
+
+    @property
+    def has_pending_cleanup(self) -> bool:
+        """
+        查询原对象或事务元数据是否仍有本所有者必须完成的清理。
+
+        :return: 仍需重试清理时为 True，不把描述符关闭等同事务资源释放
+        """
+        return not self.is_closed
 
     @property
     def is_closed(self) -> bool:

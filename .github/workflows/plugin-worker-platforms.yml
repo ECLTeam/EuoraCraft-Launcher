@@ -7,6 +7,9 @@ on:
       - "ECL/bootstrap.py"
       - "ECL/plugin_api/**"
       - "ECL/plugins/**"
+      - "ECL/utils/*file*"
+      - "ECL/services/game/**"
+      - "tests/test_posix_file_handles.py"
       - "tests/test_plugin*"
       - "tests/test_process_bootstrap.py"
       - ".github/workflows/plugin-worker-platforms.yml"
@@ -50,6 +53,9 @@ jobs:
           tests/test_process_bootstrap.py
           tests/test_plugin_guardian_control.py
           tests/test_plugin_worker_protocol.py
+          tests/test_plugin_unix_framing.py
+          tests/test_plugin_native_debugging.py
+          tests/test_plugin_native_build_inputs.py
           tests/test_plugin_worker_bootstrap.py
           tests/test_plugin_worker_lifecycle.py
           tests/test_plugin_worker_manager.py
@@ -87,4 +93,90 @@ jobs:
         with:
           name: worker-reports-${{ matrix.os }}
           path: build/worker-*.xml
+          if-no-files-found: error
+
+  file-transactions:
+    name: File Transactions (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install runtime and test dependencies
+        run: python -m pip install -e . pytest pytest-asyncio ruff
+      - name: Run native file primitives
+        timeout-minutes: 4
+        run: |
+          python - <<'PY'
+          import subprocess
+          import sys
+          suite = "tests/test_plugin_file_handles.py" if sys.platform == "win32" else "tests/test_posix_file_handles.py"
+          subprocess.run([sys.executable, "-m", "pytest", suite, "--tb=short", "-q", "--maxfail=1", "-o", "faulthandler_timeout=30", "--junitxml=build/file-native.xml"], check=True)
+          PY
+      - name: Record native browser engine versions
+        if: runner.os != 'Windows'
+        run: |
+          python - <<'PY'
+          import plistlib
+          import subprocess
+          import sys
+          from pathlib import Path
+          if sys.platform == "darwin":
+              info = plistlib.loads(Path("/System/Library/Frameworks/WebKit.framework/Resources/Info.plist").read_bytes())
+              print("WebKit CFBundleVersion:", info["CFBundleVersion"])
+          else:
+              subprocess.run(["pkg-config", "--modversion", "webkit2gtk-4.1"], check=False)
+          PY
+      - name: Run file transactions and real source Workers
+        if: always()
+        timeout-minutes: 6
+        run: >-
+          python -m pytest --tb=short -q --maxfail=1 -o faulthandler_timeout=30
+          --junitxml=build/file-common.xml
+          tests/test_plugin_host_files.py
+          tests/test_plugin_file_delete.py
+          tests/test_plugin_file_replace.py
+          tests/test_plugin_instance_profile_write.py
+          tests/test_plugin_instance_reading.py
+          tests/test_plugin_file_worker.py
+          tests/test_plugin_file_replace_worker.py
+          tests/test_plugin_file_delete_worker.py
+          tests/test_plugin_download_worker.py
+          tests/test_plugin_instance_profile_worker.py
+          tests/test_instance_profile_transactions.py
+          tests/test_plugin_game_install.py
+          tests/test_plugin_game_launch.py
+          tests/test_plugin_game_resources.py
+          tests/test_plugin_modpacks.py
+          tests/test_plugin_game_tools_worker.py
+          -k 'not frozen and not test_delayed_removal_keeps_cleanup_pending_until_original_entry_gone and not test_staging_metadata_handle_delays_quota_release'
+      - name: Reject incomplete file coverage
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for name in ("file-common.xml", "file-native.xml"):
+              cases = list(ET.parse(Path("build") / name).iter("testcase"))
+              if not cases or any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")):
+                  raise SystemExit(f"Required file coverage is incomplete: {name}")
+              print(f"{name}: {len(cases)} required cases passed")
+          PY
+      - name: Preserve original file reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: file-reports-${{ matrix.os }}
+          path: build/file-*.xml
           if-no-files-found: error

@@ -41,7 +41,7 @@ from ECL.plugins.runtime.models import (
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.services.operations import OperationCommitRejectedError, OperationContext
-from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
+from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
 
 
 @dataclass(frozen=True, slots=True)
@@ -486,14 +486,7 @@ class RuntimeFiles:
                 original.close()
                 upload.original = None
 
-                def replace() -> None:
-                    assert upload.stream is not None
-                    try:
-                        upload.stream.replace(upload.target.relative_path)
-                    except FileBoundaryError as exc:
-                        raise OperationCommitRejectedError("替换未完成，原文件已保留", exc.error_code) from exc
-
-                context.finalize(replace)
+                context.finalize(lambda: self._replace_staged(upload))
                 return _PublishedFile(upload.target, space.identity, upload.stream.information(), actual)
 
             def publish() -> None:
@@ -507,6 +500,19 @@ class RuntimeFiles:
 
             context.finalize(publish)
             return published
+
+    @staticmethod
+    def _replace_staged(upload: StagedFile) -> None:
+        """
+        区分替换前失败和实际发布后的确认失败，不把已发生的替换报告为零效果。
+        """
+        assert upload.stream is not None
+        try:
+            upload.stream.replace(upload.target.relative_path)
+        except FileBoundaryError as exc:
+            if upload.stream.is_published:
+                raise
+            raise OperationCommitRejectedError("替换未完成，原文件已保留", exc.error_code) from exc
 
     def project(self, result: object) -> JsonValue:
         """
@@ -618,6 +624,9 @@ class RuntimeFiles:
                 except FileBoundaryError as rollback_error:
                     raise exc from rollback_error
                 raise OperationCommitRejectedError("删除未执行，原文件已保留", exc.error_code) from exc
+            # 原描述符已关闭时不能再撤回；继续观察实际移除，并保留元数据清理责任。
+            deletion.needs_rollback = False
+            deletion.needs_observation = True
             raise
         deletion.needs_rollback = False
         deletion.needs_observation = True
