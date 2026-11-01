@@ -141,11 +141,15 @@ def test_real_native_custom_ui_worker_round_trip_revocation_and_reopen(tmp_path)
         creationflags=0x08000000 if sys.platform == "win32" else 0,
     )
     report = output / "result.json"
-    assert report.exists(), result.stderr.decode("utf-8", errors="replace")[-2000:]
+    diagnostics = (
+        result.stdout.decode("utf-8", errors="replace")[-6000:]
+        + result.stderr.decode("utf-8", errors="replace")[-6000:]
+    )
+    assert report.exists(), diagnostics
     data = json.loads(report.read_text(encoding="utf-8"))
     assert result.returncode == 0 and data["ok"] is True, (
         data,
-        result.stderr.decode("utf-8", errors="replace")[-2000:],
+        diagnostics,
     )
     assert data["revocation_closed"] and data["reopened_and_closed"]
     destination = os.environ.get("ECL_NATIVE_UI_REPORT")
