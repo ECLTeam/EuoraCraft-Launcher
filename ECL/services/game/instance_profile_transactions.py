@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,7 +62,8 @@ class NativeProfileTarget:
         :return: 和资源目录使用同一模型的身份
         """
         info = directory.stat_information()
-        return DirectoryIdentity(device=info.st_dev, inode=info.st_ino, created_ns=info.st_ctime_ns)
+        created_ns = info.st_ctime_ns if sys.platform == "win32" else directory.information().identity.created
+        return DirectoryIdentity(device=info.st_dev, inode=info.st_ino, created_ns=created_ns)
 
     def open(self, *, initialize: bool = False, admit: Callable[[], None] | None = None) -> None:
         """

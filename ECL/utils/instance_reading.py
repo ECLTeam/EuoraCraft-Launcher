@@ -26,6 +26,7 @@ from time import monotonic
 from pydantic import BaseModel, ConfigDict, StrictInt
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.utils.file_models import FileBoundaryError
 
 
 class InstanceReadError(ValueError):
@@ -72,8 +73,23 @@ def directory_identity(directory_path: Path) -> DirectoryIdentity:
             or not info.st_ino
         ):
             raise InstanceReadError("实例资源不是可验证的普通目录")
-        created_ns = info.st_ctime_ns if sys.platform == "win32" else int(getattr(info, "st_birthtime", 0) * 10**9)
+        if sys.platform == "win32":
+            created_ns = info.st_ctime_ns
+        else:
+            from ECL.utils.posix_file_native import PosixFiles
+
+            # 读取授权不得触发事务恢复；这里只打开只读句柄取得真实出生时间。
+            descriptor = os.open(directory_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                identity = PosixFiles().information(descriptor).identity
+                if (identity.volume, identity.index) != (info.st_dev, info.st_ino):
+                    raise InstanceReadError("实例资源身份已经变化")
+                created_ns = identity.created
+            finally:
+                os.close(descriptor)
         return DirectoryIdentity(device=info.st_dev, inode=info.st_ino, created_ns=created_ns)
+    except FileBoundaryError as exc:
+        raise InstanceReadError("实例资源无法可靠识别", exc.error_code) from exc
     except OSError as exc:
         raise InstanceReadError("实例资源无法访问") from exc
 
@@ -150,8 +166,12 @@ class InstanceReadBoundary:
             return Path(f"/proc/self/fd/{descriptor}").resolve(strict=True)
         if sys.platform == "darwin":
             library = ctypes.CDLL(None, use_errno=True)
+            function = library.fcntl
+            # Apple ARM64 的可变参数 ABI 需要声明固定参数，第三个参数仍是可变参数。
+            function.argtypes = [ctypes.c_int, ctypes.c_int]
+            function.restype = ctypes.c_int
             buffer = ctypes.create_string_buffer(4096)
-            if library.fcntl(descriptor, 50, buffer) != 0:
+            if function(descriptor, 50, ctypes.cast(buffer, ctypes.c_void_p)) != 0:
                 raise InstanceReadError("不能核实实例文件句柄")
             return Path(os.fsdecode(buffer.value))
         raise InstanceReadError("当前平台不能核实实例读取边界", "PLUGIN_RUNTIME_UNSUPPORTED")

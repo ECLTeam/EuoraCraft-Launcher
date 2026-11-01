@@ -122,6 +122,20 @@ jobs:
           suite = "tests/test_plugin_file_handles.py" if sys.platform == "win32" else "tests/test_posix_file_handles.py"
           subprocess.run([sys.executable, "-m", "pytest", suite, "--tb=short", "-q", "--maxfail=1", "-o", "faulthandler_timeout=30", "--junitxml=build/file-native.xml"], check=True)
           PY
+      - name: Record native browser engine versions
+        if: runner.os != 'Windows'
+        run: |
+          python - <<'PY'
+          import plistlib
+          import subprocess
+          import sys
+          from pathlib import Path
+          if sys.platform == "darwin":
+              info = plistlib.loads(Path("/System/Library/Frameworks/WebKit.framework/Resources/Info.plist").read_bytes())
+              print("WebKit CFBundleVersion:", info["CFBundleVersion"])
+          else:
+              subprocess.run(["pkg-config", "--modversion", "webkit2gtk-4.1"], check=False)
+          PY
       - name: Run file transactions and real source Workers
         if: always()
         timeout-minutes: 6
@@ -132,6 +146,7 @@ jobs:
           tests/test_plugin_file_delete.py
           tests/test_plugin_file_replace.py
           tests/test_plugin_instance_profile_write.py
+          tests/test_plugin_instance_reading.py
           tests/test_plugin_file_worker.py
           tests/test_plugin_file_replace_worker.py
           tests/test_plugin_file_delete_worker.py
