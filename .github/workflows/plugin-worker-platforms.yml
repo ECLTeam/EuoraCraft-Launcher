@@ -44,8 +44,9 @@ jobs:
           python -m ruff check ECL tests
           python -m ruff format --check ECL tests
       - name: Run required source behavior
+        timeout-minutes: 4
         run: >-
-          python -m pytest --tb=short -q --junitxml=build/worker-common.xml
+          python -m pytest --tb=short -q --maxfail=1 -o faulthandler_timeout=20 --junitxml=build/worker-common.xml
           tests/test_process_bootstrap.py
           tests/test_plugin_guardian_control.py
           tests/test_plugin_worker_protocol.py
@@ -60,12 +61,14 @@ jobs:
           tests/test_plugin_ui_slot_worker.py
           -k 'not frozen and not True'
       - name: Run native process and transport boundaries
+        if: always()
+        timeout-minutes: 4
         run: |
           python - <<'PY'
           import subprocess
           import sys
           suite = "tests/test_plugin_windows_supervision.py" if sys.platform == "win32" else "tests/test_plugin_posix_runtime.py"
-          subprocess.run([sys.executable, "-m", "pytest", suite, "--tb=short", "-q", "--junitxml=build/worker-native.xml"], check=True)
+          subprocess.run([sys.executable, "-m", "pytest", suite, "--tb=short", "-q", "--maxfail=1", "-o", "faulthandler_timeout=20", "--junitxml=build/worker-native.xml"], check=True)
           PY
       - name: Reject empty or skipped required coverage
         run: |
