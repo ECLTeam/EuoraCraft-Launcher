@@ -22,12 +22,13 @@
 #       - detect_ports() -> dict[str, Any] — 探测本机 Java 进程开放的候选端口。
 #       - search_mc_port(ports) -> dict[str, Any] — 在候选端口中搜索确认 Minecraft 服务端口。
 #   - class ConnectorNatError — NAT 探测失败，携带稳定 IPC 错误码。
+#   - class ConnectorRoomError — 会话归属与实际清理失败。
+#   - class PluginConnectorRoom / PluginConnectorStatus — 宿主绑定的插件会话代次及最小状态。
 # ============================================================
 
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 import socket
@@ -35,6 +36,7 @@ import struct
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+from dataclasses import dataclass
 from ipaddress import ip_address
 from threading import Event, Lock, RLock, Thread, current_thread
 from time import monotonic, sleep
@@ -51,7 +53,15 @@ from ECL.plugins.connector import (
     ConnectorSessionContext,
 )
 from ECL.services.connector_nodes import ConnectorNodeConfig, ConnectorNodeError, ConnectorNodeSettings
-from ECL.services.florolding import Florolding, find_free_port, validate_code
+from ECL.services.florolding import (
+    AsyncFloroldingClient,
+    AsyncFloroldingServer,
+    Florolding,
+    find_free_port,
+    validate_code,
+)
+from ECL.services.florolding.Florolding.Broadcaster import MinecraftLANBroadcaster
+from ECL.services.operations import OperationOrigin
 from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
 from ECL.utils.operation_logging import current_operation, operation_scope, trace_scope
 
@@ -59,6 +69,44 @@ logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
 EasyTierPhase = str  # "idle" | "resolving" | "downloading" | "extracting" | "installed" | "failed"
 NatTypeKind = str  # "cone" | "symmetric" | "blocked" | "unknown"
+
+
+class ConnectorRoomError(ConnectorError):
+    """
+    表示联机会话归属、代次或资源清理尚未满足要求的稳定业务失败。
+    """
+
+    def __init__(self, message: str, error_code: str) -> None:
+        """
+        保存不含房间码和网络凭据的错误。
+
+        :param message: 业务说明
+        :param error_code: 稳定错误类别
+        """
+        super().__init__(message)
+        self.error_code = error_code
+
+
+@dataclass(frozen=True, slots=True)
+class PluginConnectorRoom:
+    """
+    保存宿主分配的联机来源和代次，不接受插件自报。
+    """
+
+    origin: OperationOrigin
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class PluginConnectorStatus:
+    """
+    仅投影当前来源会话的必要状态，不交付网络节点、机器标识或其他房间信息。
+    """
+
+    mode: str
+    room_code: str | None
+    local_port: int | None
+    cleanup_pending: bool
 
 
 class ConnectorNatError(ConnectorError):
@@ -80,17 +128,6 @@ class ConnectorNatError(ConnectorError):
         """
         super().__init__(message)
         self.error_code = error_code
-
-
-def _supports_kwarg(func: Callable[..., Any], name: str) -> bool:
-    # 检测调用目标是否接受指定关键字参数，用于兼容不同版本的 Florolding API。
-    try:
-        signature = inspect.signature(func)
-    except (TypeError, ValueError):
-        return False
-    if name in signature.parameters:
-        return True
-    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values())
 
 
 class ConnectorService:
@@ -152,10 +189,11 @@ class ConnectorService:
         self._room_code: str | None = None
         self._mc_host: str | None = None
         self._mc_port: int | None = None
-        self._room_server: Any = None  # AsyncFloroldingServer
+        self._room_server: AsyncFloroldingServer | None = None
         self._easy_tier_node: Any = None  # easytier_pyo3.Node
         self._nat_probe_lock = Lock()
-        self._client: Any = None  # AsyncFloroldingClient
+        self._client: AsyncFloroldingClient | None = None
+        self._lan_broadcaster: MinecraftLANBroadcaster | None = None
         self._players: list[dict[str, Any]] = []
         self._nodes: list[str] = list(self.default_nodes)
         self._node_cache_ttl = max(0.0, self.node_cache_ttl_seconds if node_cache_ttl is None else node_cache_ttl)
@@ -170,6 +208,11 @@ class ConnectorService:
         self._game_info: dict[str, Any] | None = None
         # 建房/加入的状态迁移守卫：防止并发 host/join 互相覆盖房间状态
         self._transition_lock = RLock()
+        self._room_action_lock = RLock()
+        self._room_owner: OperationOrigin | None = None
+        self._room_generation = 0
+        self._is_plugin_reserved = False
+        self._is_cleanup_pending = False
         self._transitioning = False
 
         # 易用性
@@ -438,15 +481,24 @@ class ConnectorService:
 
         :returns: 包含 mode, roomCode, mcHost, mcPort, gameInfo, players, error 的字典
         """
+        players = [] if self._is_cleanup_pending else self._current_players()
+        # 房主自己不在房客列表里，直接取本次会话使用的玩家名，避免界面显示占位文案。
+        host_name = (
+            self._player_name
+            if self._mode == "host"
+            else next((item["name"] for item in players if item.get("kind") == "host" and item.get("name")), None)
+        )
         status = {
             "mode": self._mode,
             "roomCode": self._room_code,
             "mcHost": self._mc_host,
             "mcPort": self._mc_port,
             "gameInfo": dict(self._game_info) if self._game_info is not None else None,
-            "players": self._current_players(),
+            "players": players,
+            "hostName": host_name,
             "nodes": self._nodes,
             "error": self._error,
+            "cleanupPending": self._is_cleanup_pending,
         }
         return self.extensions.enrich_status(self._session_context(), status)
 
@@ -655,6 +707,141 @@ class ConnectorService:
 
     def host_port(self, port: int) -> dict[str, Any]:
         """
+        串行创建用户自己的房间，不覆盖插件或用户的现有会话。
+
+        :param port: Minecraft 服务端口
+        :return: 创建结果
+        :raises ConnectorError: 已有会话或创建失败时抛出
+        """
+        with self._room_action_lock:
+            self._begin_user_room()
+            return self._host_port(port)
+
+    def _begin_user_room(self) -> None:
+        """
+        用户和插件共用同一状态迁移入口，网络等待期间不会接纳新会话。
+        """
+        with self._transition_lock:
+            if self._mode != "idle" or self._transitioning or self._is_cleanup_pending:
+                raise ConnectorRoomError("当前已有联机会话，请先退出", "CONNECTOR_ROOM_BUSY")
+            self._room_generation += 1
+            self._room_owner = None
+
+    def reserve_plugin_room(self, origin: OperationOrigin) -> PluginConnectorRoom:
+        """
+        为已授权来源保留一次联机代次，不启动网络资源。
+
+        :param origin: 宿主持有的插件来源
+        :return: 该来源专属的代次
+        :raises ConnectorRoomError: 现有房间不能被覆盖时抛出
+        """
+        if not self._room_action_lock.acquire(blocking=False):
+            raise ConnectorRoomError("联机会话正在切换", "CONNECTOR_ROOM_BUSY")
+        try:
+            with self._transition_lock:
+                if self._mode != "idle" or self._transitioning or self._is_cleanup_pending:
+                    raise ConnectorRoomError("当前已有联机会话，请先退出", "CONNECTOR_ROOM_BUSY")
+                self._room_generation += 1
+                self._room_owner = origin
+                self._is_plugin_reserved = True
+                self._mode = "starting"
+                return PluginConnectorRoom(origin, self._room_generation)
+        finally:
+            self._room_action_lock.release()
+
+    def owns_plugin_room(self, room: PluginConnectorRoom) -> bool:
+        """
+        复核当前来源与代次；相同插件的新会话也不能恢复旧引用。
+
+        :param room: 原始保留代次
+        :return: 是否仍为同一会话
+        """
+        with self._transition_lock:
+            return self._room_owner == room.origin and self._room_generation == room.generation
+
+    def is_plugin_room_origin(self, origin: OperationOrigin) -> bool:
+        """
+        供受信扩展注册表过滤当前来源，用户房间不会协商第三方私有协议。
+
+        :param origin: 宿主绑定的插件来源
+        :return: 是否为当前会话的实际来源
+        """
+        with self._transition_lock:
+            return self._room_owner == origin
+
+    def start_plugin_room(self, room: PluginConnectorRoom, *, port: int | None = None, code: str | None = None) -> None:
+        """
+        执行已保留来源的实际建房或加入，迟到请求不能覆盖后来的会话。
+
+        :param room: 宿主保留的原始来源代次
+        :param port: 建房端口，与 code 二选一
+        :param code: 加入自己的目标房间，不用于读取其他本机会话
+        :raises ConnectorRoomError: 来源、代次或选择无效时抛出
+        """
+        with self._room_action_lock:
+            if not self.owns_plugin_room(room) or not self._is_plugin_reserved or (port is None) == (code is None):
+                raise ConnectorRoomError("联机保留已经失效", "PLUGIN_RESOURCE_DENIED")
+            self._is_plugin_reserved = False
+            self._mode = "idle"
+            if port is not None:
+                self._host_port(port)
+            else:
+                assert code is not None
+                self._join(code)
+
+    def plugin_room_status(self, room: PluginConnectorRoom) -> PluginConnectorStatus:
+        """
+        仅交付指定来源代次的状态，迁移期间不交付尚未提交的房间数据。
+
+        :param room: 原始来源代次
+        :return: 有界会话状态
+        :raises ConnectorRoomError: 当前会话已经属于其他来源或代次时抛出
+        """
+        with self._transition_lock:
+            if not self.owns_plugin_room(room):
+                raise ConnectorRoomError("联机会话不属于当前运行", "PLUGIN_RESOURCE_DENIED")
+            is_starting = self._transitioning or self._is_plugin_reserved
+            return PluginConnectorStatus(
+                "starting" if is_starting else self._mode,
+                None if is_starting else self._room_code,
+                None if is_starting else self._mc_port,
+                self._is_cleanup_pending,
+            )
+
+    def leave_plugin_room(self, room: PluginConnectorRoom) -> bool:
+        """
+        只清理同一来源代次；旧会话已结束时不能影响后来创建的用户房间。
+
+        :param room: 原始来源代次
+        :return: 原会话已不再活动或已完成实际清理时为 True
+        :raises ConnectorRoomError: 实际资源清理未完成时保留句柄并抛出
+        """
+        with self._room_action_lock:
+            if not self.owns_plugin_room(room):
+                return True
+            self._leave()
+            return True
+
+    def request_plugin_room(self, room: PluginConnectorRoom, protocol: str, body: bytes) -> tuple[int, bytes]:
+        """
+        仅向同一来源代次的房主发送请求，退出期间拒绝新的网络调用。
+
+        :param room: 原始会话代次
+        :param protocol: 适配器已经校验的私有协议名
+        :param body: 有界请求载荷
+        :return: 原始响应状态及载荷，由适配器继续校验
+        :raises ConnectorRoomError: 会话已失效、正在清理或不是房客时抛出
+        """
+        with self._room_action_lock:
+            if not self.owns_plugin_room(room) or self._mode != "guest" or self._is_cleanup_pending:
+                raise ConnectorRoomError("联机会话当前不能发送请求", "PLUGIN_RESOURCE_DENIED")
+            try:
+                return self._send_extension_request(protocol, body)
+            except (TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError, RuntimeError):
+                raise ConnectorRoomError("联机协议请求未完成", "PLUGIN_CONNECTOR_FAILED") from None
+
+    def _host_port(self, port: int) -> dict[str, Any]:
+        """
         以指定端口创建联机房间。
 
         :param port: Minecraft 服务器端口
@@ -684,16 +871,13 @@ class ConnectorService:
             florolding.set_nodes(self._nodes)
             logger.debug("已设置 EasyTier 节点列表")
 
-            create_kwargs: dict[str, Any] = {}
-            if _supports_kwarg(florolding.create_room, "protocol_handlers"):
-                create_kwargs["protocol_handlers"] = self._extension_protocol_handlers()
-            else:
-                logger.debug("当前 Florolding 版本不支持 protocol_handlers，跳过插件扩展协议注册")
             room_code, server, easy_tier_node = florolding.create_room(
                 player_name=self._player_name,
                 minecraft_port=port,
-                **create_kwargs,
+                protocol_handlers=self._extension_protocol_handlers(),
             )
+            self._room_server = server
+            self._easy_tier_node = easy_tier_node
             logger.debug(
                 "房间已创建：房间码：%s；服务端：%s；EasyTier节点编号：%s",
                 "<已隐藏>",
@@ -705,8 +889,6 @@ class ConnectorService:
             self._room_code = room_code
             self._mc_host = "127.0.0.1"
             self._mc_port = port
-            self._room_server = server
-            self._easy_tier_node = easy_tier_node
             self._error = None
 
             logger.info("联机房间创建成功：房间码：%s；游戏端口：%s", "<已隐藏>", port)
@@ -714,6 +896,7 @@ class ConnectorService:
         except Exception as exc:
             self._mode = "idle"
             self._error = str(exc)
+            self._cleanup_room_handles()
             self._end_transition()
             logger.exception("创建联机房间失败: %s", exc)
             if isinstance(exc, ConnectorNodeError):
@@ -752,6 +935,18 @@ class ConnectorService:
 
     def join(self, code: str) -> dict[str, Any]:
         """
+        串行加入用户选择的房间，不复用或覆盖插件会话。
+
+        :param code: 用户提供的房间码
+        :return: 加入后的本地连接结果
+        :raises ConnectorError: 已有房间、格式或连接失败时抛出
+        """
+        with self._room_action_lock:
+            self._begin_user_room()
+            return self._join(code)
+
+    def _join(self, code: str) -> dict[str, Any]:
+        """
         加入联机房间。
 
         :param code: 房间码（格式 U/NNNN-NNNN-SSSS-SSSS）
@@ -787,13 +982,14 @@ class ConnectorService:
             self._easy_tier_node = node
             self._mode = "guest"
             self._error = None
+            self.extensions.guest_joined(self._session_context())
 
             logger.info("已加入联机房间：房间码：%s；游戏端口：%s", "<已隐藏>", mc_port)
             return {"mcHost": self._mc_host, "mcPort": self._mc_port}
         except Exception as exc:
             self._mode = "idle"
             self._error = str(exc)
-            self._stop_async_thread_client()
+            self._cleanup_room_handles()
             self._end_transition()
             logger.exception("加入联机房间失败: %s", exc)
             if isinstance(exc, ConnectorNodeError):
@@ -824,30 +1020,35 @@ class ConnectorService:
         player_name: str,
         conn_timeout: int = 30,
     ) -> tuple[Any, int]:
-        join_kwargs: dict[str, Any] = {}
-        if _supports_kwarg(florolding.join_room, "supported_protocols"):
-            join_kwargs["supported_protocols"] = self.extensions.protocol_names()
-        else:
-            logger.debug("当前 Florolding 版本不支持 supported_protocols，跳过插件扩展协议协商")
         client, node = florolding.join_room(
             room_code,
             player_name,
             conn_timeout,
-            **join_kwargs,
+            supported_protocols=self.extensions.protocol_names(),
         )
         self._client = client
+        self._easy_tier_node = node
 
         bind_mc_port = find_free_port()
-        bind_result = florolding.bind_mc_port(client, node, bind_mc_port=bind_mc_port, timeout=conn_timeout)
-        # 新版本返回 (bool, broadcaster)，旧版本返回 bool
-        bind_ok = bool(bind_result[0]) if isinstance(bind_result, tuple) else bool(bind_result)
+        bind_ok, broadcaster = florolding.bind_mc_port(
+            client, node, bind_mc_port=bind_mc_port, timeout=conn_timeout, broadcast=self._room_owner is None
+        )
+        self._lan_broadcaster = broadcaster
         if not bind_ok:
-            node.stop()
             raise ConnectorError("绑定 Minecraft 端口失败")
-        self.extensions.guest_joined(self._session_context())
         return node, bind_mc_port
 
     def leave(self) -> dict[str, Any]:
+        """
+        串行退出当前用户可见会话，完成实际清理后才交付成功。
+
+        :return: 退出结果
+        :raises ConnectorRoomError: 资源清理未确认时保留当前会话供重试
+        """
+        with self._room_action_lock:
+            return self._leave()
+
+    def _leave(self) -> dict[str, Any]:
         """
         退出联机房间。
 
@@ -855,23 +1056,10 @@ class ConnectorService:
         """
         previous_context = self._session_context()
         logger.info("开始退出联机房间并清理网络资源")
-        if self._mode != "idle":
+        if self._mode != "idle" and not self._is_cleanup_pending:
             self.extensions.before_leave(previous_context)
-        self._stop_async_thread_client()
-        server = self._room_server
-        if server is not None and hasattr(server, "sync_stop"):
-            try:
-                server.sync_stop()
-            except Exception:
-                logger.debug("停止联机服务端失败", exc_info=True)
-
-        node = self._easy_tier_node
-        if node is not None and hasattr(node, "stop"):
-            try:
-                node.stop()
-            except Exception:
-                logger.debug("停止 EasyTier 节点失败", exc_info=True)
-
+        self._is_cleanup_pending = True
+        self._cleanup_room_handles()
         self._mode = "idle"
         self._room_code = None
         self._mc_host = None
@@ -880,7 +1068,10 @@ class ConnectorService:
         self._easy_tier_node = None
         self._client = None
         self._game_info = None
+        self._players = []
         self._error = None
+        self._is_cleanup_pending = False
+        self._is_plugin_reserved = False
         # 若退出发生在建房/加入迁移进行中，同步释放迁移占用
         self._end_transition()
         self.extensions.reset(
@@ -891,6 +1082,9 @@ class ConnectorService:
                 game_info=None,
             )
         )
+        with self._transition_lock:
+            self._room_owner = None
+            self._room_generation += 1
         logger.info("联机房间资源清理完成，已恢复空闲状态")
         return {"status": "left"}
 
@@ -911,30 +1105,88 @@ class ConnectorService:
         except Exception:
             logger.debug("关闭联机服务失败", exc_info=True)
 
+    def _cleanup_room_handles(self) -> None:
+        """
+        分别确认实际停止；失败保留对应句柄及会话，不把提交停止当作资源已经释放。
+        """
+        pending = False
+        try:
+            self._stop_async_thread_client()
+        except Exception:
+            pending = True
+            logger.warning("联机客户端清理尚未确认", exc_info=True)
+        server = self._room_server
+        if server is not None:
+            try:
+                self._stop_room_server(server)
+            except Exception:
+                pending = True
+                logger.warning("联机服务端清理尚未确认", exc_info=True)
+        node = self._easy_tier_node
+        if node is not None:
+            try:
+                node.stop()
+                self._easy_tier_node = None
+            except Exception:
+                pending = True
+                logger.warning("联机节点清理尚未确认", exc_info=True)
+        if self._lan_broadcaster is not None:
+            try:
+                self._lan_broadcaster.stop()
+                self._lan_broadcaster = None
+            except Exception:
+                pending = True
+                logger.warning("局域网广播清理尚未确认", exc_info=True)
+        if pending:
+            self._is_cleanup_pending = True
+            raise ConnectorRoomError("联机资源清理尚未确认，请重试退出", "CONNECTOR_CLEANUP_PENDING")
+
+    def _stop_room_server(self, server: AsyncFloroldingServer) -> None:
+        """
+        等待固定 Florolding 服务端循环停止，初始化或退出未完成时保留其引用。
+        """
+        deadline = monotonic() + 5
+        while server.loop is None and monotonic() < deadline:
+            sleep(0.01)
+        loop = server.loop
+        if loop is None:
+            raise ConnectorRoomError("联机服务端尚未确认初始化状态", "CONNECTOR_CLEANUP_PENDING")
+        if not loop.is_closed() and loop.is_running():
+            asyncio.run_coroutine_threadsafe(server.stop(), loop).result(timeout=5)
+            while loop.is_running() and monotonic() < deadline:
+                sleep(0.01)
+            if loop.is_running():
+                raise ConnectorRoomError("联机服务端尚未退出", "CONNECTOR_CLEANUP_PENDING")
+        self._room_server = None
+
     def _stop_async_thread_client(self) -> None:
-        # 停止 florolding 客户端线程：取消心跳并断开连接。
+        """
+        等待心跳、连接及所属循环实际结束后才清除客户端引用。
+        """
         client = self._client
         if client is None:
             return
-        loop = getattr(client, "loop", None)
-        # 事件循环未运行时无法执行停止任务，直接清理引用
-        if loop is None or loop.is_closed() or not loop.is_running():
+        loop = client.loop
+        if loop is None:
+            raise ConnectorRoomError("联机客户端尚未确认初始化状态", "CONNECTOR_CLEANUP_PENDING")
+        if loop.is_closed() or not loop.is_running():
             self._client = None
             return
 
-        async def _stop() -> None:
-            task = getattr(client, "heartbeat_task", None)
+        async def stop() -> None:
+            task = client.heartbeat_task
             if task is not None:
                 task.cancel()
-            if getattr(client, "writer", None) is not None:
-                await client.disconnect()
+                await asyncio.gather(task, return_exceptions=True)
+            await client.disconnect()
 
-        try:
-            asyncio.run_coroutine_threadsafe(_stop(), loop)
-        except (RuntimeError, TypeError):
-            logger.debug("停止 florolding 客户端失败", exc_info=True)
-        finally:
-            self._client = None
+        asyncio.run_coroutine_threadsafe(stop(), loop).result(timeout=5)
+        deadline = monotonic() + 2
+        while loop.is_running() and monotonic() < deadline:
+            sleep(0.01)
+        if loop.is_running():
+            raise ConnectorRoomError("联机客户端尚未退出", "CONNECTOR_CLEANUP_PENDING")
+        self._client = None
 
     def kick(self, machine_id: str) -> dict[str, Any]:
         """
