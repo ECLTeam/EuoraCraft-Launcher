@@ -1,6 +1,6 @@
 # 获准游戏安装示例
 
-加载插件仅注册命令。公开版本查询属于基础能力；安装仅需在可信主窗口批准管理游戏，并选定游戏根目录。安装仅支持 Windows x64 本地 NTFS。
+加载插件仅注册命令。公开版本查询属于基础能力；安装仅需在可信主窗口批准管理游戏，并选定游戏根目录。安装的系统与文件系统要求见[文件平台边界](../../../docs/protocols/eclplugin-package-format.md#文件平台边界)。
 
 1. 执行 `catalog`、`loaders(game_version,loader)` 查看公开版本。
 2. 执行 `discover(capability="instances.manage")`，明确选择一个 `root_ref`。

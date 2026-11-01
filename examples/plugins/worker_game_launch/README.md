@@ -1,6 +1,6 @@
 # 获准游戏启动示例
 
-加载插件仅注册命令。先在可信主窗口批准管理游戏，并选择游戏根目录；范围包含该目录现有及以后新增的实例。首轮仅支持 Windows x64 本地 NTFS。
+加载插件仅注册命令。先在可信主窗口批准管理游戏，并选择游戏根目录；范围包含该目录现有及以后新增的实例。系统与文件系统要求见[文件平台边界](../../../docs/protocols/eclplugin-package-format.md#文件平台边界)。
 
 1. 执行 `discover(capability="instances.manage")`，选择一个 `root_ref`，再执行 `scan(root_ref)` 并选择实际 `instance_ref`。
 2. 执行 `launch(instance_ref,mutation_key)`，用回执的 `operation_ref` 执行 `status`。
