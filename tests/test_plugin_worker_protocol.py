@@ -63,11 +63,11 @@ def test_snapshot_detects_changed_and_extra_files(tmp_path: Path) -> None:
     assert CodeSnapshot.from_records(code_path, snapshot.records()).digest() == snapshot.digest()
     entry.write_text("value = 2", encoding="utf-8")
     with pytest.raises(ProtocolError, match="不一致"):
-        snapshot.verify(snapshot.digest())
+        snapshot.verify(snapshot.digest(), full_content=True)
     entry.write_text("value = 1", encoding="utf-8")
     (code_path / "extra.py").write_text("pass", encoding="utf-8")
     with pytest.raises(ProtocolError):
-        snapshot.verify(snapshot.digest())
+        snapshot.verify(snapshot.digest(), full_content=True)
 
 
 @pytest.mark.parametrize("name", ["../main.py", "C:/main.py", "/main.py", "sub\\main.py", "sub//main.py"])
@@ -175,3 +175,24 @@ def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
         [sys.executable, "-S", "-c", source], cwd=root_path, capture_output=True, text=True, check=True, timeout=10
     )
     assert json.loads(result.stdout) == {"code": 2, "host_loaded": False}
+
+
+def test_cached_snapshot_still_rejects_a_different_authorized_digest(tmp_path):
+    (tmp_path / "main.py").write_text("value = 1", encoding="utf-8")
+    snapshot = CodeSnapshot.capture(tmp_path)
+    with pytest.raises(ProtocolError) as error:
+        snapshot.verify("0" * 64)
+    assert error.value.error_code == "PLUGIN_CONTENT_CHANGED"
+
+
+def test_load_snapshot_checks_changed_bytes_even_when_metadata_is_unchanged(tmp_path):
+    import os
+
+    entry = tmp_path / "main.py"
+    entry.write_text("value = 1", encoding="utf-8")
+    snapshot = CodeSnapshot.capture(tmp_path)
+    original = entry.stat()
+    entry.write_text("value = 2", encoding="utf-8")
+    os.utime(entry, ns=(original.st_atime_ns, original.st_mtime_ns))
+    with pytest.raises(ProtocolError):
+        snapshot.verify(snapshot.digest(), full_content=True)

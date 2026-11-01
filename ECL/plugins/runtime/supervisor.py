@@ -172,7 +172,7 @@ class WorkerSupervisor:
         with self._lock:
             if self.state != "awaiting_authorization" or self._channel is None or self._scope is None:
                 raise ProtocolError("Worker 尚未完成加载前认证")
-            snapshot.verify(snapshot.digest())
+            snapshot.verify(snapshot.digest(), full_content=True)
             if entry_file not in {item.name for item in snapshot.files}:
                 raise ProtocolError("插件入口不在批准快照内")
             assert self._worker_reference is not None

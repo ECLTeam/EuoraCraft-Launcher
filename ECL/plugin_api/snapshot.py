@@ -128,7 +128,7 @@ class CodeSnapshot:
             raise ProtocolError("插件快照超过大小上限")
         return cls(Path(root_path), tuple(sorted(files, key=lambda item: item.name)))
 
-    def verify(self, expected_digest: str) -> None:
+    def verify(self, expected_digest: str, *, full_content: bool = False) -> None:
         """
         在执行入口前复核全部文件与清单，发现变化时拒绝加载。
 
@@ -136,16 +136,22 @@ class CodeSnapshot:
         授权检查在每次宿主 API 调用前执行，全量重读整棵代码树会让插件延迟
         随体积线性增长。新增、删除或元数据变化仍走完整字节复核。
 
-        伪造元数据需要主动改写时间戳，与本文档声明的"不能阻止同用户恶意磁盘
-        篡改"边界一致，不引入新的信任假设。
+        元数据快速路径不能发现保持大小和修改时间的变化，包含文件系统合并时间戳。
+        它只用于已加载会话的频繁检查，不作为首次执行入口的准入依据。
+
+        许可加载必须指定 full_content，不能依赖可能合并写入时间的元数据缓存。
+        普通已加载 API 授权复核保留现有快速路径。
 
         :param expected_digest: 宿主批准的内容摘要
+        :param full_content: 是否强制重新读取所有文件字节；执行插件入口时必须为 True
         :raises ProtocolError: 清单或实际文件与许可不符时抛出
         """
-        if self._metadata_unchanged():
+        if self.digest() != expected_digest:
+            raise ProtocolError("插件内容与已批准快照不一致", "PLUGIN_CONTENT_CHANGED")
+        if not full_content and self._metadata_unchanged():
             return
         actual = self.capture(self.root_path)
-        if self.digest() != expected_digest or actual.files != self.files:
+        if actual.files != self.files:
             raise ProtocolError("插件内容与已批准快照不一致", "PLUGIN_CONTENT_CHANGED")
         self._verified_metadata.clear()
         self._verified_metadata.update(actual._verified_metadata)

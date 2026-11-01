@@ -55,7 +55,7 @@ def _load(message: WireMessage, run_id: str) -> tuple[ModuleType, LockedImports]
     ):
         raise ProtocolError("Worker 加载许可字段无效")
     snapshot = CodeSnapshot.capture(Path(root))
-    snapshot.verify(digest)
+    snapshot.verify(digest, full_content=True)
     if entry not in {item.name for item in snapshot.files} or not entry.endswith(".py"):
         raise ProtocolError("Worker 入口不在批准的代码清单内")
     entry_path = snapshot.root_path / entry
@@ -129,7 +129,7 @@ def _dependency_imports(value: JsonValue, roots: dict[str, Path]) -> tuple[Path 
     if not isinstance(packages, list) or not all(isinstance(name, str) and name for name in packages):
         raise ProtocolError("依赖包名称无效")
     snapshot = DependencySnapshot.capture(Path(root))
-    snapshot.verify(digest)
+    snapshot.verify(digest, full_content=True)
     site_path = snapshot.root_path / "site-packages"
     if not site_path.is_dir() or set(names) & set(roots):
         raise ProtocolError("依赖与插件代码模块冲突", "PLUGIN_DEPENDENCY_CONFLICT")
