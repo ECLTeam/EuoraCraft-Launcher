@@ -21,7 +21,7 @@ import struct
 import subprocess
 import sys
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import closing, suppress
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -241,7 +241,7 @@ def _control(worker: subprocess.Popen[bytes]) -> None:
     macOS 使用退出事件，Linux 使用 WNOWAIT；两者均不提前回收原进程。
     """
     if sys.platform == "darwin":
-        with select.kqueue() as observer:
+        with closing(select.kqueue()) as observer:
             observer.control(
                 [
                     select.kevent(

@@ -43,25 +43,6 @@ jobs:
         run: |
           python -m ruff check ECL tests
           python -m ruff format --check ECL tests
-      - name: Diagnose macOS bootstrap before plugin loading
-        if: runner.os == 'macOS'
-        continue-on-error: true
-        timeout-minutes: 2
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import subprocess
-          import sys
-          paths = [Path("ECL/plugin_api/_guardian.py"), Path("ECL/plugins/runtime/posix.py")]
-          originals = {path: path.read_bytes() for path in paths}
-          try:
-              for path, content in originals.items():
-                  path.write_bytes(content.replace(b"stderr=subprocess.DEVNULL", b"stderr=None"))
-              subprocess.run([sys.executable, "-m", "pytest", "tests/test_plugin_worker_bootstrap.py::test_close_before_load_never_executes_plugin", "-v", "-s"], timeout=70, check=True)
-          finally:
-              for path, content in originals.items():
-                  path.write_bytes(content)
-          PY
       - name: Run required source behavior
         timeout-minutes: 4
         run: >-
