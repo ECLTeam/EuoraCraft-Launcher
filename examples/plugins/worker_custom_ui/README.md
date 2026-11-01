@@ -1,6 +1,6 @@
 # 原生独立前端
 
-需要本仓库 `native/pytauri-runtime` 的固定 Windows x64 运行时。安装、启用并明确批准独立前端许可后，在功能面板点击打开独立窗口。未准备运行时、未批准许可或前端内容改变时明确失败，不退回主窗口执行脚本。
+需要本仓库 `native/pytauri-runtime` 的维护版 `0.8.0+ecl.2` 运行时；已验收 Windows x64、Linux x86_64 和 macOS ARM64 的引擎范围见[原生运行时说明](../../../native/pytauri-runtime/README.md)。安装、启用并明确批准独立前端许可后，在功能面板点击打开独立窗口。未准备运行时、未批准许可或前端内容改变时明确失败，不退回主窗口执行脚本。
 
 入口为包内 UTF-8 单文件 HTML；作者在打包前内联自己的 CSS、脚本、图片或字体。页面处于 opaque sandbox iframe，首版不能直接联网、嵌套页面、启动 worker 或调用通用 Tauri IPC。`ECL.call(method, params)` 只支持当前协议列出的自身命令、设置和任务接口，其他业务通过自己的 Worker 命令完成。
 

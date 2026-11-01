@@ -149,7 +149,7 @@ receipt = host.call("instances.profile_patch", {
 
 提交最多 5 秒；任务 `plugin_instance_profile_patch` 的总截止为 30 秒，包含排队。成功视图为 `{instance_ref,alias,profile:{description,favorite,tags},profile_etag}`，绑定真实提交后的完整版本，交付前再次验证原始管理准入和物理实例；失权时 result 为 null，不改写 effect。完整版本冲突返回 `PLUGIN_INSTANCE_PROFILE_CONFLICT`，调用方不得自动读新版本强制覆盖或换键重放。
 
-仅支持 Windows x64、本地 NTFS。宿主固定原目录和文件对象，核对原资料版本后释放其独占句柄，再用**原子替换**发布新资料：要么旧资料完整保留，要么新资料完整可见，不会出现半写或名称缺失。替换成功后旧版本不可找回，宿主不保留备份、不登记恢复记录。暂存或句柄尚未实际释放时保持 cleanup_pending；重启不恢复旧 Worker、旧任务或旧补丁。
+平台与文件系统限制见[文件平台边界](#文件平台边界)。宿主固定原目录和文件对象，核对原资料版本后释放其独占句柄，再用**原子替换**发布新资料：要么旧资料完整保留，要么新资料完整可见，不会出现半写或名称缺失。替换成功后旧版本不可找回，宿主不保留备份、不登记恢复记录。暂存或句柄尚未实际释放时保持 cleanup_pending；重启不恢复旧 Worker、旧任务或旧补丁。
 
 示例见 [worker_instance_profile](../../examples/plugins/worker_instance_profile/README.md)，边界及验收见 实例资料修改方案。
 
@@ -165,7 +165,13 @@ TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cance
 
 ## 私有文件与新建事务
 
-私有文件属于启用后可用的基础能力，不在清单中声明额外文件权限。通过 `resources.list({capability:"plugin.base"})` 取得本安装的私有数据根引用，随后调用现有文件 API。读取、新建、替换和删除共用原始基础准入；新建仍禁止覆盖，替换仍要求目标版本。范围固定为自身空间，不允许创建子目录或访问用户游戏目录。实际文件事务仅支持 Windows x64、本地 NTFS。
+私有文件属于启用后可用的基础能力，不在清单中声明额外文件权限。通过 `resources.list({capability:"plugin.base"})` 取得本安装的私有数据根引用，随后调用现有文件 API。读取、新建、替换和删除共用原始基础准入；新建仍禁止覆盖，替换仍要求目标版本。范围固定为自身空间，不允许创建子目录或访问用户游戏目录。
+
+### 文件平台边界
+
+真实源码门禁覆盖 Windows x64 本地 NTFS、Linux x86_64 和 macOS ARM64。POSIX 文件系统须为实现允许的本地类型，并能提供可靠出生时间和原生不覆盖重命名；远程、未知或缺少必要接口时明确拒绝。目录描述符固定祖先与目标绑定，拒绝链接、硬链接及跨设备对象；普通路径检查不能替代物理身份核对。私有文件、资料修改、游戏资源和安装调用同一平台入口，实际测试范围见[跨平台验收](../plans/plugin-posix-files-and-webviews-2026-11-01.md)。
+
+### 私有文件接口
 
 先调用 resources.list，capability 为上述独立文件能力，取得当前 run 的 root_ref。FileRef 为 `{root_ref,relative_path}`，文件名为 1—120 个 ASCII 字符，须以字母或数字开始，后续仅允许字母、数字、点、下划线和连字符；拒绝设备名、尾点和路径组件。空名称只用于私有根 stat/list。引用不能跨 run/授权代次重用，任何接口都不返回宿主路径。
 
@@ -189,7 +195,7 @@ RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；�
 
 成功必须确认原对象目录项已消失，最终仅返回 `{deleted:true}`。该无内容确认绑定原基础准入，失权后result为null，effect不改。自身CloseHandle成功不代表实际删除；外部元数据句柄可能延迟移除，超时返回 PLUGIN_FILE_DELETE_PENDING、effect=unknown、cleanup_pending=true。内核删除仍可能晚到完成；后续只观察原对象身份，不重开名称补删，不触及同名新对象。实际清理完成可以清除cleanup_pending，但不把unknown改报成功。
 
-这是直接删除，成功后不可恢复，不进入回收站，不提供跨重启恢复。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 实施与验收 和 [显式清理示例](../../examples/plugins/worker_file_cleanup/README.md)。
+这是直接删除，成功后不可恢复，不进入回收站。Windows 沿用原对象句柄的延迟删除；POSIX 在实际移除前持久登记并隔离原对象，只有物理身份一致才 unlink。POSIX 中断后再次访问目录时，只恢复本实现严格记录中尚存的对象且不覆盖占名文件；身份、权限或记录异常时保留全部数据并明确失败。该恢复不复活旧 Worker、任务或授权，不扫描清理其他历史文件。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 实施与验收 和 [显式清理示例](../../examples/plugins/worker_file_cleanup/README.md)。
 
 ### 按版本替换私有文件
 
@@ -254,7 +260,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 安装、启动、停止沿用 `mutation_key` 去重和 `operations.get/list/cancel`，接纳RPC至多5秒；安装总截止1800秒、启动180秒、停止30秒，均含排队。等待超时使用原键查询 `mutations.get`，不换键自动重放。接纳、请求取消、实际结束和清理完成相互独立。Worker任务视图的 `stage` 返回实际业务阶段，可信主窗口任务中心显示相同任务及安装权威快照；结果只显式投影并复核原始管理准入。
 
-安装只支持Windows x64本地NTFS。新实例名称须为安全的单个目录组件，不允许路径、ADS、设备名、尾点或空白归一化。原生目录句柄固定游戏根和目标身份；同一物理根及名称的占位由界面安装、整合包基础安装和插件共用，实际线程与句柄清理完成前不释放。已有用户实例拒绝覆盖；失败文件原地保留，只允许同一运行对同一物理身份及相同安装请求继续。插件关闭不删除文件，新运行不接管旧残留。写入开始后失败如实为 `effect:"partial"`，完整安装完成才为 `committed`。
+安装遵循[文件平台边界](#文件平台边界)。新实例名称须为安全的单个目录组件，不允许路径、ADS、设备名、尾点或空白归一化。原生目录句柄固定游戏根和目标身份；同一物理根及名称的占位由界面安装、整合包基础安装和插件共用，实际线程与句柄清理完成前不释放。已有用户实例拒绝覆盖；失败文件原地保留，只允许同一运行对同一物理身份及相同安装请求继续。插件关闭不删除文件，新运行不接管旧残留。写入开始后失败如实为 `effect:"partial"`，完整安装完成才为 `committed`。
 
 用户与插件共用单个启动准备占位，冲突返回忙。异步账户和下载准备沿用宿主既有事件循环，进程创建是短提交点，之前再次核对原始许可、取消、目录身份和当前账户；之后撤权或关闭插件不会杀游戏。准备可能已经补全游戏文件，即使未创建进程也可能是partial。已创建游戏仍在启动器正常运行列表中；停止使用有限等待，并在未确认退出时返回 `PLUGIN_GAME_STOP_TIMEOUT`。重复停止已退出的自身进程成功且保留退出码。
 
@@ -339,7 +345,7 @@ Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`�
 
 页面通过可信壳提供的 `ECL.call(method, params)` 异步调用自身命令和设置。窗口不提供账户、通用 IPC、任意路径或主窗口对象；主窗口注入继续遵循其单独契约。专用桥内部使用窗口凭据、运行代次、请求 ID 和变更去重，不接受页面自报安装身份。窗口请求白名单以 `RuntimeCustomUi` 为准。
 
-当前需要 Windows x64、维护版 `pytauri-wheel 0.8.0+ecl.1` 及已验收的 WebView2 `156.0.4314.58`。其他 Runtime 或缺少原生控制时在执行插件语句前拒绝；普通主窗口不受该版本门禁影响。构建、许可、网络与来源边界见[原生运行时](../../native/pytauri-runtime/README.md)。示例见 [worker_custom_ui](../../examples/plugins/worker_custom_ui/README.md)。
+当前需要维护版 `pytauri-wheel 0.8.0+ecl.2`。真实原生验收覆盖 Windows x64 / WebView2 `156.0.4314.58`、Linux x86_64 / WebKitGTK `2.52.6`、macOS ARM64 / WKWebView build `21624.5.1.11.3`；Windows/macOS 的精确引擎版本由来源清单固定，缺少必需原生控制时在执行插件语句前拒绝。普通主窗口不受插件专用版本门禁影响。构建、许可、网络与来源边界见[原生运行时](../../native/pytauri-runtime/README.md)。示例见 [worker_custom_ui](../../examples/plugins/worker_custom_ui/README.md)。
 
 ### 认证与联机
 
@@ -352,6 +358,6 @@ Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`�
 
 Windows 保留先分配 Job 再恢复进程的路径。POSIX 的 `plugin-guardian` 是不导入插件的内部监管角色，专属会话和控制管道与插件 RPC 分离。运行目录独占创建为 0700，端点固定绑定运行标识；Linux 查询内核 PID/UID，macOS 查询原生 peer PID 和 UID。宿主 EOF 后守护角色仍清理普通后代；停止超时继续持有原始组首进程身份，不提前回收或误报停止。
 
-该边界管理正常插件及其普通进程树，不是恶意 Python 的 OS 沙箱。主动脱离会话/进程组的进程、跨平台工具及原生 UI 按所属能力另行验收。Windows x64、Linux x64、macOS ARM64 的基础源码与原生监管门禁已通过真实 runner；处理器、用例数及原始报告见平台适配记录。受控文件及游戏安装事务继续只开放已验收的 Windows 本地 NTFS 路径，POSIX 文件事务尚未完成；不以基础 Worker 可启动推导全部 API 均可用。冻结发行物不由源码用例代替验收，当前不执行 Nuitka 构建。
+该边界管理正常插件及其普通进程树，不是恶意 Python 的 OS 沙箱。主动脱离会话/进程组的进程及其他处理器按所属能力另行验收。Windows x64、Linux x86_64、macOS ARM64 的基础源码、原生监管、文件事务与原生自定义窗口门禁已通过真实 runner；处理器、引擎、用例数及原始报告见[跨平台验收](../plans/plugin-posix-files-and-webviews-2026-11-01.md)。不以基础 Worker 可启动推导全部 API 均可用。冻结发行物不由源码用例代替验收，当前不执行 Nuitka 构建。
 
 实现与原始测试范围见[平台适配记录](../plans/plugin-posix-worker-adaptation-2026-11-01.md)。

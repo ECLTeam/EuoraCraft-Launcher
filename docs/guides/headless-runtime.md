@@ -63,18 +63,18 @@ python main.py --headless --task runtime-check
 宿主复用当前 ECL 可执行文件创建插件子进程，命令形式如下，参数值由宿主生成：
 
 ```text
-ECL.exe --headless --role plugin --pipe-address <宿主端点> --host-pid <PID> --run-id <运行标识>
+ECL.exe --headless --role plugin --endpoint <宿主端点> --host-pid <PID> --run-id <运行标识>
 ```
 
 源码模式复用当前 base CPython，以 `-S main.py` 进入相同分流。无需构建额外 Worker.exe、下载解释器或为插件创建完整桌面宿主。
 
-插件角色仅支持 Windows x64，必须包含完整的连接参数；不能与 `--task`、`--result-file`、`--data-dir` 或桌面选项混用。模式与角色控制参数使用完整名称，插件角色的参数不得重复。旧 `--internal-plugin-worker` 入口已移除并明确拒绝。
+插件角色的源码门禁已覆盖 Windows x64、Linux x86_64 和 macOS ARM64，必须包含完整的连接参数；不能与 `--task`、`--result-file`、`--data-dir` 或桌面选项混用。模式与角色控制参数使用完整名称，插件角色的参数不得重复。旧 `--internal-plugin-worker` 入口和 `--pipe-address` 参数已移除并明确拒绝。
 
-命令行只定位连接，不表示授权，也不接受任意脚本入口。宿主先挂起创建并将进程加入 Job，再恢复运行；实际执行插件的连接进程必须通过内核 PID、映像、进程句柄和 Job 归属核验。插件执行器完成认证后仍等待宿主的用户审阅和内容加载许可，不通过初始化完整 ApplicationContext 获得服务。
+命令行只定位连接，不表示授权，也不接受任意脚本入口。Windows 宿主先挂起创建并将进程加入 Job，再恢复运行；POSIX 使用独立守护会话与进程组，通过私有 Unix socket 和内核对端凭据认证。实际执行插件的连接进程必须通过所属平台的身份与监管归属核验。插件执行器完成认证后仍等待宿主的用户审阅和内容加载许可，不通过初始化完整 ApplicationContext 获得服务。
 
 插件生命周期与双向调用通过 IPC 交付，不使用 stdout 的探测结果协议。参数、连接或授权失败不会回退桌面。断连及关闭由宿主监管和会话资源清理处理；已经提交到宿主的业务任务须另按任务所有权和取消规则管理。
 
-正式 PluginManager 已接入目录与归档第三方插件：安装和发现只登记，完成内容审阅及必要授权后才创建 Worker；禁用、崩溃及必要权限撤销均由宿主持有的监管服务确认进程停止。Windows x64 以外平台明确拒绝第三方执行。可信主窗口提供权限审阅与撤销，当前 Host API 开放自身命令、设置、自查询、自身设置事件，用户明确批准的目录/单实例只读查询，以及当前 run 的自身任务状态查询和取消。任务控制不包含生产下载或安装创建接口；宿主任务收尾等待实际 future 和审计保存，不能以 Worker 退出代替。完整业务 API 仍需后续切片。实现与验收见 管理器接入方案 和 实例读取方案。自定义前端原生隔离保持暂缓。
+正式 PluginManager 已接入目录与归档第三方插件：安装和发现只登记，完成内容审阅及必要授权后才创建 Worker；禁用、崩溃及必要权限撤销均由宿主持有的监管服务确认进程停止。可信主窗口提供权限审阅与撤销，现行文件、游戏及独立窗口能力按各自契约控制，详见[v2 协议](../protocols/eclplugin-package-format.md)；跨平台真实验收范围见[交付记录](../plans/plugin-posix-files-and-webviews-2026-11-01.md)。宿主任务收尾等待实际 future 和审计保存，不能以 Worker 退出代替；源码门禁不代表新的冻结发行物已经验收。
 
 ## 扩展边界
 

@@ -2,7 +2,7 @@
 
 API v2 独立 Worker 示例。加载插件只注册命令，不自行联网。
 
-先将 plugin.json 的 `network.read.resource_refs` 改成实际需要的精确公网站点，重新审阅内容及权限；示例域名仅为占位，不是可下载测试服务。私有文件与 Worker 当前要求 Windows x64 本地 NTFS。
+先将 plugin.json 的 `network.read.resource_refs` 改成实际需要的精确公网站点，重新审阅内容及权限；示例域名仅为占位，不是可下载测试服务。私有文件与 Worker 的系统及文件系统要求见[文件平台边界](../../../docs/protocols/eclplugin-package-format.md#文件平台边界)。
 
 - `submit(url, name, mutation_key, sha256?)`：新建文件，至多 8 MiB；可指定期望摘要，返回任务和逻辑文件引用。
 - `status(operation_ref)`：查询真实状态及效果；100% 且 completed 表示已经发布。没有独立读取许可时 size 为 -1。
