@@ -460,9 +460,14 @@ class ConnectorService:
                     ).result(timeout=self.player_list_fetch_timeout_seconds)
                     if status == 0:
                         raw = json.loads(body.decode("utf-8"))
-                        return [self._to_frontend_player(p) for p in raw if isinstance(p, dict)]
-                except Exception:
-                    pass
+                        if isinstance(raw, list):
+                            return [self._to_frontend_player(p) for p in raw if isinstance(p, dict)]
+                        logger.debug("房主返回的玩家列表格式不是数组：%s", type(raw).__name__)
+                    else:
+                        logger.debug("房主拒绝玩家列表请求；状态码：%s；响应：%s", status, body[:200])
+                except Exception as exc:
+                    # 连接断开或房主未实现该协议时保持静默回退，但要留下可诊断的原因。
+                    logger.debug("获取房客玩家列表失败：%s: %s", type(exc).__name__, exc)
             # 列表获取失败时至少展示自己，避免玩家列表为空
             return [
                 {
