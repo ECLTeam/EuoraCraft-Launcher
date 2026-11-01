@@ -46,7 +46,7 @@
 - 同一运行的 Windows x64 通过 4 项必需 GUI 用例，三平台最终均成功。Windows 使用微软固定 WebView2 `156.0.4314.58`；Linux x86_64 使用 WebKitGTK `2.52.6`。三个平台均从本轮固定源码构建原生 Wheel，报告、二进制摘要及来源清单随该运行产物保留。
 - macOS 关闭 PeerConnection 采用固定 WebKit build 的专用偏好接口，原因及版本不符时的明确拒绝见[原生运行时说明](../../native/pytauri-runtime/README.md)。这些证据只覆盖实际 runner 的处理器、引擎和源码路径，不扩大为其他引擎版本、处理器或冻结发行物通过。
 
-本轮要求的 Linux/macOS 文件事务与三平台自定义窗口已经完成。未构建新的 PyInstaller 发行物，也未运行 Nuitka、关机、推送默认分支或发布版本；第三批在线发现、签名和分发闭环继续按总方案处理。[#98](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/98) 与 [#99](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/99) 的修复已在功能分支验收，进入远端默认分支前保持打开。
+本轮要求的 Linux/macOS 文件事务与三平台自定义窗口已经完成。未构建新的 PyInstaller 发行物，也未运行 Nuitka、关机、推送默认分支或发布版本；第三批在线发现、签名和分发闭环继续按总方案处理。[#98](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/98) 与 [#99](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/99) 的修复已在远端功能分支验收，随后按用户明确要求关闭并回读确认；尚未合入远端默认分支，关闭不表示已发布。
 
 ### 通信与门禁时序回归
 
