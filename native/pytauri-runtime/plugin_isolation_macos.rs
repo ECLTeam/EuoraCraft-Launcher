@@ -20,6 +20,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
+    rc::WeakPtr,
     runtime::{Class, Object, Protocol, Sel, BOOL, NO, YES},
     sel, sel_impl,
 };
@@ -66,6 +67,7 @@ struct Delegate {
     window: WebviewWindow<Runtime>,
     admitted: Cell<bool>,
     pulling: Cell<bool>,
+    navigation_delegate: WeakPtr,
 }
 
 unsafe fn string(value: &str) -> *mut Object {
@@ -161,26 +163,44 @@ extern "C" fn response(
     }
 }
 
-extern "C" fn committed(this: &Object, _: Sel, view: *mut Object, _: *mut Object) {
+extern "C" fn committed(this: &Object, _: Sel, view: *mut Object, navigation: *mut Object) {
     unsafe {
         let state = delegate_state(this);
+        if !state.policy.alive.load(Ordering::SeqCst) {
+            return;
+        }
         if !state.admitted.get() && url(view) == "about:blank" {
             return;
         }
         state.policy.loaded.store(false, Ordering::SeqCst);
         if url(view) != state.policy.shell {
             revoke(state);
+            return;
         }
+        // Fixed Wry owns the eval queue and releases it in this callback. Only
+        // forward validated lifecycle events, never its navigation decisions.
+        let original = state.navigation_delegate.load();
+        if original.is_null() {
+            revoke(state);
+            return;
+        }
+        let _: () = msg_send![*original, webView:view didCommitNavigation:navigation];
     }
 }
 
-extern "C" fn finished(this: &Object, _: Sel, view: *mut Object, _: *mut Object) {
+extern "C" fn finished(this: &Object, _: Sel, view: *mut Object, navigation: *mut Object) {
     unsafe {
         let state = delegate_state(this);
         if !state.admitted.get() && url(view) == "about:blank" {
             return;
         }
         if state.policy.alive.load(Ordering::SeqCst) && url(view) == state.policy.shell {
+            let original = state.navigation_delegate.load();
+            if original.is_null() {
+                revoke(state);
+                return;
+            }
+            let _: () = msg_send![*original, webView:view didFinishNavigation:navigation];
             state.policy.loaded.store(true, Ordering::SeqCst);
             trace_document(view);
             state.policy.send("ecl-plugin-ready://loaded");
@@ -443,6 +463,13 @@ pub(crate) unsafe fn install(
         return;
     }
     trace("原生偏好已安装");
+    let original: *mut Object = msg_send![view, navigationDelegate];
+    if original.is_null() {
+        policy.alive.store(false, Ordering::SeqCst);
+        notify(&ready, false);
+        let _ = window.close();
+        return;
+    }
     let configuration: *mut Object = msg_send![view, configuration];
     let manager: *mut Object = msg_send![configuration, userContentController];
     let _: () = msg_send![manager, removeScriptMessageHandlerForName:string("ipc")];
@@ -455,6 +482,7 @@ pub(crate) unsafe fn install(
             window: window.clone(),
             admitted: Cell::new(false),
             pulling: Cell::new(false),
+            navigation_delegate: WeakPtr::new(original),
         }))
         .cast::<c_void>(),
     );
