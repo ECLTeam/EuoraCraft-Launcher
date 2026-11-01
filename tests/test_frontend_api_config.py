@@ -1428,6 +1428,36 @@ def test_adapter_window_config_omits_webview_debug_port_by_default() -> None:
     assert "additionalBrowserArgs" not in window_config
 
 
+def test_debug_profile_is_scoped_to_main_window_without_global_override(tmp_path, monkeypatch) -> None:
+    """
+    主窗口调试目录不能通过进程环境覆盖插件窗口自己的浏览器目录。
+    """
+    import os
+
+    monkeypatch.delenv("WEBVIEW2_USER_DATA_FOLDER", raising=False)
+    adapter = object.__new__(Adapter)
+    adapter.config = {"tauri": {}}
+    adapter.launcher_version = "0.0.1-alpha"
+    adapter.webview_debug_port = 0
+    adapter.logger = SimpleNamespace(warning=lambda *args, **kwargs: None)
+    observed = []
+    adapter.context = SimpleNamespace(
+        state=SimpleNamespace(data_path=tmp_path),
+        plugins=SimpleNamespace(
+            worker_service=SimpleNamespace(
+                bind_window_app=lambda _: observed.append(os.environ.get("WEBVIEW2_USER_DATA_FOLDER"))
+            )
+        ),
+    )
+    window = adapter._build_config()["app"]["windows"][0]
+    assert "dataDirectory" not in window
+    assert os.environ["WEBVIEW2_USER_DATA_FOLDER"] == str(tmp_path / "webview-debug")
+    adapter._setup_plugin_windows(None)
+    assert observed == [str(tmp_path / "webview-debug")]
+    adapter._restore_debug_profile()
+    assert "WEBVIEW2_USER_DATA_FOLDER" not in os.environ
+
+
 @pytest.mark.parametrize(
     ("platform", "expected_mode", "is_transparent", "has_shadow"),
     [

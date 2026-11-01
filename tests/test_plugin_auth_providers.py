@@ -147,3 +147,72 @@ def test_plugin_without_accounts_permission_cannot_register_provider(tmp_path) -
 
     assert framework._status.get("auth-demo") == "unsupported"
     assert manager.list_auth_providers() == []
+
+
+def test_private_provider_data_is_available_after_restart_only_to_provider(tmp_path) -> None:
+    manager, _ = _build(tmp_path)
+    manager.add_plugin_account("demo", {"token": "persisted-secret"})
+    restored = AccountManager(tmp_path / "data", microsoft_manager=FakeMicrosoftManager())
+    received = []
+
+    def resolve(account):
+        received.append(account)
+        return {
+            "player_name": account["alias"],
+            "uuid": account["uuid"],
+            "user_type": "msa",
+            "access_token": account["data"]["token"],
+        }
+
+    restored.plugin_auth_providers.register("auth-demo", "demo", "Demo", [], lambda _: {}, resolve)
+    assert asyncio.run(restored.get_launch_credentials())["access_token"] == "persisted-secret"
+    assert received[0]["data"] == {"token": "persisted-secret"}
+    assert all("data" not in account for account in restored.list_accounts()["accounts"])
+
+
+def test_provider_failure_preserves_account_and_hides_exception_text(tmp_path) -> None:
+    manager, framework = _build(tmp_path)
+    manager.add_plugin_account("demo", {"token": "persisted-secret"})
+    before = manager.state_path.read_bytes()
+
+    def fail(_account):
+        raise RuntimeError("private-credential-from-plugin")
+
+    framework.auth_providers.get("demo").resolve_credentials = fail
+    with pytest.raises(AccountError) as error:
+        asyncio.run(manager.get_launch_credentials())
+    assert error.value.error_code == "AUTH_PROVIDER_CREDENTIAL_FAILED"
+    assert "private-credential-from-plugin" not in str(error.value)
+    assert manager.state_path.read_bytes() == before
+    assert len(manager.list_accounts()["accounts"]) == 1
+
+
+def test_disabled_provider_cannot_deliver_inflight_credentials(tmp_path) -> None:
+    manager, framework = _build(tmp_path)
+    manager.add_plugin_account("demo", {"token": "persisted-secret"})
+
+    def resolve(account):
+        framework.auth_providers.unregister_owner("auth-demo")
+        return {"player_name": account["alias"], "uuid": account["uuid"], "user_type": "msa", "access_token": "old"}
+
+    framework.auth_providers.get("demo").resolve_credentials = resolve
+    with pytest.raises(AccountError) as error:
+        asyncio.run(manager.get_launch_credentials())
+    assert error.value.error_code == "AUTH_PROVIDER_UNAVAILABLE"
+
+
+def test_account_switch_during_provider_callback_rejects_old_credentials(tmp_path) -> None:
+    manager, framework = _build(tmp_path)
+    first = manager.add_plugin_account("demo", {"token": "persisted-secret"})
+    manager.add_offline("OtherPlayer")
+    other = manager.list_accounts()["current"]["id"]
+    manager.switch_account(first["id"])
+
+    def resolve(account):
+        manager.switch_account(other)
+        return {"player_name": account["alias"], "uuid": account["uuid"], "user_type": "msa", "access_token": "old"}
+
+    framework.auth_providers.get("demo").resolve_credentials = resolve
+    with pytest.raises(AccountError) as error:
+        asyncio.run(manager.get_launch_credentials())
+    assert error.value.error_code == "ACCOUNT_CHANGED"

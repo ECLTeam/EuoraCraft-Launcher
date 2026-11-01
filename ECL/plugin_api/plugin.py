@@ -331,7 +331,8 @@ class Plugin:
 
         提供方只处理自己的认证材料：authenticate 收到用户填写的字段，返回
         ``{id, alias, uuid, data?, skinUrl?}``；resolve_credentials 在启动时
-        收到公开账户信息，返回 ``{player_name, uuid, user_type, access_token}``。
+        收到自身账户信息及先前保存的 ``data``，返回
+        ``{player_name, uuid, user_type, access_token}``。
         宿主按提供方分区保存不透明负载，不记录凭据明文。
 
         :param provider_id: 提供方稳定标识，小写字母开头

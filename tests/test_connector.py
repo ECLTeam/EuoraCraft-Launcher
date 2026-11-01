@@ -235,7 +235,9 @@ def test_stop_async_thread_client_handles_closed_loop() -> None:
 def test_close_stops_active_room() -> None:
     service = ConnectorService()
     service._mode = "host"
-    service._room_server = SimpleNamespace(sync_stop=lambda: None)
+    loop = asyncio.new_event_loop()
+    loop.close()
+    service._room_server = SimpleNamespace(loop=loop)
     service._easy_tier_node = SimpleNamespace(stop=lambda: None)
 
     service.close()

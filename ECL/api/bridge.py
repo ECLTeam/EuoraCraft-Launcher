@@ -568,6 +568,8 @@ class _FrontendState:
         if not callable(label_getter):
             return None
         label = str(label_getter())
+        if label.startswith("plugin-v2-"):
+            return failure("第三方独立窗口必须使用专用桥", "WINDOW_COMMAND_DENIED")
         if label == "main":
             return None
         metadata = self._window_metadata.get(label)

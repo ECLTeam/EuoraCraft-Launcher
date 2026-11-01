@@ -1,0 +1,8 @@
+{
+  "name": "worker-connector-example",
+  "title": "插件联机示例",
+  "version": "1.0.0",
+  "api_version": 2,
+  "entry_point": "main:Plugin",
+  "permissions": [{"capability": "connector.manage", "required": true}]
+}

@@ -156,6 +156,7 @@ def test_author_cli_builds_valid_archive(tmp_path: Path) -> None:
         [sys.executable, str(script_path), str(source_path), str(archive_path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
         timeout=20,
     )

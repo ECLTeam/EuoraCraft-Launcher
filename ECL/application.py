@@ -524,6 +524,7 @@ def create_application(
             processes=processes,
             instance_compatibility=game.instance_compatibility,
             connector_extensions=connector_extensions,
+            connector=connector,
             launch_hooks=game.launch_hooks,
             http_client=http,
             auth_providers=accounts.plugin_auth_providers,

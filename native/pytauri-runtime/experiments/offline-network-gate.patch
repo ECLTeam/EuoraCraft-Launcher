@@ -1,0 +1,105 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 678ab39f..d44f7c05 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3740,6 +3740,8 @@ dependencies = [
+  "tauri-plugin-upload",
+  "tauri-plugin-websocket",
+  "tauri-plugin-window-state",
++ "webview2-com",
++ "windows 0.61.1",
+ ]
+ 
+ [[package]]
+diff --git a/crates/pytauri-core/Cargo.toml b/crates/pytauri-core/Cargo.toml
+index a74e96b8..a57c57fb 100644
+--- a/crates/pytauri-core/Cargo.toml
++++ b/crates/pytauri-core/Cargo.toml
+@@ -50,6 +50,10 @@ pyo3 = { workspace = true, features = [
+ # workspace dependencies
+ pyo3-utils = { workspace = true, features = ["unstable"] }
+ 
++[target.'cfg(windows)'.dependencies]
++webview2-com = "=0.38.0"
++windows = { version = "=0.61.1", features = ["Win32_Foundation"] }
++
+ 
+ [features]
+ __private = []
+diff --git a/crates/pytauri-core/src/ext_mod_impl/webview.rs b/crates/pytauri-core/src/ext_mod_impl/webview.rs
+index 19042063..60cee8e2 100644
+--- a/crates/pytauri-core/src/ext_mod_impl/webview.rs
++++ b/crates/pytauri-core/src/ext_mod_impl/webview.rs
+@@ -86,6 +86,72 @@ impl WebviewWindow {
+         PyString::intern(py, webview_window.label())
+     }
+ 
++    #[cfg(windows)]
++    fn experiment_block_network(&self, py: Python<'_>) -> PyResult<()> {
++        use std::sync::mpsc;
++        use std::time::Duration;
++        use windows::core::{HSTRING, Interface, PWSTR};
++        use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, WebResourceRequestedEventHandler, Microsoft::Web::WebView2::Win32::{
++            ICoreWebView2_22, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
++            COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
++        }};
++
++        let (sender, receiver) = mpsc::sync_channel(1);
++        self.0.inner_ref().with_webview(move |view| {
++            let result = (|| -> windows::core::Result<()> {
++                unsafe {
++                    let webview = view.controller().CoreWebView2()?;
++                    let webview22: ICoreWebView2_22 = webview.cast()?;
++                    let environment = view.environment();
++                    webview22.AddWebResourceRequestedFilterWithRequestSourceKinds(
++                        &HSTRING::from("*"),
++                        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
++                        COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
++                    )?;
++                    let mut token = 0;
++                    webview.add_WebResourceRequested(
++                        &WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
++                            if let Some(args) = args {
++                                let request = args.Request()?;
++                                let mut uri = PWSTR::null();
++                                request.Uri(&mut uri)?;
++                                let uri = webview2_com::take_pwstr(uri);
++                                let is_loopback = tauri::Url::parse(&uri)
++                                    .map(|url| matches!(url.scheme(), "http" | "ws") && url.host_str() == Some("127.0.0.1"))
++                                    .unwrap_or(false);
++                                if !is_loopback {
++                                    return Ok(());
++                                }
++                                let response = environment.CreateWebResourceResponse(
++                                    None, 403, &HSTRING::from("Forbidden"), &HSTRING::new(),
++                                )?;
++                                args.SetResponse(&response)?;
++                            }
++                            Ok(())
++                        })),
++                        &mut token,
++                    )?;
++                    let completion_sender = sender.clone();
++                    webview.CallDevToolsProtocolMethod(
++                        &HSTRING::from("Network.emulateNetworkConditions"),
++                        &HSTRING::from(r#"{"offline":true,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1}"#),
++                        &CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |status, _| {
++                            let _ = completion_sender.send(status.map_err(|error| error.to_string()));
++                            Ok(())
++                        })),
++                    )?;
++                }
++                Ok(())
++            })();
++            if let Err(error) = result {
++                let _ = sender.send(Err(error.to_string()));
++            }
++        }).map_err(TauriError::from)?;
++        py.allow_threads(move || receiver.recv_timeout(Duration::from_secs(5)))
++            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?
++            .map_err(pyo3::exceptions::PyRuntimeError::new_err)
++    }
++
+     fn on_window_event(&self, py: Python<'_>, handler: PyObject) {
+         py.allow_threads(|| {
+             self.0.inner_ref().on_window_event(move |window_event| {

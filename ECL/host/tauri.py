@@ -40,6 +40,8 @@ class Adapter:
 
     # 类级默认：允许测试经 object.__new__ 构造实例时按“未开启远程调试”处理。
     webview_debug_port: int | None = None  # --webview-debug-port 指定的调试端口，None 表示未开启
+    _debug_profile_override_active: bool = False
+    _debug_profile_original: str | None = None
 
     def __init__(self, context: ApplicationContext) -> None:
         launcher = context.state
@@ -70,16 +72,44 @@ class Adapter:
             context = context_factory(self.resource_path, tauri_config=tauri_config)
             self.logger.debug("Tauri 窗口已创建")
             self.logger.debug("正在构建 Tauri 应用")
-            app = builder_factory().build(
-                context=context,
-                invoke_handler=self.commands.generate_handler(portal),
-                plugins=[dialog_init()],
-            )
+            try:
+                app = builder_factory().build(
+                    context=context,
+                    invoke_handler=self.commands.generate_handler(portal),
+                    plugins=[dialog_init()],
+                    setup=self._setup_plugin_windows,
+                )
+            except BaseException:
+                self._restore_debug_profile()
+                raise
             self.logger.info("前端界面初始化完成")
             self.logger.info("Tauri 主循环已启动，正在等待前端就绪")
             self._startup_focus_attempted = False
-            app.run_return(self._focus_main_window_on_ready)
+            try:
+                app.run_return(self._focus_main_window_on_ready)
+            finally:
+                self._restore_debug_profile()
         self.logger.info("前端已退出")
+
+    def _setup_plugin_windows(self, app_handle: AppHandle) -> None:
+        """
+        把真实原生宿主绑定到应用既有的第三方运行服务。
+        """
+        worker_service = self.context.plugins.worker_service
+        if worker_service is not None:
+            worker_service.bind_window_app(app_handle)
+
+    def _restore_debug_profile(self) -> None:
+        """
+        主窗口创建后恢复临时环境，失败退出时也不覆盖后续窗口的独立目录。
+        """
+        if not self._debug_profile_override_active:
+            return
+        if self._debug_profile_original is None:
+            os.environ.pop("WEBVIEW2_USER_DATA_FOLDER", None)
+        else:
+            os.environ["WEBVIEW2_USER_DATA_FOLDER"] = self._debug_profile_original
+        self._debug_profile_override_active = False
 
     def _focus_main_window_on_ready(self, app_handle: AppHandle, event: RunEventType) -> None:
         """
@@ -94,6 +124,7 @@ class Adapter:
         if self._startup_focus_attempted or not isinstance(event, RunEvent.Ready):
             return
         self._startup_focus_attempted = True
+        self._restore_debug_profile()
         try:
             main_window = Manager.get_webview_window(app_handle, "main")
             if main_window is None:
@@ -163,7 +194,10 @@ class Adapter:
         data_path = getattr(getattr(self, "context", None), "state", None)
         data_path = getattr(data_path, "data_path", None)
         if data_path is not None:
+            if not self._debug_profile_override_active:
+                self._debug_profile_original = os.environ.get("WEBVIEW2_USER_DATA_FOLDER")
             os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(data_path / "webview-debug")
+            self._debug_profile_override_active = True
         self.logger.warning("已开启 WebView2 远程调试：端口：%s；仅供开发期调试使用", self.webview_debug_port)
 
     def _register_commands(self) -> None:

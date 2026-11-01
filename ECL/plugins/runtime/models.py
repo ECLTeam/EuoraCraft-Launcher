@@ -386,7 +386,7 @@ class AuthFieldSpec(RequestModel):
 
 class AuthProviderDefinition(RequestModel):
     """
-    认证提供方登记：表单字段与两个回调，宿主不保存任何凭据明文。
+    认证提供方登记：有界表单与两个回调，只交付该提供方自己的账户数据。
     """
 
     provider_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,31}$")

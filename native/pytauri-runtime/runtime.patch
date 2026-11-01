@@ -1,0 +1,209 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 678ab39f..f16b4696 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3720,6 +3720,7 @@ version = "0.8.0"
+ dependencies = [
+  "pyo3",
+  "pyo3-utils",
++ "serde_json",
+  "tauri",
+  "tauri-plugin-autostart",
+  "tauri-plugin-clipboard-manager",
+@@ -3740,6 +3741,8 @@ dependencies = [
+  "tauri-plugin-upload",
+  "tauri-plugin-websocket",
+  "tauri-plugin-window-state",
++ "webview2-com",
++ "windows 0.61.1",
+ ]
+ 
+ [[package]]
+diff --git a/crates/pytauri-core/Cargo.toml b/crates/pytauri-core/Cargo.toml
+index a74e96b8..4609c9d9 100644
+--- a/crates/pytauri-core/Cargo.toml
++++ b/crates/pytauri-core/Cargo.toml
+@@ -94,3 +94,8 @@ plugin-single-instance = ["dep:tauri-plugin-single-instance"]
+ plugin-updater = ["dep:tauri-plugin-updater", "tauri-plugin-updater/zip"]
+ plugin-window-state = ["dep:tauri-plugin-window-state"]
+ plugin-global-shortcut = ["dep:tauri-plugin-global-shortcut"]
++
++[target.'cfg(windows)'.dependencies]
++webview2-com = "=0.38.0"
++windows = { version = "=0.61.1", features = ["Win32_Foundation", "Win32_System_Com"] }
++serde_json = "1"
+diff --git a/crates/pytauri-core/src/ext_mod_impl/webview.rs b/crates/pytauri-core/src/ext_mod_impl/webview.rs
+index 19042063..f42e73cb 100644
+--- a/crates/pytauri-core/src/ext_mod_impl/webview.rs
++++ b/crates/pytauri-core/src/ext_mod_impl/webview.rs
+@@ -66,6 +66,16 @@ impl WebviewWindow {
+         WebviewWindowBuilder::build(py, manager, label, url, kwargs)
+     }
+ 
++    #[staticmethod]
++    fn ecl_plugin_isolation_version() -> u32 { 1 }
++
++    fn install_plugin_isolation(&self, shell_url: String, on_message: PyObject, on_ready: PyObject) -> PyResult<()> {
++        #[cfg(windows)]
++        { crate::plugin_isolation::install(self.0.inner_ref().clone(), shell_url, on_message, on_ready) }
++        #[cfg(not(windows))]
++        { let _ = (shell_url, on_message, on_ready); Err(pyo3::exceptions::PyRuntimeError::new_err("PLUGIN_UI_ISOLATION_UNAVAILABLE")) }
++    }
++
+     fn run_on_main_thread(&self, py: Python<'_>, handler: PyObject) -> PyResult<()> {
+         py.allow_threads(|| {
+             delegate_inner!(self, run_on_main_thread, move || {
+@@ -886,6 +896,7 @@ pub struct WebviewWindowBuilderArgs {
+     initialization_script_for_all_frames: NotRequired<String>,
+     user_agent: NotRequired<PyBackedStr>,
+     additional_browser_args: NotRequired<PyBackedStr>,
++    plugin_isolation: NotRequired<bool>,
+     data_directory: NotRequired<PathBuf>,
+     disable_drag_drop_handler: NotRequired<bool>,
+     enable_clipboard_access: NotRequired<bool>,
+@@ -1012,6 +1023,8 @@ derive_from_py_dict!(WebviewWindowBuilderArgs {
+     #[pyo3(default)]
+     additional_browser_args,
+     #[pyo3(default)]
++    plugin_isolation,
++    #[pyo3(default)]
+     data_directory,
+     #[pyo3(default)]
+     disable_drag_drop_handler,
+@@ -1114,6 +1127,7 @@ impl WebviewWindowBuilderArgs {
+             initialization_script_for_all_frames,
+             user_agent,
+             additional_browser_args,
++            plugin_isolation: _,
+             data_directory,
+             disable_drag_drop_handler,
+             enable_clipboard_access,
+@@ -1390,17 +1404,39 @@ impl WebviewWindowBuilder {
+     ) -> PyResult<WebviewWindow> {
+         let url = url.get().to_tauri()?;
+         let args = WebviewWindowBuilderArgs::from_kwargs(kwargs)?;
++        let isolation = args.as_ref().and_then(|args| args.plugin_isolation.0).unwrap_or(false);
++        let browser_args = args.as_ref().and_then(|args| args.additional_browser_args.0.as_ref()).map(|value| value.to_string()).unwrap_or_default();
++        if isolation {
++            let valid_profile = args.as_ref().and_then(|args| args.data_directory.0.as_ref()).is_some_and(|path| path.is_absolute());
++            if !valid_profile || !matches!(&url, tauri::WebviewUrl::External(url) if url.as_str() == "about:blank")
++                || args.as_ref().is_some_and(|args| args.extensions_path.0.is_some() || args.browser_extensions_enabled.0 == Some(true) || args.proxy_url.0.is_some()) {
++                return Err(pyo3::exceptions::PyValueError::new_err("PLUGIN_UI_ISOLATION_UNAVAILABLE"));
++            }
++            #[cfg(not(windows))]
++            return Err(pyo3::exceptions::PyRuntimeError::new_err("PLUGIN_UI_ISOLATION_UNAVAILABLE"));
++        }
+         manager_method_impl!(py, &manager, move |py, manager| {
+-            let mut builder = webview::WebviewWindowBuilder::new(manager, label, url);
++            let mut builder = webview::WebviewWindowBuilder::new(manager, label.clone(), url);
+             if let Some(args) = args {
+                 builder = args.apply_to_builder(py, builder)?;
+             }
++            #[cfg(windows)]
++            if isolation {
++                let arguments = crate::plugin_isolation::proxy_arguments(&label, &browser_args)?;
++                builder = builder.additional_browser_args(&arguments).browser_extensions_enabled(false).devtools(false);
++            }
+ 
+             let webview_window = unsafe {
+                 // Safety: `WebviewWindowBuilder` does not hold the GIL, so this is safe
+                 py.allow_threads_unsend(builder, |builder| builder.build())
+             }
+-            .map_err(TauriError::from)?;
++            .map_err(|error| {
++                #[cfg(windows)]
++                if isolation { crate::plugin_isolation::release_proxy(&label); }
++                TauriError::from(error)
++            })?;
++            #[cfg(windows)]
++            if isolation { crate::plugin_isolation::track_proxy_lifetime(&webview_window); }
+ 
+             PyResult::Ok(WebviewWindow::new(webview_window))
+         })?
+@@ -1416,6 +1452,9 @@ impl WebviewWindowBuilder {
+     ) -> PyResult<WebviewWindow> {
+         let config = config.into_inner();
+         let args = WebviewWindowBuilderArgs::from_kwargs(kwargs)?;
++        if args.as_ref().is_some_and(|args| args.plugin_isolation.0 == Some(true)) {
++            return Err(pyo3::exceptions::PyValueError::new_err("PLUGIN_UI_ISOLATION_UNAVAILABLE"));
++        }
+         manager_method_impl!(py, &manager, move |py, manager| {
+             let mut builder = webview::WebviewWindowBuilder::from_config(manager, &config)
+                 .map_err(TauriError::from)?;
+diff --git a/crates/pytauri-core/src/lib.rs b/crates/pytauri-core/src/lib.rs
+index 49140d56..dd27c71b 100644
+--- a/crates/pytauri-core/src/lib.rs
++++ b/crates/pytauri-core/src/lib.rs
+@@ -6,6 +6,8 @@
+ )]
+ 
+ mod ext_mod_impl;
++#[cfg(windows)]
++mod plugin_isolation;
+ mod plugins;
+ pub mod tauri_runtime;
+ pub mod utils;
+diff --git a/python/pytauri-wheel/pyproject.toml b/python/pytauri-wheel/pyproject.toml
+index ab05a3c3..58d5f360 100644
+--- a/python/pytauri-wheel/pyproject.toml
++++ b/python/pytauri-wheel/pyproject.toml
+@@ -1,8 +1,9 @@
+ [project]
+ name = "pytauri-wheel"
+-version = "0.8.0" # ❗ when bumping, remember to update workspace dependencies
++version = "0.8.0+ecl.1" # ❗ when bumping, remember to update workspace dependencies
+ readme = "README.md"
+-license = "Apache-2.0"
++license = "GPL-3.0-only AND Apache-2.0"
++license-files = ["LICENSE", "ECL-LICENSE"]
+ authors = [
+     { name = "Sean Wang", email = "126865849+WSH032@users.noreply.github.com" },
+ ]
+diff --git a/python/pytauri-wheel/setup.py b/python/pytauri-wheel/setup.py
+index 746c3421..6afc3949 100644
+--- a/python/pytauri-wheel/setup.py
++++ b/python/pytauri-wheel/setup.py
+@@ -14,6 +14,7 @@ setup(
+         RustExtension(
+             # set `target` the same as `[project.entry-points.pytauri.ext_mod]` in `pyproject.toml`
+             target="pytauri_wheel.ext_mod",
++            cargo_manifest_args=["--locked"],
+             # It is recommended to set other features in `Cargo.toml`, except following features:
+             features=[
+                 # see: <https://pyo3.rs/v0.23.3/building-and-distribution.html#the-extension-module-feature>,
+diff --git a/python/pytauri/pyproject.toml b/python/pytauri/pyproject.toml
+index 6a61bdf0..3b462929 100644
+--- a/python/pytauri/pyproject.toml
++++ b/python/pytauri/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "pytauri"
+-version = "0.8.0"
++version = "0.8.0+ecl.1"
+ readme = "README.md"
+ license = "Apache-2.0"
+ authors = [
+diff --git a/python/pytauri/src/pytauri/ffi/webview.py b/python/pytauri/src/pytauri/ffi/webview.py
+index a53431c7..77b104b2 100644
+--- a/python/pytauri/src/pytauri/ffi/webview.py
++++ b/python/pytauri/src/pytauri/ffi/webview.py
+@@ -71,6 +71,11 @@ if TYPE_CHECKING:
+ 
+     @final
+     class WebviewWindow:
++        @staticmethod
++        def ecl_plugin_isolation_version() -> int: ...
++
++        def install_plugin_isolation(self, shell_url: str, on_message: Callable[[str], None], on_ready: Callable[[bool], None]) -> None: ...
++
+         """[tauri::webview::WebviewWindow](https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindow.html)"""
+ 
+         def __new__(
+@@ -349,6 +354,7 @@ class WebviewWindowBuilderArgs(_BaseWebviewWindowBuilderArgs, closed=True):
+     initialization_script_for_all_frames: NotRequired[str]
+     user_agent: NotRequired[str]
+     additional_browser_args: NotRequired[str]
++    plugin_isolation: NotRequired[bool]
+     data_directory: NotRequired[Pyo3PathInto]
+     disable_drag_drop_handler: NotRequired[bool]
+     enable_clipboard_access: NotRequired[bool]

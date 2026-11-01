@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from time import monotonic
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -24,6 +25,8 @@ from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.auth_providers import sanitize_account_payload, sanitize_credentials_payload
 from ECL.plugins.connector import limit_status_fields, limit_status_text, sanitize_status_fields
+from ECL.plugins.runtime.models import AuthProviderDefinition
+from ECL.plugins.worker_service import PluginWorkerService
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
 
 
@@ -86,3 +89,48 @@ def test_status_fields_are_bounded() -> None:
     assert len(next(iter(fields.values()))) == limit_status_text
     assert sanitize_status_fields({"fields": {"a": 1}}) == {}
     assert sanitize_status_fields("text") == {}
+
+
+def test_auth_private_data_is_not_silently_truncated() -> None:
+    token = "t" * 4096
+    account = sanitize_account_payload({"id": "1", "alias": "Player", "uuid": "0" * 32, "data": {"token": token}})
+    assert account["data"] == {"token": token}
+    credentials = sanitize_credentials_payload(
+        {"player_name": "Player", "uuid": "0" * 32, "user_type": "msa", "access_token": token}
+    )
+    assert credentials["access_token"] == token
+
+
+@pytest.mark.parametrize("data", [{"token": "t" * 16385}, {"token": 1}, {"": "token"}, {"x" * 65: "token"}])
+def test_invalid_private_data_rejects_whole_account(data) -> None:
+    with pytest.raises(ValueError):
+        sanitize_account_payload({"id": "1", "alias": "Player", "uuid": "0" * 32, "data": data})
+
+
+def test_auth_registration_is_scoped_to_installation(tmp_path, monkeypatch) -> None:
+    registrations = []
+    service = PluginWorkerService(tmp_path, auth_sink=lambda *args: registrations.append(args))
+    installation_id = "first-installation"
+    monkeypatch.setattr(
+        service,
+        "_entry",
+        lambda _name: SimpleNamespace(
+            installation_id=installation_id, session=SimpleNamespace(authorize=lambda _: None)
+        ),
+    )
+    definition = AuthProviderDefinition(
+        provider_id="demo",
+        title="Demo",
+        fields=[{"key": "token", "label": "Token"}],
+        authenticate_ref="a" * 32,
+        resolve_ref="b" * 32,
+    )
+    service._publish_auth("first", "auth", definition)
+    installation_id = "second-installation"
+    service._publish_auth("second", "auth", definition)
+    service._publish_auth("first", "auth", definition)
+    assert registrations[0][1] != registrations[1][1]
+    assert registrations[0][1] != registrations[2][1]
+    assert all(item[1] != "demo" for item in registrations)
+    service._publish_auth("first", "auth", None)
+    assert registrations[-1] == ("first", None, None, None)

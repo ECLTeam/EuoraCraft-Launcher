@@ -27,6 +27,7 @@ from ECL.plugins.auth_providers import (
     AuthProviderRegistry,
     sanitize_account_payload,
     sanitize_credentials_payload,
+    sanitize_private_auth_data,
 )
 from ECL.plugins.connector import ConnectorExtensionRegistry, sanitize_status_fields
 from ECL.plugins.crash_extensions import (
@@ -37,6 +38,7 @@ from ECL.plugins.crash_extensions import (
     sanitize_extension_result,
 )
 from ECL.plugins.dependencies import DependencyResolution
+from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.instance_compat import (
     ExternalInstanceMetadata,
@@ -58,6 +60,7 @@ from .install_transaction import recover_plugin_install_transactions
 
 if TYPE_CHECKING:
     from ECL.plugins.package_activation import PluginPackageActivationStore
+    from ECL.services.connector import ConnectorService
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -89,6 +92,7 @@ class _PluginState:
         account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
         public_config: Callable[[], JsonValue] | None = None,
         ui_injection_allowed: Callable[[], bool] | None = None,
+        connector: ConnectorService | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -111,12 +115,14 @@ class _PluginState:
         :param instance_roots: 当前配置中的游戏根目录快照
         :param game_operations: 应用唯一游戏业务入口
         :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
+        :param connector: 应用唯一联机服务
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
         self.processes = processes  # 插件可经 framework.processes 启动子进程实例
         self.instance_compatibility = instance_compatibility or InstanceCompatibilityRegistry()
         self.connector_extensions = connector_extensions or ConnectorExtensionRegistry()
+        self._connector = connector
         self.launch_hooks = launch_hooks or LaunchHookRegistry()
         self.http_client = http_client
         self._operations = operations
@@ -210,6 +216,7 @@ class _PluginState:
             tool_stopper=self._stop_worker_tool,
             auth_sink=self._on_worker_auth,
             connector_sink=self._on_worker_connector,
+            connector=self._connector,
             ui_injection_allowed=self._ui_injection_allowed,
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
@@ -308,7 +315,9 @@ class _PluginState:
             **{attribute: self._worker_hook_callable(name, phase, callback_ref)},
         )
 
-    def _on_worker_auth(self, name: str, provider_id: str | None, definition: object | None) -> None:
+    def _on_worker_auth(
+        self, name: str, provider_id: str | None, definition: object | None, lease: GrantLease | None
+    ) -> None:
         """
         登记或撤销第三方登录提供方，凭据由账户服务按提供方分区保存。
 
@@ -319,6 +328,8 @@ class _PluginState:
         if provider_id is None or definition is None:
             self.auth_providers.unregister_owner(name)
             return
+        if lease is None:
+            raise ProtocolError("认证提供方缺少原始许可", "PLUGIN_PERMISSION_DENIED")
         fields = [
             AuthField(key=item.key, label=item.label, type=item.type, required=item.required)
             for item in definition.fields
@@ -329,14 +340,32 @@ class _PluginState:
         def authenticate(values: Mapping[str, object]) -> dict[str, object]:
             if self.worker_service is None:
                 raise RuntimeError("插件运行未就绪")
-            payload = {"fields": {str(key)[:32]: str(value)[:1024] for key, value in list(values.items())[:6]}}
-            return sanitize_account_payload(self.worker_service.invoke_hook(name, authenticate_ref, payload, 5.0))
+            field_by_key = {item.key: item for item in definition.fields}
+            if not values.keys() <= field_by_key.keys():
+                raise ValueError("登录表单包含未声明字段")
+            fields: dict[str, JsonValue] = {}
+            for key, field in field_by_key.items():
+                value = values.get(key)
+                if value is None and not field.required:
+                    continue
+                if not isinstance(value, str) or len(value) > 1024 or (field.required and value == ""):
+                    raise ValueError("登录表单字段无效")
+                fields[key] = value
+            payload = {"fields": fields}
+            return sanitize_account_payload(
+                self.worker_service.invoke_hook(name, authenticate_ref, payload, 5.0, lease=lease)
+            )
 
         def resolve(current: dict[str, object]) -> dict[str, str]:
             if self.worker_service is None:
                 raise RuntimeError("插件运行未就绪")
             payload = {"account": {key: str(current.get(key, ""))[:256] for key in ("id", "alias", "uuid")}}
-            return sanitize_credentials_payload(self.worker_service.invoke_hook(name, resolve_ref, payload, 5.0))
+            private_data = current.get("data")
+            if private_data is not None:
+                payload["account"]["data"] = sanitize_private_auth_data(private_data)
+            return sanitize_credentials_payload(
+                self.worker_service.invoke_hook(name, resolve_ref, payload, 5.0, lease=lease)
+            )
 
         self.auth_providers.register(
             owner=name,
@@ -348,7 +377,7 @@ class _PluginState:
             description=definition.description,
         )
 
-    def _on_worker_connector(self, name: str, callback_ref: str | None) -> None:
+    def _on_worker_connector(self, name: str, callback_ref: str | None, lease: GrantLease | None) -> None:
         """
         登记或撤销第三方联机状态补充，只允许补充展示字段。
 
@@ -358,6 +387,8 @@ class _PluginState:
         if callback_ref is None:
             self.connector_extensions.unregister_owner(name)
             return
+        if lease is None:
+            raise ProtocolError("联机扩展缺少原始许可", "PLUGIN_PERMISSION_DENIED")
 
         def enrich(_context: object, status: dict[str, object]) -> dict[str, object]:
             if self.worker_service is None:
@@ -368,7 +399,9 @@ class _PluginState:
                 "player_count": len(players) if isinstance(players, list) else 0,
                 "protocols": [str(item)[:64] for item in protocols[:16]] if isinstance(protocols, list) else [],
             }
-            fields = sanitize_status_fields(self.worker_service.invoke_hook(name, callback_ref, payload, 5.0))
+            fields = sanitize_status_fields(
+                self.worker_service.invoke_hook(name, callback_ref, payload, 5.0, lease=lease)
+            )
             return {"plugin_fields": fields} if fields else {}
 
         self.connector_extensions.register(

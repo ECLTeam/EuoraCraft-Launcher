@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, f
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.grant_models import PermissionDeclaration, expanded_capabilities
+from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.utils import atomic_write_text
 
 
@@ -47,6 +48,7 @@ class WorkerManifest(BaseModel):
     python_dependencies: list[str] = Field(default_factory=list, alias="pythonDependencies", max_length=128)
     dependencies: dict[str, str | dict[str, str | bool]] = Field(default_factory=dict, max_length=128)
     permissions: tuple[PermissionDeclaration, ...] = Field(default=(), max_length=128)
+    custom_ui: CustomUiDeclaration | None = None
     reserved_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
     )
@@ -61,6 +63,8 @@ class WorkerManifest(BaseModel):
 
         :return: 展开后的清单
         """
+        if self.custom_ui is not None and not any(item.capability == "ui.custom.execute" for item in self.permissions):
+            raise ValueError("独立前端必须声明独立执行许可")
         expanded: list[PermissionDeclaration] = []
         seen: set[tuple[str, tuple[str, ...]]] = set()
         for declaration in self.permissions:

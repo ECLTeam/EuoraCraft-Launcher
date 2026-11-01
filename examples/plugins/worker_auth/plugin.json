@@ -1,0 +1,8 @@
+{
+  "name": "worker-auth-example",
+  "title": "第三方登录接口示例",
+  "version": "1.0.0",
+  "api_version": 2,
+  "entry_point": "main:Plugin",
+  "permissions": [{"capability": "auth.provider", "required": true}]
+}

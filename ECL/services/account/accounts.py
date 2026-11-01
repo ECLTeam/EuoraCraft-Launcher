@@ -563,7 +563,7 @@ class AccountManager:
         except AccountError:
             raise
         except Exception as exc:
-            raise AccountError(f"认证失败: {exc}", "AUTH_PROVIDER_LOGIN_FAILED") from exc
+            raise AccountError("认证失败，请检查登录信息后重试", "AUTH_PROVIDER_LOGIN_FAILED") from exc
         if not isinstance(info, dict) or not info.get("id"):
             raise AccountError("认证提供方返回数据无效", "AUTH_PROVIDER_LOGIN_FAILED")
         account_id = f"plugin:{provider_id}:{info['id']}"
@@ -748,14 +748,30 @@ class AccountManager:
         raise AccountError("当前账户类型暂不支持启动游戏", "ACCOUNT_TYPE_UNSUPPORTED")
 
     def _plugin_launch_credentials(self, current: dict[str, Any]) -> dict[str, str]:
-        # 通过插件认证提供方解析启动凭据。
+        """
+        将当前插件账户自己的持久数据交给原提供方解析，并复核交付资格。
+
+        私有数据只进入该提供方回调，不加入公开账户投影；回调期间账户或
+        提供方发生变化时拒绝交付旧凭据，原持久文件保持不变。
+        """
         provider = self.plugin_auth_providers.get(current.get("provider") or "")
         if provider is None:
             raise AccountError("认证提供方已卸载，无法启动游戏", "AUTH_PROVIDER_UNAVAILABLE")
+        account_id = current["id"]
+        with self._lock:
+            stored = deepcopy(self._plugin_accounts.get(account_id))
+            if stored is None or stored.get("provider") != current.get("provider"):
+                raise AccountError("插件账户已发生变化，请重新选择", "ACCOUNT_CHANGED")
+            callback_account = {**current, "data": deepcopy(stored.get("data"))}
         try:
-            credentials = provider.resolve_credentials(current)
+            credentials = provider.resolve_credentials(callback_account)
         except Exception as exc:
-            raise AccountError(f"解析插件账户凭据失败: {exc}", "AUTH_PROVIDER_CREDENTIAL_FAILED") from exc
+            raise AccountError("解析插件账户凭据失败，请重新登录", "AUTH_PROVIDER_CREDENTIAL_FAILED") from exc
+        with self._lock:
+            if self.plugin_auth_providers.get(provider.id) is not provider:
+                raise AccountError("认证提供方已失效，无法启动游戏", "AUTH_PROVIDER_UNAVAILABLE")
+            if self._current_account_id != account_id or self._plugin_accounts.get(account_id) != stored:
+                raise AccountError("插件账户已发生变化，请重新选择", "ACCOUNT_CHANGED")
         if not isinstance(credentials, dict):
             raise AccountError("认证提供方返回的凭据无效", "AUTH_PROVIDER_CREDENTIAL_FAILED")
         user_type = str(credentials.get("user_type") or "").lower()

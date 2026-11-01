@@ -1,0 +1,9 @@
+{
+  "name": "worker-custom-ui-example",
+  "title": "原生独立前端示例",
+  "version": "1.0.0",
+  "api_version": 2,
+  "entry_point": "main:Plugin",
+  "custom_ui": {"entry_file": "index.html", "title": "插件自己的独立窗口", "width": 800, "height": 600},
+  "permissions": [{"capability": "ui.custom.execute", "required": false}]
+}

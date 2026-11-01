@@ -26,7 +26,9 @@
 #       - reset(context) -> None — 在会话状态清空后通知扩展释放缓存。
 # ============================================================
 
-"""插件可注册的 Scaffolding 联机扩展协议。"""
+"""
+插件可注册的 Scaffolding 联机扩展协议。
+"""
 
 from __future__ import annotations
 
@@ -186,6 +188,7 @@ class _RegisteredExtension:
     enrich_status: ConnectorStatusEnricher | None
     before_leave: ConnectorSessionHook | None
     on_reset: ConnectorSessionHook | None
+    applies_to_session: Callable[[], bool] | None
 
 
 class ConnectorExtensionRegistry:
@@ -209,6 +212,7 @@ class ConnectorExtensionRegistry:
         enrich_status: ConnectorStatusEnricher | None = None,
         before_leave: ConnectorSessionHook | None = None,
         on_reset: ConnectorSessionHook | None = None,
+        applies_to_session: Callable[[], bool] | None = None,
     ) -> None:
         """
         注册或原位更新一个插件拥有的联机扩展。
@@ -235,6 +239,7 @@ class ConnectorExtensionRegistry:
             enrich_status=enrich_status,
             before_leave=before_leave,
             on_reset=on_reset,
+            applies_to_session=applies_to_session,
         )
         with self._lock:
             current = self._extensions.get(normalized_name)
@@ -267,7 +272,13 @@ class ConnectorExtensionRegistry:
         返回当前需要参与 Scaffolding 协商的扩展协议名。
         """
         with self._lock:
-            return sorted(self._protocol_owners)
+            extensions = tuple(self._extensions.values())
+        return sorted(
+            protocol
+            for extension in extensions
+            if extension.applies_to_session is None or extension.applies_to_session()
+            for protocol in extension.protocols
+        )
 
     async def dispatch(self, request: ConnectorProtocolRequest) -> tuple[int, bytes]:
         """
@@ -277,7 +288,9 @@ class ConnectorExtensionRegistry:
             extension_name = self._protocol_owners.get(request.protocol)
             extension = self._extensions.get(extension_name or "")
             handler = extension.protocols.get(request.protocol) if extension is not None else None
-        if handler is None:
+        if handler is None or (
+            extension is not None and extension.applies_to_session is not None and not extension.applies_to_session()
+        ):
             return 255, f"Unsupported protocol: {request.protocol}".encode()
         try:
             result = handler(request)
@@ -301,7 +314,9 @@ class ConnectorExtensionRegistry:
         with self._lock:
             extensions = tuple(self._extensions.values())
         for extension in extensions:
-            if extension.enrich_status is None:
+            if extension.enrich_status is None or (
+                extension.applies_to_session is not None and not extension.applies_to_session()
+            ):
                 continue
             try:
                 patch = extension.enrich_status(context, status)
@@ -327,6 +342,8 @@ class ConnectorExtensionRegistry:
         with self._lock:
             extensions = tuple(self._extensions.values())
         for extension in extensions:
+            if extension.applies_to_session is not None and not extension.applies_to_session():
+                continue
             hook = getattr(extension, hook_name)
             if hook is None:
                 continue

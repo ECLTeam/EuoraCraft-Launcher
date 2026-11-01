@@ -32,6 +32,9 @@ from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.grant_models import GrantLease, PermissionDeclaration
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.runtime.connector_api import RuntimeConnector
+from ECL.plugins.runtime.custom_ui import RuntimeCustomUi
+from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.plugins.runtime.download_api import RuntimeDownloads
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage
@@ -70,6 +73,9 @@ from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
+    from pytauri import AppHandle
+
+    from ECL.services.connector import ConnectorService
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -141,8 +147,10 @@ class PluginHostBroker:
             "java.install",
             "accounts.read",
             "ui.inject",
+            "ui.custom.execute",
             "auth.provider",
             "connector.extend",
+            "connector.manage",
         }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
@@ -167,7 +175,15 @@ class PluginHostBroker:
             "compat.register",
             "auth.register",
             "connector.register_status",
+            "connector.open",
+            "connector.leave",
+            "connector.protocols.register",
+            "connector.request",
+            "connector.status.set",
             "ui.register_vue",
+            "ui.windows.open",
+            "ui.windows.focus",
+            "ui.windows.close",
             "settings.define",
             "settings.set",
             "events.subscribe",
@@ -211,8 +227,12 @@ class PluginHostBroker:
         crash_sink: Callable[[str], None] | None = None,
         compat_sink: Callable[[str, str, str], None] | None = None,
         tool_channel: ToolChannel | None = None,
-        online_sink: Callable[[str, str | None, AuthProviderDefinition | None], None] | None = None,
+        online_sink: Callable[[str, AuthProviderDefinition | None], None] | None = None,
         connector_sink: Callable[[str, str | None], None] | None = None,
+        custom_ui: CustomUiDeclaration | None = None,
+        window_app: Callable[[], AppHandle | None] | None = None,
+        connector: ConnectorService | None = None,
+        plugin_name: str = "",
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -237,8 +257,13 @@ class PluginHostBroker:
         :param tool_channel: 受管工具通道；未提供时拒绝工具调用
         :param online_sink: 认证提供方接收方；提供方为 None 表示撤销
         :param connector_sink: 联机状态补充接收方；回调为 None 表示撤销
+        :param custom_ui: 已审阅的单文件独立前端声明
+        :param window_app: 原生宿主启动后提供应用句柄
+        :param connector: 应用唯一联机服务
+        :param plugin_name: 宿主解析的安装名称，用于私有协议命名空间
         """
         self.session: PluginGrantSession = session
+        self.custom_ui = RuntimeCustomUi(self, custom_ui, data_path, window_app) if window_app is not None else None
         self.error_code: str | None = None
         self._invoke = invoke
         self._run_state = run_state
@@ -256,6 +281,13 @@ class PluginHostBroker:
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
         )
         self.operations: RuntimeOperations | None = RuntimeOperations(session, operations) if operations else None
+        self.connector = (
+            RuntimeConnector(
+                session, connector, self.operations, plugin_name, self._invoke_callback, self._publish_event
+            )
+            if connector is not None and self.operations is not None and plugin_name
+            else None
+        )
         self.game_install: RuntimeGameInstall | None = (
             RuntimeGameInstall(session, game_operations, resources, self.operations)
             if game_operations is not None and resources is not None and self.operations is not None
@@ -312,7 +344,7 @@ class PluginHostBroker:
         self._commands: dict[str, tuple[str, CommandDefinition, GrantLease]] = {}
         self._panels: dict[str, tuple[PanelDefinition, GrantLease]] = {}
         self._definitions: dict[str, SettingDefinition] = {}
-        self._subscriptions: dict[str, tuple[str, GrantLease]] = {}
+        self._subscriptions: dict[str, tuple[str, GrantLease, str]] = {}
         self._receipts: dict[str, _Receipt] = {}
         self._events: Queue[tuple[str, dict[str, JsonValue], GrantLease]] = Queue(32)
         self._sequence = 0
@@ -378,6 +410,8 @@ class PluginHostBroker:
         if self.game_launch is not None:
             self.game_launch.release()
         if self.network is not None and not self.network.is_idle():
+            return False
+        if self.custom_ui is not None and not self.custom_ui.is_idle():
             return False
         return self.files is None or self.files.is_idle()
 
@@ -728,7 +762,11 @@ class PluginHostBroker:
         self._keys(params, {"event", "callback_ref"})
         lease = self.session.authorize("plugin.base")
         callback = params["callback_ref"]
-        if params["event"] != "settings.changed" or not isinstance(callback, str) or len(callback) != 32:
+        if (
+            params["event"] not in {"settings.changed", "connector.changed"}
+            or not isinstance(callback, str)
+            or len(callback) != 32
+        ):
             raise ProtocolError("该事件或回调尚未开放", "PLUGIN_EVENT_NOT_EXPOSED")
         reference = uuid4().hex
 
@@ -737,7 +775,7 @@ class PluginHostBroker:
                 self._ensure_accepting()
                 if len(self._subscriptions) >= 32:
                     raise ProtocolError("订阅超过上限", "PLUGIN_RATE_LIMITED")
-                self._subscriptions[reference] = (callback, lease)
+                self._subscriptions[reference] = (callback, lease, params["event"])
 
         self.session.accept(lease, register)
         return {"subscription_ref": reference}
@@ -847,20 +885,22 @@ class PluginHostBroker:
         if self._online_sink is None:
             raise ProtocolError("当前宿主未提供第三方登录", "PLUGIN_API_METHOD_NOT_FOUND")
         definition = AuthProviderDefinition.model_validate(request.params)
-        self._online_sink("auth", definition.provider_id, definition)
+        self._online_sink("auth", definition)
         return {"registered": True}
 
     def _connector_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         """
-        只接受联机状态补充登记，按「联机扩展」独立准入。
+        状态补充和自身会话分别按独立许可分派给应用唯一联机服务。
 
         :param request: 已通过变更检查的请求
         :return: 登记结果
         :raises ProtocolError: 未获准或通道缺失时抛出
         """
-        self.session.authorize("connector.extend")
         if request.method != "connector.register_status":
-            raise ProtocolError("此联机方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+            if self.connector is None:
+                raise ProtocolError("当前宿主未提供联机会话", "PLUGIN_API_METHOD_NOT_FOUND")
+            return self.connector.handle(request.method, request.params, request.deadline)
+        self.session.authorize("connector.extend")
         if self._connector_sink is None:
             raise ProtocolError("当前宿主未提供联机扩展", "PLUGIN_API_METHOD_NOT_FOUND")
         definition = ConnectorStatusDefinition.model_validate(request.params)
@@ -1081,6 +1121,10 @@ class PluginHostBroker:
         """
         只接受已批准界面注入的插槽内容，实际渲染与失效由可信界面负责。
         """
+        if request.method.startswith("ui.windows."):
+            if self.custom_ui is None:
+                raise ProtocolError("原生插件窗口不可用", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
+            return self.custom_ui.handle(request.method, request.params)
         self.session.authorize("ui.inject")
         if self._slot_sink is None:
             raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
@@ -1215,11 +1259,19 @@ class PluginHostBroker:
         return result
 
     def _publish_settings(self, values: dict[str, JsonValue], revision: int) -> None:
+        self._publish_event("settings.changed", {"values": values, "revision": revision})
+
+    def _publish_event(self, event: str, arguments: dict[str, JsonValue]) -> None:
+        """
+        只把当前运行自己的事件投递到对应订阅，不暴露全局事件总线。
+        """
         with self._lock:
+            if self._closed.is_set():
+                return
             self._sequence += 1
-            payload: dict[str, JsonValue] = {"values": values, "revision": revision, "sequence": self._sequence}
-            subscriptions = tuple(self._subscriptions.items())
-        for reference, (_, lease) in subscriptions:
+            payload: dict[str, JsonValue] = {**arguments, "sequence": self._sequence}
+            subscriptions = tuple((ref, sub) for ref, sub in self._subscriptions.items() if sub[2] == event)
+        for reference, (_, lease, _) in subscriptions:
             try:
                 self._events.put_nowait((reference, payload, lease))
             except Full:
@@ -1281,22 +1333,20 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
-        if self.modpacks is not None:
-            self.modpacks.close()
-        if self.game_catalog is not None:
-            self.game_catalog.close()
-        if self.game_install is not None:
-            self.game_install.close()
-        if self.game_launch is not None:
-            self.game_launch.close()
-        if self.java is not None:
-            self.java.close()
-        if self.network is not None:
-            self.network.close()
-        if self.files is not None:
-            self.files.close()
-        if self.operations is not None:
-            self.operations.close()
+        for resource in (
+            self.connector,
+            self.custom_ui,
+            self.modpacks,
+            self.game_catalog,
+            self.game_install,
+            self.game_launch,
+            self.java,
+            self.network,
+            self.files,
+            self.operations,
+        ):
+            if resource is not None:
+                resource.close()
         if self._resources is not None:
             self._resources.clear()
         with self._lock:
@@ -1309,6 +1359,8 @@ class PluginHostBroker:
         """
         监管现有任务、网络和暂存的原始授权及取消信号，并重试真实资源清理。
         """
+        if self.custom_ui is not None:
+            self.custom_ui.refresh_permissions()
         if self.operations is not None:
             self.operations.refresh_permissions()
         if self.network is not None:
@@ -1321,6 +1373,8 @@ class PluginHostBroker:
         授权版本变化后只保留仍获准的注册，并为自身事件重新建立有效准入。
         """
         self.refresh_pending_work()
+        if self.connector is not None:
+            self.connector.invalidate()
         view = self.session.view()
         if view.error_code or not view.required_satisfied:
             self.close()
@@ -1335,5 +1389,7 @@ class PluginHostBroker:
                 else {}
             )
             self._subscriptions = (
-                {key: (value[0], event_lease) for key, value in self._subscriptions.items()} if event_lease else {}
+                {key: (value[0], event_lease, value[2]) for key, value in self._subscriptions.items()}
+                if event_lease
+                else {}
             )

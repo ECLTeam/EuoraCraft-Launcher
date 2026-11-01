@@ -1,0 +1,6 @@
+# EuoraCraft Launcher — ECLTeam © 2026, GPL-3.0 License.
+# Native manifests hash exact source bytes; Windows checkouts must preserve LF.
+native/pytauri-runtime/** text eol=lf
+# A unified patch uses a single space for empty context lines.
+native/pytauri-runtime/**/*.patch whitespace=-blank-at-eol
+native/pytauri-runtime/*.patch whitespace=-blank-at-eol

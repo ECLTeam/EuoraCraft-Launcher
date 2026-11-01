@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" />
+  <title>独立前端示例</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px system-ui; }
+    body { margin: 24px; }
+    main { max-width: 640px; margin: auto; }
+    label, input, button, output { display: block; margin: 12px 0; }
+    input, button { font: inherit; padding: 8px; }
+    output { overflow-wrap: anywhere; white-space: pre-wrap; }
+    :focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
+  </style>
+  <main>
+    <h1>插件自己的独立窗口</h1>
+    <p>此页面通过专用端口访问自己的命令和设置，不能直接访问启动器主窗口。</p>
+    <form>
+      <label for="message">问候内容</label>
+      <input id="message" maxlength="200" required />
+      <button>保存设置并执行自己的命令</button>
+    </form>
+    <output role="status" aria-live="polite"></output>
+  </main>
+  <script>
+    const form = document.querySelector('form'), input = document.querySelector('input'), button = document.querySelector('button'), output = document.querySelector('output');
+    ECL.call('settings.get', { keys: ['message'] }).then(result => { input.value = result.values.message; }).catch(error => { output.textContent = error.message; });
+    form.addEventListener('submit', async event => {
+      event.preventDefault(); if (button.disabled) return; button.disabled = true;
+      try {
+        const current = await ECL.call('settings.get', { keys: ['message'] });
+        await ECL.call('settings.set', { values: { message: input.value }, expected_revision: current.revision });
+        const result = await ECL.call('commands.call', { command_ref: 'greet', args: { text: input.value } });
+        output.textContent = result.value.text;
+      } catch (error) { output.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+  </script>
+</html>

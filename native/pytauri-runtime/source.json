@@ -1,0 +1,15 @@
+{
+  "upstream": "https://github.com/pytauri/pytauri.git",
+  "commit": "734d5a1c7834935abdd39c85b53bf990a563febe",
+  "version": "0.8.0+ecl.1",
+  "rust_version": "1.99.0",
+  "tauri": "2.8.3",
+  "wry": "0.53.1",
+  "pyo3": "0.25.1",
+  "webview2_com": "0.38.0",
+  "policy_version": 1,
+  "patch_sha256": "cee6ee8f20166319c924a577f4245211a24615c6e0c8211453c8a7ae11b5f10d",
+  "policy_sha256": "fa2ea6c4dbb73caa195cca12d92179e6dc55a630ed9a682e4ae863676433b7ad",
+  "cargo_lock_sha256": "5bc2dd445e6f87fff063ebfbf417591423d4426a88375b6b9929797811f2ad31",
+  "webview2_version": "156.0.4314.58"
+}

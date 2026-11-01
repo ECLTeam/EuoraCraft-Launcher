@@ -31,6 +31,7 @@ from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
 from ECL.plugins.environment_pool import PluginDependencyDirectory
 from ECL.plugins.grant_models import (
+    GrantLease,
     InstanceCapability,
     PermissionDecision,
     PermissionDeclaration,
@@ -56,6 +57,9 @@ from ECL.utils.account_reading import AccountSummary
 from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
+    from pytauri import AppHandle
+
+    from ECL.services.connector import ConnectorService
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -113,8 +117,9 @@ class PluginWorkerService:
         compat_sink: Callable[[str, str | None, str | None, str | None], None] | None = None,
         tool_spawner: Callable[[str, str, list[str], str], str] | None = None,
         tool_stopper: Callable[[str, str], bool] | None = None,
-        auth_sink: Callable[[str, str | None, object | None], None] | None = None,
-        connector_sink: Callable[[str, str | None], None] | None = None,
+        auth_sink: Callable[[str, str | None, object | None, GrantLease | None], None] | None = None,
+        connector_sink: Callable[[str, str | None, GrantLease | None], None] | None = None,
+        connector: ConnectorService | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -139,6 +144,7 @@ class PluginWorkerService:
         :param tool_stopper: 受管工具停止方；未提供时拒绝停止
         :param auth_sink: 认证提供方接收方；提供方为 None 表示撤销
         :param connector_sink: 联机状态补充接收方；回调为 None 表示撤销
+        :param connector: 应用唯一联机服务，创建和停止均保留会话来源
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
@@ -150,6 +156,8 @@ class PluginWorkerService:
         self._tool_stopper = tool_stopper
         self._auth_sink = auth_sink
         self._connector_sink = connector_sink
+        self._connector = connector
+        self._window_app: AppHandle | None = None
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
             data_path, implemented_capabilities=PluginHostBroker.implemented_capabilities
@@ -178,6 +186,18 @@ class PluginWorkerService:
             else None
         )
         self._resource_pages = ResourcePages()
+
+    def bind_window_app(self, app_handle: AppHandle) -> None:
+        """
+        在原生宿主就绪后绑定独立窗口入口，不从插件数据接收应用句柄。
+
+        :param app_handle: 当前应用唯一 Tauri 句柄
+        :raises RuntimeError: 已有不同的原生宿主时抛出
+        """
+        with self._lock:
+            if self._window_app is not None:
+                raise RuntimeError("原生窗口宿主已经绑定")
+            self._window_app = app_handle
 
     def refresh_resources(self) -> int:
         """
@@ -586,6 +606,10 @@ class PluginWorkerService:
                     compat_sink=partial(self._publish_compat, name),
                     online_sink=partial(self._publish_auth, name),
                     connector_sink=partial(self._publish_connector, name),
+                    custom_ui=entry.manifest.custom_ui,
+                    window_app=lambda: self._window_app,
+                    connector=self._connector,
+                    plugin_name=entry.manifest.name,
                     tool_channel=ToolChannel(
                         run=partial(self._tool_run, name),
                         stop=partial(self._tool_stop, name),
@@ -671,7 +695,13 @@ class PluginWorkerService:
         """
         if self._auth_sink is None:
             raise ProtocolError("当前宿主未提供第三方登录", "PLUGIN_API_METHOD_NOT_FOUND")
-        self._auth_sink(name, None if definition is None else str(getattr(definition, "provider_id", "")), definition)
+        provider_id = None
+        lease = None
+        if definition is not None:
+            entry = self._entry(name)
+            lease = entry.session.authorize("auth.provider")
+            provider_id = f"worker.{entry.installation_id}.{getattr(definition, 'provider_id', '')}"
+        self._auth_sink(name, provider_id, definition, lease)
 
     def _clear_auth(self, name: str) -> None:
         """
@@ -680,7 +710,7 @@ class PluginWorkerService:
         :param name: 安装名称
         """
         if self._auth_sink is not None:
-            self._auth_sink(name, None, None)
+            self._auth_sink(name, None, None, None)
 
     def _publish_connector(self, name: str, kind: str, callback_ref: str | None) -> None:
         """
@@ -692,7 +722,8 @@ class PluginWorkerService:
         """
         if self._connector_sink is None:
             raise ProtocolError("当前宿主未提供联机扩展", "PLUGIN_API_METHOD_NOT_FOUND")
-        self._connector_sink(name, callback_ref)
+        lease = self._entry(name).session.authorize("connector.extend") if callback_ref is not None else None
+        self._connector_sink(name, callback_ref, lease)
 
     def _clear_connector(self, name: str) -> None:
         """
@@ -701,7 +732,7 @@ class PluginWorkerService:
         :param name: 安装名称
         """
         if self._connector_sink is not None:
-            self._connector_sink(name, None)
+            self._connector_sink(name, None, None)
 
     def _tool_run(self, name: str, definition: object, args: tuple[str, ...]) -> str:
         """
@@ -809,7 +840,13 @@ class PluginWorkerService:
             self._hook_sink(name, None, None, False)
 
     def invoke_hook(
-        self, name: str, callback_ref: str, payload: dict[str, JsonValue], timeout: float = 5.0
+        self,
+        name: str,
+        callback_ref: str,
+        payload: dict[str, JsonValue],
+        timeout: float = 5.0,
+        *,
+        lease: GrantLease | None = None,
     ) -> JsonValue:
         """
         宿主调用插件登记的钩子回调，失败按命令失败上报。
@@ -818,13 +855,18 @@ class PluginWorkerService:
         :param callback_ref: 本运行登记的回调标识
         :param payload: 有界启动上下文
         :param timeout: 最长等待秒数
+        :param lease: 敏感登记的原始准入；调用与交付前均须继续有效
         :return: 回调返回值
         :raises ProtocolError: 插件未启用或回调失败时抛出
         """
         entry = self._entry(name)
         if entry.state != "enabled" or entry.broker is None:
             raise ProtocolError("插件未启用", "PLUGIN_TARGET_DISABLED")
+        if lease is not None:
+            entry.session.check(lease)
         reply = entry.broker.invoke_callback(callback_ref, payload, timeout)
+        if lease is not None:
+            entry.session.check(lease)
         if reply.get("ok") is not True or not isinstance(reply.get("data"), dict):
             raise ProtocolError("启动钩子执行失败", "PLUGIN_COMMAND_FAILED")
         return reply["data"].get("value")
@@ -1057,6 +1099,8 @@ class PluginWorkerService:
         )
         if entry.broker:
             entry.broker.refresh_permissions()
+        self._clear_auth(name)
+        self._clear_connector(name)
         if not view.required_satisfied and entry.state == "enabled":
             try:
                 self.stop(name)
