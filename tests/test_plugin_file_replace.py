@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.runtime.models import FileReplaceBeginRequest
-from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
+from ECL.utils.file_handles import FileBoundaryError, FileHandle
 from tests.test_plugin_file_delete import published
 from tests.test_plugin_host_files import call, chunk, commit, files, finish, invalidate_base
 
@@ -221,3 +221,23 @@ def test_revocation_during_original_hash_prevents_acceptance(files, tmp_path, mo
     view = finish(broker, manager, commit(broker, upload, b"new bytes"))
     assert view["effect"] == "none" and not view["cleanup_pending"]
     assert target_path.read_bytes() == b"hello"
+
+
+def test_replacement_confirmation_failure_does_not_claim_original_was_preserved(files, tmp_path, monkeypatch):
+    broker, manager, storage, _, _ = files
+    target, etag = published(broker, manager)
+    upload = replace_begin(broker, target, etag)
+    chunk(broker, upload, b"new bytes")
+    replace = FileHandle.replace
+
+    def completed_then_failed(stream, name):
+        replace(stream, name)
+        raise FileBoundaryError("发布后确认失败", "PLUGIN_STORAGE_FAILED")
+
+    monkeypatch.setattr(FileHandle, "replace", completed_then_failed)
+    view = finish(broker, manager, commit(broker, upload, b"new bytes"))
+    assert view["state"] == "failed"
+    assert view["effect"] == "unknown"
+    assert not view["cleanup_pending"]
+    assert next(tmp_path.glob("plugin_data/*/files/target.bin")).read_bytes() == b"new bytes"
+    assert not storage.uploads(broker.session.run_id)

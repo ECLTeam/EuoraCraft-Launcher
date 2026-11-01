@@ -33,8 +33,8 @@ from anyio import to_thread
 from packaging.version import InvalidVersion, Version
 
 from ECL.game import GetGames, InstallEvent, InstallObserver
+from ECL.utils.file_handles import FileBoundaryError
 from ECL.utils.instance_reading import InstanceReadBoundary, directory_identity
-from ECL.utils.windows_file_handles import FileBoundaryError
 
 from .base import Downloader, GameServiceError, _GameState
 from .install_progress import InstallationProgress, InstallationSnapshot

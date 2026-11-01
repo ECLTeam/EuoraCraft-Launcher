@@ -24,8 +24,8 @@ from typing import Literal
 from uuid import uuid4
 
 from ECL.services.operations import OperationCommitRejectedError, OperationContext
+from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle
 from ECL.utils.instance_reading import DirectoryIdentity, InstanceReadBoundary, InstanceReadError
-from ECL.utils.windows_file_handles import FileBoundaryError, FileDirectory, FileHandle
 
 from .instance_profile_models import InstanceProfilePatch, InstanceProfileSnapshot, read_profile_snapshot
 

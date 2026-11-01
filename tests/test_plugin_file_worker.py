@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -18,8 +17,6 @@ from ECL.services.operations import OperationManager
 
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
 def test_snapshot_example_uses_real_worker_upload_commit_read_and_restart(tmp_path, is_frozen):
-    if sys.platform != "win32":
-        pytest.skip("第三方执行仅支持 Windows x64")
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     if is_frozen and not artifact:
         pytest.skip("需要本轮真实冻结发行物")

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from ECL.utils.instance_reading import DirectoryIdentity
 
 if TYPE_CHECKING:
-    from ECL.utils.windows_file_handles import FileDirectory
+    from ECL.utils.file_handles import FileDirectory
 
 
 @dataclass(frozen=True, slots=True)

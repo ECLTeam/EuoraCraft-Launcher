@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
@@ -24,8 +23,6 @@ from ECL.services.operations import OperationManager
 
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
 def test_real_worker_download_publish_cancel_revoke_and_stop(tmp_path, is_frozen):
-    if sys.platform != "win32":
-        pytest.skip("第三方 Worker 仅支持 Windows x64")
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     if is_frozen and not artifact:
         pytest.skip("需要本轮真实冻结发行物")
