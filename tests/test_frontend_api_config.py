@@ -49,6 +49,7 @@
 #       - run_on_main_thread(handler) -> None
 #   - test_launcher_config_excludes_runtime_metadata(tmp_path) -> None
 #   - test_launcher_info_uses_runtime_metadata(tmp_path) -> None
+#   - test_launcher_info_reports_current_system_summary(tmp_path) -> None
 #   - test_announcements_delegate_to_registered_service(tmp_path) -> None
 #   - test_user_agreement_state_is_persisted_by_formal_system_api(tmp_path) -> None
 #   - test_java_scan_delegates_to_game_service(tmp_path) -> None
@@ -102,6 +103,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import platform
 import sys
 from importlib import import_module
 from pathlib import Path
@@ -630,6 +632,20 @@ def test_launcher_info_uses_runtime_metadata(tmp_path) -> None:
     assert result["data"]["version"] == "1.4.2-alpha.3+20260906"
     assert result["data"]["version_type"] == "alpha"
     assert result["data"]["active_window_chrome"] == "system_shadow"
+
+
+def test_launcher_info_reports_current_system_summary(tmp_path) -> None:
+    api = _build_api(tmp_path)
+    api.launcher.active_window_chrome = "custom"
+
+    result = asyncio.run(api.launcher_info({}))
+
+    system = result["data"]["system"]
+    assert system["os_name"]
+    assert system["architecture"]
+    assert system["python_version"] == platform.python_version()
+    assert isinstance(system["memory_total_mb"], int)
+    assert system["memory_total_mb"] > 0
 
 
 def test_settings_write_returns_effective_snapshot_without_losing_runtime_override(tmp_path: Path) -> None:

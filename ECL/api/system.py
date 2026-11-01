@@ -11,7 +11,7 @@
 #       - launcher_errors_ack(body) -> dict[str, Any] — 确认前端已经接收一批严重错误并释放其内存副本。
 #       - system_ping(body) -> dict[str, Any] — 检查连接。
 #       - system_memory(body) -> dict[str, Any] — 获取内存信息。
-#       - launcher_info(body) -> dict[str, Any] — 获取启动器信息。
+#       - launcher_info(body) -> dict[str, Any] — 获取启动器信息与当前系统信息。
 #       - launcher_check_update(body) -> dict[str, Any] — 按当前版本通道检查 GitHub Releases 是否有新版本。
 #       - launcher_preload_connector(body) -> dict[str, Any] — 预热联机节点缓存，避免首次创建或加入房间等待网络。
 #       - launcher_announcements_get(body) -> dict[str, Any] — 获取启动器公告。
@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import platform
 import sys
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,44 @@ from ECL.services.updates import UpdateChecker
 from ECL.utils.ui_locale import is_simplified_chinese
 
 from .bridge import _FrontendState, _ipc_handler
+
+
+def _describe_platform() -> tuple[str, str]:
+    """
+    返回便于阅读的操作系统名称与版本号。
+
+    Windows 依据内部版本号区分 10 与 11，macOS 使用系统版本而不是内核版本，
+    其他系统直接沿用 ``platform`` 的原始字段，避免展示推测出来的信息。
+
+    :return: 系统名称与版本号，例如 ``("Windows 11", "10.0.26300")``
+    """
+    if sys.platform == "win32":
+        version = sys.getwindowsversion()
+        # 微软从内部版本 22000 起将系统标识为 Windows 11，platform.release() 在不同 Python 版本下并不一致。
+        windows_11_first_build = 22000
+        family = "Windows 11" if version.build >= windows_11_first_build else "Windows 10"
+        return family, f"{version.major}.{version.minor}.{version.build}"
+    if sys.platform == "darwin":
+        mac_version = platform.mac_ver()[0]
+        return "macOS", mac_version or platform.release()
+    return platform.system() or sys.platform, platform.release()
+
+
+def _system_summary() -> dict[str, Any]:
+    """
+    汇总当前运行环境的系统信息，供关于页的调试信息弹窗展示。
+
+    :return: 系统名称、系统版本、架构、Python 版本与物理内存总量（MB）
+    """
+    os_name, os_version = _describe_platform()
+    memory_total_mb = round(psutil.virtual_memory().total / (1024 * 1024))
+    return {
+        "os_name": os_name,
+        "os_version": os_version,
+        "architecture": platform.machine(),
+        "python_version": platform.python_version(),
+        "memory_total_mb": memory_total_mb,
+    }
 
 
 class SystemHandlers(_FrontendState):
@@ -166,12 +205,12 @@ class SystemHandlers(_FrontendState):
 
     async def launcher_info(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        获取启动器信息及本次运行的主窗口模式。
+        获取启动器信息、当前系统信息及本次运行的主窗口模式。
 
         窗口模式是创建窗口时固定的快照，设置页保存新偏好后不会提前改变它。
 
         :param body: 前端传入的 IPC 请求参数
-        :return: 版本、调试状态及主窗口模式信息
+        :return: 版本、调试状态、系统信息及主窗口模式信息
         """
         return {
             "success": True,
@@ -181,6 +220,7 @@ class SystemHandlers(_FrontendState):
                 "debug": bool(self.launcher.debug),
                 "active_window_chrome": self.launcher.active_window_chrome,
                 "system_shadow_supported": sys.platform == "win32",
+                "system": _system_summary(),
             },
         }
 
