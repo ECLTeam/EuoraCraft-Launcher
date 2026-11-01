@@ -42,6 +42,7 @@ jobs:
       ECL_NATIVE_RUNTIME_PATH: ${{ github.workspace }}/build/native-packages
       ECL_NATIVE_GATE_REPORT: ${{ github.workspace }}/build/native-gate.json
       ECL_NATIVE_UI_REPORT: ${{ github.workspace }}/build/native-worker-ui.json
+      ECL_NATIVE_TRACE_DIRECTORY: ${{ github.workspace }}/build/native-traces
       LIBGL_ALWAYS_SOFTWARE: "1"
       WEBKIT_DISABLE_DMABUF_RENDERER: "1"
     steps:
@@ -114,6 +115,7 @@ jobs:
             build/native-ui.xml
             build/native-gate.json
             build/native-worker-ui.json
+            build/native-traces/*.jsonl
             native/pytauri-runtime/source.json
             native/pytauri-runtime/runtime.patch
             native/pytauri-runtime/plugin_isolation*.rs

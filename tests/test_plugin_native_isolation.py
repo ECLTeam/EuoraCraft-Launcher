@@ -127,15 +127,15 @@ def test_native_isolation_real_sources_and_fail_closed(tmp_path, mode):
             while not port_file.exists() and monotonic() < end and process.poll() is None:
                 sleep(0.03)
             assert port_file.exists()
-            asyncio.run(online_control(port_file))
-        _, error = process.communicate(timeout=30)
+            _restore_online(process, port_file, output)
+        stdout, error = process.communicate(timeout=60)
         report = output / "result.json"
-        assert report.exists(), error.decode("utf-8", errors="replace")[-2000:]
+        assert report.exists(), _diagnostics(output, process.returncode, stdout, error)
         data = json.loads(report.read_text(encoding="utf-8"))
         if mode != "network":
             assert data == {"denied": True}, data
             return
-        assert process.returncode == 0, error.decode("utf-8", errors="replace")[-2000:]
+        assert process.returncode == 0, _diagnostics(output, process.returncode, stdout, error)
         _assert_native_frame(data)
         assert received == [] and udp_received == [], {"http": received, "udp_packets": len(udp_received)}
         destination = os.environ.get("ECL_NATIVE_GATE_REPORT")
@@ -176,3 +176,24 @@ def _assert_native_frame(data):
     assert frame["fetch"] == frame["websocket"] == "blocked", data
     assert frame["nested"] == "ran" and frame["worker"] in {"ran", "blocked"}, data
     assert frame["rtc"] in {"offer-created", "blocked"} and frame["hostAsset"] is False, data
+
+
+def _diagnostics(output, returncode, stdout, stderr):
+    files = [output / "runtime.json", output / "trace.jsonl", output / "result.json"]
+    records = [file.read_text(encoding="utf-8") for file in files if file.exists()]
+    return (
+        f"exit: {returncode}\n"
+        + "\n".join(records)
+        + stdout.decode("utf-8", errors="replace")[-2000:]
+        + stderr.decode("utf-8", errors="replace")[-2000:]
+    )
+
+
+def _restore_online(process, port_file, output):
+    try:
+        asyncio.run(online_control(port_file))
+    except Exception as exc:
+        if process.poll() is None:
+            process.terminate()
+        stdout, stderr = process.communicate(timeout=5)
+        raise AssertionError(_diagnostics(output, process.returncode, stdout, stderr)) from exc

@@ -15,7 +15,7 @@
     "plugin_isolation.rs": "fa2ea6c4dbb73caa195cca12d92179e6dc55a630ed9a682e4ae863676433b7ad",
     "plugin_isolation_unix.rs": "664e40df717f250828fbdc771c5555a8746ca8d262eb0a30ecd2c3268796e63a",
     "plugin_isolation_gtk.rs": "7ce06be2728cbf9ce966d1fd0ab2c1dbdbb95b604af16d1c15c980e493ba286c",
-    "plugin_isolation_macos.rs": "ef8225e9269906903f2f0688ad1bc0e07ea8ecc563eaf22055314bf71bdc8e5b"
+    "plugin_isolation_macos.rs": "48bfae0f865e2561278349edaa7ba6a375624bde7bed9e598288eab538dfc7cb"
   },
   "wkwebview_version": "21624.5.1.11.3"
 }

@@ -34,6 +34,12 @@ use tauri::webview::WebviewWindow;
 
 const SIGNAL: &str = "new MutationObserver(()=>{if(document.title.startsWith('ecl-plugin-message://request/'))window.webkit.messageHandlers.ecl_plugin_signal.postMessage('title');}).observe(document,{subtree:true,childList:true,characterData:true});";
 
+fn trace(phase: &str) {
+    if std::env::var_os("ECL_NATIVE_UI_GATE").is_some() {
+        eprintln!("插件原生窗口阶段：{phase}");
+    }
+}
+
 struct Delegate {
     policy: Arc<Policy>,
     view: *mut Object,
@@ -400,6 +406,7 @@ pub(crate) unsafe fn install(
     ready: PyObject,
     window: WebviewWindow<Runtime>,
 ) {
+    trace("开始配置 WKWebView");
     let view = raw.cast::<Object>();
     if view.is_null() || url(view) != "about:blank" || !preferences(view) {
         policy.alive.store(false, Ordering::SeqCst);
@@ -407,6 +414,7 @@ pub(crate) unsafe fn install(
         let _ = window.close();
         return;
     }
+    trace("原生偏好已安装");
     let configuration: *mut Object = msg_send![view, configuration];
     let manager: *mut Object = msg_send![configuration, userContentController];
     let _: () = msg_send![manager, removeScriptMessageHandlerForName:string("ipc")];
@@ -433,11 +441,13 @@ pub(crate) unsafe fn install(
     let _: () = msg_send![manager, addUserScript:script];
     let _: () = msg_send![script, release];
     let _: () = msg_send![delegate, release];
+    trace("原生委托已安装");
 
     let store: *mut Object = msg_send![class!(WKContentRuleListStore), defaultStore];
     let identifier = window.label().to_owned();
     let cleanup_identifier = identifier.clone();
     let callback = ConcreteBlock::new(move |filter: *mut Object, error: *mut Object| {
+        trace("内容过滤已完成");
         if !error.is_null() || filter.is_null() || !policy.alive.load(Ordering::SeqCst) {
             policy.alive.store(false, Ordering::SeqCst); notify(&ready, false); let _ = window.close();
         } else {
@@ -452,4 +462,5 @@ pub(crate) unsafe fn install(
         let _: () = msg_send![store, removeContentRuleListForIdentifier:string(&cleanup_identifier) completionHandler:&*cleanup];
     }).copy();
     let _: () = msg_send![store, compileContentRuleListForIdentifier:string(&identifier) encodedContentRuleList:string(RESOURCE_RULES) completionHandler:&*callback];
+    trace("内容过滤已提交");
 }

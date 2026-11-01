@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import platform
 import sys
+from functools import partial
 from importlib.metadata import version
 from pathlib import Path
 from threading import Timer
@@ -18,10 +20,33 @@ from pytauri.ipc import WebviewWindow
 from pytauri_wheel.lib import builder_factory, context_factory
 
 
+def _trace(root: Path, mode: str, phase: str) -> None:
+    paths = [root / "trace.jsonl"]
+    diagnostic_path = os.environ.get("ECL_NATIVE_TRACE_DIRECTORY")
+    if diagnostic_path:
+        destination = Path(diagnostic_path)
+        destination.mkdir(parents=True, exist_ok=True)
+        paths.append(destination / f"{mode}.jsonl")
+    for path in paths:
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"phase": phase}) + "\n")
+
+
 def main() -> None:
     root, canary, udp_port = Path(sys.argv[1]).resolve(), sys.argv[2], int(sys.argv[3])
     mode = sys.argv[4] if len(sys.argv) > 4 else "network"
     root.mkdir(parents=True)
+
+    trace = partial(_trace, root, mode)
+
+    runtime = {
+        "wheel": version("pytauri-wheel"),
+        "engine": webview_version(),
+        "os": sys.platform,
+        "architecture": platform.machine(),
+    }
+    (root / "runtime.json").write_text(json.dumps(runtime), encoding="utf-8")
+    trace("start")
     (root / "assets").mkdir()
     (root / "assets/index.html").write_text(
         "<!doctype html><title>HOST_ASSET_CANARY</title><script>window.__TAURI_INTERNALS__.invoke('plugin:pytauri|pyfunc',new Uint8Array(),{headers:{pyfunc:'gate_request'}});</script>",
@@ -76,10 +101,13 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
     url = "data:text/html;base64," + base64.b64encode(shell.encode()).decode()
 
     def setup(handle: AppHandle) -> None:
+        trace("setup")
         WebviewWindowBuilder.build(
             handle, "main", WebviewUrl.App("index.html"), visible=False, data_directory=root / "trusted-profile"
         )
+        trace("main-created")
         try:
+            trace("plugin-create-start")
             window = WebviewWindowBuilder.build(
                 handle,
                 "plugin-v2-" + uuid4().hex,
@@ -89,6 +117,7 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
                 data_directory=root / "webview",
                 additional_browser_args="--remote-debugging-port=0" if sys.platform == "win32" else "",
             )
+            trace("plugin-created")
             if mode == "unprotected":
                 window.install_plugin_isolation(url, lambda _: None, lambda _: None)
         except (ValueError, RuntimeError) as exc:
@@ -100,23 +129,20 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
 
         def message(uri: str) -> None:
             if uri == "ecl-plugin-ready://loaded":
+                trace("shell-loaded")
                 Timer(3, lambda: window.eval("globalThis.__eclStart()")).start()
                 return
             parts = urlsplit(uri)
             if parts.path != "/" + secret:
                 return
             result = json.loads(parse_qs(parts.query)["payload"][0])
+            trace("guest-report")
             (root / "result.json").write_text(
                 json.dumps(
                     {
                         "frame": result,
                         "ipc": counters,
-                        "runtime": {
-                            "wheel": version("pytauri-wheel"),
-                            "engine": webview_version(),
-                            "os": sys.platform,
-                            "architecture": platform.machine(),
-                        },
+                        "runtime": runtime,
                     },
                     indent=2,
                 ),
@@ -125,23 +151,31 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
             Timer(0.3, lambda: handle.exit(0)).start()
 
         def ready(success: bool) -> None:
+            trace("native-ready" if success else "native-rejected")
             if success:
                 window.navigate(url)
             else:
+                (root / "result.json").write_text(
+                    json.dumps({"initialization_failed": True, "runtime": runtime}), encoding="utf-8"
+                )
                 handle.exit(3)
 
         window.install_plugin_isolation(url, message, ready)
+        trace("install-requested")
         timer = Timer(20, lambda: handle.exit(2))
         timer.daemon = True
         timer.start()
 
     with start_blocking_portal("asyncio") as portal:
+        trace("app-build-start")
         app = builder_factory().build(
             context=context_factory(root, tauri_config={"build": {"frontendDist": "assets"}, "app": {"windows": []}}),
             invoke_handler=commands.generate_handler(portal),
             setup=setup,
         )
+        trace("app-built")
         app.run_return()
+        trace("app-exited")
 
 
 if __name__ == "__main__":
