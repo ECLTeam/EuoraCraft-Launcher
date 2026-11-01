@@ -32,4 +32,12 @@
 
 实现提交 `908e59a`，平台集成修正 `eba689a`。完整本地回归 2702 项通过；后续目录身份和 macOS ARM64 可变参数调用修正的相关回归 46 项通过。真实三平台运行 [41284878230](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41284878230) 全部成功：三个平台各 128 项文件领域和真实源码 Worker 测试；Linux/macOS 各 10 项原生文件测试，Windows 9 项原生文件测试。必需覆盖没有跳过；源码进程与传输门禁也保持通过。
 
+补齐实际文件调用方后的 [41286035439](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41286035439) 三平台继续全绿：各 191 项共享事务、游戏资源、安装、整合包与真实 Worker 用例通过，另有上述原生文件用例。移除了已失效的 POSIX 一律拒绝预期；不支持文件系统的拒绝、目录换绑和链接越界仍有明确回归。加入窗口适配后的本地完整回归 2709 项通过、61 项按环境跳过，后续测试范围调整的相关 63 项通过。
+
 原生窗口仍在独立验收。新增 `0.8.0+ecl.2` 固定源码构建、两种 WebKit 原生策略及三平台 GUI 门禁；未取得实际合法回传和网络零请求报告前，不宣称窗口完成。macOS 关闭 PeerConnection 采用固定 WebKit build 的专用偏好接口，原因及失败边界见原生运行时说明。
+
+## 原生窗口验收进展
+
+- Linux WebKitGTK 2.52.6 已在 [41286814282](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41286814282) 通过 3 项真实 GUI 门禁，包含合法回传、服务端 HTTP/UDP 零请求、通用 IPC 拒绝和 Worker 撤权、关闭、重开；原始报告见该运行的 `plugin-native-ubuntu-latest` 产物。
+- Windows 本机 WebView2 156.0.4314.58 使用 CI 构建的 `0.8.0+ecl.2` Wheel，在独立目录通过 4 项真实 GUI 门禁。合法主窗口 IPC 与插件桥均成功；HTTP/UDP 到达数为零，撤销 CDP 网络拒绝后仍由固定代理阻断；Worker 回传、撤权关闭与重新打开通过。本地报告位于忽略目录 `build/native-win-acceptance/`。Wheel 来自运行 `41285850953`，Windows 策略和 runtime.patch 与后续受验源码相同；不把该 Wheel 当作后续 macOS 策略的验收产物。
+- 远端 Windows 与 macOS 的 GUI 尚未通过，正在保留原始初始化阶段、运行时版本及退出信息定位；不能用本机 Windows 或 Linux 结果替代这两项。Nuitka、默认分支推送和发布仍未执行。
