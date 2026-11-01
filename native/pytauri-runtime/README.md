@@ -4,14 +4,14 @@
 
 ## 构建与安装
 
-需要 Windows x64、Python 3.11/3.12、Rust 1.99.0 和 MSVC 构建工具。从主仓库执行：
+需要 Python 3.11/3.12 与 Rust 1.99.0。Windows x64 使用 MSVC，Linux 使用 GTK 3 / WebKitGTK 4.1 开发包，macOS 使用 Xcode 命令行工具。从主仓库执行：
 
 ```powershell
-./native/pytauri-runtime/build-wheel.ps1 -Python python
+python native/pytauri-runtime/build-wheel.py
 python -m pip install --no-index --no-deps --require-hashes --find-links build/native-runtime/wheels -r build/native-runtime/install.txt
 ```
 
-构建使用独立 venv、固定且校验摘要的构建工具、完整 upstream workspace 和 `cargo --locked`。脚本拒绝覆盖已有源码目录；再次构建可指定新的 `-OutputDirectory`。`-SourceRepository` 可选择只读本地 Git 镜像，但检出的提交仍必须与固定 SHA 一致。不会修改其他项目或 site-packages；安装是后续显式命令。可用 `--target` 安装到验收目录。产物版本为 `pytauri` 与 `pytauri-wheel` 的 `0.8.0+ecl.1`，输出清单记录本次二进制摘要，不宣称不同路径或编译器环境产生逐字节一致的文件。
+构建使用独立 venv、固定且校验摘要的构建工具、完整 upstream workspace 和 `cargo --locked`。脚本拒绝覆盖已有源码目录；再次构建可指定新的 `--output-directory`。`--source-repository` 可选择只读本地 Git 镜像，但检出的提交仍必须与固定 SHA 一致。不会修改其他项目或 site-packages；安装是后续显式命令。可用 `--target` 安装到验收目录。产物版本为 `pytauri` 与 `pytauri-wheel` 的 `0.8.0+ecl.2`，输出清单记录本次二进制摘要，不宣称不同路径或编译器环境产生逐字节一致的文件。原 PowerShell 入口转调同一构建程序。
 
 ## 边界和顺序
 
@@ -25,6 +25,10 @@ WebView2 对本次 data 顶层文档的 `Source` 观测为空，不能据此鉴�
 
 ## 验收与许可
 
-真实测试须同时有合法回传和服务端零请求，覆盖 WebSocket、worker、嵌套 frame、特殊协议、旁路、关闭及撤权；单独的 ready、超时或浏览器报错不构成通过。详细范围和当前结果保存在第二批交付记录，未验证的门禁不得标为完成。其他平台的自定义前端尚未获验收，保持明确拒绝。
+真实测试须同时有合法回传和服务端零请求，覆盖 WebSocket、worker、嵌套 frame、特殊协议、旁路、关闭及撤权；单独的 ready、超时或浏览器报错不构成通过。详细范围和当前结果保存在第二批交付记录，未验证的门禁不得标为完成。
+
+`0.8.0+ecl.2` 接入 WebKitGTK 与 WKWebView，三平台原始 GUI 报告由 `Plugin Native WebViews` 工作流保留。POSIX 窗口在创建时启用独立临时数据上下文与固定拒绝代理，安装原生内容过滤后才加载宿主壳；禁止通用 IPC、文件选择、权限、下载和外部导航。桥接只从实际顶层文档读取宿主闭包，不采信 frame 名称。
+
+WKWebView 公共接口没有关闭 PeerConnection 的等价选项，因此本项目使用版本固定的 WebKit 专用偏好接口，关闭 PeerConnection、媒体设备、屏幕捕获及可发现的 WebTransport 功能。该接口属于 SPI，不承诺跨 WebKit build 稳定；清单固定实际 `CFBundleVersion`，版本或必要接口不符时在空白窗口拒绝执行。更新须审阅接口并重新通过真实 GUI 和网络门禁，不扩大为任意系统版本支持。当前正在进行首次 POSIX 原生验收，结果以实施文档记录为准。
 
 upstream PyTauri 使用 Apache-2.0，原文见 `UPSTREAM-LICENSE`；ECL 的原生策略使用主仓库 GPL-3.0。修改后的原生 Wheel 同时携带两份许可，发布时保留上游著作权和依赖声明；源码补丁、Cargo.lock 及构建清单须与产物一同保留。普通 Python 绑定保留 upstream Apache-2.0 许可。

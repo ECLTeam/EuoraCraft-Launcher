@@ -1,29 +1,37 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 678ab39f..f16b4696 100644
+index 678ab39f..d6c6b5c7 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -3720,6 +3720,7 @@ version = "0.8.0"
+@@ -3718,8 +3718,14 @@ dependencies = [
+ name = "pytauri-core"
+ version = "0.8.0"
  dependencies = [
++ "block",
++ "gio",
++ "glib",
++ "javascriptcore-rs",
++ "objc",
   "pyo3",
   "pyo3-utils",
 + "serde_json",
   "tauri",
   "tauri-plugin-autostart",
   "tauri-plugin-clipboard-manager",
-@@ -3740,6 +3741,8 @@ dependencies = [
+@@ -3740,6 +3746,9 @@ dependencies = [
   "tauri-plugin-upload",
   "tauri-plugin-websocket",
   "tauri-plugin-window-state",
++ "webkit2gtk",
 + "webview2-com",
 + "windows 0.61.1",
  ]
  
  [[package]]
 diff --git a/crates/pytauri-core/Cargo.toml b/crates/pytauri-core/Cargo.toml
-index a74e96b8..4609c9d9 100644
+index a74e96b8..b902f8d0 100644
 --- a/crates/pytauri-core/Cargo.toml
 +++ b/crates/pytauri-core/Cargo.toml
-@@ -94,3 +94,8 @@ plugin-single-instance = ["dep:tauri-plugin-single-instance"]
+@@ -94,3 +94,19 @@ plugin-single-instance = ["dep:tauri-plugin-single-instance"]
  plugin-updater = ["dep:tauri-plugin-updater", "tauri-plugin-updater/zip"]
  plugin-window-state = ["dep:tauri-plugin-window-state"]
  plugin-global-shortcut = ["dep:tauri-plugin-global-shortcut"]
@@ -32,11 +40,22 @@ index a74e96b8..4609c9d9 100644
 +webview2-com = "=0.38.0"
 +windows = { version = "=0.61.1", features = ["Win32_Foundation", "Win32_System_Com"] }
 +serde_json = "1"
++
++[target.'cfg(target_os = "linux")'.dependencies]
++glib = "=0.18.5"
++gio = "=0.18.4"
++java_script_core = { package = "javascriptcore-rs", version = "=1.1.2" }
++webkit2gtk = { version = "=2.0.1", features = ["v2_40"] }
++
++[target.'cfg(target_os = "macos")'.dependencies]
++objc = "=0.2.7"
++block = "=0.1.6"
++tauri = { workspace = true, features = ["macos-proxy"] }
 diff --git a/crates/pytauri-core/src/ext_mod_impl/webview.rs b/crates/pytauri-core/src/ext_mod_impl/webview.rs
-index 19042063..f42e73cb 100644
+index 19042063..cde82e84 100644
 --- a/crates/pytauri-core/src/ext_mod_impl/webview.rs
 +++ b/crates/pytauri-core/src/ext_mod_impl/webview.rs
-@@ -66,6 +66,16 @@ impl WebviewWindow {
+@@ -66,6 +66,18 @@ impl WebviewWindow {
          WebviewWindowBuilder::build(py, manager, label, url, kwargs)
      }
  
@@ -46,14 +65,16 @@ index 19042063..f42e73cb 100644
 +    fn install_plugin_isolation(&self, shell_url: String, on_message: PyObject, on_ready: PyObject) -> PyResult<()> {
 +        #[cfg(windows)]
 +        { crate::plugin_isolation::install(self.0.inner_ref().clone(), shell_url, on_message, on_ready) }
-+        #[cfg(not(windows))]
++        #[cfg(any(target_os = "linux", target_os = "macos"))]
++        { crate::plugin_isolation_unix::install(self.0.inner_ref().clone(), shell_url, on_message, on_ready) }
++        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 +        { let _ = (shell_url, on_message, on_ready); Err(pyo3::exceptions::PyRuntimeError::new_err("PLUGIN_UI_ISOLATION_UNAVAILABLE")) }
 +    }
 +
      fn run_on_main_thread(&self, py: Python<'_>, handler: PyObject) -> PyResult<()> {
          py.allow_threads(|| {
              delegate_inner!(self, run_on_main_thread, move || {
-@@ -886,6 +896,7 @@ pub struct WebviewWindowBuilderArgs {
+@@ -886,6 +898,7 @@ pub struct WebviewWindowBuilderArgs {
      initialization_script_for_all_frames: NotRequired<String>,
      user_agent: NotRequired<PyBackedStr>,
      additional_browser_args: NotRequired<PyBackedStr>,
@@ -61,7 +82,7 @@ index 19042063..f42e73cb 100644
      data_directory: NotRequired<PathBuf>,
      disable_drag_drop_handler: NotRequired<bool>,
      enable_clipboard_access: NotRequired<bool>,
-@@ -1012,6 +1023,8 @@ derive_from_py_dict!(WebviewWindowBuilderArgs {
+@@ -1012,6 +1025,8 @@ derive_from_py_dict!(WebviewWindowBuilderArgs {
      #[pyo3(default)]
      additional_browser_args,
      #[pyo3(default)]
@@ -70,7 +91,7 @@ index 19042063..f42e73cb 100644
      data_directory,
      #[pyo3(default)]
      disable_drag_drop_handler,
-@@ -1114,6 +1127,7 @@ impl WebviewWindowBuilderArgs {
+@@ -1114,6 +1129,7 @@ impl WebviewWindowBuilderArgs {
              initialization_script_for_all_frames,
              user_agent,
              additional_browser_args,
@@ -78,7 +99,7 @@ index 19042063..f42e73cb 100644
              data_directory,
              disable_drag_drop_handler,
              enable_clipboard_access,
-@@ -1390,17 +1404,39 @@ impl WebviewWindowBuilder {
+@@ -1390,17 +1406,48 @@ impl WebviewWindowBuilder {
      ) -> PyResult<WebviewWindow> {
          let url = url.get().to_tauri()?;
          let args = WebviewWindowBuilderArgs::from_kwargs(kwargs)?;
@@ -90,7 +111,7 @@ index 19042063..f42e73cb 100644
 +                || args.as_ref().is_some_and(|args| args.extensions_path.0.is_some() || args.browser_extensions_enabled.0 == Some(true) || args.proxy_url.0.is_some()) {
 +                return Err(pyo3::exceptions::PyValueError::new_err("PLUGIN_UI_ISOLATION_UNAVAILABLE"));
 +            }
-+            #[cfg(not(windows))]
++            #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 +            return Err(pyo3::exceptions::PyRuntimeError::new_err("PLUGIN_UI_ISOLATION_UNAVAILABLE"));
 +        }
          manager_method_impl!(py, &manager, move |py, manager| {
@@ -105,6 +126,11 @@ index 19042063..f42e73cb 100644
 +                builder = builder.additional_browser_args(&arguments).browser_extensions_enabled(false).devtools(false);
 +            }
  
++            #[cfg(any(target_os = "linux", target_os = "macos"))]
++            if isolation {
++                let proxy = crate::plugin_isolation_unix::proxy_url(&label, &browser_args)?;
++                builder = builder.incognito(true).proxy_url(proxy).devtools(false);
++            }
              let webview_window = unsafe {
                  // Safety: `WebviewWindowBuilder` does not hold the GIL, so this is safe
                  py.allow_threads_unsend(builder, |builder| builder.build())
@@ -113,14 +139,18 @@ index 19042063..f42e73cb 100644
 +            .map_err(|error| {
 +                #[cfg(windows)]
 +                if isolation { crate::plugin_isolation::release_proxy(&label); }
++                #[cfg(any(target_os = "linux", target_os = "macos"))]
++                if isolation { crate::plugin_isolation_unix::release_proxy(&label); }
 +                TauriError::from(error)
 +            })?;
 +            #[cfg(windows)]
 +            if isolation { crate::plugin_isolation::track_proxy_lifetime(&webview_window); }
++            #[cfg(any(target_os = "linux", target_os = "macos"))]
++            if isolation { crate::plugin_isolation_unix::track_proxy_lifetime(&webview_window); }
  
              PyResult::Ok(WebviewWindow::new(webview_window))
          })?
-@@ -1416,6 +1452,9 @@ impl WebviewWindowBuilder {
+@@ -1416,6 +1463,9 @@ impl WebviewWindowBuilder {
      ) -> PyResult<WebviewWindow> {
          let config = config.into_inner();
          let args = WebviewWindowBuilderArgs::from_kwargs(kwargs)?;
@@ -131,27 +161,33 @@ index 19042063..f42e73cb 100644
              let mut builder = webview::WebviewWindowBuilder::from_config(manager, &config)
                  .map_err(TauriError::from)?;
 diff --git a/crates/pytauri-core/src/lib.rs b/crates/pytauri-core/src/lib.rs
-index 49140d56..dd27c71b 100644
+index 49140d56..a089de1b 100644
 --- a/crates/pytauri-core/src/lib.rs
 +++ b/crates/pytauri-core/src/lib.rs
-@@ -6,6 +6,8 @@
+@@ -6,6 +6,14 @@
  )]
  
  mod ext_mod_impl;
 +#[cfg(windows)]
 +mod plugin_isolation;
++#[cfg(any(target_os = "linux", target_os = "macos"))]
++mod plugin_isolation_unix;
++#[cfg(target_os = "linux")]
++mod plugin_isolation_gtk;
++#[cfg(target_os = "macos")]
++mod plugin_isolation_macos;
  mod plugins;
  pub mod tauri_runtime;
  pub mod utils;
 diff --git a/python/pytauri-wheel/pyproject.toml b/python/pytauri-wheel/pyproject.toml
-index ab05a3c3..58d5f360 100644
+index ab05a3c3..08992926 100644
 --- a/python/pytauri-wheel/pyproject.toml
 +++ b/python/pytauri-wheel/pyproject.toml
 @@ -1,8 +1,9 @@
  [project]
  name = "pytauri-wheel"
 -version = "0.8.0" # ❗ when bumping, remember to update workspace dependencies
-+version = "0.8.0+ecl.1" # ❗ when bumping, remember to update workspace dependencies
++version = "0.8.0+ecl.2" # ❗ when bumping, remember to update workspace dependencies
  readme = "README.md"
 -license = "Apache-2.0"
 +license = "GPL-3.0-only AND Apache-2.0"
@@ -172,14 +208,14 @@ index 746c3421..6afc3949 100644
              features=[
                  # see: <https://pyo3.rs/v0.23.3/building-and-distribution.html#the-extension-module-feature>,
 diff --git a/python/pytauri/pyproject.toml b/python/pytauri/pyproject.toml
-index 6a61bdf0..3b462929 100644
+index 6a61bdf0..e7aec4e5 100644
 --- a/python/pytauri/pyproject.toml
 +++ b/python/pytauri/pyproject.toml
 @@ -1,6 +1,6 @@
  [project]
  name = "pytauri"
 -version = "0.8.0"
-+version = "0.8.0+ecl.1"
++version = "0.8.0+ecl.2"
  readme = "README.md"
  license = "Apache-2.0"
  authors = [

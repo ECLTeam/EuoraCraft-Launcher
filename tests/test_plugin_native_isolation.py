@@ -14,7 +14,7 @@ from time import monotonic, sleep
 import pytest
 
 pytestmark = pytest.mark.skipif(
-    sys.platform != "win32" or not os.environ.get("ECL_NATIVE_UI_GATE"), reason="需要固定原生 Wheel 和真实 WebView2"
+    not os.environ.get("ECL_NATIVE_UI_GATE"), reason="需要固定原生 Wheel 和真实系统 WebView"
 )
 
 
@@ -64,7 +64,7 @@ async def online_control(port_file: Path) -> None:
         )
 
 
-@pytest.mark.parametrize("mode", ["network", "profile_override", "unprotected"])
+@pytest.mark.parametrize("mode", ["network", "unprotected", *(["profile_override"] if sys.platform == "win32" else [])])
 def test_native_isolation_real_sources_and_fail_closed(tmp_path, mode):
     root = Path(__file__).resolve().parents[1]
     received, udp_received = [], []
@@ -119,9 +119,9 @@ def test_native_isolation_real_sources_and_fail_closed(tmp_path, mode):
             env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            creationflags=0x08000000,
+            creationflags=0x08000000 if sys.platform == "win32" else 0,
         )
-        if mode == "network":
+        if mode == "network" and sys.platform == "win32":
             port_file = output / "webview/EBWebView/DevToolsActivePort"
             end = monotonic() + 10
             while not port_file.exists() and monotonic() < end and process.poll() is None:
@@ -136,18 +136,19 @@ def test_native_isolation_real_sources_and_fail_closed(tmp_path, mode):
             assert data == {"denied": True}, data
             return
         assert process.returncode == 0, error.decode("utf-8", errors="replace")[-2000:]
-        frame = data["frame"]
-        assert frame["positive"] and frame["nativeGlobals"] and frame["parentAccess"] is False, data
-        assert data["ipc"]["positive"] >= 1 and data["ipc"]["bypass"] == 0, data
-        assert frame["fetch"] == frame["websocket"] == "blocked", data
-        assert frame["nested"] == "ran" and frame["worker"] in {"ran", "blocked"}, data
-        assert frame["rtc"] in {"offer-created", "blocked"} and frame["hostAsset"] is False, data
+        _assert_native_frame(data)
         assert received == [] and udp_received == [], {"http": received, "udp_packets": len(udp_received)}
         destination = os.environ.get("ECL_NATIVE_GATE_REPORT")
         if destination:
             Path(destination).write_text(
                 json.dumps(
-                    {**data, "http": received, "udp_packets": len(udp_received), "cdp_network_online": True}, indent=2
+                    {
+                        **data,
+                        "http": received,
+                        "udp_packets": len(udp_received),
+                        "cdp_network_online": sys.platform == "win32",
+                    },
+                    indent=2,
                 ),
                 encoding="utf-8",
             )
@@ -161,3 +162,14 @@ def test_native_isolation_real_sources_and_fail_closed(tmp_path, mode):
         server.shutdown()
         server.server_close()
         server_thread.join(2)
+
+
+def _assert_native_frame(data):
+    frame = data["frame"]
+    assert frame["positive"] and frame["parentAccess"] is False, data
+    if sys.platform == "win32":
+        assert frame["nativeGlobals"], data
+    assert data["ipc"]["positive"] >= 1 and data["ipc"]["bypass"] == 0, data
+    assert frame["fetch"] == frame["websocket"] == "blocked", data
+    assert frame["nested"] == "ran" and frame["worker"] in {"ran", "blocked"}, data
+    assert frame["rtc"] in {"offer-created", "blocked"} and frame["hostAsset"] is False, data

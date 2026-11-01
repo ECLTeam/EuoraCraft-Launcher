@@ -121,8 +121,8 @@ def test_custom_ui_replay_returns_same_result_and_changed_identity_cannot_write_
 
 
 @pytest.mark.skipif(
-    sys.platform != "win32" or not os.environ.get("ECL_NATIVE_UI_GATE"),
-    reason="需要固定原生 Wheel 的真实 Windows WebView2 验收",
+    not os.environ.get("ECL_NATIVE_UI_GATE"),
+    reason="需要固定原生 Wheel 的真实系统 WebView 验收",
 )
 def test_real_native_custom_ui_worker_round_trip_revocation_and_reopen(tmp_path):
     root = Path(__file__).resolve().parents[1]
@@ -138,7 +138,7 @@ def test_real_native_custom_ui_worker_round_trip_revocation_and_reopen(tmp_path)
         env=environment,
         capture_output=True,
         timeout=60,
-        creationflags=0x08000000,
+        creationflags=0x08000000 if sys.platform == "win32" else 0,
     )
     report = output / "result.json"
     assert report.exists(), result.stderr.decode("utf-8", errors="replace")[-2000:]

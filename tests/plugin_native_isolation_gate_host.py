@@ -81,7 +81,7 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
                 plugin_isolation=mode != "unprotected",
                 visible=False,
                 data_directory=root / "webview",
-                additional_browser_args="--remote-debugging-port=0",
+                additional_browser_args="--remote-debugging-port=0" if sys.platform == "win32" else "",
             )
             if mode == "unprotected":
                 window.install_plugin_isolation(url, lambda _: None, lambda _: None)
