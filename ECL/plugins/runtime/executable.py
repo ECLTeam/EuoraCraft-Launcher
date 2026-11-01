@@ -65,7 +65,16 @@ class ExecutableLaunchSpec:
             raise PluginRuntimeError("无法确认 Nuitka 原始执行文件", "WORKER_EXECUTABLE_UNRESOLVED")
         project_path = Path(__file__).resolve().parents[3]
         # Windows venv 的入口是重定向器；直接复用当前 VM 的受信 CPython，避免再创建控制台代理。
-        executable_path = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+        if sys.platform == "darwin":
+            import psutil
+
+            # Framework Python 的 bin 启动器会执行 Python.app；认证和重启统一使用实际镜像。
+            try:
+                executable_path = Path(psutil.Process(os.getpid()).exe()).resolve()
+            except psutil.Error:
+                raise PluginRuntimeError("无法确认源码执行镜像", "WORKER_EXECUTABLE_UNRESOLVED") from None
+        else:
+            executable_path = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
         if not executable_path.is_file() or not (project_path / "main.py").is_file():
             raise PluginRuntimeError("无法确认源码启动入口", "WORKER_EXECUTABLE_UNRESOLVED")
         return cls(executable_path, project_path, "source")

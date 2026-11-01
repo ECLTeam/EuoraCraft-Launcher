@@ -149,3 +149,18 @@ def test_host_launch_spec_uses_the_formal_headless_role() -> None:
     start = arguments.index("--headless")
     assert select_process_route(arguments[start:]).role is ProcessRole.plugin
     assert "--internal-plugin-worker" not in arguments
+
+
+def test_macos_source_launch_uses_kernel_image_instead_of_framework_launcher(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from ECL.plugins.runtime.executable import ExecutableLaunchSpec
+
+    actual_image = tmp_path / "Python.app" / "Contents" / "MacOS" / "Python"
+    actual_image.parent.mkdir(parents=True)
+    actual_image.write_bytes(b"test-image")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("psutil.Process", lambda _pid: SimpleNamespace(exe=lambda: str(actual_image)))
+    specification = ExecutableLaunchSpec.current()
+    assert specification.executable_path == actual_image.resolve()
+    assert specification.arguments(local_worker_endpoint(run_id), 123, run_id)[0] == str(actual_image.resolve())
