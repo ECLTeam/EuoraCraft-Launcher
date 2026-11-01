@@ -5,7 +5,9 @@ on:
     branches: [codex/plugin-posix-worker]
     paths:
       - "native/pytauri-runtime/**"
-      - "ECL/plugins/runtime/custom_ui*"
+      - "ECL/plugins/runtime/**"
+      - "ECL/plugin_api/**"
+      - "ECL/plugins/worker_service.py"
       - "tests/*custom_ui*"
       - "tests/*native_isolation*"
       - ".github/workflows/plugin-native-platforms.yml"
@@ -13,7 +15,9 @@ on:
     branches: [main]
     paths:
       - "native/pytauri-runtime/**"
-      - "ECL/plugins/runtime/custom_ui*"
+      - "ECL/plugins/runtime/**"
+      - "ECL/plugin_api/**"
+      - "ECL/plugins/worker_service.py"
       - "tests/*custom_ui*"
       - "tests/*native_isolation*"
       - ".github/workflows/plugin-native-platforms.yml"

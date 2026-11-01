@@ -147,11 +147,8 @@ def test_real_native_custom_ui_worker_round_trip_revocation_and_reopen(tmp_path)
     )
     assert report.exists(), diagnostics
     data = json.loads(report.read_text(encoding="utf-8"))
-    assert result.returncode == 0 and data["ok"] is True, (
-        data,
-        diagnostics,
-    )
-    assert data["revocation_closed"] and data["reopened_and_closed"]
     destination = os.environ.get("ECL_NATIVE_UI_REPORT")
     if destination:
         Path(destination).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    assert result.returncode == 0 and data["ok"] is True, json.dumps(data, ensure_ascii=False) + "\n" + diagnostics
+    assert data["revocation_closed"] and data["reopened_and_closed"]

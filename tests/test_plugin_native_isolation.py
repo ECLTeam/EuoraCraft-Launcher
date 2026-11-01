@@ -24,7 +24,7 @@ async def online_control(port_file: Path) -> None:
     """
     import websockets
 
-    lines = port_file.read_text().splitlines()
+    lines = _debugging_port_lines(port_file)
     async with websockets.connect("ws://127.0.0.1:" + lines[0] + lines[1], proxy=None) as connection:
         sequence = 0
 
@@ -200,3 +200,16 @@ def _restore_online(process, port_file, output):
             process.terminate()
         stdout, stderr = process.communicate(timeout=5)
         raise AssertionError(_diagnostics(output, process.returncode, stdout, stderr)) from exc
+
+
+def _debugging_port_lines(port_file):
+    deadline = monotonic() + 3
+    while monotonic() < deadline:
+        try:
+            lines = port_file.read_text(encoding="utf-8").splitlines()
+        except (FileNotFoundError, PermissionError):
+            lines = []
+        if len(lines) >= 2 and lines[0].isdecimal() and lines[1].startswith("/devtools/browser/"):
+            return lines
+        sleep(0.02)
+    raise AssertionError("WebView 调试端口文件未完成发布")

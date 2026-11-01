@@ -53,6 +53,9 @@ jobs:
           tests/test_process_bootstrap.py
           tests/test_plugin_guardian_control.py
           tests/test_plugin_worker_protocol.py
+          tests/test_plugin_unix_framing.py
+          tests/test_plugin_native_debugging.py
+          tests/test_plugin_native_build_inputs.py
           tests/test_plugin_worker_bootstrap.py
           tests/test_plugin_worker_lifecycle.py
           tests/test_plugin_worker_manager.py
