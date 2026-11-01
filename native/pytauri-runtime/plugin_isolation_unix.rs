@@ -14,6 +14,16 @@ use std::{
 };
 
 use crate::tauri_runtime::Runtime;
+
+// WebKit's filter syntax excludes regexp disjunction; use one rule per scheme.
+pub(crate) const RESOURCE_RULES: &str = r#"[
+{"trigger":{"url-filter":"^https?:"},"action":{"type":"block"}},
+{"trigger":{"url-filter":"^wss?:"},"action":{"type":"block"}},
+{"trigger":{"url-filter":"^file:"},"action":{"type":"block"}},
+{"trigger":{"url-filter":"^tauri:"},"action":{"type":"block"}},
+{"trigger":{"url-filter":"^asset:"},"action":{"type":"block"}},
+{"trigger":{"url-filter":"^ipc:"},"action":{"type":"block"}}
+]"#;
 use pyo3::prelude::*;
 use tauri::{webview::WebviewWindow, WindowEvent};
 

@@ -106,7 +106,7 @@ def main() -> None:
                             "revocation_closed": True,
                             "reopened_and_closed": True,
                             "wheel": version("pytauri-wheel"),
-                            "webview2": webview_version(),
+                            "engine": webview_version(),
                         },
                         indent=2,
                     ),

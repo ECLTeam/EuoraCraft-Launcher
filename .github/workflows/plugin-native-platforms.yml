@@ -41,6 +41,7 @@ jobs:
       ECL_NATIVE_UI_GATE: "1"
       ECL_NATIVE_RUNTIME_PATH: ${{ github.workspace }}/build/native-packages
       ECL_NATIVE_GATE_REPORT: ${{ github.workspace }}/build/native-gate.json
+      ECL_NATIVE_UI_REPORT: ${{ github.workspace }}/build/native-worker-ui.json
       LIBGL_ALWAYS_SOFTWARE: "1"
       WEBKIT_DISABLE_DMABUF_RENDERER: "1"
     steps:
@@ -89,7 +90,7 @@ jobs:
           arguments = [sys.executable, "-m", "pytest", "--tb=short", "-q", "--maxfail=1", "--junitxml=build/native-ui.xml",
                        "tests/test_plugin_native_isolation.py", "tests/test_plugin_custom_ui.py", "-k", "native"]
           if sys.platform == "linux":
-              arguments = ["xvfb-run", "-a", "-s", "-screen 0 1280x800x24", *arguments]
+              arguments = ["dbus-run-session", "--", "xvfb-run", "-a", "-s", "-screen 0 1280x800x24", *arguments]
           subprocess.run(arguments, check=True, env=dict(os.environ, PYTHONPATH=os.environ["ECL_NATIVE_RUNTIME_PATH"]))
           PY
       - name: Reject empty or skipped native coverage
@@ -112,6 +113,7 @@ jobs:
             build/native-runtime/wheels/*.whl
             build/native-ui.xml
             build/native-gate.json
+            build/native-worker-ui.json
             native/pytauri-runtime/source.json
             native/pytauri-runtime/runtime.patch
             native/pytauri-runtime/plugin_isolation*.rs

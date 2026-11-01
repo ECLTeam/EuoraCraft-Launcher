@@ -13,9 +13,9 @@
   "webview2_version": "156.0.4314.58",
   "policies": {
     "plugin_isolation.rs": "fa2ea6c4dbb73caa195cca12d92179e6dc55a630ed9a682e4ae863676433b7ad",
-    "plugin_isolation_unix.rs": "d5306ef68474bc74d138df89dbbf0bf69f32c45bde1f629aac942344e66e526a",
-    "plugin_isolation_gtk.rs": "00384c040bea68dde5c763f2493d87bffe101d431f5ea3b5facde3538aee4c0b",
-    "plugin_isolation_macos.rs": "7e1abe658cb8a6a9758f88258617518a4ced5ba6f2a5980066268f0d5002d444"
+    "plugin_isolation_unix.rs": "664e40df717f250828fbdc771c5555a8746ca8d262eb0a30ecd2c3268796e63a",
+    "plugin_isolation_gtk.rs": "7ce06be2728cbf9ce966d1fd0ab2c1dbdbb95b604af16d1c15c980e493ba286c",
+    "plugin_isolation_macos.rs": "ef8225e9269906903f2f0688ad1bc0e07ea8ecc563eaf22055314bf71bdc8e5b"
   },
   "wkwebview_version": "21624.5.1.11.3"
 }

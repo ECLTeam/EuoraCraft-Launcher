@@ -2,7 +2,7 @@
 // WKWebView native delegates and a main-frame-only signal, on the AppKit thread.
 
 use crate::{
-    plugin_isolation_unix::{notify, Policy},
+    plugin_isolation_unix::{notify, Policy, RESOURCE_RULES},
     tauri_runtime::Runtime,
 };
 use block::{Block, ConcreteBlock};
@@ -32,7 +32,6 @@ use std::{
 };
 use tauri::webview::WebviewWindow;
 
-const RULES: &str = r#"[{"trigger":{"url-filter":"^(https?|wss?|file|tauri|asset|ipc):"},"action":{"type":"block"}}]"#;
 const SIGNAL: &str = "new MutationObserver(()=>{if(document.title.startsWith('ecl-plugin-message://request/'))window.webkit.messageHandlers.ecl_plugin_signal.postMessage('title');}).observe(document,{subtree:true,childList:true,characterData:true});";
 
 struct Delegate {
@@ -213,6 +212,19 @@ extern "C" fn media(
     }
 }
 
+extern "C" fn permission(
+    _: &Object,
+    _: Sel,
+    _: *mut Object,
+    _: *mut Object,
+    _: *mut Object,
+    handler: Completion<(isize,), ()>,
+) {
+    unsafe {
+        (*handler.0).call((0,));
+    }
+}
+
 extern "C" fn alert(
     _: &Object,
     _: Sel,
@@ -301,21 +313,23 @@ fn delegate_class() -> &'static Class {
         for name in ["WKNavigationDelegate", "WKUIDelegate", "WKScriptMessageHandler"] {
             class.add_protocol(Protocol::get(name).unwrap());
         }
-        class.add_method(sel!(dealloc), dealloc as extern "C" fn(_, _));
-        class.add_method(sel!(webView:decidePolicyForNavigationAction:decisionHandler:), navigation as extern "C" fn(_, _, _, _, _));
-        class.add_method(sel!(webView:decidePolicyForNavigationResponse:decisionHandler:), response as extern "C" fn(_, _, _, _, _));
-        class.add_method(sel!(webView:didCommitNavigation:), committed as extern "C" fn(_, _, _, _));
-        class.add_method(sel!(webView:didFinishNavigation:), finished as extern "C" fn(_, _, _, _));
-        class.add_method(sel!(webView:didFailNavigation:withError:), failed as extern "C" fn(_, _, _, _, _));
-        class.add_method(sel!(webView:didFailProvisionalNavigation:withError:), failed as extern "C" fn(_, _, _, _, _));
-        class.add_method(sel!(webViewWebContentProcessDidTerminate:), terminated as extern "C" fn(_, _, _));
-        class.add_method(sel!(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:), popup as extern "C" fn(_, _, _, _, _, _) -> _);
-        class.add_method(sel!(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:), open_panel as extern "C" fn(_, _, _, _, _, _));
-        class.add_method(sel!(webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:), media as extern "C" fn(_, _, _, _, _, _, _));
-        class.add_method(sel!(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:), alert as extern "C" fn(_, _, _, _, _, _));
-        class.add_method(sel!(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:), confirm as extern "C" fn(_, _, _, _, _, _));
-        class.add_method(sel!(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:), prompt as extern "C" fn(_, _, _, _, _, _, _));
-        class.add_method(sel!(userContentController:didReceiveScriptMessage:), signal as extern "C" fn(_, _, _, _));
+        class.add_method(sel!(dealloc), dealloc as extern "C" fn(&mut Object, Sel));
+        class.add_method(sel!(webView:decidePolicyForNavigationAction:decisionHandler:), navigation as extern "C" fn(&Object, Sel, *mut Object, *mut Object, Completion<(isize,), ()>));
+        class.add_method(sel!(webView:decidePolicyForNavigationResponse:decisionHandler:), response as extern "C" fn(&Object, Sel, *mut Object, *mut Object, Completion<(isize,), ()>));
+        class.add_method(sel!(webView:didCommitNavigation:), committed as extern "C" fn(&Object, Sel, *mut Object, *mut Object));
+        class.add_method(sel!(webView:didFinishNavigation:), finished as extern "C" fn(&Object, Sel, *mut Object, *mut Object));
+        class.add_method(sel!(webView:didFailNavigation:withError:), failed as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object));
+        class.add_method(sel!(webView:didFailProvisionalNavigation:withError:), failed as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object));
+        class.add_method(sel!(webViewWebContentProcessDidTerminate:), terminated as extern "C" fn(&Object, Sel, *mut Object));
+        class.add_method(sel!(webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:), popup as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, *mut Object) -> *mut Object);
+        class.add_method(sel!(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:), open_panel as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, Completion<(*mut Object,), ()>));
+        class.add_method(sel!(webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:), media as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, usize, Completion<(isize,), ()>));
+        class.add_method(sel!(webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:), alert as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, Completion<(), ()>));
+        class.add_method(sel!(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:), confirm as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, Completion<(BOOL,), ()>));
+        class.add_method(sel!(webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:), prompt as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, *mut Object, Completion<(*mut Object,), ()>));
+        class.add_method(sel!(userContentController:didReceiveScriptMessage:), signal as extern "C" fn(&Object, Sel, *mut Object, *mut Object));
+        class.add_method(sel!(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:), permission as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, Completion<(isize,), ()>));
+        class.add_method(sel!(_webView:queryPermission:forOrigin:completionHandler:), permission as extern "C" fn(&Object, Sel, *mut Object, *mut Object, *mut Object, Completion<(isize,), ()>));
         class.register() as *const Class as usize
     });
     unsafe { &*(*class as *const Class) }
@@ -358,7 +372,18 @@ unsafe fn preferences(view: *mut Object) -> bool {
     for index in 0..count {
         let feature: *mut Object = msg_send![features, objectAtIndex:index];
         let key: *mut Object = msg_send![feature, key];
-        if text(key).contains("WebTransport") {
+        if [
+            "WebTransport",
+            "Geolocation",
+            "Notifications",
+            "WebBluetooth",
+            "WebUSB",
+            "WebNFC",
+            "WebSerial",
+        ]
+        .iter()
+        .any(|name| text(key).contains(name))
+        {
             let _: () = msg_send![preferences, _setEnabled:NO forFeature:feature];
             let enabled: BOOL = msg_send![preferences, _isEnabledForFeature:feature];
             if enabled != NO {
@@ -426,5 +451,5 @@ pub(crate) unsafe fn install(
         let store: *mut Object = msg_send![class!(WKContentRuleListStore), defaultStore];
         let _: () = msg_send![store, removeContentRuleListForIdentifier:string(&cleanup_identifier) completionHandler:&*cleanup];
     }).copy();
-    let _: () = msg_send![store, compileContentRuleListForIdentifier:string(&identifier) encodedContentRuleList:string(RULES) completionHandler:&*callback];
+    let _: () = msg_send![store, compileContentRuleListForIdentifier:string(&identifier) encodedContentRuleList:string(RESOURCE_RULES) completionHandler:&*callback];
 }

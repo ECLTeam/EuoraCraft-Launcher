@@ -2,7 +2,7 @@
 // Native WebKitGTK policy; JavaScript in a guest never owns these controls.
 
 use crate::{
-    plugin_isolation_unix::{notify, Policy},
+    plugin_isolation_unix::{notify, Policy, RESOURCE_RULES},
     tauri_runtime::Runtime,
 };
 use glib::{prelude::*, translate::*};
@@ -18,9 +18,6 @@ use std::{
 };
 use tauri::webview::WebviewWindow;
 use webkit2gtk::*;
-
-// Filter compilation is deliberately completed while the only document is blank.
-const RULES: &[u8] = br#"[{"trigger":{"url-filter":"^(https?|wss?|file|tauri|asset|ipc):"},"action":{"type":"block"}}]"#;
 
 fn block_existing(object: &impl IsA<glib::Object>, names: &[&str]) {
     for name in names {
@@ -95,6 +92,25 @@ pub(crate) fn install(
         ],
     );
     view.connect_create(|_, _| None);
+    view.connect_context_menu(|_, _, _, _| true);
+    // Unregistering blocks new IPC; disconnecting also releases Wry's retained view.
+    unsafe {
+        let id = glib::gobject_ffi::g_signal_lookup(
+            c"script-message-received".as_ptr(),
+            manager.type_().into_glib(),
+        );
+        if id != 0 {
+            glib::gobject_ffi::g_signal_handlers_disconnect_matched(
+                manager.as_ptr().cast(),
+                glib::gobject_ffi::G_SIGNAL_MATCH_ID,
+                id,
+                0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            );
+        }
+    }
     view.connect_permission_request(|_, request| {
         request.deny();
         true
@@ -224,7 +240,7 @@ pub(crate) fn install(
             fail(&policy, &ready, &close);
             return;
         }
-        let bytes = glib::Bytes::from_static(RULES);
+        let bytes = glib::Bytes::from_static(RESOURCE_RULES.as_bytes());
         let state = Box::new(Compilation {
             view: view.downgrade(),
             policy,

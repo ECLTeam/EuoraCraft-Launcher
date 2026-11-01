@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
+import platform
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from threading import Timer
 from urllib.parse import parse_qs, urlsplit
@@ -10,6 +12,7 @@ from uuid import uuid4
 
 from anyio.from_thread import start_blocking_portal
 from pytauri import AppHandle, Commands, WebviewUrl
+from pytauri.ffi import webview_version
 from pytauri.ffi.webview import WebviewWindowBuilder
 from pytauri.ipc import WebviewWindow
 from pytauri_wheel.lib import builder_factory, context_factory
@@ -43,9 +46,11 @@ def main() -> None:
         return b"{}"
 
     script = """
-const result={positive:true,nativeGlobals:!!window.__TAURI_INTERNALS__,parentAccess:false,fetch:'pending',websocket:'pending',worker:'pending',nested:'pending',rtc:'pending',hostAsset:false};
+const result={positive:true,nativeGlobals:!!window.__TAURI_INTERNALS__,nativeHandlerBlocked:false,parentAccess:false,fetch:'pending',websocket:'pending',worker:'pending',nested:'pending',rtc:'pending',transport:'pending',hostAsset:false};
 try{result.parentAccess=!!parent.document;}catch(e){}
 try{window.__TAURI_INTERNALS__?.invoke('plugin:pytauri|pyfunc',new Uint8Array(),{headers:{pyfunc:'gate_request'}}).catch(()=>{});}catch(e){}
+try{window.webkit.messageHandlers.ipc.postMessage('{}');}catch(e){result.nativeHandlerBlocked=true;}
+try{window.webkit.messageHandlers.ecl_plugin_signal.postMessage('forged-child-signal');}catch(e){}
 fetch(CANARY+'/fetch').then(()=>result.fetch='succeeded').catch(()=>result.fetch='blocked');
 fetch('http://tauri.localhost/index.html').then(r=>r.text()).then(t=>result.hostAsset=t.includes('HOST_ASSET_CANARY')).catch(()=>{});
 try{const ws=new WebSocket(CANARY.replace('http:','ws:')+'/ws');ws.onopen=()=>result.websocket='opened';ws.onerror=()=>result.websocket='blocked';}catch(e){result.websocket='blocked';}
@@ -57,6 +62,7 @@ addEventListener('message',e=>{if(e.source===nested.contentWindow&&e.data==='nes
 const image=new Image();image.src=CANARY+'/image';document.body.append(image);
 window.open(CANARY+'/popup','_blank');
 try{const rtc=new RTCPeerConnection({iceServers:[{urls:'stun:127.0.0.1:UDP_PORT'}]});rtc.createDataChannel('test');rtc.createOffer().then(offer=>rtc.setLocalDescription(offer)).then(()=>result.rtc='offer-created').catch(()=>result.rtc='blocked');setTimeout(()=>rtc.close(),1500);}catch(e){result.rtc='blocked';}
+try{const transport=new WebTransport('https://127.0.0.1:UDP_PORT');transport.ready.then(()=>result.transport='opened').catch(()=>result.transport='blocked');setTimeout(()=>transport.close(),1500);}catch(e){result.transport='blocked';}
 const link=document.createElement('a');link.download='unexpected.txt';link.href=URL.createObjectURL(new Blob(['unexpected']));link.click();
 setTimeout(()=>parent.postMessage({kind:'result',result},'*'),1800);
 """.replace("CANARY", json.dumps(canary)).replace("UDP_PORT", str(udp_port))
@@ -101,7 +107,20 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
                 return
             result = json.loads(parse_qs(parts.query)["payload"][0])
             (root / "result.json").write_text(
-                json.dumps({"frame": result, "ipc": counters}, indent=2), encoding="utf-8"
+                json.dumps(
+                    {
+                        "frame": result,
+                        "ipc": counters,
+                        "runtime": {
+                            "wheel": version("pytauri-wheel"),
+                            "engine": webview_version(),
+                            "os": sys.platform,
+                            "architecture": platform.machine(),
+                        },
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
             )
             Timer(0.3, lambda: handle.exit(0)).start()
 

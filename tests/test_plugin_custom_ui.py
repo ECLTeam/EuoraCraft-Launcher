@@ -148,3 +148,6 @@ def test_real_native_custom_ui_worker_round_trip_revocation_and_reopen(tmp_path)
         result.stderr.decode("utf-8", errors="replace")[-2000:],
     )
     assert data["revocation_closed"] and data["reopened_and_closed"]
+    destination = os.environ.get("ECL_NATIVE_UI_REPORT")
+    if destination:
+        Path(destination).write_text(json.dumps(data, indent=2), encoding="utf-8")

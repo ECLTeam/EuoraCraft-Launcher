@@ -169,6 +169,9 @@ def _assert_native_frame(data):
     assert frame["positive"] and frame["parentAccess"] is False, data
     if sys.platform == "win32":
         assert frame["nativeGlobals"], data
+    else:
+        assert frame["nativeHandlerBlocked"] and frame["rtc"] == "blocked", data
+    assert frame["transport"] == "blocked", data
     assert data["ipc"]["positive"] >= 1 and data["ipc"]["bypass"] == 0, data
     assert frame["fetch"] == frame["websocket"] == "blocked", data
     assert frame["nested"] == "ran" and frame["worker"] in {"ran", "blocked"}, data
