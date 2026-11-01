@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -67,6 +68,16 @@ def main() -> None:
     if sys.version_info[:2] not in {(3, 11), (3, 12)} or sys.platform not in {"win32", "linux", "darwin"}:
         raise ValueError("需要 Windows/Linux/macOS 和 Python 3.11/3.12")
     manifest = json.loads((script_path / "source.json").read_text(encoding="utf-8"))
+    browser_versions = manifest["webview2_versions"]
+    if (
+        not isinstance(browser_versions, list)
+        or not browser_versions
+        or any(
+            not isinstance(value, str) or re.fullmatch(r"\d+\.\d+\.\d+\.\d+", value) is None
+            for value in browser_versions
+        )
+    ):
+        raise ValueError("WebView2 验收版本清单无效")
     compiler = _capture(["rustc", "--version"])
     if not compiler.startswith(f"rustc {manifest['rust_version']} "):
         raise ValueError("Rust 工具链与固定清单不一致")
@@ -125,7 +136,7 @@ def main() -> None:
     environment.update(
         PYO3_PYTHON=sys.executable,
         CARGO_BUILD_JOBS="2",
-        ECL_EXPECTED_WEBVIEW2_VERSION=manifest["webview2_version"],
+        ECL_EXPECTED_WEBVIEW2_VERSIONS=",".join(browser_versions),
         ECL_EXPECTED_WKWEBVIEW_VERSION=manifest["wkwebview_version"],
     )
     environment.setdefault("CARGO_TARGET_DIR", str(output_path / "target"))
@@ -166,7 +177,7 @@ def main() -> None:
         "platform": sys.platform,
         "architecture": platform.machine(),
         "python_abi": abi,
-        "webview2_version": manifest["webview2_version"],
+        "webview2_versions": browser_versions,
         "wkwebview_version": manifest["wkwebview_version"],
         "wheels": [{"name": wheel.name, "sha256": _digest(wheel)} for wheel in wheels],
     }

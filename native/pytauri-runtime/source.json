@@ -10,12 +10,15 @@
   "policy_version": 1,
   "patch_sha256": "cc56c4fab7b43184b0d3d357c99a1944c443dd757c18a0cac67043f793149d24",
   "cargo_lock_sha256": "b0bf27491c3c3394dd7a95faf34d1472b02ed14fa0a48ecba8d20289546f27b2",
-  "webview2_version": "156.0.4314.58",
   "policies": {
-    "plugin_isolation.rs": "fa2ea6c4dbb73caa195cca12d92179e6dc55a630ed9a682e4ae863676433b7ad",
+    "plugin_isolation.rs": "8d6fdc2a096d45563705c63c228ed23c88d568c4962a3b5f55c61221b64cb480",
     "plugin_isolation_unix.rs": "664e40df717f250828fbdc771c5555a8746ca8d262eb0a30ecd2c3268796e63a",
     "plugin_isolation_gtk.rs": "7ce06be2728cbf9ce966d1fd0ab2c1dbdbb95b604af16d1c15c980e493ba286c",
-    "plugin_isolation_macos.rs": "48bfae0f865e2561278349edaa7ba6a375624bde7bed9e598288eab538dfc7cb"
+    "plugin_isolation_macos.rs": "61b5015750e60e0aae3b87e8ed494f05d45b93395aa437fdf8da0ec3652859e8"
   },
-  "wkwebview_version": "21624.5.1.11.3"
+  "wkwebview_version": "21624.5.1.11.3",
+  "webview2_versions": [
+    "155.0.4283.62",
+    "156.0.4314.58"
+  ]
 }

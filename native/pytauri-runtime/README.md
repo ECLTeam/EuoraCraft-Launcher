@@ -17,9 +17,11 @@ python -m pip install --no-index --no-deps --require-hashes --find-links build/n
 
 插件窗口只从 `about:blank` 创建，独立浏览器目录及拒绝代理在创建前绑定。全局 WebView2 浏览器参数、全局用户目录覆盖会阻止创建，以免破坏窗口隔离。原生控制安装完成后才允许一次精确受信壳导航；对应 NavigationId 成功完成后才启动 opaque iframe。窗口关闭或浏览器进程失败先撤销消息准入，再清理原生事件。
 
-当前只开放已实测的 WebView2 **156.0.4314.58**。Chromium 参数不是稳定的 WebView2 生产接口；Evergreen 更新到其他 build 时，普通主窗口继续工作，插件自定义窗口在执行任何插件语句前明确拒绝。新增 Runtime build 须重跑真实网络与生命周期门禁并审阅更新 `source.json`，不得只放宽版本比较。
+WebView2 的精确版本范围由 `source.json` 维护。Chromium 参数不是稳定的 WebView2 生产接口；Evergreen 更新到清单外的 build 时，普通主窗口继续工作，插件自定义窗口在执行任何插件语句前明确拒绝。新增 Runtime build 须重跑真实网络与生命周期门禁并审阅更新清单，不得只放宽版本比较。
 
 原生层关闭通用 WebMessage/HostObject 入口，拒绝不许可导航、资源、外部 URI、新窗口、下载及权限，并拦截文件选择。单窗口本地 HTTP 代理只返回拒绝，不解析上游地址、不转发、不带 DIRECT 回退，覆盖 Chromium 隐含 loopback bypass；禁用 QUIC 与非代理 WebRTC UDP。CSP 继续限制插件页面，不能代替原生验证。
+
+Windows CI 当前预装 WebView2 155.0.4283.62，本机使用 156.0.4314.58；两者作为明确的外部运行时验收范围写入版本清单，分别验证相同原生策略。清单只接受完整版本号，不接受通配或版本区间；新增版本须通过真实门禁才能标记验收完成。当前 155 的首次验收仍在进行。
 
 WebView2 对本次 data 顶层文档的 `Source` 观测为空，不能据此鉴权。专用桥改为原生确认精确 URL 的 NavigationId，再只读取顶层 DocumentTitle 信号，并用原生 ExecuteScript 从不可变顶层闭包取出一次性消息。标题只携带窗口凭据及请求 ID，不携带业务正文。iframe 通过独立 MessagePort 请求，不能读取壳凭据或进入通用 IPC；窗内请求再由原始运行、许可和 Broker 白名单校验。
 

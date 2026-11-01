@@ -40,6 +40,26 @@ fn trace(phase: &str) {
     }
 }
 
+unsafe fn trace_document(view: *mut Object) {
+    if std::env::var_os("ECL_NATIVE_UI_GATE").is_none() {
+        return;
+    }
+    let callback = ConcreteBlock::new(|value: *mut Object, error: *mut Object| {
+        if error.is_null() && !value.is_null() {
+            let is_string: BOOL = msg_send![value, isKindOfClass:class!(NSString)];
+            if is_string == YES {
+                let value = text(value);
+                if value.len() < 512 {
+                    eprintln!("插件宿主文档状态：{value}");
+                }
+            }
+        }
+    })
+    .copy();
+    let script = "JSON.stringify({ready:document.readyState,start:typeof globalThis.__eclStart,take:typeof globalThis.__eclTakeRequest,visibility:document.visibilityState})";
+    let _: () = msg_send![view, evaluateJavaScript:string(script) completionHandler:&*callback];
+}
+
 struct Delegate {
     policy: Arc<Policy>,
     view: *mut Object,
@@ -161,6 +181,7 @@ extern "C" fn finished(this: &Object, _: Sel, view: *mut Object, _: *mut Object)
         }
         if state.policy.alive.load(Ordering::SeqCst) && url(view) == state.policy.shell {
             state.policy.loaded.store(true, Ordering::SeqCst);
+            trace_document(view);
             state.policy.send("ecl-plugin-ready://loaded");
         } else {
             revoke(state);
@@ -286,10 +307,12 @@ extern "C" fn signal(this: &Object, _: Sel, _: *mut Object, message: *mut Object
         {
             return;
         }
+        trace("原生桥已确认顶层信号");
         // Keep the delegate alive through the asynchronous evaluation without a view cycle.
         let owner: *mut Object = msg_send![this, retain];
         let owner = owner as usize;
         let callback = ConcreteBlock::new(move |value: *mut Object, error: *mut Object| {
+            trace("原生桥已读取顶层闭包");
             let owner = owner as *mut Object;
             let state = delegate_state(&*owner);
             state.pulling.set(false);

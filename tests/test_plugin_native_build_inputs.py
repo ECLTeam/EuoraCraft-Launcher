@@ -64,3 +64,15 @@ def test_native_builder_reports_chinese_under_western_windows_console(builder):
     )
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
     assert "构建固定的插件原生窗口运行时" in result.stdout.decode("utf-8")
+
+
+@pytest.mark.parametrize("versions", [[], ["155.*"], ["155.0.4283.62,156.0.4314.58"], [155], "155.0.4283.62"])
+def test_native_build_rejects_wildcards_and_invalid_runtime_allowlists(builder, tmp_path, monkeypatch, versions):
+    script = tmp_path / "native/runtime/build-wheel.py"
+    script.parent.mkdir(parents=True)
+    (script.parent / "source.json").write_text(json.dumps({"webview2_versions": versions}), encoding="utf-8")
+    monkeypatch.setattr(builder, "__file__", str(script))
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-directory", str(tmp_path / "output")])
+    with pytest.raises(ValueError, match="验收版本清单无效"):
+        builder.main()
+    assert not (tmp_path / "output").exists()

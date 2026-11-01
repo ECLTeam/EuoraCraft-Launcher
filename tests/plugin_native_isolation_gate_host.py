@@ -103,7 +103,11 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
     def setup(handle: AppHandle) -> None:
         trace("setup")
         WebviewWindowBuilder.build(
-            handle, "main", WebviewUrl.App("index.html"), visible=False, data_directory=root / "trusted-profile"
+            handle,
+            "main",
+            WebviewUrl.App("index.html"),
+            visible=mode == "network",
+            data_directory=root / "trusted-profile",
         )
         trace("main-created")
         try:
@@ -130,7 +134,14 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
         def message(uri: str) -> None:
             if uri == "ecl-plugin-ready://loaded":
                 trace("shell-loaded")
-                Timer(3, lambda: window.eval("globalThis.__eclStart()")).start()
+                window.show()
+                window.set_focus()
+
+                def start_guest() -> None:
+                    trace("guest-started")
+                    window.eval("globalThis.__eclStart()")
+
+                Timer(3, start_guest).start()
                 return
             parts = urlsplit(uri)
             if parts.path != "/" + secret:
@@ -174,8 +185,9 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
             setup=setup,
         )
         trace("app-built")
-        app.run_return()
+        exit_code = app.run_return()
         trace("app-exited")
+    raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":
