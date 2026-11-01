@@ -157,7 +157,9 @@ class QomicExCompatibilityPlugin(Plugin):
             if payload is None:
                 return context.request_json(protocol)
             return context.request_json(protocol, payload)
-        except (RuntimeError, UnicodeDecodeError, ValueError):
+        except (RuntimeError, UnicodeDecodeError, ValueError, OSError, EOFError):
+            # 房主可能刚完成握手就关闭连接；这是可预期的瞬时失败，
+            # 返回空结果让调用方跳过本次补充，不把网络异常抛给扩展注册表。
             return None
 
     def _refresh_remote_game_info(self, context: ConnectorSessionContext) -> None:
