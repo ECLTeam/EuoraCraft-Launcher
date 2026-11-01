@@ -56,7 +56,7 @@ unsafe fn trace_document(view: *mut Object) {
         }
     })
     .copy();
-    let script = "JSON.stringify({ready:document.readyState,start:typeof globalThis.__eclStart,take:typeof globalThis.__eclTakeRequest,visibility:document.visibilityState})";
+    let script = "JSON.stringify({ready:document.readyState,start:typeof globalThis.__eclStart,take:typeof globalThis.__eclTakeRequest,visibility:document.visibilityState,bridge:typeof globalThis.webkit?.messageHandlers?.ecl_plugin_signal?.postMessage})";
     let _: () = msg_send![view, evaluateJavaScript:string(script) completionHandler:&*callback];
 }
 
@@ -97,6 +97,7 @@ unsafe fn delegate_state(this: &Object) -> &Delegate {
 }
 
 unsafe fn revoke(state: &Delegate) {
+    trace("撤销窗口消息准入");
     state.policy.alive.store(false, Ordering::SeqCst);
     state.policy.loaded.store(false, Ordering::SeqCst);
     let _ = state.window.close();
@@ -195,8 +196,12 @@ extern "C" fn terminated(this: &Object, _: Sel, _: *mut Object) {
     }
 }
 
-extern "C" fn failed(this: &Object, _: Sel, _: *mut Object, _: *mut Object, _: *mut Object) {
+extern "C" fn failed(this: &Object, _: Sel, _: *mut Object, _: *mut Object, error: *mut Object) {
     unsafe {
+        if std::env::var_os("ECL_NATIVE_UI_GATE").is_some() {
+            let code: isize = msg_send![error, code];
+            eprintln!("插件宿主导航失败，原生错误码：{code}");
+        }
         revoke(delegate_state(this));
     }
 }

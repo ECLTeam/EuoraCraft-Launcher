@@ -139,7 +139,9 @@ addEventListener('message',event=>{if(event.source!==guest.contentWindow||event.
 
                 def start_guest() -> None:
                     trace("guest-started")
-                    window.eval("globalThis.__eclStart()")
+                    window.eval(
+                        "globalThis.__eclStart();globalThis.webkit?.messageHandlers?.ecl_plugin_signal?.postMessage('native-probe')"
+                    )
 
                 Timer(3, start_guest).start()
                 return

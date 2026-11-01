@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -15,6 +16,15 @@ import pytest
 def builder():
     script_path = Path(__file__).resolve().parents[1] / "native/pytauri-runtime/build-wheel.py"
     spec = importlib.util.spec_from_file_location("native_runtime_builder", script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def fixed_runtime():
+    script = Path(__file__).resolve().parents[1] / "native/pytauri-runtime/prepare-webview2.py"
+    spec = importlib.util.spec_from_file_location("native_webview_fixture", script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -66,13 +76,48 @@ def test_native_builder_reports_chinese_under_western_windows_console(builder):
     assert "构建固定的插件原生窗口运行时" in result.stdout.decode("utf-8")
 
 
-@pytest.mark.parametrize("versions", [[], ["155.*"], ["155.0.4283.62,156.0.4314.58"], [155], "155.0.4283.62"])
-def test_native_build_rejects_wildcards_and_invalid_runtime_allowlists(builder, tmp_path, monkeypatch, versions):
+@pytest.mark.parametrize("version", [[], "156.*", "155.0.4283.62,156.0.4314.58", 155, ""])
+def test_native_build_rejects_wildcards_and_invalid_runtime_versions(builder, tmp_path, monkeypatch, version):
     script = tmp_path / "native/runtime/build-wheel.py"
     script.parent.mkdir(parents=True)
-    (script.parent / "source.json").write_text(json.dumps({"webview2_versions": versions}), encoding="utf-8")
+    (script.parent / "source.json").write_text(json.dumps({"webview2_version": version}), encoding="utf-8")
     monkeypatch.setattr(builder, "__file__", str(script))
     monkeypatch.setattr(sys, "argv", [str(script), "--output-directory", str(tmp_path / "output")])
-    with pytest.raises(ValueError, match="验收版本清单无效"):
+    with pytest.raises(ValueError, match="验收版本无效"):
         builder.main()
     assert not (tmp_path / "output").exists()
+
+
+def test_tampered_fixed_runtime_is_never_expanded(fixed_runtime, tmp_path, monkeypatch):
+    script = tmp_path / "tool/prepare-webview2.py"
+    script.parent.mkdir()
+    manifest = {
+        "webview2_fixed_runtime": {
+            "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/runtime.cab",
+            "sha256": "0" * 64,
+        }
+    }
+    (script.parent / "source.json").write_text(json.dumps(manifest), encoding="utf-8")
+    output = tmp_path / "output"
+    monkeypatch.setattr(fixed_runtime, "__file__", str(script))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "argv", [str(script), "--output-directory", str(output)])
+    monkeypatch.setattr(fixed_runtime, "urlopen", lambda *args, **kwargs: io.BytesIO(b"tampered"))
+
+    def never_execute(*args, **kwargs):
+        raise AssertionError("Unverified archive must never be expanded")
+
+    monkeypatch.setattr(fixed_runtime.subprocess, "run", never_execute)
+    with pytest.raises(ValueError, match="摘要不一致"):
+        fixed_runtime.main()
+    assert not (output / "runtime.cab").exists()
+    assert (output / "runtime.partial").read_bytes() == b"tampered"
+
+
+def test_fixed_runtime_is_published_only_after_digest_validation(fixed_runtime, tmp_path, monkeypatch):
+    content = b"authenticated fixture"
+    target = tmp_path / "runtime.cab"
+    monkeypatch.setattr(fixed_runtime, "urlopen", lambda *args, **kwargs: io.BytesIO(content))
+    fixed_runtime._download("https://fixture.invalid", target, hashlib.sha256(content).hexdigest())
+    assert target.read_bytes() == content
+    assert not target.with_suffix(".partial").exists()

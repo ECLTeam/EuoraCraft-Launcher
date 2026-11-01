@@ -69,6 +69,10 @@ jobs:
           restore-keys: plugin-native-${{ runner.os }}-rust199-py311-
       - name: Install launcher test dependencies
         run: python -m pip install -e . pytest pytest-asyncio
+      - name: Prepare fixed WebView2 runtime
+        if: runner.os == 'Windows'
+        timeout-minutes: 10
+        run: python native/pytauri-runtime/prepare-webview2.py
       - name: Build reviewed native Wheel
         run: python native/pytauri-runtime/build-wheel.py
       - name: Save native compiler cache
@@ -86,13 +90,20 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          import json
           import subprocess
           import sys
+          from pathlib import Path
           arguments = [sys.executable, "-m", "pytest", "--tb=short", "-q", "--maxfail=1", "--junitxml=build/native-ui.xml",
                        "tests/test_plugin_native_isolation.py", "tests/test_plugin_custom_ui.py", "-k", "native"]
           if sys.platform == "linux":
               arguments = ["dbus-run-session", "--", "xvfb-run", "-a", "-s", "-screen 0 1280x800x24", *arguments]
-          subprocess.run(arguments, check=True, env=dict(os.environ, PYTHONPATH=os.environ["ECL_NATIVE_RUNTIME_PATH"]))
+          environment = dict(os.environ, PYTHONPATH=os.environ["ECL_NATIVE_RUNTIME_PATH"])
+          if sys.platform == "win32":
+              environment["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = Path("build/webview2-fixed/install-path.txt").read_text(encoding="utf-8")
+              manifest = json.loads(Path("native/pytauri-runtime/source.json").read_text(encoding="utf-8"))
+              environment["ECL_EXPECTED_NATIVE_ENGINE"] = manifest["webview2_version"]
+          subprocess.run(arguments, check=True, env=environment)
           PY
       - name: Reject empty or skipped native coverage
         run: |

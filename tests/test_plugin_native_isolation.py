@@ -166,6 +166,9 @@ def test_native_isolation_real_sources_and_fail_closed(tmp_path, mode):
 
 def _assert_native_frame(data):
     frame = data["frame"]
+    expected_engine = os.environ.get("ECL_EXPECTED_NATIVE_ENGINE")
+    if expected_engine:
+        assert data["runtime"]["engine"] == expected_engine, data
     assert frame["positive"] and frame["parentAccess"] is False, data
     if sys.platform == "win32":
         assert frame["nativeGlobals"], data

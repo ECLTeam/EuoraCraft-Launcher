@@ -29,7 +29,7 @@ use crate::tauri_runtime::Runtime;
 
 // Chromium arguments are not a stable WebView2 production API. A different
 // runtime must pass the native gates and update the reviewed build manifest.
-const TESTED_WEBVIEW2_VERSIONS: &str = env!("ECL_EXPECTED_WEBVIEW2_VERSIONS");
+const TESTED_WEBVIEW2_VERSION: &str = env!("ECL_EXPECTED_WEBVIEW2_VERSION");
 
 struct DenyProxy {
     alive: Arc<AtomicBool>,
@@ -227,8 +227,7 @@ pub(crate) fn install(
         let controller = platform.controller();
         let result = (|| -> windows::core::Result<ICoreWebView2> {
             let environment = platform.environment();
-            let browser_version = text(|value| unsafe { environment.BrowserVersionString(value) })?;
-            if !TESTED_WEBVIEW2_VERSIONS.split(',').any(|version| version == browser_version) {
+            if text(|value| unsafe { environment.BrowserVersionString(value) })? != TESTED_WEBVIEW2_VERSION {
                 return Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x80004001u32 as i32)));
             }
             let core = unsafe { controller.CoreWebView2()? };
