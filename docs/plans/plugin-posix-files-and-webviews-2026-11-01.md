@@ -41,3 +41,11 @@
 - Linux WebKitGTK 2.52.6 已在 [41286814282](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41286814282) 通过 3 项真实 GUI 门禁，包含合法回传、服务端 HTTP/UDP 零请求、通用 IPC 拒绝和 Worker 撤权、关闭、重开；原始报告见该运行的 `plugin-native-ubuntu-latest` 产物。
 - Windows 本机 WebView2 156.0.4314.58 使用 CI 构建的 `0.8.0+ecl.2` Wheel，在独立目录通过 4 项真实 GUI 门禁。合法主窗口 IPC 与插件桥均成功；HTTP/UDP 到达数为零，撤销 CDP 网络拒绝后仍由固定代理阻断；Worker 回传、撤权关闭与重新打开通过。本地报告位于忽略目录 `build/native-win-acceptance/`。Wheel 来自运行 `41285850953`，Windows 策略和 runtime.patch 与后续受验源码相同；不把该 Wheel 当作后续 macOS 策略的验收产物。
 - 远端 Windows 与 macOS 的 GUI 尚未通过，正在保留原始初始化阶段、运行时版本及退出信息定位；不能用本机 Windows 或 Linux 结果替代这两项。Nuitka、默认分支推送和发布仍未执行。
+
+### 通信与门禁时序回归
+
+真实 GUI 验收确认 WKWebView 的代理委托须保留固定 Wry 的 commit/finish 生命周期，否则其宿主 eval 队列无法释放；仅转发精确宿主文档的生命周期，不转发导航或权限决策。
+
+另已独立复现 [#99](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/99)：POSIX 接收线程在可读通知后被延迟时，会将已经完整到达的消息误判为超时。修正为先非阻塞读取已到达字节，只有等待缺失字节才检查原截止；消息上限、同一等待预算和真正半帧超时终止均保留。使用真实流 socket 和调度时序回归验证前失败后通过，并在三平台源码门禁运行；不将尚未定位的其他通信中断直接归因于此。
+
+Windows DevTools 端口文件存在到可读取之间有短暂共享锁窗口；门禁仅对文件缺失、共享锁及未完整发布做有界等待，不重试浏览器拒绝或忽略失败结果。
