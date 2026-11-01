@@ -68,7 +68,7 @@ Python 回调不负责同步决定每一个网络请求；关键拒绝策略在�
 | N02 来源与生命周期 | 专用原生插件桥、顶层来源检查、壳代次；`ECL/api/bridge.py` 拒绝通用命令旁路；限定 Capability | U01—U08、U10/U11，直接 native invoke、伪造 origin/owner、错凭据、导航、撤销均无业务副作用；独立 positive control 必须成功 | 移除该运行代次的桥/端口/事件，不恢复旧主窗口第三方 JS 注入 |
 | N03 发行集成 | `pyproject.toml` 与 CI 固定受控 Wheel 来源/版本/摘要；两种冻结打包；完整 P04/P18 门禁 | 在最终发行物实测 U01—U11、普通启动、权限撤销与残留资源；Ruff/pytest、pnpm check/build；核实 WebView2 最低 Runtime；任一遗漏不开放 custom | 恢复可信宿主依赖并保持 `ui.custom.execute` 关闭；保留授权和数据，不发布 |
 
-Windows 专属安全能力缺失时拒绝创建用户自定义窗口，给出稳定错误 `PLUGIN_UI_ISOLATION_UNAVAILABLE`；第三方运行平台策略仍按 Windows x64 首版约束。其他平台的普通可信主窗口必须继续可构建运行。
+Windows 专属安全能力缺失时拒绝创建用户自定义窗口，给出稳定错误 `PLUGIN_UI_ISOLATION_UNAVAILABLE`；基础 Worker 平台按[适配记录](../plans/plugin-posix-worker-adaptation-2026-11-01.md)验收；此原生窗口门禁仍只开放 Windows x64，不随 Worker 基础适配放开。其他平台的普通可信主窗口必须继续可构建运行。
 
 测试必须真实启动 PyTauri/WebView2，带 native globals，服务器记录接收数量；不能用纯 Chromium iframe、mock、浏览器报错或 timeout 当作安全通过。增加 frame 创建/销毁循环、失败注册、关闭中请求和 revoke 竞态的资源测试；冻结产物记录 Wheel/Runtime/编译器版本和摘要。
 

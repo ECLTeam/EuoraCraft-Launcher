@@ -49,4 +49,24 @@
 - POSIX 专属测试在本机 Windows 跳过，不能视作 Linux/macOS 支持证据；新增的 11 项 POSIX 原生用例须由对应 runner 实际执行。共享守护控制语义有本机单元回归，仍不能代替实际内核测试。
 - 工作流 YAML 及内嵌 Python 已在独立工具 venv 中解析检查，未修改全局 Python 环境；`git diff --check` 通过。
 
-当前交付仅为基础 Worker 平台引导与监管实现。第 5 步受控文件事务尚未实现；Linux/macOS 真实验收、冻结产物及其余第三批能力仍未完成。本机没有可运行的 POSIX 环境，真实验收须授权推送当前分支以运行 CI，或提供对应受信环境。CI 未通过前不将基础平台实现合入共享 `main`，不发布或宣称第三批完成。
+当前交付为基础 Worker 平台引导与监管实现。第 5 步受控文件事务、冻结产物及其余第三批能力仍未完成；基础 Worker 可运行不能推导全部领域 API 已跨平台支持。用户已明确授权推送本分支并继续三平台 CI 验收，授权不扩大到默认分支推送、版本发布或关闭尚未进入远端默认分支的 Issue。
+
+
+平台 CI 暴露已有快照缓存的时间戳合并问题：Windows 连续写入等长内容时，修改时间可能保持相同。许可加载不能使用这一缓存，因此 Host 与 Worker 的实际加载点强制重读字节；普通已加载 API 的授权检查保留原有快速路径。同时在任何缓存命中前先校验批准摘要，避免新 capture 的摘要与宿主许可不符却因元数据缓存提前返回。增加保持大小及时间不变的确定性回归，避免用 sleep 掩盖问题。
+
+
+## 真实三平台基础门禁
+
+[完整运行与原始报告](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41280678365)，源码提交 `8cac0ba78046750cd4e2b356b5c713019e4ee559`，Python 3.11。三平台均成功从远端浅克隆检出全部子模块指针，并执行 Ruff 及格式检查。
+
+| 平台 | 共用源码行为 | 原生边界 | 报告 |
+| --- | --- | --- | --- |
+| Windows x64 | 125 通过 | 5 通过 | [原始 JUnit](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41280678365/artifacts/13072933133) |
+| Linux x64 | 125 通过 | 11 通过 | [原始 JUnit](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41280678365/artifacts/13073356291) |
+| macOS ARM64 | 125 通过 | 11 通过 | [原始 JUnit](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41280678365/artifacts/13072274337) |
+
+必需用例均非空、无失败和跳过；7 个冻结用例或相关参数在源码门禁中明确排除。这里只证明表列处理器和源码基础路径，其他处理器、冻结产物、文件事务和 WebView 不在此结论内。
+
+真实 runner 发现并修正了 POSIX 宿主进程组查询、macOS kqueue 的关闭方式和 Framework Python 启动器与实际镜像不一致的问题。macOS 选择宿主内核确认的真实解释器镜像，保持单一精确镜像认证，不增加候选路径回退。临时加载前诊断已移除，最终报告使用原始生产代码。
+
+快照问题已登记为 [#98](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/98)，修复 `8137235`；在进入远端默认分支前保持打开。修复后本机重新执行主仓库完整后端回归，结果为 **2700 通过、51 跳过**；之后新增的 macOS 专属回归与源码入口回归均通过，并包含在上述三平台共用门禁中。此前一轮失败结果保留为调查记录，不将它改写成已通过。

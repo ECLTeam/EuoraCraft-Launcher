@@ -119,4 +119,4 @@ Java 查询/校验存在另一工作树提交 `6a52497`，但该提交不是当�
 | --- | --- | --- |
 | 第一批：游戏与 Java 业务能力 | 已实现并集成本地 `main`，Windows x64 源码与实际桌面验收通过 | [第一批交付与验收](plugin-first-batch-delivery-2026-10-31.md) |
 | 第二批：界面与扩展能力 | 已实现：声明式面板、主窗口注入、跨插件调用、生命周期扩展、工具进程，以及第三方登录、所属联机会话和原生独立窗口；Windows x64 验收详见交付记录 | [第二批交付与验收](plugin-second-batch-delivery-2026-11-01.md) |
-| 第三批：跨平台与分发闭环 | 实施中：Worker 跨平台通信、监管和基础源码门禁 | [平台适配记录](plugin-posix-worker-adaptation-2026-11-01.md)；文件事务、真实 POSIX 验收及其余第三批工作仍未完成 |
+| 第三批：跨平台与分发闭环 | 实施中：Windows/Linux/macOS 基础 Worker 源码门禁已通过 | [平台适配记录](plugin-posix-worker-adaptation-2026-11-01.md)；文件事务、冻结产物、原生窗口及其余第三批工作仍未完成 |
