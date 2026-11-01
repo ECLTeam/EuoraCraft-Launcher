@@ -80,7 +80,8 @@ from unittest.mock import Mock
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.game import GetGames, LaunchConfig, SearchMinecraft, build_minecraft_cmd
+from ECL.game import CoreError, GetGames, LaunchConfig, SearchMinecraft, build_minecraft_cmd
+from ECL.game.Core.LaunchCommand import parse_launch_command
 from ECL.services.game import GameService, GameServiceError
 
 
@@ -1441,7 +1442,7 @@ def test_command_builder_lock_memory_pins_initial_heap_to_max(tmp_path) -> None:
             {
                 "id": "1.21",
                 "mainClass": "net.minecraft.client.main.Main",
-                "arguments": {"jvm": [], "game": []},
+                "arguments": {"jvm": ["-cp", "${classpath}"], "game": []},
                 "libraries": [],
             }
         ),
@@ -1476,6 +1477,97 @@ def test_command_builder_lock_memory_pins_initial_heap_to_max(tmp_path) -> None:
     assert "-Xms256M" in unlocked and "-Xmx4096M" in unlocked
     assert "-Xms4096M" in locked and "-Xmx4096M" in locked
     assert "-Xms256M" not in locked
+
+
+def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> None:
+    """Forge 忽略列表中的含空格版本名必须保持为单个参数。"""
+    game_path = tmp_path / ".minecraft"
+    version_name = "Zombie Invade 100 Days"
+    version_path = game_path / "versions" / version_name
+    version_path.mkdir(parents=True)
+    parent_name = "1.20.1"
+    (version_path / f"{parent_name}.json").write_text(
+        json.dumps(
+            {
+                "id": parent_name,
+                "mainClass": "net.minecraft.client.main.Main",
+                "arguments": {
+                    "jvm": ["-cp", "${classpath}"],
+                    "game": ["--username", "${auth_player_name}", "--version", "${version_name}"],
+                },
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (version_path / f"{parent_name}.jar").write_bytes(b"client-jar")
+    (version_path / f"{version_name}.json").write_text(
+        json.dumps(
+            {
+                "id": version_name,
+                "mainClass": "cpw.mods.bootstraplauncher.BootstrapLauncher",
+                "inheritsFrom": parent_name,
+                "arguments": {
+                    "jvm": ["-DignoreList=bootstraplauncher,...,forge-,${version_name}.jar"],
+                    "game": ["--launchTarget", "forgeclient"],
+                },
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    command = build_minecraft_cmd(
+        LaunchConfig(
+            java_path="java.exe",
+            game_path=game_path,
+            version_name=version_name,
+            use_ram=4096,
+            player_name="Player",
+            auth_uuid="0" * 32,
+        )
+    )
+    argv = parse_launch_command(command)
+
+    ignore_list_tokens = [token for token in argv if token.startswith("-DignoreList=")]
+    assert len(ignore_list_tokens) == 1
+    assert f"{version_name}.jar" in ignore_list_tokens[0]
+    assert "Invade" not in argv
+    assert argv.count("cpw.mods.bootstraplauncher.BootstrapLauncher") == 1
+
+
+def test_command_builder_rejects_invalid_main_class_with_actionable_error(tmp_path) -> None:
+    """非法主类必须在创建进程前失败，并保留稳定错误码。"""
+    game_path = tmp_path / ".minecraft"
+    version_name = "InvalidMain"
+    version_path = game_path / "versions" / version_name
+    version_path.mkdir(parents=True)
+    (version_path / f"{version_name}.json").write_text(
+        json.dumps(
+            {
+                "id": version_name,
+                "mainClass": "cpw.mods .BootstrapLauncher",
+                "arguments": {"jvm": ["-cp", "${classpath}"], "game": []},
+                "libraries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (version_path / f"{version_name}.jar").write_bytes(b"client-jar")
+
+    with pytest.raises(CoreError) as exc_info:
+        build_minecraft_cmd(
+            LaunchConfig(
+                java_path="java.exe",
+                game_path=game_path,
+                version_name=version_name,
+                use_ram=4096,
+                player_name="Player",
+                auth_uuid="0" * 32,
+            )
+        )
+
+    assert exc_info.value.error_code == "LAUNCH_COMMAND_INVALID"
 
 
 def test_launch_downloads_missing_inherited_version_metadata_before_file_check(tmp_path, monkeypatch) -> None:

@@ -43,7 +43,7 @@ import httpx
 import psutil
 from anyio import to_thread
 
-from ECL.game import LaunchConfig
+from ECL.game import CoreError, LaunchConfig
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.launch_hooks import LaunchContext
@@ -1414,6 +1414,10 @@ class LaunchCoordinator(_GameState):
             raise error from exc
         except (ProtocolError, PluginGrantError) as exc:
             raise GameServiceError("插件启动准入已失效", exc.error_code) from exc
+        except CoreError as exc:
+            error = GameServiceError(str(exc), getattr(exc, "error_code", "GAME_LAUNCH_FAILED"))
+            self._emit_launch_progress("error", str(error), 0, error.error_code)
+            raise error from exc
         except Exception as exc:
             self.logger.exception("启动 Minecraft 失败")
             error = GameServiceError(f"启动游戏失败: {exc}", "GAME_LAUNCH_FAILED")
