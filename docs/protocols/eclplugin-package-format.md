@@ -325,3 +325,22 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 游戏目录与授权边界由 `tests/test_plugin_game_queries.py` 验证；安装、共享占位及结果读取由 `test_plugin_game_install.py` 验证；启动、进程所有权、撤权竞争及停止由 `test_plugin_game_launch.py` 验证。后两者包含公开示例经过真实源码与冻结Worker的RPC用例，完成记录见[游戏操作实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md#8-验证与交付)。
 
 真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py`、`test_plugin_network_worker.py` 和 `test_plugin_download_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。下载的流式实体、双权限/提交竞争、配额、取消和失败恢复由 `test_plugin_download_api.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
+
+
+## 第二批独立窗口、认证与联机契约
+
+这三项分别声明 `ui.custom.execute`、`auth.provider`、`connector.manage`，不能从基本启用推导。原有 `connector.extend` 仅允许状态补充。权限审阅和六语言能力说明同步展示，撤权使旧运行许可失效。
+
+### 包内独立前端
+
+清单可声明 `custom_ui: {entry_file: "index.html", title: "Example", width: 800, height: 600}`，并须同时声明 `ui.custom.execute`。入口必须是代码快照内的 UTF-8 HTML（至多 512 KiB），资源由作者预先内联；不能使用绝对路径、URL、反斜杠或父目录。每次加载复核实际字节及批准摘要。
+
+Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`、`closed`、`error_code`；`ui.windows.get/focus/close({window_ref})` 仅操作自身引用。每次运行至多两个活动窗口、十六个累计引用。关闭与撤权先失效消息准入，再确认原生销毁；禁用等待实际清理。
+
+页面通过可信壳提供的 `ECL.call(method, params)` 异步调用自身命令和设置。窗口不提供账户、通用 IPC、任意路径或主窗口对象；主窗口注入继续遵循其单独契约。专用桥内部使用窗口凭据、运行代次、请求 ID 和变更去重，不接受页面自报安装身份。窗口请求白名单以 `RuntimeCustomUi` 为准。
+
+当前需要 Windows x64、维护版 `pytauri-wheel 0.8.0+ecl.1` 及已验收的 WebView2 `156.0.4314.58`。其他 Runtime 或缺少原生控制时在执行插件语句前拒绝；普通主窗口不受该版本门禁影响。构建、许可、网络与来源边界见[原生运行时](../../native/pytauri-runtime/README.md)。示例见 [worker_custom_ui](../../examples/plugins/worker_custom_ui/README.md)。
+
+### 认证与联机
+
+方法、参数、返回模型、预算及原始许可生命周期集中定义于[第三方登录与联机契约](../designs/plugin-auth-and-connector-extension-design.md)。认证只交付本提供方自己的持久数据；联机只操作本来源会话。撤权再授权不复活旧注册或旧引用。会话退出请求不代表实际资源已停止，最终状态以所属任务及清理结果为准。

@@ -1,90 +1,38 @@
-# 第三方登录与联机扩展契约
+# 第三方登录与联机会话扩展
 
-日期：2026-11-01，Asia/Shanghai。状态：待确认，未实施。
+状态：2026-11-01 已实现；验收与交付范围见[第二批记录](../plans/plugin-second-batch-delivery-2026-11-01.md)。本文件替代早期“仅联机状态补充”的草案，契约以当前 Worker Broker 为准。
 
-本文件补充[三批方案](../plans/plugin-three-batch-implementation-plan-2026-10-31.md)第二批「第三方登录」与「联机与联机扩展」。两项都涉及用户凭据或房间内他人数据，先定契约再写代码。
+## 登录提供方
 
-## 1. 共同边界
+`auth.register` 需要 `auth.provider`。提供方声明 `provider_id`、`title`、至多六个表单字段及 `authenticate_ref`、`resolve_ref`。宿主最终身份由安装标识和提供方 ID 共同组成；相同原始 ID 不允许接管另一安装的账户。
 
-| 约束 | 做法 |
+`authenticate(fields)` 只接收声明的字段，值必须为字符串且不超过 1024 字符；额外字段、缺少必填项、错误类型整体拒绝。返回账户使用现有模型：`id`、`alias`、`uuid`，可选 `skinUrl` 和 `data`，不使用旧草案的 `account_id/display_name/credentials` 结构。
+
+`data` 是该提供方自己的私有字符串映射，至多 16 项，键长 1—64，单值不超过 16384 字符。宿主原子保存，但不通过账户摘要、日志或其他提供方接口公开。不能把 Python Worker 的进程隔离称为操作系统沙箱。
+
+`resolve_credentials(account)` 接收该提供方当前账户及其已保存的私有 `data`，返回 `player_name`、`uuid`、`access_token`、`user_type` 和可选 `auth_server`。令牌不截断、不强制转型；未知字段及越界内容整体拒绝。回调前后校验原始许可、提供方身份和当前选中账户，失败保留账户与原凭据。原始插件异常不直接进入用户错误提示。
+
+撤权、禁用或重载移除提供方。重新授权不会恢复旧回调；Worker 重新登记后才可使用。示例 [worker_auth](../../examples/plugins/worker_auth/README.md) 使用合成测试令牌，只验证认证契约，不提供真实第三方登录服务。
+
+## 联机会话
+
+`connector.extend` 仍只允许 `connector.register_status` 有界状态补充。新增独立的 `connector.manage` 允许下列操作，不能从基本启用或状态补充推导建房权限。
+
+| 方法 | 参数与结果 |
 | --- | --- |
-| 回调形态 | 与启动钩子、崩溃分析一致：登记回调标识，宿主按需投递有界上下文，5 秒超时 |
-| 返回值 | 逐字段白名单 + 长度截断；越界整体拒绝，不并入半份结果 |
-| 生命周期 | 禁用、卸载、撤权时撤销该安装全部登记，迟到回调不投递 |
-| 凭据 | 插件只持有自己的认证材料；宿主不把其他提供方或微软账户凭据交给任何插件 |
+| `connector.open` | `port` 或 `code` 二选一；返回自己的 `session_ref`、`operation_ref` 和 queued 状态 |
+| `connector.get` | 传自身 `session_ref`；返回最小模式、房间码、本地端口及清理状态，不返回玩家、节点或机器标识 |
+| `connector.leave` | 请求取消该会话任务；`requested` 不表示实际退出已经完成 |
+| `connector.protocols.register` | `name` 和 `callback_ref`，每次运行至多八个；返回随机 `protocol_ref` |
+| `connector.request` | 自身会话和协议引用、JSON `payload`；仅房客向房主请求，有界 JSON 返回 `value` |
+| `connector.status.set` | 自身会话的有界文字，不能覆盖宿主字段 |
 
-## 2. 第三方登录
+会话归属于安装、代码内容、运行及服务代次。应用只维护一个联机服务；用户已有房间时新插件请求明确拒绝。取消、撤权、崩溃和退出都清理原会话，不允许迟到清理关闭后来创建的用户房间。实际停止失败保留句柄和 `cleanup_pending`，供后续重试；任务在房间存续期间持续运行，并可通过可信任务界面取消。
 
-### 2.1 提供方登记
+私有协议按清单名称的哈希隔离，不接受插件自报来源；请求和响应均不超过 16 KiB。远程回调只接收 JSON 业务载荷，调用前后复核原许可和会话。扩展只对本来源房间参与协商，未协商的协议由底层拒绝。
 
-```
-auth.register {
-  provider_id: "^[a-z][a-z0-9_-]{2,31}$",
-  title: 1..32,
-  description: 0..200,
-  fields: [{ key, label, type: "text"|"password", required }],   // ≤6 项
-  callback_ref: 32 位十六进制
-}
-```
+`events.subscribe` 可订阅 `connector.changed`，事件只向所属 Worker 的有效订阅排队。`ready`、`joined`、`leaving`、`reset`、`closed` 表示不同阶段，关闭通知不能替代任务的实际最终状态。示例见 [worker_connector](../../examples/plugins/worker_connector/README.md)。
 
-### 2.2 宿主调用
+## 验收
 
-`authenticate(fields)`：只传用户在动态表单里填写的字段值，最多 6 项、每项 1024 字符。
-
-返回值只接受：
-
-```
-{ "account_id": 1..64, "display_name": 1..64, "credentials": { key: value } }
-```
-
-`credentials` 由宿主按提供方隔离存储（按 `installation_id + provider_id` 分区），插件不能读取其他分区；宿主不写日志、不进崩溃报告。
-
-`resolve_credentials(account_id)`：重启后由宿主调用，插件返回同一形状的凭据；返回失败时该账户标记为「需要重新登录」，不删除账户。
-
-### 2.3 不做的事
-
-- 宿主不代插件发起网络请求：插件用自己的 `network.read` 授权走 `network.request`。
-- 不做凭据迁移：首个版本不做旧格式导入。
-
-## 3. 联机扩展
-
-### 3.1 分期
-
-联机扩展点较多（协议分发、房客加入、状态补充、离开前、重置）。首个版本只开放**状态补充**：
-
-```
-connector.register_status { callback_ref }
-```
-
-宿主在房间状态被读取时调用，传入有界状态：
-
-```
-{ "role": "host"|"guest", "player_count": int, "protocols": [str] }   // protocols ≤16 项
-```
-
-返回值只接受 `{ "fields": { key: value } }`，≤8 项、每项 256 字符，合并进状态展示；不覆盖宿主已有字段。
-
-其余扩展点（协议分发、房客加入、离开前、重置）首版不开放，登记时明确返回 `PLUGIN_API_METHOD_NOT_FOUND`，不做「登记成功但永不调用」。
-
-### 3.2 会话代次
-
-状态补充不带会话写权限：插件不能创建、加入或关闭房间，也不能关闭用户现有房间。会话本身的创建与关闭仍只由界面触发。
-
-## 4. 准入（已定）
-
-两项分开授权，不合并：登录涉及第三方凭据，联机扩展涉及房间内他人数据，信任问题不同。
-
-| 方法 | 能力 | 用户看到 |
-| --- | --- | --- |
-| `auth.register` | `auth.provider` | 第三方登录 |
-| `connector.register_status` | `connector.extend` | 联机扩展 |
-
-能力总数由 5 变为 7。插件只给其中一项时，另一项的方法直接拒绝。
-
-## 5. 验收口径
-
-- 未获准时 `auth.register` / `connector.register_status` 拒绝，界面不出现该提供方或字段。
-- 提供方返回超长或多余字段时整体拒绝，不写入账户。
-- 重启后 `resolve_credentials` 失败，账户保留并标记需重新登录，不静默删除。
-- 房间状态补充不改变房间本身，插件无法创建或关闭房间。
-- 禁用插件后，提供方从登录列表消失，房间状态不再出现其字段。
+回归包含：严格表单与返回模型、真实 Worker 登录及重启、撤权再授权不复活旧回调、私有材料不进入摘要；会话去重、用户房间保护、异源引用拒绝、启动期间撤权、清理失败后重试、旧代次隔离、有界私有协议与任务取消。实际网络和发行物的结果单独记录，不用服务替身测试代替真实联机验收。

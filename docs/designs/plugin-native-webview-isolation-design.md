@@ -1,6 +1,6 @@
 # ECL 插件原生前端隔离增补方案
 
-日期：2026-10-12，Asia/Shanghai。状态：用户已明确批准本详细增补，随后要求先越过原生部分，直接进行下一步。原生实施暂缓；尚未创建原生原型、变更绑定或安装替代 Wheel，自定义前端保持关闭。
+日期：2026-10-12，Asia/Shanghai；实施状态更新于 2026-11-01。固定源码原生 Wheel、生产 Broker 与独立窗口已接通，真实 WebView2 网络门禁及 Worker 往返、撤权关闭、重开已通过。构建入口、固定 Runtime 版本与限制见 [原生运行时说明](../../native/pytauri-runtime/README.md)，具体证据见[第二批交付](../plans/plugin-second-batch-delivery-2026-11-01.md)。本文件保留调研与失败实验的原因，不把早期原型状态作为当前功能状态。
 
 本文件补充已获实施批准的 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)，只调整 P04/P18 的原生边界。Worker 与权限/API 方向不变，不迁移到 PyTauriX，也不修改本机另一套 PyTauri 项目。
 
@@ -74,9 +74,22 @@ Windows 专属安全能力缺失时拒绝创建用户自定义窗口，给出稳
 
 ## 6. 未确认风险与审阅边界
 
+2026-11-01 原生实验确认：`ICoreWebView2_22` 的全来源资源事件能阻止 HTTP 子框架导航，但同一测试页面的 WebSocket 握手仍到达服务器。在该事件基础上增加 `Network.emulateNetworkConditions` 离线策略、等待原生完成回调后再加载测试页面，WebSocket 仍未被阻断。实验补丁与独立服务器测试见 [实验说明](../../native/pytauri-runtime/experiments/README.md)。这两种早期原型未满足 N01。当前生产实现已经增加固定拒绝代理、移除 loopback bypass、禁用 QUIC/非代理 UDP，并通过独立服务器与合法回传对照；不能把当时资源事件或离线模拟单独作为完整网络边界。
+
 - 当前 Wheel 与 upstream commit 的 Rust 依赖差异，需要 N00 建立实际构建证据；不是顺带升级 Tauri/Wry/PyO3 的授权。
 - 原生预加载注册顺序、iframe/worker 全来源过滤、WebSocket 等出口覆盖、Tauri 通用 IPC 在 iframe 中的路径，仍须源码定位及真实验收。
 - 最低 WebView2 Runtime 版本由所需 COM 接口和验收确定；版本不足时 fail closed，不设置允许绕过的兼容回退。
 - 原生增加一套受维护的 Wheel 发行链和供应链核验；所有远端推送/发布仍需单独授权。
 
-本增补已经完成根目录 AGENTS.md 第 0 节的详细文档审阅流程。原有 Worker/用户授权/Host API 实施批准继续有效。目前按用户随后要求暂停这条原生路径；不得将已批准但未执行的方案作为安全验收结果。用户已要求全部改动完成并验收后推送，本阶段不提前推送或发布。
+本增补已经完成根目录 AGENTS.md 第 0 节的详细文档审阅流程。原有 Worker/用户授权/Host API 实施批准继续有效；用户于 2026-11-01 恢复本路径的无人值守实施。不得将已批准的方案或单项实验作为完整安全验收结果。全部改动完成并验收后再按用户授权提交推送；用户后续取消关机，保持开机，不发布版本。
+
+
+## 7. 当前落地与门禁
+
+实际生产契约见[包与 API 协议](../protocols/eclplugin-package-format.md#第二批独立窗口认证与联机契约)。构建使用固定来源和锁文件，Windows x64 打包安装本次生成且带摘要的维护版 Wheel；源码开发者显式构建安装，缺少维护版时仅自定义窗口拒绝创建。其他平台的原生自定义前端仍属于第三批。
+
+网络实际拒绝由原生代理及浏览器配置共同承担，通用 WebMessage/HostObject 关闭。消息来源使用确认的顶层 NavigationId 和原生 ExecuteScript，不使用当前 Runtime 下为空的 Source 字段。顶层文档闭包中的一次性消息经原生读取，标题只作为带凭据的请求信号；iframe 不能读取顶层凭据。
+
+当前支持的 WebView2 build 固定为 156.0.4314.58。Evergreen 更新不会自动被信任；新增 build 必须重新验收后修改 source.json 和原生策略。普通主窗口不使用此门禁。具体测试与冻结证据见[第二批交付](../plans/plugin-second-batch-delivery-2026-11-01.md)。
+
+用户后续明确取消本次 Nuitka 构建与后续验收；本次交付以已完成的源码、真实原生门禁与 PyInstaller 验收为准，Nuitka onefile 不记为通过。
