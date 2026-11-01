@@ -44,7 +44,7 @@ ECL.exe
 ECL.exe --headless --task runtime-check
   → 一次探测任务 → 输出结果 → 退出
 
-ECL.exe --headless --role plugin --pipe-address <宿主端点> --host-pid <PID> --run-id <运行标识>
+ECL.exe --headless --role plugin --endpoint <宿主端点> --host-pid <PID> --run-id <运行标识>
   → 无头插件子进程 → 认证 IPC → 等待授权加载 → 运行生命周期 → 清理退出
 ```
 
@@ -58,7 +58,7 @@ ECL.exe --headless --role plugin --pipe-address <宿主端点> --host-pid <PID> 
 - 插件角色拒绝未知参数、重复且冲突的角色或模式，不允许以缩写、参数顺序或 `--` 分隔绕过。角色控制选项采用完整名称；已有普通桌面参数的解析行为不顺带重写。
 - 插件参数错误或认证失败直接非零退出，不进入 GUI、runtime-check 或完整宿主初始化。
 - 插件模式通过 IPC 交付握手、回调和结果，不向 stdout 输出任务 JSON；失败时不弹出桌面错误窗。已有 runtime-check 结果协议和退出码保持原契约。
-- 本次新增插件角色仍以 Windows x64 为验收范围；普通 runtime-check 保留原跨平台范围。
+- Windows x64、Linux x64、macOS ARM64 的基础 Worker 源码和监管门禁已通过；冻结、文件事务与原生窗口分别按[平台适配文档](../plans/plugin-posix-worker-adaptation-2026-11-01.md)记录，不能将基础门禁泛化为全部平台能力。普通 runtime-check 保留原跨平台范围。
 
 ### 3.2 加载与退出顺序
 

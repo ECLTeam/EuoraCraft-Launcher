@@ -12,31 +12,30 @@
 from __future__ import annotations
 
 import os
-import platform
 from collections.abc import Callable
 from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
 from uuid import uuid4
 
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api._imports import DependencySnapshot
 from ECL.plugin_api._rpc import RpcPeer, RpcRequest
-from ECL.plugin_api._transport import PipeChannel, PipeServer
-from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api._transport import LocalChannel, LocalServer, create_local_server
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, WireMessage
 from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 
 from .executable import ExecutableLaunchSpec
-from .windows import WindowsJob, WindowsProcess
+from .process_scope import PreparedProcess, ProcessReference, ProcessScope, create_process_scope
 
 
 class WorkerSupervisor:
     """
-    先确认 Job 和真实连接进程，再接受显式的宿主加载许可。
+    先确认平台监管范围和真实连接进程，再接受显式的宿主加载许可。
 
-    本类尚不接入用户插件管理器。调用方必须在业务集成层完成用户授权和内容绑定。
+    调用方必须在业务集成层完成用户授权和内容绑定。
     同步方法须在后台边界调用，不得直接阻塞桌面事件循环。
     """
 
@@ -58,10 +57,10 @@ class WorkerSupervisor:
         self.pid: int | None = None
         self.created_at: int | None = None
         self.image_path: Path | None = None
-        self.root_process: WindowsProcess | None = None
-        self._worker_handle: int | None = None
-        self._job: WindowsJob | None = None
-        self._channel: PipeChannel | None = None
+        self.root_process: PreparedProcess | None = None
+        self._worker_reference: ProcessReference | None = None
+        self._scope: ProcessScope | None = None
+        self._channel: LocalChannel | None = None
         self._lock = RLock()
         self._host_handler = host_handler
         self._peer: RpcPeer | None = None
@@ -69,26 +68,23 @@ class WorkerSupervisor:
 
     def start(self, timeout: float = 30.0) -> dict[str, JsonValue]:
         """
-        挂起创建并分配 Job，恢复后核实实际 Worker 身份。
+        建立平台监管资源，恢复后核实实际 Worker 身份。
 
         :param timeout: 包含冻结冷解包的启动等待上限
         :return: 受信引导摘要，尚未执行插件入口
-        :raises WindowsRuntimeError: 平台、进程或身份检查失败时抛出
+        :raises PluginRuntimeError: 平台、进程或身份检查失败时抛出
         """
-        if platform.system() != "Windows" or platform.machine().casefold() not in {"amd64", "x86_64"}:
-            raise WindowsRuntimeError("当前平台尚未验收插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
         with self._lock:
             if self.state != "stopped" or self._has_started:
-                raise WindowsRuntimeError("Worker 运行会话已使用", "PLUGIN_SESSION_EXPIRED")
+                raise PluginRuntimeError("Worker 运行会话已使用", "PLUGIN_SESSION_EXPIRED")
             self.state = "starting"
             self._has_started = True
-            server: PipeServer | None = None
+            server: LocalServer | None = None
             try:
-                self._job = WindowsJob()
-                address = f"\\\\.\\pipe\\ecl-worker-{self.run_id}"
-                server = PipeServer(address)
-                self.root_process = self._job.spawn_suspended(
-                    self.executable.arguments(address, os.getpid(), self.run_id),
+                self._scope = create_process_scope(self.executable, self.run_id)
+                server = create_local_server(self.run_id)
+                self.root_process = self._scope.prepare(
+                    self.executable.arguments(server.address, os.getpid(), self.run_id),
                     self.executable.working_directory(),
                     self.executable.environment(),
                 )
@@ -102,7 +98,7 @@ class WorkerSupervisor:
                     or hello.params.get("api_version") != 2
                 ):
                     raise ProtocolError("Worker 引导握手不兼容")
-                if hello.params.get("has_host_modules") is not False or hello.params.get("is_in_job") is not True:
+                if hello.params.get("has_host_modules") is not False or hello.params.get("is_supervised") is not True:
                     raise ProtocolError("Worker 引导未保持宿主导入及监管边界")
                 if hello.params.get("pid") != self.pid:
                     raise ProtocolError("Worker 自报身份与系统连接身份不一致")
@@ -118,16 +114,13 @@ class WorkerSupervisor:
 
     def _authenticate(self) -> None:
         """
-        保留原生进程句柄、创建时间与 Job 归属，拒绝可伪造的 PID 字段。
+        保留原生进程身份和监管归属，拒绝可伪造的 PID 字段。
         """
-        assert self._channel is not None and self._job is not None
+        assert self._channel is not None and self._scope is not None
         pid = self._channel.peer_pid()
-        handle = self._job.api.open_process(pid)
-        self._worker_handle = handle
-        created_at, image_path = self._job.api.process_identity(handle)
-        if not self._job.contains(handle) or image_path != self.executable.executable_path.resolve():
-            raise WindowsRuntimeError("连接进程不属于预期 Worker", "PLUGIN_PIPE_AUTH_FAILED")
-        self.pid, self.created_at, self.image_path = pid, created_at, image_path
+        reference = self._scope.reference(pid, self.executable.executable_path)
+        self._worker_reference = reference
+        self.pid, self.created_at, self.image_path = pid, reference.created_at, reference.image_path
 
     def authorize_load(
         self,
@@ -177,13 +170,13 @@ class WorkerSupervisor:
         :raises ProtocolError: 代码变化或状态不允许加载时抛出
         """
         with self._lock:
-            if self.state != "awaiting_authorization" or self._channel is None or self._job is None:
+            if self.state != "awaiting_authorization" or self._channel is None or self._scope is None:
                 raise ProtocolError("Worker 尚未完成加载前认证")
-            snapshot.verify(snapshot.digest())
+            snapshot.verify(snapshot.digest(), full_content=True)
             if entry_file not in {item.name for item in snapshot.files}:
                 raise ProtocolError("插件入口不在批准快照内")
-            assert self._worker_handle is not None
-            if not self._job.contains(self._worker_handle):
+            assert self._worker_reference is not None
+            if not self._scope.is_member(self._worker_reference):
                 raise ProtocolError("Worker 监管归属已经失效")
             try:
                 dependency_payload = self._dependency_payload(dependency)
@@ -203,7 +196,7 @@ class WorkerSupervisor:
                 if reply.kind == "error":
                     code = reply.params.get("code")
                     allowed = {"PLUGIN_CONTENT_CHANGED", "PLUGIN_DEPENDENCY_CONFLICT", "PLUGIN_PROTOCOL_ERROR"}
-                    raise WindowsRuntimeError(
+                    raise PluginRuntimeError(
                         "插件入口加载失败", code if code in allowed else "PLUGIN_WORKER_EXECUTION_FAILED"
                     )
                 if reply.kind != "loaded" or reply.params.get("pid") != self.pid:
@@ -265,9 +258,9 @@ class WorkerSupervisor:
         """
         查询实际监管成员数，包含单文件引导和普通后代。
 
-        :return: 当前 Job 中的活跃进程数
+        :return: 当前监管范围中的活跃进程数
         """
-        return self._job.active_count() if self._job is not None else 0
+        return self._scope.active_count() if self._scope is not None else 0
 
     def is_alive(self) -> bool:
         """
@@ -276,13 +269,13 @@ class WorkerSupervisor:
         :return: 已认证 Worker 仍在执行时为 True
         """
         with self._lock:
-            if self._worker_handle is None or self._job is None:
+            if self._worker_reference is None or self._scope is None:
                 return False
-            return self._job.api.kernel.WaitForSingleObject(self._worker_handle, 0) == 258
+            return self._worker_reference.is_alive()
 
     def close(self) -> None:
         """
-        有界请求正常退出，再按 Job 回收全部成员并关闭身份句柄。
+        有界请求正常退出，再由平台监管实现回收成员并关闭身份引用。
 
         不把普通管道超时解释为线程或进程已经结束。
         """
@@ -294,22 +287,26 @@ class WorkerSupervisor:
                     else:
                         self._channel.send(WireMessage("shutdown", {}), 1)
                         self._channel.receive(1)
-                except (OSError, ProtocolError, WindowsRuntimeError):
-                    # 关闭阶段允许对端已退出，实际停止仍由下方 Job 查询确认。
+                except (OSError, ProtocolError, PluginRuntimeError):
+                    # 关闭阶段允许对端已退出，实际停止仍由下方监管范围查询确认。
                     self.state = "stopping"
                 finally:
                     self._channel.close()
                     self._channel = None
                     self._peer = None
-            if self._job is not None:
+            if self._scope is not None:
                 deadline = monotonic() + 1
-                while self._job.active_count() and monotonic() < deadline:
-                    sleep(0.01)
-                self._job.close()
-                if self._worker_handle is not None:
-                    self._job.api.close(self._worker_handle)
-                    self._worker_handle = None
-                self._job = None
+                try:
+                    while self._scope.active_count() and monotonic() < deadline:
+                        sleep(0.01)
+                except (OSError, PluginRuntimeError):
+                    # 查询失败仍须进入实际清理；只有范围关闭确认成功才能释放引用。
+                    self.state = "stopping"
+                self._scope.close()
+                if self._worker_reference is not None:
+                    self._worker_reference.close()
+                    self._worker_reference = None
+                self._scope = None
             self.state = "stopped"
 
     def __enter__(self) -> WorkerSupervisor:

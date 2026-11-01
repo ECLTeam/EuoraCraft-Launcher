@@ -63,11 +63,11 @@ def test_snapshot_detects_changed_and_extra_files(tmp_path: Path) -> None:
     assert CodeSnapshot.from_records(code_path, snapshot.records()).digest() == snapshot.digest()
     entry.write_text("value = 2", encoding="utf-8")
     with pytest.raises(ProtocolError, match="不一致"):
-        snapshot.verify(snapshot.digest())
+        snapshot.verify(snapshot.digest(), full_content=True)
     entry.write_text("value = 1", encoding="utf-8")
     (code_path / "extra.py").write_text("pass", encoding="utf-8")
     with pytest.raises(ProtocolError):
-        snapshot.verify(snapshot.digest())
+        snapshot.verify(snapshot.digest(), full_content=True)
 
 
 @pytest.mark.parametrize("name", ["../main.py", "C:/main.py", "/main.py", "sub\\main.py", "sub//main.py"])
@@ -121,7 +121,8 @@ print(json.dumps([n for n in sys.modules if
 
 
 @pytest.mark.parametrize("host_module", [None, "ECL.services", "ECL.plugin_api_extra", "ECL.bootstrap_extra"])
-def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | None) -> None:
+@pytest.mark.parametrize("worker_platform", ["win32", "linux", "darwin"])
+def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | None, worker_platform: str) -> None:
     import subprocess
 
     source = f"""
@@ -133,12 +134,17 @@ from ECL.plugin_api.contracts import WireMessage
 host_module = {host_module!r}
 if host_module is not None:
     sys.modules[host_module] = ModuleType(host_module)
-_process.WindowsApi = lambda: SimpleNamespace(
+import ECL.plugin_api._windows as windows
+windows.WindowsApi = lambda: SimpleNamespace(
     is_in_job=lambda *args: True,
     kernel=SimpleNamespace(GetCurrentProcess=lambda: 1))
 messages = []
 channel = SimpleNamespace(send=messages.append, receive=lambda timeout: WireMessage('shutdown', {{}}))
-_process._serve(channel, 'a' * 32)
+_process.sys.platform = {worker_platform!r}
+_process.os.getsid = lambda pid: 42 if pid == 0 else 1
+_process.os.getpgrp = lambda: 43
+_process.os.getpgid = lambda pid: 2
+_process._serve(channel, 'a' * 32, 123)
 print(json.dumps(messages[0].params['has_host_modules']))
 """
     completed = subprocess.run(
@@ -159,7 +165,7 @@ def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
     source = (
         "import main, sys, json\n"
         "try:\n"
-        " main.run_launcher(['--headless','--role=plugin','--pipe-address',r'\\\\.\\pipe\\ecl-worker-test','--host-pid','0','--run-id','0'*32])\n"
+        " main.run_launcher(['--headless','--role=plugin','--endpoint',r'\\\\.\\pipe\\ecl-worker-test','--host-pid','0','--run-id','0'*32])\n"
         "except SystemExit as error:\n"
         " code=error.code\n"
         "print(json.dumps({'code':code,'host_loaded':any(n.startswith('ECL.') "
@@ -169,3 +175,24 @@ def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
         [sys.executable, "-S", "-c", source], cwd=root_path, capture_output=True, text=True, check=True, timeout=10
     )
     assert json.loads(result.stdout) == {"code": 2, "host_loaded": False}
+
+
+def test_cached_snapshot_still_rejects_a_different_authorized_digest(tmp_path):
+    (tmp_path / "main.py").write_text("value = 1", encoding="utf-8")
+    snapshot = CodeSnapshot.capture(tmp_path)
+    with pytest.raises(ProtocolError) as error:
+        snapshot.verify("0" * 64)
+    assert error.value.error_code == "PLUGIN_CONTENT_CHANGED"
+
+
+def test_load_snapshot_checks_changed_bytes_even_when_metadata_is_unchanged(tmp_path):
+    import os
+
+    entry = tmp_path / "main.py"
+    entry.write_text("value = 1", encoding="utf-8")
+    snapshot = CodeSnapshot.capture(tmp_path)
+    original = entry.stat()
+    entry.write_text("value = 2", encoding="utf-8")
+    os.utime(entry, ns=(original.st_atime_ns, original.st_mtime_ns))
+    with pytest.raises(ProtocolError):
+        snapshot.verify(snapshot.digest(), full_content=True)

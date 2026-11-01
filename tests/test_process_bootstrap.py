@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from ECL.bootstrap import ProcessRole, select_process_route
+from ECL.bootstrap import ProcessRole, local_worker_endpoint, select_process_route
 
 run_id = "a" * 32
 plugin_arguments = (
     "--headless",
     "--role=plugin",
-    "--pipe-address",
-    f"\\\\.\\pipe\\ecl-worker-{run_id}",
+    "--endpoint",
+    local_worker_endpoint(run_id),
     "--host-pid=123",
     "--run-id",
     run_id,
@@ -68,7 +68,7 @@ def test_other_roles_keep_their_arguments_without_loading_an_executor(arguments,
         [argument.replace("=123", "=4294967296") for argument in plugin_arguments],
         [argument.replace("ecl-worker-", "unrelated-") for argument in plugin_arguments],
         [
-            argument.replace(run_id, "b" * 32) if argument.startswith("\\\\") else argument
+            argument.replace(run_id, "b" * 32) if argument == local_worker_endpoint(run_id) else argument
             for argument in plugin_arguments
         ],
     ],
@@ -145,7 +145,22 @@ def test_host_launch_spec_uses_the_formal_headless_role() -> None:
     from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 
     specification = ExecutableLaunchSpec.current()
-    arguments = specification.arguments(f"\\\\.\\pipe\\ecl-worker-{run_id}", 123, run_id)
+    arguments = specification.arguments(local_worker_endpoint(run_id), 123, run_id)
     start = arguments.index("--headless")
     assert select_process_route(arguments[start:]).role is ProcessRole.plugin
     assert "--internal-plugin-worker" not in arguments
+
+
+def test_macos_source_launch_uses_kernel_image_instead_of_framework_launcher(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from ECL.plugins.runtime.executable import ExecutableLaunchSpec
+
+    actual_image = tmp_path / "Python.app" / "Contents" / "MacOS" / "Python"
+    actual_image.parent.mkdir(parents=True)
+    actual_image.write_bytes(b"test-image")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("psutil.Process", lambda _pid: SimpleNamespace(exe=lambda: str(actual_image)))
+    specification = ExecutableLaunchSpec.current()
+    assert specification.executable_path == actual_image.resolve()
+    assert specification.arguments(local_worker_endpoint(run_id), 123, run_id)[0] == str(actual_image.resolve())

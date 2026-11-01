@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,6 @@ from ECL.services import AccountManager
 from ECL.utils import AccountError
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="第三方 Worker 当前只支持 Windows x64")
 @pytest.mark.parametrize("frozen", [False, True], ids=["source", "frozen"])
 def test_real_auth_worker_persists_only_own_data_and_restarts(tmp_path: Path, frozen: bool) -> None:
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -62,7 +61,6 @@ def test_close_does_not_mark_installed_plugins_disabled(framework, tmp_path):
     assert not state_file.exists() or "example" not in json.loads(state_file.read_text())["disabled"]
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 def test_enable_clears_disabled_choice_only_after_review(framework, tmp_path):
     framework.disable("example")
     assert not framework.enable("example").success

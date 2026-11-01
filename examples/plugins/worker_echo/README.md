@@ -4,7 +4,7 @@
 
 启用后可以修改自身 `prefix` 设置；已登记命令为 `worker_echo:greet`，参数为 `{"name":"Player"}`，结果为 `{"message":"ECL: Player"}`。命令可由可信管理接口或既有开发通道调用。开发通道不能替用户审阅权限。
 
-在权限页撤销全部授权后，Worker 停止，命令不再可用。重新审阅后可以启用新的运行会话；修改代码后也必须重新审阅。仅支持已验收的 Windows x64 Worker。
+在权限页撤销全部授权后，Worker 停止，命令不再可用。重新审阅后可以启用新的运行会话；修改代码后也必须重新审阅。基础 Worker 已通过 Windows x64、Linux x64 和 macOS ARM64 源码门禁；冻结产物和其他领域 API 的支持范围见[平台适配记录](../../../docs/plans/plugin-posix-worker-adaptation-2026-11-01.md)。
 
 制作归档时运行 `python packaging/build-eclplugin.py examples/plugins/worker_echo build/worker_echo.eclplugin`。本示例无第三方 Python 依赖；有依赖时使用完整锁和兼容 Wheel，见 [归档格式说明](../../../docs/protocols/eclplugin-package-format.md)。
 

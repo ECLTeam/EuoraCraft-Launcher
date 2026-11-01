@@ -1,0 +1,90 @@
+name: Plugin Worker Platforms
+
+on:
+  push:
+    branches: [main, codex/plugin-posix-worker]
+    paths:
+      - "ECL/bootstrap.py"
+      - "ECL/plugin_api/**"
+      - "ECL/plugins/**"
+      - "tests/test_plugin*"
+      - "tests/test_process_bootstrap.py"
+      - ".github/workflows/plugin-worker-platforms.yml"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-worker:
+    name: Source Worker (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install runtime and test dependencies
+        run: python -m pip install -e . pytest pytest-asyncio ruff
+      - name: Check backend quality
+        run: |
+          python -m ruff check ECL tests
+          python -m ruff format --check ECL tests
+      - name: Run required source behavior
+        timeout-minutes: 4
+        run: >-
+          python -m pytest --tb=short -q --maxfail=1 -o faulthandler_timeout=20 --junitxml=build/worker-common.xml
+          tests/test_process_bootstrap.py
+          tests/test_plugin_guardian_control.py
+          tests/test_plugin_worker_protocol.py
+          tests/test_plugin_worker_bootstrap.py
+          tests/test_plugin_worker_lifecycle.py
+          tests/test_plugin_worker_manager.py
+          tests/test_plugin_manager_packages.py
+          tests/test_plugin_worker_dependencies.py
+          tests/test_plugin_auth_worker_roundtrip.py
+          tests/test_plugin_cross_plugin.py
+          tests/test_plugin_disabled_state.py
+          tests/test_plugin_ui_slot_worker.py
+          -k 'not frozen and not True'
+      - name: Run native process and transport boundaries
+        if: always()
+        timeout-minutes: 4
+        run: |
+          python - <<'PY'
+          import subprocess
+          import sys
+          suite = "tests/test_plugin_windows_supervision.py" if sys.platform == "win32" else "tests/test_plugin_posix_runtime.py"
+          subprocess.run([sys.executable, "-m", "pytest", suite, "--tb=short", "-q", "--maxfail=1", "-o", "faulthandler_timeout=20", "--junitxml=build/worker-native.xml"], check=True)
+          PY
+      - name: Reject empty or skipped required coverage
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for name in ("worker-common.xml", "worker-native.xml"):
+              cases = list(ET.parse(Path("build") / name).iter("testcase"))
+              if not cases or any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")):
+                  raise SystemExit(f"Required platform coverage is incomplete: {name}")
+              print(f"{name}: {len(cases)} required cases passed")
+          PY
+      - name: Preserve raw test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: worker-reports-${{ matrix.os }}
+          path: build/worker-*.xml
+          if-no-files-found: error

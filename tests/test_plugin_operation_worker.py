@@ -10,7 +10,7 @@ from time import monotonic, sleep
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
@@ -137,7 +137,7 @@ def test_real_worker_stop_waits_for_host_commit_and_rejects_early_enable(worker)
             PermissionManagementCaller.main_webview,
         )
         assert control(service, "get", reference)["state"] == "committing"
-        with pytest.raises(WindowsRuntimeError) as error:
+        with pytest.raises(PluginRuntimeError) as error:
             service.stop("task_control")
         assert error.value.error_code == "PLUGIN_HOST_CLEANUP_PENDING"
         assert service.runtime_info("task_control")["cleanup_state"] == "pending"

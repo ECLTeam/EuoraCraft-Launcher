@@ -20,11 +20,11 @@ from pathlib import Path
 from types import ModuleType
 
 from ECL.bootstrap import PluginProcessOptions
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api._imports import DependencySnapshot, LockedImports
 from ECL.plugin_api._rpc import RpcPeer, RpcRequest
 from ECL.plugin_api._runtime import PluginRuntime
-from ECL.plugin_api._transport import PipeChannel, connect_pipe
-from ECL.plugin_api._windows import WindowsApi, WindowsRuntimeError
+from ECL.plugin_api._transport import LocalChannel, connect_local
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, ProtocolPolicy, WireMessage
 from ECL.plugin_api.plugin import HostClient
 from ECL.plugin_api.snapshot import CodeSnapshot
@@ -55,7 +55,7 @@ def _load(message: WireMessage, run_id: str) -> tuple[ModuleType, LockedImports]
     ):
         raise ProtocolError("Worker 加载许可字段无效")
     snapshot = CodeSnapshot.capture(Path(root))
-    snapshot.verify(digest)
+    snapshot.verify(digest, full_content=True)
     if entry not in {item.name for item in snapshot.files} or not entry.endswith(".py"):
         raise ProtocolError("Worker 入口不在批准的代码清单内")
     entry_path = snapshot.root_path / entry
@@ -129,7 +129,7 @@ def _dependency_imports(value: JsonValue, roots: dict[str, Path]) -> tuple[Path 
     if not isinstance(packages, list) or not all(isinstance(name, str) and name for name in packages):
         raise ProtocolError("依赖包名称无效")
     snapshot = DependencySnapshot.capture(Path(root))
-    snapshot.verify(digest)
+    snapshot.verify(digest, full_content=True)
     site_path = snapshot.root_path / "site-packages"
     if not site_path.is_dir() or set(names) & set(roots):
         raise ProtocolError("依赖与插件代码模块冲突", "PLUGIN_DEPENDENCY_CONFLICT")
@@ -137,14 +137,19 @@ def _dependency_imports(value: JsonValue, roots: dict[str, Path]) -> tuple[Path 
     return site_path, frozenset(packages)
 
 
-def _serve(channel: PipeChannel, run_id: str) -> None:
+def _serve(channel: LocalChannel, run_id: str, host_pid: int) -> None:
     """
     提供受信引导诊断与关闭，未接线的业务方法明确拒绝。
     """
-    api = WindowsApi()
-    is_in_job = api.is_in_job(None, api.kernel.GetCurrentProcess())
-    if not is_in_job:
-        raise WindowsRuntimeError("Worker 不在受控 Job 内", "PLUGIN_JOB_ASSIGN_FAILED")
+    if sys.platform == "win32":
+        from ECL.plugin_api._windows import WindowsApi
+
+        api = WindowsApi()
+        is_supervised = api.is_in_job(None, api.kernel.GetCurrentProcess())
+    else:
+        is_supervised = os.getsid(0) != os.getsid(host_pid) and os.getpgrp() != os.getpgid(host_pid)
+    if not is_supervised:
+        raise PluginRuntimeError("Worker 不在独立监管范围内", "PLUGIN_JOB_ASSIGN_FAILED")
     channel.send(
         WireMessage(
             "hello",
@@ -152,7 +157,7 @@ def _serve(channel: PipeChannel, run_id: str) -> None:
                 "api_version": ProtocolPolicy.api_version,
                 "pid": os.getpid(),
                 "run_id": run_id,
-                "is_in_job": is_in_job,
+                "is_supervised": is_supervised,
                 # ECL 包标记、角色分流和插件 API 属于受信引导，其他 ECL 模块仍视为宿主泄漏。
                 "has_host_modules": any(
                     name.startswith("ECL.")
@@ -176,7 +181,7 @@ def _serve(channel: PipeChannel, run_id: str) -> None:
         imports.close()
 
 
-def _serve_loaded(channel: PipeChannel, module: ModuleType, entry_class: str) -> None:
+def _serve_loaded(channel: LocalChannel, module: ModuleType, entry_class: str) -> None:
     """
     在接收线程之外处理生命周期，反向调用使用同一认证通道。
     """
@@ -204,12 +209,12 @@ def run_plugin_process(options: PluginProcessOptions) -> int:
     :return: 正常退出为零；平台、协议或连接失败为二
     """
     sys.dont_write_bytecode = True
-    channel: PipeChannel | None = None
+    channel: LocalChannel | None = None
     try:
-        channel = connect_pipe(options.pipe_address, options.host_pid)
-        _serve(channel, options.run_id)
+        channel = connect_local(options.endpoint, options.host_pid)
+        _serve(channel, options.run_id, options.host_pid)
         return 0
-    except (WindowsRuntimeError, ProtocolError) as exc:
+    except (PluginRuntimeError, ProtocolError) as exc:
         _report_failure(channel, exc.error_code)
         return 2
     except (OSError, EOFError, SystemExit, KeyboardInterrupt):
@@ -224,7 +229,7 @@ def run_plugin_process(options: PluginProcessOptions) -> int:
             channel.close()
 
 
-def _report_failure(channel: PipeChannel | None, code: str) -> None:
+def _report_failure(channel: LocalChannel | None, code: str) -> None:
     """
     只传递白名单错误类别，不转发插件可控制的异常文本。
     """
@@ -238,6 +243,6 @@ def _report_failure(channel: PipeChannel | None, code: str) -> None:
     }
     try:
         channel.send(WireMessage("error", {"code": code if code in allowed else "PLUGIN_WORKER_EXECUTION_FAILED"}), 1)
-    except (OSError, ProtocolError, WindowsRuntimeError):
-        # 对端已关闭时没有可交付对象；执行方仍退出，由宿主 Job 负责最后回收。
+    except (OSError, ProtocolError, PluginRuntimeError):
+        # 对端已关闭时没有可交付对象；执行方仍退出，由平台监管实现负责最后回收。
         return
