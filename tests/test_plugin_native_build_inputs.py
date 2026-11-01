@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -51,3 +53,14 @@ def test_native_build_preserves_existing_source_before_running_tools(builder, tm
         builder.main()
     assert marker.read_bytes() == b"preserve"
     assert not (tmp_path / "wheels").exists()
+
+
+def test_native_builder_reports_chinese_under_western_windows_console(builder):
+    result = subprocess.run(
+        [sys.executable, builder.__file__, "--help"],
+        env=dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0"),
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    assert "构建固定的插件原生窗口运行时" in result.stdout.decode("utf-8")

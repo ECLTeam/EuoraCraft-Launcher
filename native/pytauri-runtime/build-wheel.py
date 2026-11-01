@@ -51,6 +51,7 @@ def main() -> None:
 
     不重置已有源码目录、不安装到全局环境；构建失败时保留现场。
     """
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="构建固定的插件原生窗口运行时")
     parser.add_argument("--output-directory", type=Path, default=Path("build/native-runtime"))
     parser.add_argument("--source-repository")
