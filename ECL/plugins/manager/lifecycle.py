@@ -26,7 +26,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.environment_pool import _exclusive_lock
 
@@ -91,7 +91,7 @@ class PluginLifecycle(_PluginState):
                 self._plugin_errors.pop(name, None)
                 self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
                 return True, ""
-            except (OSError, ValueError, WindowsRuntimeError) as exc:
+            except (OSError, ValueError, PluginRuntimeError) as exc:
                 code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
                 self._status[name] = "review_required" if code == "PLUGIN_GRANT_REVIEW_REQUIRED" else "error"
                 self._plugin_errors[name] = code
@@ -209,7 +209,7 @@ class PluginLifecycle(_PluginState):
             assert self.worker_service is not None
             if self._status.get(name) != "unsupported":
                 self.worker_service.stop(name)
-        except (OSError, ValueError, WindowsRuntimeError) as exc:
+        except (OSError, ValueError, PluginRuntimeError) as exc:
             return PluginActionResult(
                 name, PluginAction.DISABLE, "stopping", getattr(exc, "error_code", "PLUGIN_JOB_STOP_PENDING")
             )

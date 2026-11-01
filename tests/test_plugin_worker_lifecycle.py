@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api._windows import WindowsRuntimeError
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins.grant_models import (
     PermissionDeclaration,
@@ -18,8 +17,6 @@ from ECL.plugins.grant_models import (
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantStore
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
-
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 
 
 def _prepare_session(supervisor, tmp_path, code_path, declarations=()):
@@ -188,6 +185,6 @@ def test_same_supervisor_cannot_restart_old_run_identity() -> None:
     supervisor = WorkerSupervisor()
     supervisor.start()
     supervisor.close()
-    with pytest.raises(WindowsRuntimeError) as error:
+    with pytest.raises(PluginRuntimeError) as error:
         supervisor.start()
     assert error.value.error_code == "PLUGIN_SESSION_EXPIRED"

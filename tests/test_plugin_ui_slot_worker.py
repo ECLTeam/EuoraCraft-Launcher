@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
@@ -49,7 +48,6 @@ def _prepare(tmp_path: Path, *, allow: bool = True) -> tuple[PluginWorkerService
     return service, metadata, received
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="真实 Worker 当前要求 Windows x64")
 def test_real_worker_injects_slots_and_clears_on_stop(tmp_path: Path) -> None:
     service, metadata, received = _prepare(tmp_path)
     try:
@@ -67,7 +65,6 @@ def test_real_worker_injects_slots_and_clears_on_stop(tmp_path: Path) -> None:
     assert received[-1] == (metadata["name"], {"kind": "clear"})
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="真实 Worker 当前要求 Windows x64")
 def test_master_switch_prevents_worker_injection(tmp_path: Path) -> None:
     service, metadata, received = _prepare(tmp_path, allow=False)
     try:

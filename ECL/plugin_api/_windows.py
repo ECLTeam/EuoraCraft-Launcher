@@ -6,7 +6,6 @@
 # 文件作用：提供 Windows 原生进程和命名管道边界，导入时不读取平台专属 API。
 #
 # 公开接口：
-#   - class WindowsRuntimeError — 原生操作失败及稳定错误码。
 #   - class WindowsApi — 延迟绑定 Windows API、显式资源句柄和身份查询。
 # ============================================================
 
@@ -17,23 +16,7 @@ import sys
 from ctypes import wintypes
 from pathlib import Path
 
-
-class WindowsRuntimeError(RuntimeError):
-    """
-    保存原生错误类别，不输出命令、目录或用户 SID。
-    """
-
-    def __init__(self, message: str, error_code: str, native_error: int = 0) -> None:
-        """
-        保存用于诊断的系统错误与对外稳定错误码。
-
-        :param message: 不包含敏感输入的规则说明
-        :param error_code: 插件运行协议的稳定错误码
-        :param native_error: Windows 错误值，不作为插件身份
-        """
-        super().__init__(message)
-        self.error_code: str = error_code
-        self.native_error: int = native_error
+from ECL.plugin_api._errors import PluginRuntimeError
 
 
 class _SecurityAttributes(ctypes.Structure):
@@ -140,10 +123,10 @@ class WindowsApi:
         """
         延迟加载内核及安全接口，不在模块导入时访问 Windows 属性。
 
-        :raises WindowsRuntimeError: 当前平台不受支持时抛出
+        :raises PluginRuntimeError: 当前平台不受支持时抛出
         """
         if sys.platform != "win32":
-            raise WindowsRuntimeError("当前平台尚不支持插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
+            raise PluginRuntimeError("当前平台尚不支持插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
         self.kernel: ctypes.CDLL = ctypes.WinDLL("kernel32", use_last_error=True)
         self.security: ctypes.CDLL = ctypes.WinDLL("advapi32", use_last_error=True)
         self._bind_kernel()
@@ -230,10 +213,10 @@ class WindowsApi:
 
         :param result: Windows API 的成功标识
         :param error_code: 当前操作的领域错误码
-        :raises WindowsRuntimeError: 调用失败时抛出
+        :raises PluginRuntimeError: 调用失败时抛出
         """
         if not result:
-            raise WindowsRuntimeError("Windows 插件运行操作失败", error_code, ctypes.get_last_error())
+            raise PluginRuntimeError("Windows 插件运行操作失败", error_code, ctypes.get_last_error())
 
     def close(self, handle: int) -> None:
         """
@@ -248,7 +231,7 @@ class WindowsApi:
         建立不继承的匿名 Job，最后句柄关闭时回收普通派生链。
 
         :return: 调用方必须关闭的 Job 句柄
-        :raises WindowsRuntimeError: 创建或设置失败时抛出
+        :raises PluginRuntimeError: 创建或设置失败时抛出
         """
         handle = self.kernel.CreateJobObjectW(None, None)
         self.check(handle, "PLUGIN_JOB_CREATE_FAILED")
@@ -259,7 +242,7 @@ class WindowsApi:
                 self.kernel.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)),
                 "PLUGIN_JOB_CREATE_FAILED",
             )
-        except WindowsRuntimeError:
+        except PluginRuntimeError:
             self.close(handle)
             raise
         return int(handle)
@@ -270,11 +253,11 @@ class WindowsApi:
 
         :param job: 当前 Worker 的 Job
         :param process: 尚未恢复的进程句柄
-        :raises WindowsRuntimeError: 分配或复核失败时抛出
+        :raises PluginRuntimeError: 分配或复核失败时抛出
         """
         self.check(self.kernel.AssignProcessToJobObject(job, process), "PLUGIN_JOB_ASSIGN_FAILED")
         if not self.is_in_job(job, process):
-            raise WindowsRuntimeError("插件进程不属于预期 Job", "PLUGIN_JOB_ASSIGN_FAILED")
+            raise PluginRuntimeError("插件进程不属于预期 Job", "PLUGIN_JOB_ASSIGN_FAILED")
 
     def is_in_job(self, job: int | None, process: int) -> bool:
         """
@@ -312,16 +295,16 @@ class WindowsApi:
         :param cwd_path: 受信工作目录
         :param environment: 已净化的完整环境
         :return: 进程句柄、主线程句柄和根 PID
-        :raises WindowsRuntimeError: 参数或原生创建失败时抛出
+        :raises PluginRuntimeError: 参数或原生创建失败时抛出
         """
         import subprocess
 
         if not arguments or not Path(arguments[0]).is_absolute():
-            raise WindowsRuntimeError("Worker 执行文件必须是绝对路径", "WORKER_EXECUTABLE_UNRESOLVED")
+            raise PluginRuntimeError("Worker 执行文件必须是绝对路径", "WORKER_EXECUTABLE_UNRESOLVED")
         if any("\0" in item for item in arguments) or any(
             not key or "=" in key or "\0" in key + value for key, value in environment.items()
         ):
-            raise WindowsRuntimeError("Worker 启动参数无效", "PLUGIN_INVALID_REQUEST")
+            raise PluginRuntimeError("Worker 启动参数无效", "PLUGIN_INVALID_REQUEST")
         command = ctypes.create_unicode_buffer(subprocess.list2cmdline(arguments))
         environment_block = ctypes.create_unicode_buffer(
             "\0".join(
@@ -429,7 +412,7 @@ class WindowsApi:
             needed = wintypes.DWORD()
             self.security.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
             if not needed.value:
-                raise WindowsRuntimeError("无法取得插件管道身份", "PLUGIN_PIPE_CREATE_FAILED")
+                raise PluginRuntimeError("无法取得插件管道身份", "PLUGIN_PIPE_CREATE_FAILED")
             user_buffer = ctypes.create_string_buffer(needed.value)
             self.check(
                 self.security.GetTokenInformation(token, 1, user_buffer, needed, ctypes.byref(needed)),

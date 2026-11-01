@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -24,7 +23,6 @@ def test_locked_imports_cannot_shadow_standard_library_or_sdk(tmp_path: Path) ->
         assert error.value.error_code == "PLUGIN_DEPENDENCY_CONFLICT"
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="首版仅 Windows x64")
 @pytest.mark.parametrize("use_frozen", [False, True])
 def test_workers_use_different_locked_versions_and_metadata(tmp_path: Path, use_frozen: bool) -> None:
     import idna
@@ -87,7 +85,6 @@ def test_workers_use_different_locked_versions_and_metadata(tmp_path: Path, use_
             supervisor.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="首版仅 Windows x64")
 def test_native_wheel_loads_from_shared_pool_in_frozen_worker(tmp_path: Path) -> None:
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     wheelhouse = os.environ.get("ECL_PLUGIN_SMOKE_WHEELS")

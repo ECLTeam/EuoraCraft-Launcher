@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import json
-import platform
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
@@ -25,8 +24,8 @@ from typing import TYPE_CHECKING, Literal
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaError
 from ECL.java.queries import JavaQueries
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api._windows import WindowsRuntimeError
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
 from ECL.plugins.environment_pool import PluginDependencyDirectory
@@ -552,8 +551,6 @@ class PluginWorkerService:
                 return
             if entry.cleanup_state == "pending":
                 raise ProtocolError("上一运行仍在完成清理", "PLUGIN_HOST_CLEANUP_PENDING")
-            if platform.system() != "Windows" or platform.machine().casefold() not in {"amd64", "x86_64"}:
-                raise ProtocolError("当前平台尚未支持第三方插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
             if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED":
                 entry.supervisor = WorkerSupervisor(
                     self._executable, host_handler=lambda request: self._handle(name, request)
@@ -969,7 +966,7 @@ class PluginWorkerService:
         先撤销本运行准入和注册，再有界回收 Worker；失败保留实际清理状态。
 
         :param name: 要停止的安装
-        :raises WindowsRuntimeError: 进程树尚未确认回收时抛出
+        :raises PluginRuntimeError: 进程树尚未确认回收时抛出
         """
         entry = self._entry(name)
         with entry.lock:
@@ -990,8 +987,8 @@ class PluginWorkerService:
                 if entry.broker:
                     entry.broker.close()
                     if not entry.broker.wait_idle(1):
-                        raise WindowsRuntimeError("插件宿主调用仍在完成中", "PLUGIN_HOST_CLEANUP_PENDING")
-            except (ProtocolError, OSError, WindowsRuntimeError) as exc:
+                        raise PluginRuntimeError("插件宿主调用仍在完成中", "PLUGIN_HOST_CLEANUP_PENDING")
+            except (ProtocolError, OSError, PluginRuntimeError) as exc:
                 entry.cleanup_state = "pending"
                 entry.error_code = getattr(exc, "error_code", "PLUGIN_JOB_STOP_PENDING")
                 raise
@@ -1104,7 +1101,7 @@ class PluginWorkerService:
         if not view.required_satisfied and entry.state == "enabled":
             try:
                 self.stop(name)
-            except WindowsRuntimeError:
+            except PluginRuntimeError:
                 get_logger("PluginWorkerService").warning("插件授权已保存，进程树仍等待清理确认")
         return {
             "revision": view.revision,
@@ -1228,7 +1225,7 @@ class PluginWorkerService:
                         self.stop(name)
                         entry.state = "failed"
                         entry.error_code = view.error_code or failure_code or "PLUGIN_WORKER_EXITED"
-                    except (OSError, ValueError, WindowsRuntimeError):
+                    except (OSError, ValueError, PluginRuntimeError):
                         entry.cleanup_state = "pending"
                         get_logger("PluginWorkerService").warning("插件运行清理尚未完成，需要重试停止")
 
@@ -1244,10 +1241,10 @@ class PluginWorkerService:
         for name in reversed(tuple(self._entries)):
             try:
                 self.stop(name)
-            except (OSError, ValueError, WindowsRuntimeError) as exc:
+            except (OSError, ValueError, PluginRuntimeError) as exc:
                 failures.append(exc)
         is_network_idle = self._network_service.close()
         if failures:
-            raise WindowsRuntimeError("部分插件进程树尚未确认停止", "PLUGIN_JOB_STOP_PENDING") from failures[0]
+            raise PluginRuntimeError("部分插件进程树尚未确认停止", "PLUGIN_JOB_STOP_PENDING") from failures[0]
         if not self._file_storage.close() or not is_network_idle:
-            raise WindowsRuntimeError("插件宿主资源尚未释放", "PLUGIN_HOST_CLEANUP_PENDING")
+            raise PluginRuntimeError("插件宿主资源尚未释放", "PLUGIN_HOST_CLEANUP_PENDING")

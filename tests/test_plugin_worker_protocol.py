@@ -133,12 +133,14 @@ from ECL.plugin_api.contracts import WireMessage
 host_module = {host_module!r}
 if host_module is not None:
     sys.modules[host_module] = ModuleType(host_module)
-_process.WindowsApi = lambda: SimpleNamespace(
+import ECL.plugin_api._windows as windows
+windows.WindowsApi = lambda: SimpleNamespace(
     is_in_job=lambda *args: True,
     kernel=SimpleNamespace(GetCurrentProcess=lambda: 1))
 messages = []
 channel = SimpleNamespace(send=messages.append, receive=lambda timeout: WireMessage('shutdown', {{}}))
-_process._serve(channel, 'a' * 32)
+_process.sys.platform = 'win32'
+_process._serve(channel, 'a' * 32, 123)
 print(json.dumps(messages[0].params['has_host_modules']))
 """
     completed = subprocess.run(
@@ -159,7 +161,7 @@ def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
     source = (
         "import main, sys, json\n"
         "try:\n"
-        " main.run_launcher(['--headless','--role=plugin','--pipe-address',r'\\\\.\\pipe\\ecl-worker-test','--host-pid','0','--run-id','0'*32])\n"
+        " main.run_launcher(['--headless','--role=plugin','--endpoint',r'\\\\.\\pipe\\ecl-worker-test','--host-pid','0','--run-id','0'*32])\n"
         "except SystemExit as error:\n"
         " code=error.code\n"
         "print(json.dumps({'code':code,'host_loaded':any(n.startswith('ECL.') "

@@ -7,7 +7,9 @@
 #
 # 公开接口：
 #   - class WindowsProcess — 保留原生句柄和创建身份的受控进程。
+#   - class WindowsReference — 持有已认证 Worker 的原始内核身份。
 #   - class WindowsJob — 不允许脱离的进程创建与回收边界。
+#   - class WindowsReference — 已认证 Worker 的独立内核身份句柄。
 # ============================================================
 
 from __future__ import annotations
@@ -18,7 +20,9 @@ from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
 
-from ECL.plugin_api._windows import WindowsApi, WindowsRuntimeError
+from ECL.plugin_api._errors import PluginRuntimeError
+from ECL.plugin_api._windows import WindowsApi
+from ECL.plugins.runtime.process_scope import ProcessReference
 
 
 @dataclass(slots=True)
@@ -39,12 +43,12 @@ class WindowsProcess:
         """
         仅恢复已经核实 Job 归属的线程，并释放主线程句柄。
 
-        :raises WindowsRuntimeError: 归属或恢复失败时抛出
+        :raises PluginRuntimeError: 归属或恢复失败时抛出
         """
         if not self.is_assigned or not self.thread_handle:
-            raise WindowsRuntimeError("插件进程没有受控恢复条件", "PLUGIN_JOB_ASSIGN_FAILED")
+            raise PluginRuntimeError("插件进程没有受控恢复条件", "PLUGIN_JOB_ASSIGN_FAILED")
         if self.api.kernel.ResumeThread(self.thread_handle) == 0xFFFFFFFF:
-            raise WindowsRuntimeError("无法恢复插件进程", "PLUGIN_PROCESS_RESUME_FAILED")
+            raise PluginRuntimeError("无法恢复插件进程", "PLUGIN_PROCESS_RESUME_FAILED")
         self.api.close(self.thread_handle)
         self.thread_handle = 0
 
@@ -88,9 +92,7 @@ class WindowsJob:
         self._processes: list[WindowsProcess] = []
         self._lock = RLock()
 
-    def spawn_suspended(
-        self, arguments: tuple[str, ...], cwd_path: Path, environment: dict[str, str]
-    ) -> WindowsProcess:
+    def prepare(self, arguments: tuple[str, ...], cwd_path: Path, environment: dict[str, str]) -> WindowsProcess:
         """
         挂起创建根进程，成功分配并复核 Job 后才允许调用方恢复。
 
@@ -98,11 +100,11 @@ class WindowsJob:
         :param cwd_path: 受信工作目录
         :param environment: 净化后的运行环境
         :return: 仍挂起且已经属于本 Job 的进程
-        :raises WindowsRuntimeError: 任一步失败时回收挂起根进程并抛出
+        :raises PluginRuntimeError: 任一步失败时回收挂起根进程并抛出
         """
         with self._lock:
             if not self.handle:
-                raise WindowsRuntimeError("插件 Job 已关闭", "PLUGIN_HOST_CLOSED")
+                raise PluginRuntimeError("插件 Job 已关闭", "PLUGIN_HOST_CLOSED")
             process_handle, thread_handle, pid = self.api.create_suspended(arguments, cwd_path, environment)
             try:
                 created_at, image_path = self.api.process_identity(process_handle)
@@ -127,6 +129,34 @@ class WindowsJob:
         """
         return bool(self.handle) and self.api.is_in_job(self.handle, process_handle)
 
+    def reference(self, pid: int, executable_path: Path) -> WindowsReference:
+        """
+        保留实际连接进程身份，只接受本 Job 中的原发行入口。
+
+        :param pid: 命名管道内核返回的对端 PID
+        :param executable_path: 宿主固定的发行入口
+        :return: 调用方负责关闭的独立身份引用
+        :raises PluginRuntimeError: 归属或镜像不符
+        """
+        handle = self.api.open_process(pid)
+        try:
+            created, image = self.api.process_identity(handle)
+            if not self.contains(handle) or image != executable_path.resolve():
+                raise PluginRuntimeError("连接进程不属于预期 Worker", "PLUGIN_PIPE_AUTH_FAILED")
+            return WindowsReference(self.api, handle, pid, created, image)
+        except BaseException:
+            self.api.close(handle)
+            raise
+
+    def is_member(self, reference: ProcessReference) -> bool:
+        """
+        从保留的内核句柄复核身份引用归属。
+
+        :param reference: 本运行认证的引用
+        :return: 是否仍为本 Job 的成员
+        """
+        return isinstance(reference, WindowsReference) and self.contains(reference.handle)
+
     def active_count(self) -> int:
         """
         查询实际活跃成员数，已关闭 Job 返回零。
@@ -140,7 +170,7 @@ class WindowsJob:
         请求终止全部成员，确认回收后关闭所有持有句柄。
 
         :param timeout: 实际退出等待上限
-        :raises WindowsRuntimeError: 无法确认退出时保持句柄供调用方重试
+        :raises PluginRuntimeError: 无法确认退出时保持句柄供调用方重试
         """
         with self._lock:
             if not self.handle:
@@ -150,12 +180,12 @@ class WindowsJob:
             deadline = monotonic() + timeout
             while self.active_count():
                 if monotonic() >= deadline:
-                    raise WindowsRuntimeError("插件进程树尚未确认停止", "PLUGIN_JOB_STOP_PENDING")
+                    raise PluginRuntimeError("插件进程树尚未确认停止", "PLUGIN_JOB_STOP_PENDING")
                 sleep(0.01)
             for process in self._processes:
                 remaining_ms = max(1, int((deadline - monotonic()) * 1000))
                 if self.api.kernel.WaitForSingleObject(process.handle, remaining_ms) != 0:
-                    raise WindowsRuntimeError("插件根进程尚未确认退出", "PLUGIN_JOB_STOP_PENDING")
+                    raise PluginRuntimeError("插件根进程尚未确认退出", "PLUGIN_JOB_STOP_PENDING")
                 process.close()
             self._processes.clear()
             self.api.close(self.handle)
@@ -166,3 +196,32 @@ class WindowsJob:
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         self.close()
+
+
+@dataclass(slots=True)
+class WindowsReference:
+    """
+    独立持有已经认证的 Worker 对象，不依赖可重用的裸 PID 判断存活。
+    """
+
+    api: WindowsApi
+    handle: int
+    pid: int
+    created_at: int
+    image_path: Path
+
+    def is_alive(self) -> bool:
+        """
+        通过原对象等待状态查询存活。
+
+        :return: 该对象是否仍在执行
+        """
+        return bool(self.handle) and self.api.kernel.WaitForSingleObject(self.handle, 0) == 258
+
+    def close(self) -> None:
+        """
+        幂等释放身份句柄，不把关闭查询引用等同于停止 Worker。
+        """
+        if self.handle:
+            self.api.close(self.handle)
+            self.handle = 0

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from time import monotonic
 from uuid import uuid4
@@ -94,7 +93,6 @@ def _prepare(tmp_path: Path) -> PluginWorkerService:
     return service
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="真实 Worker 当前要求 Windows x64")
 def test_real_worker_calls_exported_command(tmp_path: Path) -> None:
     service = _prepare(tmp_path)
     try:
@@ -106,7 +104,6 @@ def test_real_worker_calls_exported_command(tmp_path: Path) -> None:
         service.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="真实 Worker 当前要求 Windows x64")
 def test_real_worker_rejects_disabled_target(tmp_path: Path) -> None:
     service = _prepare(tmp_path)
     try:

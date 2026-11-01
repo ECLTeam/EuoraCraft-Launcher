@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from time import monotonic, sleep
 
 import pytest
 
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugins import PluginManager
 from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 
@@ -62,7 +62,6 @@ def test_discovery_and_directory_install_do_not_execute_before_review(tmp_path: 
         manager.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="真实 Worker 运行仅在 Windows 验收")
 def test_manager_real_worker_review_command_settings_revoke_and_restart(tmp_path: Path):
     marker = tmp_path / "executed"
     make_plugin(tmp_path / "data/plugins/example", marker)
@@ -103,21 +102,24 @@ def test_legacy_third_party_never_executes_in_host(tmp_path: Path):
         manager.close()
 
 
-def test_non_windows_worker_rejection_never_executes_entry(tmp_path: Path, monkeypatch):
+def test_unsupported_runtime_rejection_never_executes_entry(tmp_path: Path, monkeypatch):
     marker = tmp_path / "executed"
     make_plugin(tmp_path / "data/plugins/example", marker)
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
         review(manager)
-        monkeypatch.setattr("ECL.plugins.worker_service.platform.system", lambda: "Linux")
+
+        def unsupported(*_args):
+            raise PluginRuntimeError("不支持的平台", "PLUGIN_RUNTIME_UNSUPPORTED")
+
+        monkeypatch.setattr("ECL.plugins.runtime.supervisor.create_process_scope", unsupported)
         assert not manager.enable("example").success
         assert not marker.exists()
     finally:
         manager.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 def test_unexpected_worker_exit_cleans_resources_without_page_polling(tmp_path: Path):
     root = tmp_path / "data/plugins/example"
     make_plugin(root, tmp_path / "marker")
@@ -158,7 +160,6 @@ def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
         manager.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 def test_directory_with_complete_offline_lock_loads_its_own_dependency(tmp_path: Path):
     from plugin_wheel_helpers import make_wheel, wheel_lock
 
@@ -225,7 +226,6 @@ def test_changed_directory_contents_require_new_review(tmp_path: Path):
         manager.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 def test_callback_timeout_denies_new_calls_and_monitor_confirms_stop(tmp_path: Path):
     from ECL.plugins.framework import PluginCommandError
 
@@ -254,7 +254,6 @@ def test_callback_timeout_denies_new_calls_and_monitor_confirms_stop(tmp_path: P
         manager.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 def test_install_waits_for_concurrent_enable_then_stops_old_worker(tmp_path: Path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
@@ -303,7 +302,6 @@ def test_install_waits_for_concurrent_enable_then_stops_old_worker(tmp_path: Pat
         manager.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows Worker")
 def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path: Path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
@@ -338,9 +336,8 @@ def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path:
                 ),
             )
             assert write_started.wait(2)
-            from ECL.plugin_api._windows import WindowsRuntimeError
 
-            with pytest.raises(WindowsRuntimeError) as error:
+            with pytest.raises(PluginRuntimeError) as error:
                 manager.worker_service.stop("example")
             assert error.value.error_code == "PLUGIN_HOST_CLEANUP_PENDING"
             assert manager.worker_service.runtime_info("example")["cleanup_state"] == "pending"

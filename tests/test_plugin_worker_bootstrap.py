@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import psutil
 import pytest
 
-from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
-
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="首版仅 Windows x64")
 
 
 def _snapshot(tmp_path: Path) -> tuple[CodeSnapshot, Path]:
@@ -34,7 +31,7 @@ def test_worker_waits_for_permission_before_plugin_code(tmp_path: Path) -> None:
     try:
         hello = supervisor.start()
         assert hello["has_host_modules"] is False
-        assert hello["is_in_job"] is True
+        assert hello["is_supervised"] is True
         assert supervisor.pid != os.getpid()
         assert supervisor.state == "awaiting_authorization"
         assert not marker.exists()
@@ -71,7 +68,7 @@ def test_plugin_exception_is_reported_without_private_exception_text(tmp_path: P
     snapshot, marker = _snapshot(tmp_path)
     (snapshot.root_path / "main.py").write_text("raise ValueError('private-token-must-not-leak')", encoding="utf-8")
     with WorkerSupervisor() as supervisor:
-        with pytest.raises(WindowsRuntimeError) as error:
+        with pytest.raises(PluginRuntimeError) as error:
             supervisor._authorize_snapshot(CodeSnapshot.capture(snapshot.root_path))
         assert error.value.error_code == "PLUGIN_WORKER_EXECUTION_FAILED"
         assert "private-token" not in str(error.value)

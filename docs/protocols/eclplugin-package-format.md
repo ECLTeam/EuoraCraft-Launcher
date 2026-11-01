@@ -344,3 +344,14 @@ Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`�
 ### 认证与联机
 
 方法、参数、返回模型、预算及原始许可生命周期集中定义于[第三方登录与联机契约](../designs/plugin-auth-and-connector-extension-design.md)。认证只交付本提供方自己的持久数据；联机只操作本来源会话。撤权再授权不复活旧注册或旧引用。会话退出请求不代表实际资源已停止，最终状态以所属任务及清理结果为准。
+
+
+## 第三批 Worker 平台引导契约
+
+正式入口统一为 `--headless --role plugin --endpoint <本地端点> --host-pid <PID> --run-id <32位运行标识>`。`--endpoint` 同时用于 Windows 命名管道和 POSIX Unix socket，不保留旧参数别名。握手字段 `is_supervised` 表示系统监管条件已建立；宿主仍独立核对内核对端身份、发行入口及监管归属，不信任插件自报 PID 或该布尔值作为授权。
+
+Windows 保留先分配 Job 再恢复进程的路径。POSIX 的 `plugin-guardian` 是不导入插件的内部监管角色，专属会话和控制管道与插件 RPC 分离。运行目录独占创建为 0700，端点固定绑定运行标识；Linux 查询内核 PID/UID，macOS 查询原生 peer PID 和 UID。宿主 EOF 后守护角色仍清理普通后代；停止超时继续持有原始组首进程身份，不提前回收或误报停止。
+
+该边界管理正常插件及其普通进程树，不是恶意 Python 的 OS 沙箱。主动脱离会话/进程组的进程、跨平台工具及原生 UI 按所属能力另行验收。Windows x64 源码回归可在本机执行；Linux/macOS 的基础实现与三平台工作流已编写，真实 runner 通过前仍为待验收。受控文件及游戏安装事务继续只开放已验收的 Windows 本地 NTFS 路径，POSIX 文件事务尚未完成；不以基础 Worker 可启动推导全部 API 均可用。冻结发行物不由源码用例代替验收，当前不执行 Nuitka 构建。
+
+实现与原始测试范围见[平台适配记录](../plans/plugin-posix-worker-adaptation-2026-11-01.md)。

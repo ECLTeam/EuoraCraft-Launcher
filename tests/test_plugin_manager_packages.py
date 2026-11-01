@@ -7,7 +7,7 @@ import sys
 import pytest
 from plugin_wheel_helpers import make_package, make_wheel
 
-from ECL.plugin_api._windows import WindowsRuntimeError
+from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugins import PluginManager
 from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
@@ -53,13 +53,15 @@ def test_package_requires_review_after_install_and_restart(tmp_path):
         manager.close()
 
 
-@pytest.mark.parametrize("system,machine", [("Windows", "ARM64"), ("Linux", "x86_64"), ("Darwin", "arm64")])
+@pytest.mark.parametrize(
+    "system,machine", [("win32", "ARM64"), ("linux", "riscv64"), ("darwin", "ppc"), ("freebsd", "x86_64")]
+)
 def test_unsupported_worker_platform_is_rejected_before_start(monkeypatch, system, machine):
     supervisor = WorkerSupervisor()
-    monkeypatch.setattr(platform, "system", lambda: system)
+    monkeypatch.setattr(sys, "platform", system)
     monkeypatch.setattr(platform, "machine", lambda: machine)
     try:
-        with pytest.raises(WindowsRuntimeError) as error:
+        with pytest.raises(PluginRuntimeError) as error:
             supervisor.start()
         assert error.value.error_code == "PLUGIN_RUNTIME_UNSUPPORTED"
         assert supervisor.pid is None
@@ -68,10 +70,6 @@ def test_unsupported_worker_platform_is_rejected_before_start(monkeypatch, syste
         supervisor.close()
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32" or platform.machine().casefold() not in {"amd64", "x86_64"},
-    reason="真实 Worker 仅在 Windows x64 验收",
-)
 def test_package_executes_in_worker_and_can_be_disabled_reloaded_uninstalled(tmp_path):
     manager = install_and_restart(tmp_path, make_package(tmp_path))
     try:
@@ -131,10 +129,6 @@ def test_safe_mode_discovers_package_without_starting_worker(tmp_path):
         safe.close()
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32" or platform.machine().casefold() not in {"amd64", "x86_64"},
-    reason="真实 Worker 仅在 Windows x64 验收",
-)
 def test_failure_in_on_load_does_not_report_enabled(tmp_path):
     code = "from ECL.plugin_api import Plugin as Base\nclass Plugin(Base):\n    def on_load(self):\n        raise RuntimeError('private detail')\n"
     manager = install_and_restart(tmp_path, make_package(tmp_path, code=code))
@@ -169,10 +163,6 @@ def test_explicit_empty_permissions_are_not_inferred_from_code(tmp_path):
         manager.close()
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32" or platform.machine().casefold() not in {"amd64", "x86_64"},
-    reason="真实 Worker 仅在 Windows x64 验收",
-)
 def test_two_package_workers_use_distinct_versions_without_host_dependency_conflict(tmp_path):
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
