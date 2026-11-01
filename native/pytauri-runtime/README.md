@@ -27,10 +27,10 @@ WebView2 对本次 data 顶层文档的 `Source` 观测为空，不能据此鉴�
 
 ## 验收与许可
 
-真实测试须同时有合法回传和服务端零请求，覆盖 WebSocket、worker、嵌套 frame、特殊协议、旁路、关闭及撤权；单独的 ready、超时或浏览器报错不构成通过。详细范围和当前结果保存在第二批交付记录，未验证的门禁不得标为完成。
+真实测试须同时有合法回传和服务端零请求，覆盖 WebSocket、worker、嵌套 frame、特殊协议、旁路、关闭及撤权；单独的 ready、超时或浏览器报错不构成通过。详细范围和当前结果见[跨平台交付记录](../../docs/plans/plugin-posix-files-and-webviews-2026-11-01.md)，未验证的门禁不得标为完成。
 
 `0.8.0+ecl.2` 接入 WebKitGTK 与 WKWebView，三平台原始 GUI 报告由 `Plugin Native WebViews` 工作流保留。POSIX 窗口在创建时启用独立临时数据上下文与固定拒绝代理，安装原生内容过滤后才加载宿主壳；禁止通用 IPC、文件选择、权限、下载和外部导航。桥接只从实际顶层文档读取宿主闭包，不采信 frame 名称。
 
-WKWebView 公共接口没有关闭 PeerConnection 的等价选项，因此本项目使用版本固定的 WebKit 专用偏好接口，关闭 PeerConnection、媒体设备、屏幕捕获及可发现的 WebTransport 功能。该接口属于 SPI，不承诺跨 WebKit build 稳定；清单固定实际 `CFBundleVersion`，版本或必要接口不符时在空白窗口拒绝执行。更新须审阅接口并重新通过真实 GUI 和网络门禁，不扩大为任意系统版本支持。当前正在进行首次 POSIX 原生验收，结果以实施文档记录为准。
+WKWebView 公共接口没有关闭 PeerConnection 的等价选项，因此本项目使用版本固定的 WebKit 专用偏好接口，关闭 PeerConnection、媒体设备、屏幕捕获及可发现的 WebTransport 功能。该接口属于 SPI，不承诺跨 WebKit build 稳定；清单固定实际 `CFBundleVersion`，版本或必要接口不符时在空白窗口拒绝执行。更新须审阅接口并重新通过真实 GUI 和网络门禁，不扩大为任意系统版本支持。三平台首次原生验收已在运行 [41311269541](https://github.com/ECLTeam/EuoraCraft-Launcher/actions/runs/41311269541) 通过：Windows x64 4 项、Linux x86_64 与 macOS ARM64 各 3 项，具体引擎和源码范围以交付记录为准。
 
 upstream PyTauri 使用 Apache-2.0，原文见 `UPSTREAM-LICENSE`；ECL 的原生策略使用主仓库 GPL-3.0。修改后的原生 Wheel 同时携带两份许可，发布时保留上游著作权和依赖声明；源码补丁、Cargo.lock 及构建清单须与产物一同保留。普通 Python 绑定保留 upstream Apache-2.0 许可。
