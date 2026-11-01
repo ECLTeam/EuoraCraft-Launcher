@@ -56,7 +56,7 @@ from .modpack_export import (
     scan_export_files,
 )
 from .modpack_preparation import PreparedModpackFile
-from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post
+from .resources import ResourceCatalogPolicy, _proxied_get, _proxied_post, _proxied_stream
 from .workspace import ResolvedInstanceTarget, safe_extract_zip
 
 # 在线整合包安装支持的来源。
@@ -132,6 +132,38 @@ class ModpackFormatPolicy:
     )
 
 
+class ModpackIconPolicy:
+    """
+    整合包自带图标的候选名称、下载上限与内容类型映射。
+
+    候选只用于解压目录根层级；不递归 overrides，避免把资源包或模组图标当成
+    整合包图标。下载上限与实例资料图标校验保持一致，内容类型缺失时回退到 URL
+    后缀。
+    """
+
+    candidate_names = (
+        "icon.png",
+        "icon.jpg",
+        "icon.jpeg",
+        "icon.webp",
+        "icon.gif",
+        "icon.bmp",
+        "pack.png",
+        "logo.png",
+    )
+    content_type_extensions = MappingProxyType(
+        {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+            "image/bmp": ".bmp",
+        }
+    )
+    image_extensions = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"})
+    max_bytes = 10 * 1024 * 1024
+
+
 @dataclass(frozen=True, slots=True)
 class PackFileEntry:
     """
@@ -169,6 +201,8 @@ class ModpackPlan:
     files: tuple[PackFileEntry, ...] = ()
     overrides_dir: Path | None = None
     needs_reinstall_loader: bool = False
+    icon_url: str | None = None
+    icon_source_path: Path | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -400,6 +434,44 @@ def detect_pack_format(root: Path) -> str:
     :return: mrpack / curseforge / mcbbs / hmcl / multimc / ecl-legacy / unknown
     """
     return _detect_pack_layout(root)[1]
+
+
+def _pack_icon_candidate(*roots: Path) -> Path | None:
+    """
+    在解压目录根层级按固定优先级查找整合包图标。
+
+    只检查传入目录的直接子文件，不递归 overrides；文件名按 casefold 比较，
+    兼容 `Logo.png` 等大小写差异。目录不可读时继续检查下一个根目录。
+
+    :param roots: 按优先级排列的候选根目录
+    :return: 首个命中的图标文件路径；无候选时返回 None
+    """
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            files = {item.name.casefold(): item for item in root.iterdir() if item.is_file()}
+        except OSError:
+            continue
+        for candidate_name in ModpackIconPolicy.candidate_names:
+            candidate = files.get(candidate_name)
+            if candidate is not None:
+                return candidate
+    return None
+
+
+def _icon_extension_from_url(url: str) -> str | None:
+    """
+    从图标 URL 的路径部分提取受支持的图片扩展名。
+
+    :param url: 平台返回的图标地址
+    :return: 小写扩展名；路径没有受支持后缀时返回 None
+    """
+    path_part = url.split("?", 1)[0].split("#", 1)[0]
+    suffix = PurePosixPath(path_part).suffix.casefold()
+    if suffix in ModpackIconPolicy.image_extensions:
+        return suffix
+    return None
 
 
 def _parse_mcbbs_plan(root: Path) -> ModpackPlan:
@@ -683,6 +755,23 @@ def _resolve_export_dependencies(target: ResolvedInstanceTarget) -> dict[str, st
     return dependencies
 
 
+def _ftb_square_icon(info: dict[str, Any]) -> str | None:
+    """
+    从 FTB 项目详情的 art 列表提取方形图标地址。
+
+    :param info: FTB 整合包详情响应
+    :return: 首个 square 类型图标地址；无匹配时返回 None
+    """
+    arts = info.get("art") if isinstance(info.get("art"), list) else []
+    for item in arts:
+        if not isinstance(item, dict) or item.get("type") != "square":
+            continue
+        url = item.get("url")
+        if isinstance(url, str) and url.strip().startswith(("http://", "https://")):
+            return url.strip()
+    return None
+
+
 def build_ftb_plan(info: dict[str, Any], manifest: dict[str, Any]) -> ModpackPlan:
     """
     将 FTB 版本清单转换为启动器使用的安装计划。
@@ -715,6 +804,7 @@ def build_ftb_plan(info: dict[str, Any], manifest: dict[str, Any]) -> ModpackPla
         loader_type=loader_type,
         loader_version=loader_version,
         files=tuple(entries),
+        icon_url=_ftb_square_icon(info),
         warnings=tuple(warnings),
     )
 
@@ -897,6 +987,13 @@ class ModpackCoordinator(_GameState):
                         plan = ModpackPlan(format_name=detected, pack_name=source_path.stem if source_path else "ECL")
                     else:
                         plan = build_pack_plan(extracted)
+                        plan = self._attach_pack_icon(
+                            plan,
+                            source=source,
+                            project_id=project_id,
+                            layout_root=layout_root,
+                            extracted=extracted,
+                        )
                 # 在确认前解析引用，只读取文件详情，不下载清单中的文件内容。
                 active_plan = replace(
                     plan, files=tuple(item for item in plan.files if item.env_client != "unsupported")
@@ -1052,6 +1149,46 @@ class ModpackCoordinator(_GameState):
             raise GameServiceError("FTB 整合包清单无效", "FTB_SOURCE_UNAVAILABLE")
         return build_ftb_plan(info if isinstance(info, dict) else {}, manifest)
 
+    def _attach_pack_icon(
+        self,
+        plan: ModpackPlan,
+        *,
+        source: str,
+        project_id: str,
+        layout_root: Path,
+        extracted: Path,
+    ) -> ModpackPlan:
+        """
+        为准备计划补充整合包图标来源，不阻断预览或安装。
+
+        本地包只读取解压目录根层级的候选文件；Modrinth 与 CurseForge 通过
+        项目详情取图标地址，FTB 已在构建计划时读取。图标信息缺失或请求失败
+        时保留原计划，由安装阶段自然回退到自动图标。
+
+        :param plan: 已解析的整合包安装计划
+        :param source: local、modrinth、curseforge 或 ftb
+        :param project_id: 在线项目标识；本地来源为空
+        :param layout_root: 清单所在解压目录
+        :param extracted: 解压内容根目录
+        :return: 带图标来源字段的计划；无图标时返回原计划
+        """
+        if source == "local":
+            candidate = _pack_icon_candidate(layout_root, extracted)
+            if candidate is None:
+                return plan
+            return replace(plan, icon_source_path=candidate)
+        if source == "ftb" or not project_id:
+            return plan
+        try:
+            details = self.fetch_project_info(source, project_id, "modpack")
+        except (GameServiceError, httpx.HTTPError, ValueError, TypeError) as exc:
+            self.logger.warning("读取整合包图标信息失败：%s；来源：%s", exc, source)
+            return plan
+        icon_url = details.get("iconUrl") if isinstance(details, dict) else None
+        if not isinstance(icon_url, str) or not icon_url.strip().startswith(("http://", "https://")):
+            return plan
+        return replace(plan, icon_url=icon_url.strip())
+
     def _import_legacy_ecl_pack(
         self,
         extracted: Path,
@@ -1115,6 +1252,8 @@ class ModpackCoordinator(_GameState):
         if download is not None:
             staging = target.instance_path.with_name(f".ecl-plugin-import-{uuid4().hex}")
             staging.mkdir()
+        warnings = list(plan.warnings)
+        icon_source: tuple[Path, bool] | None = None
         try:
             entries, skipped = self._resolve_pack_entries(plan, context)
             base_name = self._ensure_pack_base_version(plan, target, context)
@@ -1126,7 +1265,23 @@ class ModpackCoordinator(_GameState):
             overrides_count = self._copy_pack_overrides(plan, staging, context, ignored_paths)
             self._write_pack_version_json(base_name, target, staging, plan.minecraft_version)
             context.check_cancelled()
+            icon_source = self._prepare_pack_icon(plan, context, staging.parent)
+            if icon_source is None and (plan.icon_url or plan.icon_source_path is not None):
+                warnings.append("整合包图标不可用，已回退到自动图标")
+                self.logger.warning("整合包图标不可用，已回退到自动图标")
             context.finalize(lambda: _commit_staged_instance(staging, target.instance_path))
+            if icon_source is not None:
+                icon_path, _ = icon_source
+                try:
+                    self.set_instance_icon(
+                        target.minecraft_root_path,
+                        target.instance_directory_name,
+                        "local",
+                        source_path=icon_path,
+                    )
+                except (GameServiceError, OSError, ValueError) as exc:
+                    warnings.append(f"整合包图标未写入：{exc}")
+                    self.logger.warning("整合包图标未写入：%s", exc)
             return {
                 "versionId": target.instance_directory_name,
                 "path": str(target.instance_path),
@@ -1136,11 +1291,95 @@ class ModpackCoordinator(_GameState):
                 "excludedOptionalFiles": 0,
                 "overridesFiles": overrides_count,
                 "baseVersion": base_name,
-                "warnings": list(plan.warnings),
+                "warnings": warnings,
             }
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
+        finally:
+            if icon_source is not None and icon_source[1]:
+                icon_source[0].unlink(missing_ok=True)
+
+    def _prepare_pack_icon(
+        self,
+        plan: ModpackPlan,
+        context: OperationContext,
+        temp_directory: Path,
+    ) -> tuple[Path, bool] | None:
+        """
+        准备安装完成后写入实例资料的图标文件。
+
+        本地包直接复用准备快照中的图标；在线图标在提交前下载到临时文件。
+        图标缺失或下载失败时返回 None，安装流程继续并回退自动图标。
+
+        :param plan: 带图标来源字段的安装计划
+        :param context: 当前安装任务上下文
+        :param temp_directory: 在线图标临时文件所在目录
+        :return: (图标路径, 是否为临时文件)；无可用图标时返回 None
+        """
+        if plan.icon_source_path is not None:
+            if plan.icon_source_path.is_file():
+                return plan.icon_source_path, False
+            self.logger.warning("整合包图标文件已不存在：%s", plan.icon_source_path.name)
+            return None
+        if not plan.icon_url:
+            return None
+        downloaded = self._download_pack_icon(plan.icon_url, temp_directory, context)
+        if downloaded is None:
+            return None
+        return downloaded, True
+
+    def _download_pack_icon(
+        self,
+        url: str,
+        temp_directory: Path,
+        context: OperationContext,
+    ) -> Path | None:
+        """
+        下载整合包图标到临时文件，失败时保留安装任务并回退自动图标。
+
+        下载期间检查取消信号；内容类型或 URL 后缀无法确定、响应超过大小上限、
+        网络失败或写盘失败时清理临时文件并返回 None。取消异常仍然向上抛出。
+
+        :param url: 平台返回的图标地址
+        :param temp_directory: 临时文件所在目录
+        :param context: 当前安装任务上下文
+        :return: 临时图标路径；无法缓存时返回 None
+        """
+        destination: Path | None = None
+        keep_destination = False
+        try:
+            with _proxied_stream("GET", url, timeout=15, follow_redirects=True) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                extension = ModpackIconPolicy.content_type_extensions.get(content_type)
+                if extension is None:
+                    extension = _icon_extension_from_url(url)
+                if extension is None:
+                    self.logger.warning("整合包图标类型无法识别，已跳过缓存")
+                    return None
+                content_length = response.headers.get("content-length")
+                if content_length and content_length.isdigit() and int(content_length) > ModpackIconPolicy.max_bytes:
+                    self.logger.warning("整合包图标超过大小上限，已跳过缓存")
+                    return None
+                destination = temp_directory / f".pack-icon-{uuid4().hex}{extension}"
+                downloaded = 0
+                with destination.open("wb") as output:
+                    for chunk in response.iter_bytes(1024 * 1024):
+                        context.check_cancelled()
+                        downloaded += len(chunk)
+                        if downloaded > ModpackIconPolicy.max_bytes:
+                            self.logger.warning("整合包图标超过大小上限，已跳过缓存")
+                            return None
+                        output.write(chunk)
+                keep_destination = True
+                return destination
+        except (httpx.HTTPError, OSError, ValueError, TypeError) as exc:
+            self.logger.warning("下载整合包图标失败：%s", exc)
+            return None
+        finally:
+            if not keep_destination and destination is not None:
+                destination.unlink(missing_ok=True)
 
     def _resolve_pack_entries(self, plan: ModpackPlan, context: OperationContext) -> tuple[list[PackFileEntry], int]:
         """

@@ -18,6 +18,8 @@
 #   - test_build_pack_plan_rejects_unknown(tmp_path) -> None
 #   - test_build_pack_plan_rejects_ecl_legacy(tmp_path) -> None
 #   - test_build_pack_plan_rejects_missing_directory(tmp_path) -> None
+#   - test_local_pack_icon_candidates_follow_priority(tmp_path) -> None
+#   - test_local_pack_caches_root_icon_into_ecl(tmp_path) -> None
 #   - test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None
 #   - test_import_modrinth_pack_auto_installs_loader_base(tmp_path, monkeypatch) -> None
 #   - test_import_pack_reports_missing_loader_versions(tmp_path, monkeypatch) -> None
@@ -38,7 +40,11 @@
 #   - test_parse_multimc_plan(tmp_path) -> None
 #   - test_detect_wrapped_single_directory(tmp_path) -> None
 #   - test_build_ftb_plan(tmp_path) -> None
+#   - test_build_ftb_plan_extracts_square_icon() -> None
 #   - test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None
+#   - test_online_pack_install_caches_icon_into_ecl(tmp_path, monkeypatch) -> None
+#   - test_online_pack_icon_download_failure_does_not_block_install(tmp_path, monkeypatch) -> None
+#   - test_online_pack_icon_unsupported_format_falls_back(tmp_path, monkeypatch) -> None
 #   - test_search_online_resources_ftb(tmp_path, monkeypatch) -> None
 #   - test_commit_staged_instance_renames_directory(tmp_path) -> None
 #   - test_commit_staged_instance_retries_transient_lock(tmp_path, monkeypatch) -> None
@@ -49,11 +55,13 @@
 
 import hashlib
 import json
+import struct
 import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from ECL.foundation import EventBus
@@ -61,6 +69,7 @@ from ECL.services.game import GameService
 from ECL.services.game import modpack as modpack_module
 from ECL.services.game.modpack import (
     ModpackPlan,
+    _pack_icon_candidate,
     build_ftb_plan,
     build_pack_plan,
     curseforge_fingerprint,
@@ -407,6 +416,81 @@ def _make_base_version(game_path: Path, version: str) -> None:
     )
 
 
+def _valid_png() -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + b"\0" * 8 + struct.pack(">II", 32, 32) + b"payload"
+
+
+class _IconResponse:
+    """模拟图标下载响应，供安装阶段的图标缓存测试使用。"""
+
+    def __init__(self, content: bytes, content_type: str = "image/png") -> None:
+        self._content = content
+        self.headers = {"content-type": content_type, "content-length": str(len(content))}
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_bytes(self, _chunk_size: int):
+        yield self._content
+
+    def __enter__(self) -> "_IconResponse":
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        return False
+
+
+def test_local_pack_icon_candidates_follow_priority(tmp_path) -> None:
+    """根目录候选图标应按 icon、pack、logo 的顺序选择，且不递归 overrides。"""
+    root = tmp_path / "pack"
+    root.mkdir()
+    (root / "logo.png").write_bytes(b"logo")
+    (root / "pack.png").write_bytes(b"pack")
+    (root / "icon.png").write_bytes(b"icon")
+
+    assert _pack_icon_candidate(root).name == "icon.png"
+    (root / "icon.png").unlink()
+    assert _pack_icon_candidate(root).name == "pack.png"
+    (root / "pack.png").unlink()
+    assert _pack_icon_candidate(root).name == "logo.png"
+    (root / "logo.png").unlink()
+    (root / "Logo.png").write_bytes(b"logo")
+    assert _pack_icon_candidate(root).name == "Logo.png"
+    (root / "Logo.png").unlink()
+
+    overrides = root / "overrides"
+    overrides.mkdir()
+    (overrides / "icon.png").write_bytes(b"nested")
+    assert _pack_icon_candidate(root) is None
+
+
+def test_local_pack_caches_root_icon_into_ecl(tmp_path) -> None:
+    """本地导入命中根目录图标时应缓存到实例 .ecl 目录并写入资料。"""
+    game_path = tmp_path / ".minecraft"
+    _make_base_version(game_path, "1.21.1")
+    png = _valid_png()
+    index = {"name": "Icon Pack", "dependencies": {"minecraft": "1.21.1"}, "files": []}
+    pack = tmp_path / "with-icon.mrpack"
+    _make_pack_zip(
+        pack,
+        {
+            "modrinth.index.json": json.dumps(index).encode(),
+            "icon.png": png,
+        },
+    )
+    service = _build_pack_service(_pack_downloader_factory({}))
+    try:
+        state = _run_pack_operation(service, game_path=game_path, source_path=pack, new_version_id="LocalIcon")
+
+        assert state["status"] == "completed", state
+        instance = game_path / "versions" / "LocalIcon"
+        assert (instance / ".ecl" / "icon.png").read_bytes() == png
+        profile = json.loads((instance / ".ecl" / "instance.json").read_text(encoding="utf-8"))
+        assert profile["icon"] == {"type": "local", "value": "icon.png"}
+    finally:
+        service.close()
+
+
 def test_import_modrinth_pack_downloads_and_assembles(tmp_path) -> None:
     """导入 mrpack 时应下载清单文件、跳过不适用于客户端的条目并创建继承实例。"""
     game_path = tmp_path / ".minecraft"
@@ -673,6 +757,132 @@ def test_modpack_online_install_downloads_and_imports(tmp_path, monkeypatch) -> 
     assert (instance / "config" / "a.txt").read_bytes() == b"1"
 
 
+def test_online_pack_install_caches_icon_into_ecl(tmp_path, monkeypatch) -> None:
+    """在线整合包安装后应把项目图标缓存到实例 .ecl 目录并写入资料。"""
+    game_path = tmp_path / ".minecraft"
+    _make_base_version(game_path, "1.21.1")
+    index = {"name": "Icon Online", "dependencies": {"minecraft": "1.21.1"}, "files": []}
+    pack_zip = tmp_path / "icon-online.mrpack"
+    _make_pack_zip(pack_zip, {"modrinth.index.json": json.dumps(index).encode()})
+    pack_bytes = pack_zip.read_bytes()
+    png = _valid_png()
+
+    service = _build_pack_service(_pack_downloader_factory({}))
+    monkeypatch.setattr(
+        service,
+        "_select_online_file",
+        lambda *_args: {"filename": "icon-online.mrpack", "url": "https://example.com/pack.mrpack"},
+    )
+    service._downloader_factory = _pack_downloader_factory({"https://example.com/pack.mrpack": pack_bytes})
+    monkeypatch.setattr(
+        service,
+        "fetch_project_info",
+        lambda *_args, **_kwargs: {"id": "proj-icon", "iconUrl": "https://example.com/icon.png"},
+    )
+    monkeypatch.setattr(modpack_module, "_proxied_stream", lambda *_args, **_kwargs: _IconResponse(png))
+
+    try:
+        state = _run_online_pack_operation(service, "modrinth", "proj-icon", "ver-icon", game_path, "OnlineIcon")
+
+        assert state["status"] == "completed", state
+        instance = game_path / "versions" / "OnlineIcon"
+        assert (instance / ".ecl" / "icon.png").read_bytes() == png
+        profile = json.loads((instance / ".ecl" / "instance.json").read_text(encoding="utf-8"))
+        assert profile["icon"] == {"type": "local", "value": "icon.png"}
+        resolved = service._instance_profiles.resolve_icon(
+            game_path,
+            "OnlineIcon",
+            version_type="release",
+            primary_loader="Forge",
+        )
+        assert resolved == {"type": "local", "value": str(instance / ".ecl" / "icon.png")}
+    finally:
+        service.close()
+
+
+def test_online_pack_icon_download_failure_does_not_block_install(tmp_path, monkeypatch) -> None:
+    """图标下载失败时安装继续，实例回退自动图标并保留警告。"""
+    game_path = tmp_path / ".minecraft"
+    _make_base_version(game_path, "1.21.1")
+    index = {"name": "Icon Failure", "dependencies": {"minecraft": "1.21.1"}, "files": []}
+    pack_zip = tmp_path / "icon-failure.mrpack"
+    _make_pack_zip(pack_zip, {"modrinth.index.json": json.dumps(index).encode()})
+    pack_bytes = pack_zip.read_bytes()
+
+    service = _build_pack_service(_pack_downloader_factory({}))
+    monkeypatch.setattr(
+        service,
+        "_select_online_file",
+        lambda *_args: {"filename": "icon-failure.mrpack", "url": "https://example.com/pack.mrpack"},
+    )
+    service._downloader_factory = _pack_downloader_factory({"https://example.com/pack.mrpack": pack_bytes})
+    monkeypatch.setattr(
+        service,
+        "fetch_project_info",
+        lambda *_args, **_kwargs: {"id": "proj-icon", "iconUrl": "https://example.com/icon.png"},
+    )
+
+    def fail_stream(*_args, **_kwargs):
+        raise httpx.HTTPError("icon download failed")
+
+    monkeypatch.setattr(modpack_module, "_proxied_stream", fail_stream)
+
+    try:
+        state = _run_online_pack_operation(service, "modrinth", "proj-icon", "ver-icon", game_path, "IconFailure")
+
+        assert state["status"] == "completed", state
+        instance = game_path / "versions" / "IconFailure"
+        assert not (instance / ".ecl" / "icon.png").exists()
+        assert any("图标不可用" in warning for warning in state["result"]["warnings"])
+    finally:
+        service.close()
+
+
+def test_online_pack_icon_unsupported_format_falls_back(tmp_path, monkeypatch) -> None:
+    """图标格式无法识别时跳过缓存，安装继续并回退自动图标。"""
+    game_path = tmp_path / ".minecraft"
+    _make_base_version(game_path, "1.21.1")
+    index = {"name": "Icon Format", "dependencies": {"minecraft": "1.21.1"}, "files": []}
+    pack_zip = tmp_path / "icon-format.mrpack"
+    _make_pack_zip(pack_zip, {"modrinth.index.json": json.dumps(index).encode()})
+    pack_bytes = pack_zip.read_bytes()
+
+    service = _build_pack_service(_pack_downloader_factory({}))
+    monkeypatch.setattr(
+        service,
+        "_select_online_file",
+        lambda *_args: {"filename": "icon-format.mrpack", "url": "https://example.com/pack.mrpack"},
+    )
+    service._downloader_factory = _pack_downloader_factory({"https://example.com/pack.mrpack": pack_bytes})
+    monkeypatch.setattr(
+        service,
+        "fetch_project_info",
+        lambda *_args, **_kwargs: {"id": "proj-icon", "iconUrl": "https://example.com/icon"},
+    )
+    monkeypatch.setattr(
+        modpack_module,
+        "_proxied_stream",
+        lambda *_args, **_kwargs: _IconResponse(_valid_png(), content_type="text/plain"),
+    )
+
+    try:
+        state = _run_online_pack_operation(
+            service,
+            "modrinth",
+            "proj-icon",
+            "ver-icon",
+            game_path,
+            "IconFormat",
+        )
+
+        assert state["status"] == "completed", state
+        instance = game_path / "versions" / "IconFormat"
+        assert not (instance / ".ecl" / "icon.png").exists()
+        assert any("图标不可用" in warning for warning in state["result"]["warnings"])
+    finally:
+        service.close()
+
+
 # ---------- CurseForge 指纹与导出反查 ----------
 
 
@@ -859,6 +1069,26 @@ def test_build_ftb_plan() -> None:
         ("config/c.cfg", "optional"),
     ]
     assert any("no-url.bin" in warning for warning in plan.warnings)
+
+
+def test_build_ftb_plan_extracts_square_icon() -> None:
+    """FTB 详情的 square art 应写入安装计划，供安装阶段下载缓存。"""
+    info = {
+        "name": "FTB Icon",
+        "synopsis": "demo",
+        "art": [
+            {"type": "banner", "url": "https://example.com/banner.png"},
+            {"type": "square", "url": "https://example.com/icon.png"},
+        ],
+    }
+    manifest = {
+        "targets": [{"name": "minecraft", "version": "1.21.1", "type": "game"}],
+        "files": [],
+    }
+
+    plan = build_ftb_plan(info, manifest)
+
+    assert plan.icon_url == "https://example.com/icon.png"
 
 
 def test_modpack_online_install_ftb(tmp_path, monkeypatch) -> None:
