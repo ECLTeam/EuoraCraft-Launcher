@@ -139,12 +139,18 @@ class UnixChannel:
 
     def _read_exact(self, count: int, deadline: float) -> bytes:
         """
-        在同一截止内读满已验证的字节数量，EOF 不解释为合法空帧。
+        先读取已经到达的字节，只在需要等待新数据时检查截止时间。
+
+        接收线程可能在就绪通知后被桌面任务延迟；已经完整到达的帧不应
+        因线程恢复较晚而被误判为半帧。等待缺失字节仍受同一截止限制。
         """
         content = bytearray()
         while len(content) < count:
-            self._ready(writing=False, deadline=deadline)
-            block = self._socket.recv(count - len(content))
+            try:
+                block = self._socket.recv(count - len(content))
+            except BlockingIOError:
+                self._ready(writing=False, deadline=deadline)
+                continue
             if not block:
                 raise EOFError
             content.extend(block)
