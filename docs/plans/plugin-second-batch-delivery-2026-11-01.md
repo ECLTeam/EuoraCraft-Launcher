@@ -31,7 +31,7 @@
 
 主仓库 `python -m ruff check .`、`python -m ruff check ECL tests`、格式检查通过。Florolding 只修改端口转发列表，按其既有格式保留；定向静态检查及主仓库默认回归、真实网络集成均通过，不借此整理子仓库其他代码。
 
-前端 `pnpm check` 全量通过（1164 passed、1 todo），`pnpm build` 通过；新增授权测试及解析测试最终 41 passed，改动文件 Prettier/ESLint 通过。后续只调整六语言任务标题，使用定向检查，并完成最新前端构建，不重复运行相同代码的全量测试。远端普通质量检查、前端构建和 Showcase 构建通过；治理任务另发现 pnpm/action-setup 重复指定版本，已移除重复配置，见 [#94](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/94)，工具安装阶段还发现 ubuntu-latest 已变为 Playwright 1.58.0 不支持的 Ubuntu 26.04，已把前端治理任务固定为 Ubuntu 24.04；修复后的治理结果单独核对。
+前端 `pnpm check` 全量通过（1164 passed、1 todo），`pnpm build` 通过；新增授权测试及解析测试最终 41 passed，改动文件 Prettier/ESLint 通过。后续只调整六语言任务标题，使用定向检查，并完成最新前端构建，不重复运行相同代码的全量测试。远端普通质量检查、前端构建和 Showcase 构建通过；治理任务另发现 pnpm/action-setup 重复指定版本，已移除重复配置，见 [#94](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/94)，工具安装阶段还发现 ubuntu-latest 已变为 Playwright 1.58.0 不支持的 Ubuntu 26.04，已把前端治理任务固定为 Ubuntu 24.04；最新报告的生产依赖 285 项、完整依赖 814 项均无公告命中；31 个界面场景没有确认违规。已查看八张变化场景截图并复核 12 个未决节点，清理失配旧定位，见[可访问性复核](../governance/accessibility-review-2026-11-01.md)；三个报告门禁均通过，未放宽失败条件。
 
 ## 冻结与平台范围
 
@@ -46,3 +46,12 @@ Nuitka standalone 曾构建成功，其显式冻结 Worker 回归 17 passed；�
 前端先提交并推送，再更新主仓库指针。Florolding 的修复已包含在当前子仓库提交中，保留同期其他修改；主仓库推送前复核全部 gitlink 在各自远端 main 可达，推送后全新浅克隆递归检出确认。
 
 原生构建命令及哈希来源见[运行时说明](../../native/pytauri-runtime/README.md)，API 见[协议](../protocols/eclplugin-package-format.md#第二批独立窗口认证与联机契约)。运行真实门禁前，将 `ECL_NATIVE_UI_GATE=1`、`ECL_NATIVE_RUNTIME_PATH` 指向安装了本次 Wheel 的目录；冻结 Worker 验收另设 `ECL_WORKER_SMOKE_EXECUTABLE` 和 `ECL_WORKER_SMOKE_BUILDER=pyinstaller/nuitka`。这些变量仅控制测试，不放宽生产门禁。
+
+
+## 远端核验
+
+阶段二主仓库 `56ff246365c3ef8b5e4c4f2fc80d5913a4278fc8` 的 Backend Tests、Frontend Checks 与 Sync Submodule 已通过；远端 Checkout 实际检出了 Core、Florolding 和前端的全部记录指针。后续治理复核与固定修订另行提交，不把旧治理任务的失败写为成功。
+
+本地全新浅克隆的主仓库检出已核实原生源文件、补丁与固定摘要一致；前端子模块下载遭遇 GitHub 网络 EOF，未把本次本地递归克隆标为成功。子模块交付依据采用 AGENTS.md 第 8 节允许的远端 CI 实际检出证据。
+
+已核对并关闭完成的 #75、#83、#84、#91、#92、#94；#76 按最终复核与治理结果处理。Dependency Dashboard 作为持续依赖跟踪保留。
