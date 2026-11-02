@@ -29,6 +29,7 @@
 | [插件系统功能报告（2026-11-02）](guides/plugin-system-feature-report-2026-11-02.md) | 指定提交的功能、接口、权限、平台与验收证据快照；后续行为以代码和现行协议为准 |
 | [插件开发手册](guides/plugin-development/README.md) | 从入门、开发模式、统一配置、前端及业务 API 到扩展、打包和排障 |
 | [可视化主题设计指南](guides/theme-designer-guide.zh-CN.md) | 主题设计器、预设库与 `.ecltheme` 文件 |
+| [ECL 前端设计规范](../frontend/docs/ECL_DESIGN_SYSTEM.md) | 当前主题、令牌、公共组件、页面与交互契约；新增样式自动检查 |
 
 ## 协议与格式
 

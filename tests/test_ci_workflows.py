@@ -78,6 +78,34 @@ def test_daily_frontend_checks_cover_parent_main_and_pull_requests():
     assert "pnpm build" not in source
 
 
+@pytest.mark.parametrize(
+    ("relative_path", "step_name", "is_parent"),
+    [
+        (".github/workflows/frontend-checks.yml", "Check frontend quality", True),
+        (".github/workflows/build.yml", "Check frontend quality", True),
+        ("frontend/.github/workflows/lint.yml", "Check quality", False),
+    ],
+)
+def test_every_quality_caller_supplies_a_real_design_commit_range(relative_path, step_name, is_parent):
+    root_path = Path(__file__).resolve().parents[1]
+    source = (root_path / relative_path).read_text(encoding="utf-8")
+    block = source.split(f"      - name: {step_name}\n", 1)[1].split("      - name:", 1)[0]
+    assert "run: pnpm check" in block
+    assert "ECL_DESIGN_BASE:" in block and "ECL_DESIGN_TARGET: ${{ github.sha }}" in block
+    if is_parent:
+        assert "ECL_DESIGN_SUPERPROJECT: .." in block
+    else:
+        assert "ECL_DESIGN_SUPERPROJECT" not in block
+    if relative_path.endswith("build.yml"):
+        frontend_job = source.split("  build-frontend:", 1)[1].split("  build-backend:", 1)[0]
+        assert "fetch-depth: 0" in frontend_job
+        assert "format('{0}^', github.sha)" in block
+    else:
+        assert "fetch-depth: 0" in source
+        assert "github.event.pull_request.base.sha" in block and "github.event.before" in block
+    assert "design_base:" in _trigger(source)
+
+
 def test_both_platform_groups_use_shared_version_and_publication_results():
     source = _workflow("build.yml")
     assert "steps.version_info.outputs" not in source
