@@ -191,6 +191,11 @@ class SingleInstanceService:
                 or len(argv) > 128
                 or any(not isinstance(arg, str) or len(arg) > 4096 for arg in argv)
                 or self._has_headless_options(argv)
+                or any(
+                    arg.startswith("--")
+                    and any(option.startswith(arg.split("=", 1)[0]) for option in ("--plugin-dev", "--no-plugin-dev"))
+                    for arg in argv
+                )
             ):
                 return False
             if action == "launch" or any(

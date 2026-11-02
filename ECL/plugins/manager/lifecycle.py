@@ -85,6 +85,7 @@ class PluginLifecycle(_PluginState):
             try:
                 assert self.worker_service is not None
                 self.worker_service.development.intent(name, True)
+                self.worker_service.development.prepare_enable(name, frontend_ready=self._frontend_ready)
                 if (
                     self.worker_service.development.manages(name)
                     and self.worker_service.runtime_info(name)["run_state"] != "enabled"

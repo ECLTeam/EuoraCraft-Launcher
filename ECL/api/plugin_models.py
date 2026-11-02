@@ -9,7 +9,6 @@
 #   - class PluginPermissionQuery — 安装权限及运行查询。
 #   - class PluginPermissionUpdate — 带内容与并发版本的授权更新。
 #   - class PluginPermissionResources — 可信主窗口的有界资源候选查询。
-#   - class PluginDevelopmentUpdate — 本次开发模式开关。
 #   - class PluginSettingsQuery / PluginSettingsUpdate — 内容与定义版本绑定的配置管理请求。
 # ============================================================
 
@@ -17,7 +16,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from pydantic import JsonValue as PydanticJsonValue
 
 from ECL.plugins.grant_models import PermissionDecision
@@ -56,15 +55,6 @@ class PluginPermissionResources(PluginPermissionQuery):
     search: str = Field(default="", max_length=120)
     cursor: str | None = Field(default=None, max_length=128)
     limit: StrictInt = Field(default=50, ge=1, le=100)
-
-
-class PluginDevelopmentUpdate(BaseModel):
-    """
-    仅接受开发模式开关，不接收路径、凭据或客户端决定的来源。
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    enabled: StrictBool
 
 
 class PluginSettingsQuery(BaseModel):

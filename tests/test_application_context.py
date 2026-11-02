@@ -405,7 +405,24 @@ def test_system_proxy_mode_does_not_force_no_proxy(monkeypatch, tmp_path: Path) 
     assert os.environ.get("no_proxy") == ""
 
 
-def test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "file_mode, flag, disabled, expected",
+    [
+        (None, None, False, False),
+        (True, None, False, True),
+        (True, False, False, False),
+        (False, True, False, True),
+        (True, True, True, False),
+    ],
+)
+def test_composition_applies_launch_options_sticky_overrides(
+    monkeypatch,
+    tmp_path: Path,
+    file_mode,
+    flag,
+    disabled,
+    expected,
+) -> None:
     """命令行启动参数应叠加到生效配置、关闭插件自动启用，并在配置更新后保持粘滞。"""
     monkeypatch.setattr(application_module.httpx, "Client", _FakeHttp)
     monkeypatch.setattr(application_module, "AccountManager", _FakeAccounts)
@@ -424,9 +441,14 @@ def test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_pa
         debug=True,
         log_level="debug",
         enable_dev_channel=True,
-        disable_plugins=True,
+        disable_plugins=disabled,
+        plugin_development=flag,
         frontend_dist="http://localhost:5173",
     )
+    if file_mode is not None:
+        from ECL.utils.config import ConfigStore
+
+        ConfigStore(tmp_path / "ECL_data").save_config("plugins", {"development_mode": file_mode})
     context = create_application(
         {
             "app_path": tmp_path,
@@ -444,7 +466,8 @@ def test_composition_applies_launch_options_sticky_overrides(monkeypatch, tmp_pa
         assert context.state.config["tauri"]["frontenddist"] == "http://localhost:5173"
         assert context.state.debug is True
         plugins = context.plugins
-        assert plugins.init_kwargs["auto_enable"] is False
+        assert plugins.init_kwargs["auto_enable"] is not disabled
+        assert plugins.init_kwargs["development_mode"] is expected
         assert isinstance(context.dev_channel, _FakeDevChannel)
         assert context.dev_channel.started is True
         assert isinstance(context.single_instance, _FakeSingleInstance)

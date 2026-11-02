@@ -10,7 +10,7 @@
 #       - plugin_permission_resources(body, webview_window) — 只为原生主窗口发现可审阅实例资源。
 #       - plugin_permissions_get/update — 查询和保存本安装的内容及精确范围授权。
 #       - plugin_runtime_info — 查询实际 Worker 和清理状态。
-#       - plugin_development_get/set — 可信主窗口查询、开启和关闭开发会话。
+#       - plugin_development_get — 可信主窗口只读查询本次开发会话。
 #       - plugin_open_directory — 打开宿主登记的目录安装。
 #       - plugin_list(body) -> dict[str, Any] — 获取插件列表。
 #       - plugin_info(body) -> dict[str, Any] — 获取插件信息。
@@ -45,7 +45,6 @@ from uuid import uuid4
 from ECL.api.bridge import WebviewWindow
 from ECL.api.contracts import failure
 from ECL.api.plugin_models import (
-    PluginDevelopmentUpdate,
     PluginPermissionQuery,
     PluginPermissionResources,
     PluginPermissionUpdate,
@@ -85,25 +84,6 @@ class PluginHandlers(_FrontendState):
             if body:
                 raise ProtocolError("开发状态查询参数无效", "PLUGIN_SCHEMA_INVALID")
             return {"success": True, "data": self.plugins.worker_service.development.view()}
-        except (PluginGrantError, ProtocolError) as exc:
-            return failure(str(exc), exc.error_code)
-
-    async def plugin_development_set(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        开启或关闭本次开发信任；关闭成功只在实际清理完成后返回。
-
-        :param body: 严格布尔开关
-        :param webview_window: 原生调用窗口
-        :return: 实际开发状态
-        """
-        try:
-            self._permission_caller(webview_window)
-            request = PluginDevelopmentUpdate.model_validate(body)
-            result = await asyncio.to_thread(self.plugins.worker_service.development.set_enabled, request.enabled)
-            self.plugins.events.emit("plugin:status_changed", {"plugin": "", "status": "development"})
-            return {"success": True, "data": result}
         except (PluginGrantError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
 

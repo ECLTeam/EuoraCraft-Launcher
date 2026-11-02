@@ -148,6 +148,25 @@ class PluginDevelopmentService:
             plugin = self._plugins.get(name)
             return self._is_enabled and plugin is not None and plugin.wants_enabled
 
+    def prepare_enable(self, name: str, *, frontend_ready: bool) -> None:
+        """
+        在正常启用入口为已审阅目录准备首个稳定运行，避免先执行一次源目录。
+
+        :param name: 正常生命周期已决定启用的安装名称
+        :param frontend_ready: 可信主界面是否已经就绪
+        :raises ProtocolError: 审阅或稳定副本准备未完成时抛出，不回退执行源目录
+        """
+        with self._transition_lock:
+            if not self._is_enabled or name in self._plugins:
+                return
+            source = next((item for item in self._workers.directory_sources() if item.name == name), None)
+            if source is None:
+                return
+            self._enroll(source, frontend_ready=frontend_ready)
+            plugin = self._plugins[name]
+            if plugin.error_code:
+                raise ProtocolError("插件开发运行尚未就绪", plugin.error_code)
+
     def forget(self, name: str) -> None:
         """
         安装替换或卸载时终结该来源的开发信任，不删除用户目录。
@@ -301,16 +320,16 @@ class PluginDevelopmentService:
         protected_digest = hashlib.sha256(json.dumps(protected, sort_keys=True).encode()).hexdigest()
         return copy_path, snapshot.digest(), protected_digest, manifest.supports_hot_reload
 
-    def _enroll(self, source: DevelopmentSource) -> None:
+    def _enroll(self, source: DevelopmentSource, *, frontend_ready: bool = True) -> None:
         """
-        仅为已经审阅且实际启用的目录建立开发会话，显式退出者仍使用稳定副本。
+        仅为已经审阅且正常流程决定启用的目录建立开发会话，显式退出者仍使用稳定副本。
         """
         token = self._workers.development_approval(source.name)
         stat = source.source_path.stat()
         plugin = _DevelopmentPlugin(source, (stat.st_dev, stat.st_ino), token)
         with self._lock:
             self._plugins[source.name] = plugin
-        self._reload(plugin, initial=True)
+        self._reload(plugin, initial=True, frontend_ready=frontend_ready)
 
     def _failure(self, plugin: _DevelopmentPlugin, error: BaseException, status: str = "failed") -> None:
         """
@@ -333,7 +352,14 @@ class PluginDevelopmentService:
             self._logger.warning("插件开发版本未完成：插件：%s；错误：%s", plugin.source.name, plugin.error_code)
             self._changed()
 
-    def _reload(self, plugin: _DevelopmentPlugin, *, initial: bool = False, manual: bool = False) -> None:
+    def _reload(
+        self,
+        plugin: _DevelopmentPlugin,
+        *,
+        initial: bool = False,
+        manual: bool = False,
+        frontend_ready: bool = True,
+    ) -> None:
         """
         准备后再停止旧版，换代前后都检查真实用户意图；失败不重放旧实现。
         """
@@ -373,7 +399,12 @@ class PluginDevelopmentService:
                 if not self._is_enabled or not plugin.wants_enabled:
                     return
                 plugin.status = "reloading"
-            self._workers.activate_development(plugin.source.name, copy_path, plugin.token)
+            self._workers.activate_development(
+                plugin.source.name,
+                copy_path,
+                plugin.token,
+                frontend_ready=frontend_ready,
+            )
             with self._lock:
                 plugin.digest = digest
                 plugin.protected_digest = protected

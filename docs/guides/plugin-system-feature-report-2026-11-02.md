@@ -517,3 +517,9 @@ Python Worker SDK 提供 `HostClient.call/call_async`、本地回调注册、自
 开发入口为[插件开发手册](plugin-development/README.md)。因此，第 15 节“开发者文档收敛”的原基线缺项已由本次手册补齐；其余在线分发、签名及平台发行矩阵边界不变。
 
 本次按授权、并发、IPC、共享状态及持久化变更执行受影响仓库全量检查，并使用实际 Windows 启动器验证源码换代、配置保留、拒绝/人工重载、关闭模式和设置布局。最终结果、脚本及未完成的平台验证统一记录于[实施方案第 11 节](../plans/plugin-development-mode-and-settings-plan-2026-11-02.md#11-实施与验证记录)，不将历史三平台记录当作本次新代码的真实平台验收。以上为本地实施，不表示远端推送或可下载版本已发布。
+
+## 18. 开发模式入口与设置样式调整
+
+用户选择保留全屏设置的方案 A 并批准实施后，开发模式改为启动期选项：`--plugin-dev` / `--no-plugin-dev` 或非必填的 `plugins.development_mode`；参数优先于文件，`--disable-plugins` 优先关闭开发监听，缺省关闭。插件页的开发模式开关及其写入 IPC 已移除，临时开发信任仍不跨进程恢复。
+
+统一设置保留全屏容器与左右选择、配置流程，内部导航、主题选中效果、卡片边界及设置行对齐项目样式。第 17 节的页面开关与手动关闭验收属于前一轮历史，现行用法见[开发模式手册](plugin-development/development-mode.md)，本轮验证与交付记录见[本轮方案](../plans/plugin-development-entry-and-settings-style-plan-2026-11-02.md)。

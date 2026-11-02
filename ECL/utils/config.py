@@ -211,14 +211,27 @@ class ConfigStore:
         try:
             self._initialize_file()
             loaded = TypeAdapter(dict[str, JsonValue]).validate_json(self.config_path.read_text(encoding="utf-8"))
+            self._validate_plugins_config(loaded.get("plugins", {}))
             needs_write = self._ensure_default_minecraft_path(loaded)
             if needs_write:
                 self._write_config(loaded)
             return loaded
+        except ConfigValidationError:
+            raise
         except ValidationError:
             return self._restore_default_config(ValueError("配置文件必须为有效的 JSON 对象"))
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             return self._restore_default_config(exc)
+
+    @staticmethod
+    def _validate_plugins_config(value: JsonValue) -> None:
+        """
+        校验启动期插件配置，拒绝隐式布尔转换并让调用方保留原配置文件。
+        """
+        if not isinstance(value, dict):
+            raise ConfigValidationError("插件配置必须为对象")
+        if "development_mode" in value and type(value["development_mode"]) is not bool:
+            raise ConfigValidationError("插件开发模式配置必须为布尔值")
 
     def _restore_default_config(self, cause: Exception) -> dict[str, JsonValue]:
         """
@@ -308,6 +321,12 @@ class ConfigStore:
             data = ConnectorNodeConfig.model_validate(data).model_dump()
         with self._lock:
             config_data = self.get_config()
+            if normalized_section == "plugins":
+                self._validate_plugins_config(data)
+                data = dict(data)
+                previous = config_data.get("plugins", {})
+                if "development_mode" not in data and isinstance(previous, dict) and "development_mode" in previous:
+                    data["development_mode"] = previous["development_mode"]
             if config_data.get(normalized_section) == data:
                 return
             config_data[normalized_section] = deepcopy(data)

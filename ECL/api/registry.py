@@ -240,7 +240,6 @@ class IpcCommandRegistry:
         "plugin_permissions_update",
         "plugin_runtime_info",
         "plugin_development_get",
-        "plugin_development_set",
         "plugin_open_directory",
         "plugin_list",
         "plugin_info",

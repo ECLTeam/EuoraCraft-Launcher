@@ -22,15 +22,19 @@ sample.eclplugin
 
 ```json
 {
-  "files": [
-    { "path": "main.py", "sha256": "<64 位小写十六进制 SHA-256>", "size": 123 },
-    {
-      "path": "plugin.json",
-      "sha256": "<64 位小写十六进制 SHA-256>",
-      "size": 456
-    }
-  ],
-  "format_version": 1
+    "files": [
+        {
+            "path": "main.py",
+            "sha256": "<64 位小写十六进制 SHA-256>",
+            "size": 123
+        },
+        {
+            "path": "plugin.json",
+            "sha256": "<64 位小写十六进制 SHA-256>",
+            "size": 456
+        }
+    ],
+    "format_version": 1
 }
 ```
 
@@ -77,11 +81,11 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 
 ```json
 {
-  "name": "example",
-  "api_version": 2,
-  "version": "1.0.0",
-  "entry_point": "main:Plugin",
-  "permissions": []
+    "name": "example",
+    "api_version": 2,
+    "version": "1.0.0",
+    "entry_point": "main:Plugin",
+    "permissions": []
 }
 ```
 
@@ -105,11 +109,11 @@ class Plugin(BasePlugin):
 
 ### 开发模式与热重载
 
-可信主窗口可以开启仅本次进程有效的开发模式。已审阅启用的第三方目录插件使用宿主管理的稳定执行副本，监听实际安装目录；目录安装会复制源码，原始导入目录不自动同步。归档版本与系统插件不受监听。
+通过 `--plugin-dev` 或 `setting.json` 中非必填的 `plugins.development_mode: true` 在启动期启用开发模式；省略默认关闭，`--no-plugin-dev` 显式关闭，`--disable-plugins` 优先禁止开发监听。参数不落盘，文件配置需重启生效，临时开发信任不跨进程恢复。插件页没有模式切换入口。已审阅启用的第三方目录插件使用宿主管理的稳定执行副本，监听实际安装目录；目录安装会复制源码，原始导入目录不自动同步。归档版本与系统插件不受监听。
 
 清单 `supports_hot_reload` 省略或严格布尔 true 表示允许，false 明确拒绝源码保存触发的自动重载；用户仍可手动重载。非法类型拒绝。文件集、750 ms 轮询与防抖、开发临时信任和清理状态见[开发模式](../guides/plugin-development/development-mode.md)。
 
-开发临时准入只沿用会话批准的范围，不向新摘要写永久 allow。权限、身份/入口、独立前端声明、插件/Python 依赖和锁等边界变化要求重新审阅；撤权或关闭模式使旧引用失效。普通模式的内容摘要检查继续有效。关闭开发模式停止开发 Worker，源目录按普通流程重新审阅，不清除配置和私有数据。
+开发临时准入只沿用会话批准的范围，不向新摘要写永久 allow。权限、身份/入口、独立前端声明、插件/Python 依赖和锁等边界变化要求重新审阅；撤权或关闭模式使旧引用失效。普通模式的内容摘要检查继续有效。退出时停止开发 Worker；以普通模式重启后，源目录按普通流程重新审阅，不清除配置和私有数据。
 
 ### 统一配置
 
@@ -257,14 +261,14 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 公开版本和加载器目录属于基础能力，由宿主固定来源提供，不接收插件指定地址。安装、启动、运行管理和停止使用 `instances.manage`，统一由可信主窗口批准游戏根；管理包含查看，不需要再声明其他游戏细项。修改授权使原始准入失效，重新批准不复活旧任务及结果。
 
-| 方法 | 请求 | 结果及限制 |
-| --- | --- | --- |
-| `game.catalog` | `{type?:"release"\|"snapshot",cursor?,limit?:1..100}` | `{items:[{version_id,type,release_time}],next_cursor}`；不含旧Alpha/Beta分类或下载地址 |
-| `game.loaders` | `{game_version,loader:"fabric"\|"forge"\|"neoforge"\|"quilt",cursor?,limit?:1..100}` | `{items:[{loader_version,is_latest}],next_cursor}`；版本降序，最新标记与安装默认选择一致 |
-| `game.install` | `{root_ref,version_id,version_name?,loader?:"vanilla"\|"fabric"\|"forge"\|"neoforge"\|"quilt",loader_version?}` | `{operation_ref,state:"queued"}`；原始管理准入仍有效时，成功结果为 `InstanceView` |
-| `game.launch` | `{instance_ref,options?:LaunchOptions}` | 自身任务回执；需要所属游戏根的管理准入，成功结果为 `GameRunView` |
-| `game.running` | `{instance_ref}` | `{items:[GameRunView]}`；只返回当前Worker运行创建的进程记录，包含保留的实际退出码 |
-| `game.stop` | `{game_run_ref}` | 自身任务回执；管理准入只控制本运行创建的确切进程，结果绑定同一原始管理准入 |
+| 方法           | 请求                                                                                                            | 结果及限制                                                                               |
+| -------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `game.catalog` | `{type?:"release"\|"snapshot",cursor?,limit?:1..100}`                                                           | `{items:[{version_id,type,release_time}],next_cursor}`；不含旧Alpha/Beta分类或下载地址   |
+| `game.loaders` | `{game_version,loader:"fabric"\|"forge"\|"neoforge"\|"quilt",cursor?,limit?:1..100}`                            | `{items:[{loader_version,is_latest}],next_cursor}`；版本降序，最新标记与安装默认选择一致 |
+| `game.install` | `{root_ref,version_id,version_name?,loader?:"vanilla"\|"fabric"\|"forge"\|"neoforge"\|"quilt",loader_version?}` | `{operation_ref,state:"queued"}`；原始管理准入仍有效时，成功结果为 `InstanceView`        |
+| `game.launch`  | `{instance_ref,options?:LaunchOptions}`                                                                         | 自身任务回执；需要所属游戏根的管理准入，成功结果为 `GameRunView`                         |
+| `game.running` | `{instance_ref}`                                                                                                | `{items:[GameRunView]}`；只返回当前Worker运行创建的进程记录，包含保留的实际退出码        |
+| `game.stop`    | `{game_run_ref}`                                                                                                | 自身任务回执；管理准入只控制本运行创建的确切进程，结果绑定同一原始管理准入               |
 
 所有请求严格拒绝未知字段和错误类型。分页默认50，目录最多10000项；游标绑定当前运行、查询和授权代次，120秒过期，不跨运行复用。查询最多30秒，使用宿主当前有效下载源及已有目录服务，不接受URL、代理、源配置或账户信息。显式加载器版本必须存在于该游戏版本的目录；省略时由宿主选择兼容的最高版本。
 
@@ -284,14 +288,14 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 `java.read`、`java.use` 的清单范围必须为空，由可信主窗口分别选择已登记运行时；两项不自动预选。候选 `kind` 为 `java_runtime`，使用独立 `java_resource_revision` 提交授权。`java.catalog.read` 和 `java.install` 不接受资源范围，后者的用户可见含义为“安装并使用官方 Java”。清单不能提供 URL、磁盘路径或全局删除能力。
 
-| 方法 | 参数与结果 |
-| --- | --- |
-| `java.inventory` | `{cursor?,limit?}`；所选运行时的最后登记摘要，不扫描或运行 Java |
-| `resources.list` | `{capability:"java.read",cursor?,limit?}`；当前运行 `runtime_ref`，不返回登记 ID 或路径 |
-| `java.validate` | `{runtime_ref,required_major?}`；执行固定参数的有界单目标探测，不修改登记或配置 |
-| `java.catalog` | `{major_version?,runtime_kind?:"JRE"|"JDK",cursor?,limit?}`；固定官方来源包的 `package_ref` 和公开摘要 |
+| 方法                | 参数与结果                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `java.inventory`    | `{cursor?,limit?}`；所选运行时的最后登记摘要，不扫描或运行 Java                         |
+| `resources.list`    | `{capability:"java.read",cursor?,limit?}`；当前运行 `runtime_ref`，不返回登记 ID 或路径 |
+| `java.validate`     | `{runtime_ref,required_major?}`；执行固定参数的有界单目标探测，不修改登记或配置         |
+| `java.catalog`      | `{major_version?,runtime_kind?:"JRE"                                                    | "JDK",cursor?,limit?}`；固定官方来源包的 `package_ref` 和公开摘要 |
 | `java.install_plan` | `{package_ref}`；当前运行中未过期的包生成 `plan_ref` 和计划摘要，属于有去重键的变更请求 |
-| `java.install` | `{plan_ref}`；返回自身任务回执；实际安装、校验和登记后交付 `runtime_ref` |
+| `java.install`      | `{plan_ref}`；返回自身任务回执；实际安装、校验和登记后交付 `runtime_ref`                |
 
 已登记目标校验与选用要求对应 `java.read` / `java.use` 的明确选择。本运行在原始 `java.install` 许可下安装成功的目标可直接选用；这不授予其他全局 Java 的访问权。`game.launch.options.runtime_ref` 可传入此引用，宿主在执行前与进程创建前重新核验原始许可及文件身份。其他启动参数不增加裸 Java 路径、JVM 参数或命令入口。
 
@@ -301,15 +305,15 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 以下 `kind` 取 `mods`、`resourcepacks` 或 `shaders`，文件后缀分别为 `.jar`、`.zip`、`.zip`。查看使用 `instances.read` 或其管理包含的查看范围；写入使用所选根的 `instances.manage`。所有副作用通过自身任务提交，并使用稳定去重键。
 
-| 方法 | 参数与结果 |
-| --- | --- |
-| `<kind>.list` | `{instance_ref,cursor?,limit?}`；返回 `resource_ref`、文件名、大小和适用的启用状态，不返回路径 |
-| `<kind>.install` | `{instance_ref,source:FileRef,filename}`；从本插件私有普通文件复制到实例实际资源目录，成功才提交新文件 |
-| `<kind>.delete` | `{resource_ref}`；只删除原列表对应的文件版本，替换后旧引用失败 |
-| `mods.set_enabled` | `{resource_ref,enabled:boolean}`；设置明确目标状态，重复禁用不反向启用 |
-| `<kind>.search` | `{source?:"modrinth"|"curseforge",query?,game_version?,loader?,offset?,limit?}`；公开项目白名单与下一偏移 |
-| `<kind>.versions` | `{source?,project_id,game_version?,loader?,cursor?,limit?}`；公开平台版本分页 |
-| `<kind>.download_info` | `{source?,project_id,version_id}`；公开文件名、URL、站点、大小和适用的 SHA-512 摘要，不直接下载 |
+| 方法                   | 参数与结果                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ |
+| `<kind>.list`          | `{instance_ref,cursor?,limit?}`；返回 `resource_ref`、文件名、大小和适用的启用状态，不返回路径         |
+| `<kind>.install`       | `{instance_ref,source:FileRef,filename}`；从本插件私有普通文件复制到实例实际资源目录，成功才提交新文件 |
+| `<kind>.delete`        | `{resource_ref}`；只删除原列表对应的文件版本，替换后旧引用失败                                         |
+| `mods.set_enabled`     | `{resource_ref,enabled:boolean}`；设置明确目标状态，重复禁用不反向启用                                 |
+| `<kind>.search`        | `{source?:"modrinth"                                                                                   | "curseforge",query?,game_version?,loader?,offset?,limit?}`；公开项目白名单与下一偏移 |
+| `<kind>.versions`      | `{source?,project_id,game_version?,loader?,cursor?,limit?}`；公开平台版本分页                          |
+| `<kind>.download_info` | `{source?,project_id,version_id}`；公开文件名、URL、站点、大小和适用的 SHA-512 摘要，不直接下载        |
 
 目录查询属于固定来源基础能力，复用用户设置的现有模组源，不接受插件指定 API 地址或提供方密钥。搜索每页 1—50 条，偏移最多 1000；版本分页每页 1—50 条。下载文件仍使用 `downloads.submit` 及单独批准的精确网络站点，完成后再传私有 `FileRef` 安装。`download_info` 不隐式授予站点或写入权限。
 
@@ -317,14 +321,14 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 ### 整合包所属任务
 
-| 方法 | 参数与结果 |
-| --- | --- |
-| `modpacks.prepare` | `{source:FileRef}`；复制私有归档并执行现有校验，所属任务完成后返回 `preparation_ref` |
-| `modpacks.get` | `{preparation_ref,cursor?,limit?}`；名称、格式、Minecraft、加载器和有限文件预览 |
-| `modpacks.install` | `{root_ref,preparation_ref,version_name,excluded_file_ids?}`；批准游戏根中的新实例安装任务，拒绝已有实例覆盖 |
-| `modpacks.export_preview` | `{instance_ref}`；读取所选实例并产生含 `preview_ref` 的导出预览任务 |
-| `modpacks.export_files` | `{preview_ref,cursor?,limit?}`；分页列出候选文件，不自动全选 |
-| `modpacks.export` | `{preview_ref,selected_file_ids,destination:FileRef,name,version,summary?}`；只导出明确选择的文件到私有新 `.mrpack` |
+| 方法                      | 参数与结果                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `modpacks.prepare`        | `{source:FileRef}`；复制私有归档并执行现有校验，所属任务完成后返回 `preparation_ref`                                |
+| `modpacks.get`            | `{preparation_ref,cursor?,limit?}`；名称、格式、Minecraft、加载器和有限文件预览                                     |
+| `modpacks.install`        | `{root_ref,preparation_ref,version_name,excluded_file_ids?}`；批准游戏根中的新实例安装任务，拒绝已有实例覆盖        |
+| `modpacks.export_preview` | `{instance_ref}`；读取所选实例并产生含 `preview_ref` 的导出预览任务                                                 |
+| `modpacks.export_files`   | `{preview_ref,cursor?,limit?}`；分页列出候选文件，不自动全选                                                        |
+| `modpacks.export`         | `{preview_ref,selected_file_ids,destination:FileRef,name,version,summary?}`；只导出明确选择的文件到私有新 `.mrpack` |
 
 准备使用基础准入，导入使用管理游戏范围，导出同时要求查看实例与私有写入。每次运行最多保留 32 个准备引用和 32 个导出预览引用；准备另受领域有效期约束，运行关闭时释放，分页上限 100，明确选择或排除文件上限 1024。归档识别、路径穿越拒绝、文件大小和格式约束沿用现有领域实现。
 
@@ -346,7 +350,6 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py`、`test_plugin_network_worker.py` 和 `test_plugin_download_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。下载的流式实体、双权限/提交竞争、配额、取消和失败恢复由 `test_plugin_download_api.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
 
-
 ## 第二批独立窗口、认证与联机契约
 
 这三项分别声明 `ui.custom.execute`、`auth.provider`、`connector.manage`，不能从基本启用推导。原有 `connector.extend` 仅允许状态补充。权限审阅和六语言能力说明同步展示，撤权使旧运行许可失效。
@@ -364,7 +367,6 @@ Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`�
 ### 认证与联机
 
 方法、参数、返回模型、预算及原始许可生命周期集中定义于[第三方登录与联机契约](../designs/plugin-auth-and-connector-extension-design.md)。认证只交付本提供方自己的持久数据；联机只操作本来源会话。撤权再授权不复活旧注册或旧引用。会话退出请求不代表实际资源已停止，最终状态以所属任务及清理结果为准。
-
 
 ## 第三批 Worker 平台引导契约
 

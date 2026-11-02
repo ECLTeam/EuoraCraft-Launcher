@@ -50,6 +50,7 @@ class LaunchOptions:
     debug: bool = False  # --debug 是否开启调试模式
     log_level: str | None = None  # --log-level 指定的控制台日志级别
     disable_plugins: bool = False  # --disable-plugins 是否跳过插件的加载与启用
+    plugin_development: bool | None = None  # None 表示沿用文件中的插件开发模式配置
     frontend_dist: str | None = None  # --frontend-dist 指定的前端资源来源
     enable_dev_channel: bool = False  # --dev-channel 是否开启开发者通道
     # --webview-debug-port 指定的 WebView2 远程调试端口，None 表示未开启；仅 Windows、仅本次运行生效
@@ -159,6 +160,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--frontend-dist",
         metavar="URL|路径",
         help="覆盖前端资源来源，支持 http(s):// 地址或本地目录",
+    )
+    plugin_development = parser.add_mutually_exclusive_group()
+    plugin_development.add_argument(
+        "--plugin-dev",
+        dest="plugin_development",
+        action="store_true",
+        default=None,
+        help="本次开启目录插件开发模式与热重载，不改变插件授权",
+    )
+    plugin_development.add_argument(
+        "--no-plugin-dev",
+        dest="plugin_development",
+        action="store_false",
+        help="本次关闭插件开发模式，覆盖文件配置",
     )
     parser.add_argument(
         "--dev-channel",
@@ -392,6 +407,7 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         debug=bool(args.debug),
         log_level=args.log_level,
         disable_plugins=bool(args.disable_plugins),
+        plugin_development=args.plugin_development,
         frontend_dist=_resolve_frontend_dist(parser, args.frontend_dist),
         enable_dev_channel=bool(args.dev_channel),
         webview_debug_port=args.webview_debug_port,
@@ -445,7 +461,7 @@ def apply_launch_overrides(config: dict[str, Any], options: LaunchOptions | None
     将启动参数折算为配置覆盖并叠加到配置副本上。
 
     覆盖作用于 ``launcher.debug``、``launcher.debug_log_level``、
-    ``launcher.dev_channel`` 与 ``tauri.frontenddist``；调用时机在
+    ``launcher.dev_channel``、``plugins.development_mode`` 与 ``tauri.frontenddist``；调用时机在
     环境变量覆盖（``ECL_CONFIG_*``）之后，因此命令行优先级最高。
     本函数不修改传入的 config 对象。
 
@@ -469,6 +485,10 @@ def apply_launch_overrides(config: dict[str, Any], options: LaunchOptions | None
         tauri_section = dict(result.get("tauri") or {})
         tauri_section["frontenddist"] = options.frontend_dist
         result["tauri"] = tauri_section
+    if options.plugin_development is not None or options.disable_plugins:
+        plugins_section = dict(result.get("plugins") or {})
+        plugins_section["development_mode"] = False if options.disable_plugins else options.plugin_development
+        result["plugins"] = plugins_section
     return result
 
 

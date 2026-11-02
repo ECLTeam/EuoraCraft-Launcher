@@ -545,6 +545,7 @@ def create_application(
             state.data_path,
             state.resource_path,
             auto_enable=not (launch_options is not None and launch_options.disable_plugins),
+            development_mode=(state.config.get("plugins") or {}).get("development_mode", False),
         )
         logger.debug("插件管理器已初始化")
 

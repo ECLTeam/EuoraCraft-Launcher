@@ -275,7 +275,6 @@ class IpcLogPolicy:
             "plugin_permissions_update": IpcLogSpec("审阅和更新插件授权", "action"),
             "plugin_runtime_info": IpcLogSpec("查询插件运行状态", "query"),
             "plugin_development_get": IpcLogSpec("查询插件开发模式", "query"),
-            "plugin_development_set": IpcLogSpec("切换插件开发模式", "action"),
             "plugin_open_directory": IpcLogSpec("打开插件开发目录", "action"),
             "plugin_list": IpcLogSpec("获取插件列表", "query"),
             "plugin_info": IpcLogSpec("获取插件信息", "query"),

@@ -569,20 +569,21 @@ class PluginWorkerService:
         """
         仅从当前宿主会话建立开发准入，不从插件元数据推导允许。
 
-        :param name: 已启用目录安装
+        :param name: 已审阅且正常流程决定启用的目录安装
         :return: 本进程的开发会话凭据
         """
         entry = self._entry(name)
         with entry.lock:
             return self.grants.begin_development(entry.session)
 
-    def activate_development(self, name: str, code_path: Path, token: str) -> None:
+    def activate_development(self, name: str, code_path: Path, token: str, *, frontend_ready: bool = True) -> None:
         """
         复用原安装及依赖，在旧运行实际停止后启动稳定开发副本。
 
         :param name: 安装名称
         :param code_path: 开发服务创建并验证的副本
         :param token: 已批准开发会话
+        :param frontend_ready: 可信主界面是否已经就绪，首次启动不得提前调用前端生命周期
         """
         entry = self._entry(name)
         with entry.lock:
@@ -598,7 +599,7 @@ class PluginWorkerService:
                 development_token=token,
                 source_path=entry.source_path or entry.root_path,
             )
-            self.enable(name, frontend_ready=True)
+            self.enable(name, frontend_ready=frontend_ready)
 
     def restore_directory(self, name: str, source_path: Path) -> None:
         """

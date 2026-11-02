@@ -77,7 +77,6 @@ async def test_resource_candidates_require_native_registered_main(api, label):
     "method,body",
     [
         ("plugin_development_get", {}),
-        ("plugin_development_set", {"enabled": True}),
         ("plugin_open_directory", {"installation_id": "a" * 32}),
         ("plugin_get_settings", {"plugin_name": "example"}),
     ],

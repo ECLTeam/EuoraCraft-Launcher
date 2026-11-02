@@ -19,6 +19,7 @@ from uuid import uuid4
 
 import httpx
 import psutil
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 
@@ -50,8 +51,9 @@ def _prepare_sources(root, output):
     return data, launcher
 
 
-def _start_launcher(root, output, data, launcher):
-    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(root / "frontend/dist")))
+def _start_launcher(root, output, data, launcher, development_flag="--plugin-dev"):
+    frontend_path = Path(os.environ.get("ECL_ACCEPTANCE_FRONTEND_DIST", str(root / "frontend/dist")))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(frontend_path)))
     Thread(target=server.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{server.server_port}/"
     with socket.socket() as probe:
@@ -66,11 +68,12 @@ def _start_launcher(root, output, data, launcher):
     )
     environment.pop("WEBVIEW2_USER_DATA_FOLDER", None)
     environment.pop("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", None)
-    log_file = (output / "launcher.log").open("wb")
+    log_file = (output / "launcher.log").open("ab")
     process = subprocess.Popen(
         [
             sys.executable,
             str(launcher),
+            development_flag,
             "--frontend-dist",
             url,
             "--data-dir",
@@ -127,6 +130,37 @@ async def _command_result(page, command):
     )
 
 
+async def _verify_surface_contract(page, output):
+    await page.evaluate("location.hash='#/more/plugins'")
+    await page.get_by_role("button", name="插件设置", exact=True).click()
+    await page.locator(".plugin-settings-center").wait_for()
+    # 非预设圆角可揭示旧局部样式对公共主题的覆盖。
+    await page.evaluate("document.documentElement.style.setProperty('--ecl-card-radius','19px')")
+    surfaces = await page.locator(".plugin-settings-center").evaluate("""el=>{
+        const reference=document.createElement('div'); reference.className='ecl-surface'; el.append(reference);
+        const expected=getComputedStyle(reference);
+        const result=[...el.querySelectorAll('.plugin-settings-navigation,.plugin-settings-detail')].map(node=>{
+            const actual=getComputedStyle(node);
+            return {radius:actual.borderRadius,expectedRadius:expected.borderRadius,
+                border:actual.borderWidth,expectedBorder:expected.borderWidth};
+        }); reference.remove(); return result;
+    }""")
+    await page.screenshot(path=str(output / "surface-contract.png"))
+    assert all(s["radius"] == s["expectedRadius"] and s["border"] == s["expectedBorder"] for s in surfaces), surfaces
+    await page.evaluate("document.documentElement.style.removeProperty('--ecl-card-radius')")
+    await page.locator(".plugin-settings-choice").nth(1).hover()
+    selected_background = await page.locator('.plugin-settings-choice[aria-current="true"]').evaluate(
+        "el=>getComputedStyle(el).backgroundColor"
+    )
+    hovered_background = (
+        await page.locator(".plugin-settings-choice").nth(1).evaluate("el=>getComputedStyle(el).backgroundColor")
+    )
+    assert selected_background != hovered_background, (selected_background, hovered_background)
+    print("Shared surface radius and border regression passed", flush=True)
+    await page.keyboard.press("Escape")
+    await page.locator(".plugin-settings-center").wait_for(state="hidden")
+
+
 async def _exercise_settings(page, data):
     assert (await _call(page, "accounts_list"))["accounts"] == []
     await page.evaluate("location.hash='#/more/plugins'")
@@ -139,7 +173,7 @@ async def _exercise_settings(page, data):
             lambda items, expected=title: any(p["title"] == expected and p["status"] == "enabled" for p in items),
         )
     print("Enabled two actual workers via UI", flush=True)
-    await page.get_by_role("switch", name="开发模式", exact=True).click()
+    assert await page.get_by_role("switch", name="开发模式", exact=True).count() == 0
     await _wait_for(
         lambda: _call(page, "plugin_development_get"),
         lambda state: (
@@ -170,6 +204,32 @@ async def _exercise_settings(page, data):
     await field.wait_for()
     assert await field.input_value() == "界面验收保存值"
     print("Saved configuration and observed v2 after actual source edit", flush=True)
+
+
+async def _resize_native_window(page, user, handle, width, height):
+    # 主题切换可能异步调整原生边框；每次按实际客户区差值修正，不复用启动时的边框尺寸。
+    for attempt in range(3):
+        await page.evaluate("()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+        metrics = await page.evaluate("({width:innerWidth,height:innerHeight,ratio:devicePixelRatio})")
+        outer = wintypes.RECT()
+        user.GetWindowRect(handle, ctypes.byref(outer))
+        assert user.SetWindowPos(
+            handle,
+            None,
+            10,
+            10,
+            outer.right - outer.left + round((width - metrics["width"]) * metrics["ratio"]),
+            outer.bottom - outer.top + round((height - metrics["height"]) * metrics["ratio"]),
+            0x14,
+        )
+        try:
+            await page.wait_for_function("([w,h])=>innerWidth===w&&innerHeight===h", arg=[width, height], timeout=3000)
+            return
+        except PlaywrightTimeoutError:
+            if attempt == 2:
+                raise AssertionError(
+                    await page.evaluate("({width:innerWidth,height:innerHeight,ratio:devicePixelRatio})")
+                ) from None
 
 
 async def _verify_layouts(page, process, output):
@@ -207,12 +267,7 @@ async def _verify_layouts(page, process, output):
         ctypes.c_int,
         ctypes.c_uint,
     ]
-    outer, client = wintypes.RECT(), wintypes.RECT()
-    user.GetWindowRect(handle, ctypes.byref(outer))
-    user.GetClientRect(handle, ctypes.byref(client))
-    frame_w = outer.right - outer.left - client.right
-    frame_h = outer.bottom - outer.top - client.bottom
-    ratio = await page.evaluate("devicePixelRatio")
+
     for skin in ("classic", "folia"):
         for mode in ("light", "dark"):
             await page.evaluate(
@@ -220,10 +275,7 @@ async def _verify_layouts(page, process, output):
                 [skin, mode],
             )
             for width, height in ((960, 600), (1200, 800), (1440, 1000)):
-                assert user.SetWindowPos(
-                    handle, None, 10, 10, int(width * ratio) + frame_w, int(height * ratio) + frame_h, 0x14
-                )
-                await page.wait_for_function("([w,h])=>innerWidth===w&&innerHeight===h", arg=[width, height])
+                await _resize_native_window(page, user, handle, width, height)
                 await page.evaluate("()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
                 geometry = await page.locator(".plugin-settings-center").evaluate(
                     "el=>{const n=el.querySelector('.plugin-settings-navigation').getBoundingClientRect(),d=el.querySelector('.plugin-settings-detail').getBoundingClientRect();return {left:n.left,navRight:n.right,detailLeft:d.left,right:d.right,bottom:Math.max(n.bottom,d.bottom),height:innerHeight,overflow:el.scrollWidth-el.clientWidth,bodyOverflow:el.closest('main').scrollHeight-el.closest('main').clientHeight}}"
@@ -241,7 +293,7 @@ async def _verify_layouts(page, process, output):
                 records.append({"skin": skin, "mode": mode, "width": width, "height": height, "geometry": geometry})
                 await page.screenshot(path=str(output / f"settings-{skin}-{mode}-{width}.png"))
     for locale in ("zh-CN", "zh-TW", "en-US", "de-DE", "ja-JP", "ru-RU"):
-        assert user.SetWindowPos(handle, None, 10, 10, int(960 * ratio) + frame_w, int(600 * ratio) + frame_h, 0x14)
+        await _resize_native_window(page, user, handle, 960, 600)
         await page.evaluate(
             "locale=>document.getElementById('app').__vue_app__.config.globalProperties.$i18n.locale=locale", locale
         )
@@ -250,6 +302,37 @@ async def _verify_layouts(page, process, output):
         await page.screenshot(path=str(output / f"settings-{locale}.png"))
         records.append({"locale": locale, "width": 960, "height": 600})
     await page.evaluate("document.getElementById('app').__vue_app__.config.globalProperties.$i18n.locale='zh-CN'")
+    await page.locator(".plugin-settings-search input").fill("worker_")
+    await page.locator(".plugin-settings-choice").filter(has_text="插件开发与统一配置示例").click()
+    await page.locator('.plugin-settings-detail input[aria-label="问候内容"]').wait_for()
+    await page.screenshot(path=str(output / "settings-final.png"))
+    image_url = await page.evaluate("""()=>{
+        const canvas=document.createElement('canvas'); canvas.width=canvas.height=320;
+        const ctx=canvas.getContext('2d');
+        for(let x=0;x<320;x+=40){ctx.fillStyle=x%80 ? '#c7c0b3' : '#657f76';ctx.fillRect(x,0,40,320);}
+        return canvas.toDataURL();
+    }""")
+    for skin in ("classic", "folia"):
+        for mode in ("light", "dark"):
+            await page.evaluate(
+                """([skin,mode,image])=>{
+                const theme=document.getElementById('app').__vue_app__.config.globalProperties.$pinia._s.get('theme');
+                theme.setThemeId(skin,false);theme.setThemeMode(mode,false);theme.setBackgroundImage(image,undefined,false);
+            }""",
+                [skin, mode, image_url],
+            )
+            await page.evaluate("()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+            assert await page.locator(".plugin-settings-center").evaluate("el=>el.scrollWidth<=el.clientWidth+1")
+            await page.screenshot(path=str(output / f"settings-image-{skin}-{mode}.png"))
+            records.append({"skin": skin, "mode": mode, "background": "image", "card_opacity": 60, "blur": 12})
+    await page.locator(".plugin-settings-choice").filter(has_text="显式拒绝热重载示例").click()
+    empty = page.locator(".plugin-settings-content .n-empty")
+    await empty.wait_for()
+    assert await empty.evaluate("""el=>{
+        const parent=el.parentElement.getBoundingClientRect(),rect=el.getBoundingClientRect();
+        return Math.abs((rect.top+rect.bottom-parent.top-parent.bottom)/2)<2;
+    }""")
+    await page.screenshot(path=str(output / "settings-empty.png"))
     await page.keyboard.press("Tab")
     assert await page.evaluate("document.activeElement.closest('.plugin-settings-center') !== null")
     await page.keyboard.press("Shift+Tab")
@@ -284,14 +367,6 @@ async def _exercise_opt_out(page, data):
     await _wait_for(
         lambda: _command_result(page, "worker_no_hot_reload:version"),
         lambda value: value["success"] and value["data"]["version"] == "v2",
-    )
-    await page.get_by_role("switch", name="开发模式", exact=True).click()
-    await _wait_for(
-        lambda: _call(page, "plugin_development_get"), lambda state: not state["enabled"] and not state["items"]
-    )
-    items = await _call(page, "plugin_list")
-    assert all(
-        item["status"] != "enabled" for item in items if item["name"] in {"worker_development", "worker_no_hot_reload"}
     )
 
 
@@ -342,9 +417,38 @@ async def main():
                 .get_by_role("button", name="确定", exact=True)
             )
             await page.add_locator_handler(warning, lambda locator: locator.click())
+            await _verify_surface_contract(page, output)
             await _exercise_settings(page, data)
             records = await _verify_layouts(page, process, output)
             await _exercise_opt_out(page, data)
+            await page.locator(".titlebar-btn-close").click()
+            await asyncio.to_thread(process.wait, 20)
+            await browser.close()
+            _shutdown(process, server, log_file)
+            server, port, process, log_file = _start_launcher(root, output, data, launcher, "--no-plugin-dev")
+            await _wait_connection(port, process)
+            browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            page = next(
+                p
+                for c in browser.contexts
+                for p in c.pages
+                if p.url.startswith(f"http://127.0.0.1:{server.server_port}/")
+            )
+            await page.wait_for_function("window.__TAURI__?.pytauri && document.body.innerText.length > 10")
+            await page.evaluate("location.hash='#/more/plugins'")
+            await page.locator(".plugin-row").first.wait_for()
+            development = await _wait_for(
+                lambda: page.evaluate("window.__TAURI__.pytauri.pyInvoke('plugin_development_get',{})"),
+                lambda reply: reply["success"],
+            )
+            assert development["data"] == {"enabled": False, "items": []}
+            settings = await _call(page, "plugin_get_settings", {"plugin_name": "worker_development"})
+            assert settings["values"]["greeting"] == "界面验收保存值", settings
+            items = await _call(page, "plugin_list")
+            assert all(
+                p["status"] != "enabled" for p in items if p["name"] in {"worker_development", "worker_no_hot_reload"}
+            )
+            print("Restart with --no-plugin-dev preserves settings and requires source review", flush=True)
             (output / "result.json").write_text(
                 json.dumps(
                     {
@@ -357,7 +461,7 @@ async def main():
                             "source-v2",
                             "opt-out",
                             "manual-reload",
-                            "disable-development",
+                            "restart-with-no-plugin-dev",
                         ],
                     },
                     ensure_ascii=False,

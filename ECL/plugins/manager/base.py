@@ -186,7 +186,14 @@ class _PluginState:
         with self._package_lock:
             return self._action_locks.setdefault(name, RLock())
 
-    def initialize(self, data_path: Path, resource_path: Path | None = None, *, auto_enable: bool = True) -> None:
+    def initialize(
+        self,
+        data_path: Path,
+        resource_path: Path | None = None,
+        *,
+        auto_enable: bool = True,
+        development_mode: bool = False,
+    ) -> None:
         """
         从用户和系统目录发现插件，按依赖顺序加载并启用可用插件。
 
@@ -195,8 +202,11 @@ class _PluginState:
         :param auto_enable: 是否在发现后立即加载并启用插件；False 时仅完成发现、
             安装事务恢复与依赖解析（对应命令行 --disable-plugins 安全模式），
             插件保持未加载状态，可由用户在插件页或开发通道按需启用
+        :param development_mode: 本次启动是否开启目录插件开发模式；安全模式下不生效
         """
         self._data_path = Path(data_path)
+        if type(development_mode) is not bool:
+            raise ValueError("插件开发模式配置必须为布尔值")
         self.worker_service = PluginWorkerService(
             self._data_path,
             instance_queries=self._instance_queries,
@@ -277,6 +287,8 @@ class _PluginState:
             set(self._candidate_map) | failed_installs | package_names, non_disableable_plugins=system_plugins
         )
         self._dependency_resolution = self._resolve_candidate_dependencies(candidates)
+        if development_mode and auto_enable:
+            self.worker_service.development.set_enabled(True)
         self.logger.debug(
             "插件依赖解析完成：加载顺序：%s；错误数量：%d",
             self._dependency_resolution.load_order,
