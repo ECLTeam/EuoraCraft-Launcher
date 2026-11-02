@@ -26,6 +26,7 @@
 | [无头运行说明](guides/headless-runtime.md) | `--headless` 任务协议、输出格式与插件子进程边界 |
 | [启动器命令行](guides/launcher-cli.md) | 启动参数、实例快捷启动与设置生效顺序 |
 | [版本与整合包安装](guides/modpack-installation.md) | 默认加载器版本、安装预览、文件选择和后台任务 |
+| [插件系统功能报告（2026-11-02）](guides/plugin-system-feature-report-2026-11-02.md) | 指定提交的功能、接口、权限、平台与验收证据快照；后续行为以代码和现行协议为准 |
 | [可视化主题设计指南](guides/theme-designer-guide.zh-CN.md) | 主题设计器、预设库与 `.ecltheme` 文件 |
 
 ## 协议与格式
