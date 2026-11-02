@@ -332,7 +332,7 @@ class ConfigStore:
             config_data[normalized_section] = deepcopy(data)
             self._write_config(config_data)
         # 广播配置变更事件，通知订阅组件。
-        self.logger.debug("配置已保存；分区：%s", normalized_section)
+        self.logger.info("设置已保存；分区：%s", normalized_section)
         self.events.emit("config:updated", normalized_section, deepcopy(data))
 
     def patch_download(self, patch: DownloadSettingsPatch) -> dict[str, JsonValue]:
@@ -364,5 +364,6 @@ class ConfigStore:
                 return deepcopy(next_download)
             config_data["download"] = next_download
             self._write_config(config_data)
+        self.logger.info("下载设置已保存")
         self.events.emit("config:updated", "download", deepcopy(next_download))
         return deepcopy(next_download)

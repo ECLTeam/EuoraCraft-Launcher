@@ -24,11 +24,13 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextvars import copy_context
 from typing import Any
 
 from ECL.plugins.plugin import Plugin
+from ECL.utils.operation_logging import current_operation
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult, PluginCommandError
@@ -429,6 +431,29 @@ class PluginRegistry(_PluginState):
         self.events.emit("plugin:settings_changed", name, key, old_value, value)
         return PluginActionResult(name, PluginAction.UPDATE_SETTING, "updated")
 
+    def _execute_local_command(
+        self, plugin_name: str, command_name: str, handler: Callable[..., Any], params: dict[str, Any]
+    ) -> Any:
+        """
+        在执行线程记录插件命令的实际结果，即使等待方超时也保留最终状态。
+        """
+        try:
+            result = handler(**params)
+        except BaseException:
+            trace = current_operation()
+            if trace is not None:
+                trace.claim_failure("PLUGIN_COMMAND_FAILED")
+            self.logger.exception(
+                "插件命令执行失败；插件：%s；命令：%s；错误码：PLUGIN_COMMAND_FAILED", plugin_name, command_name
+            )
+            raise
+        trace = current_operation()
+        if trace is None:
+            self.logger.info("插件命令执行完成；插件：%s；命令：%s", plugin_name, command_name)
+        else:
+            trace.log_result(self.logger, f"插件命令执行完成；插件：{plugin_name}；命令：{command_name}")
+        return result
+
     def call_command(self, command: str, params: dict[str, Any] | None = None, timeout: float = 30.0) -> Any:
         """
         在线程池中调用 ``插件名:命令名``，失败或超时时抛出 ``PluginCommandError``。
@@ -464,20 +489,21 @@ class PluginRegistry(_PluginState):
         if handler is None:
             raise PluginCommandError(f"插件 {plugin_name} 不存在命令 {cmd_name}")
 
-        def execute() -> Any:
-            self.logger.info("开始执行插件命令；插件：%s；命令：%s", plugin_name, cmd_name)
-            try:
-                result = handler(**(params or {}))
-            except BaseException:
-                self.logger.exception("插件命令执行失败；插件：%s；命令：%s", plugin_name, cmd_name)
-                raise
-            self.logger.info("插件命令执行完成；插件：%s；命令：%s", plugin_name, cmd_name)
-            return result
-
         try:
-            future = self._command_executor.submit(copy_context().run, execute)
+            future = self._command_executor.submit(
+                copy_context().run,
+                PluginRegistry._execute_local_command,
+                self,
+                plugin_name,
+                cmd_name,
+                handler,
+                params or {},
+            )
             return future.result(timeout=timeout)
         except FutureTimeoutError:
+            trace = current_operation()
+            if trace is not None:
+                trace.claim_failure("PLUGIN_COMMAND_FAILED")
             self.logger.warning("等待插件命令超时，后台线程可能仍在执行；插件：%s；命令：%s", plugin_name, cmd_name)
             raise PluginCommandError(f"插件 {plugin_name} 命令 {cmd_name} 执行超时") from None
         except PluginCommandError:

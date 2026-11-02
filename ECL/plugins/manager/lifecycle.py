@@ -97,6 +97,7 @@ class PluginLifecycle(_PluginState):
                 self._save_plugin_state()
                 self._plugin_errors.pop(name, None)
                 self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
+                self.logger.info("插件已启用：%s", name)
                 return True, ""
             except (OSError, ValueError, PluginRuntimeError) as exc:
                 code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
@@ -225,6 +226,8 @@ class PluginLifecycle(_PluginState):
         if self._status.get(name) != "unsupported":
             self._status[name] = "disabled"
         self.events.emit("plugin:status_changed", {"plugin": name, "status": "disabled"})
+        if persist_state:
+            self.logger.info("插件已禁用：%s", name)
         return PluginActionResult(name, PluginAction.DISABLE, "disabled")
 
     def unload(self, name: str, _persist_state: bool = True) -> PluginActionResult:
@@ -574,9 +577,7 @@ class PluginLifecycle(_PluginState):
         通知所有已启用插件前端已就绪；重复调用无效。
         """
         if self._frontend_ready:
-            self.logger.debug("忽略重复的插件前端就绪通知")
             return
-        self.logger.info("正在通知已启用插件前端已就绪")
         self._frontend_ready = True
         if self.worker_service is not None:
             self.worker_service.notify_frontend_ready()
@@ -588,7 +589,7 @@ class PluginLifecycle(_PluginState):
             notified += 1
         if self._sidebar_collapsed is not None:
             self.events.emit("frontend:sidebar_changed", {"collapsed": self._sidebar_collapsed})
-        self.logger.info(
+        self.logger.debug(
             "插件前端就绪通知完成：通知数量：%d",
             notified,
         )

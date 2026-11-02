@@ -50,7 +50,7 @@ from ECL.services.custom_downloads import CustomDownloadRequest
 from ECL.services.updates import UpdateChecker
 from ECL.utils.ui_locale import is_simplified_chinese
 
-from .bridge import _FrontendState, _ipc_handler
+from .bridge import _FrontendState, _ipc_handler, _record_ipc_exception
 
 
 def _describe_platform() -> tuple[str, str]:
@@ -333,7 +333,7 @@ class SystemHandlers(_FrontendState):
         try:
             staged, new_binary = await to_thread.run_sync(applier.stage, release)
         except AppUpdateError as exc:
-            self.logger.warning("自动更新下载失败: %s", exc)
+            _record_ipc_exception(self, "launcher_update_download", exc, exc.error_code)
             return {"success": False, "message": str(exc), "errorCode": exc.error_code}
         return success(
             {

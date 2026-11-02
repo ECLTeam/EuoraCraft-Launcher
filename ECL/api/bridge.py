@@ -52,7 +52,7 @@ from ECL.services.game.launch import candidate_roots, resolve_launch_target
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.logging import get_frontend_log_history
 from ECL.utils.network import download_proxy_url
-from ECL.utils.operation_logging import operation_scope
+from ECL.utils.operation_logging import OperationTrace, current_operation, operation_scope
 from ECL.utils.ui_locale import is_simplified_chinese
 
 
@@ -215,7 +215,7 @@ def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) 
     title = "启动器发生内部错误"
     raw_message = str(exc).strip() or type(exc).__name__
     if _should_report_failure(state, operation, "INTERNAL_ERROR"):
-        state.logger.exception("%s发生内部异常；错误编号：%s", _log_spec(operation).title, error_id)
+        state.logger.exception("%s失败；错误码：INTERNAL_ERROR", _log_spec(operation).title)
     state.events.emit(
         "launcher:error", {"error_id": error_id, "title": title, "message": message, "detail": raw_message}
     )
@@ -232,8 +232,31 @@ def _make_unexpected_error_response(state: Any, operation: str, exc: Exception) 
 def _make_timeout_response(state: Any, operation: str) -> ApiResponse:
     # 为操作超时构造失败响应，提示用户检查网络。
     if _should_report_failure(state, operation, "OPERATION_TIMEOUT"):
-        state.logger.warning("%s请求超时，已请求取消；后台执行是否停止由执行方确认", _log_spec(operation).title)
+        state.logger.warning(
+            "%s请求超时，已请求取消；后台执行是否停止由执行方确认；错误码：OPERATION_TIMEOUT",
+            _log_spec(operation).title,
+        )
     return failure("操作超时，请检查网络后重试", "OPERATION_TIMEOUT")
+
+
+def _record_ipc_exception(state: Any, operation: str, exc: Exception, code: str) -> None:
+    """
+    在实际捕获边界记录一次异常，领域包装保留的程序缺陷原因仍输出堆栈。
+    """
+    if not _should_report_failure(state, operation, code):
+        return
+    if isinstance(exc, ValidationError):
+        state.logger.warning("%s请求未通过结构检查；错误码：%s", _log_spec(operation).title, code)
+    elif code in IpcLogPolicy.cancellation_codes:
+        state.logger.info("%s已取消；错误码：%s", _log_spec(operation).title, code)
+    elif exc.__cause__ is not None and not isinstance(exc.__cause__, _FrontendState.ipc_errors):
+        state.logger.exception("%s执行失败；错误码：%s", _log_spec(operation).title, code)
+    elif isinstance(exc, httpx.HTTPError):
+        state.logger.warning("%s远程请求失败：%s；错误码：%s", _log_spec(operation).title, exc, code)
+    elif isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError):
+        state.logger.exception("%s执行失败；错误码：%s", _log_spec(operation).title, code)
+    else:
+        state.logger.warning("%s执行失败：%s；错误码：%s", _log_spec(operation).title, exc, code)
 
 
 async def _guarded_call(
@@ -247,15 +270,8 @@ async def _guarded_call(
     except TimeoutError:
         return _make_timeout_response(state, operation)
     except _FrontendState.ipc_errors as exc:
-        if _should_report_failure(state, operation, getattr(exc, "error_code", fallback_code)):
-            if isinstance(exc, ValidationError):
-                state.logger.warning("%s请求未通过结构检查；错误码：%s", _log_spec(operation).title, fallback_code)
-            elif isinstance(exc, httpx.HTTPError):
-                state.logger.warning("%s远程请求失败：%s", _log_spec(operation).title, exc)
-            elif isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError):
-                state.logger.exception("%s执行失败", _log_spec(operation).title)
-            else:
-                state.logger.warning("%s执行失败：%s", _log_spec(operation).title, exc)
+        code = getattr(exc, "error_code", fallback_code)
+        _record_ipc_exception(state, operation, exc, code)
         return _make_error_response(exc, fallback_code, state.events)
     except Exception as exc:
         return _make_unexpected_error_response(state, operation, exc)
@@ -269,18 +285,40 @@ def _should_report_failure(state: Any, operation: str, code: str) -> bool:
     spec = _log_spec(operation)
     if spec.kind == "channel":
         return False
+    trace = current_operation()
+    if trace is not None and not trace.claim_failure(code):
+        return False
     runtime = getattr(state, "_ipc_log_runtime", None)
     return spec.kind != "poll" or runtime is None or runtime.record_failure(operation, code)
 
 
+def _record_ipc_result(logger: logging.Logger, spec: IpcLogSpec, response: ApiResponse, trace: OperationTrace) -> None:
+    """
+    仅为没有执行方结果的普通操作记录成功，不把异步受理当成执行完成。
+    """
+    if spec.kind != "action" or spec.result_owner != "ipc" or trace.has_result:
+        return
+    data = response.get("data") if isinstance(response, dict) else None
+    if isinstance(data, dict) and (data.get("operationId") or data.get("taskId") or data.get("task_id")):
+        return
+    message = f"{spec.title}成功"
+    if (
+        isinstance(data, dict)
+        and isinstance(data.get("status"), str)
+        and data.get("status") in {"pending", "running", "downloading"}
+    ):
+        message = f"{spec.title}请求已受理，等待执行结果"
+    trace.log(logger, message)
+
+
 def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float | None = None) -> Any:
     """
-    记录 IPC 命令的开始、结果和失败，并把异常转换为响应。
+    按操作归属记录必要结果和失败，并把异常转换为响应。
 
-    日志通道不记录自身调用，查询使用 DEBUG，轮询仅记录限频失败和恢复。
-    普通操作记录开始和结果；界面状态同步操作可使用 DEBUG 级别。
-    开始阶段行不输出耗时；只有声明为计时的网络或重型操作保留累计耗时。
-    后台任务返回时只记录提交，不宣称执行完成；不输出请求体和配置值。
+    查询和界面同步成功静默，普通操作默认只记录一条结果。服务和后台任务
+    已拥有结果时不再追加成功；失败转换保留原响应及严重错误呈现，调用内
+    同一失败只记录一次。只有实际同步长操作按声明输出开始和有意义的耗时。
+    轮询失败限频并记录一次恢复；不输出请求体和配置值。
 
     :param state: 保存日志器和事件总线的前端 API 对象
     :param operation: 注册到 PyTauri 的稳定命令名
@@ -298,38 +336,26 @@ def guard_ipc_handler(state: Any, operation: str, handler: Any, timeout: float |
     async def guarded(*args: Any, **kwargs: Any) -> ApiResponse:
         if spec.kind == "channel":
             return await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
-        level = logging.INFO if spec.kind == "action" and spec.normal_level == "info" else logging.DEBUG
         with operation_scope(spec.title, timed=spec.timed) as trace:
-            if spec.kind != "poll":
-                trace.log(state.logger, f"开始{spec.title}", level, include_duration=False)
+            if spec.kind == "action" and spec.log_start:
+                trace.log(state.logger, f"开始{spec.title}", include_duration=False)
             try:
                 response = await _guarded_call(state, operation, "INTERNAL_ERROR", handler(*args, **kwargs), timeout)
             except asyncio.CancelledError:
-                trace.log(state.logger, f"{spec.title}请求已取消；后台任务仍以执行方状态为准", logging.WARNING)
+                trace.log(state.logger, f"{spec.title}请求已取消；后台任务仍以执行方状态为准")
                 raise
             if isinstance(response, dict) and response.get("success") is False:
                 code = str(response.get("errorCode", "INTERNAL_ERROR"))
-                if spec.kind != "poll" or runtime.record_failure(operation, code):
-                    trace.log(state.logger, f"{spec.title}失败；错误码：{code}", logging.WARNING)
+                if _should_report_failure(state, operation, code):
+                    if code in IpcLogPolicy.cancellation_codes:
+                        trace.log(state.logger, f"{spec.title}已取消；错误码：{code}")
+                    else:
+                        trace.log(state.logger, f"{spec.title}失败；错误码：{code}", logging.WARNING)
             elif spec.kind == "poll":
                 if runtime.record_recovery(operation):
                     trace.log(state.logger, f"{spec.title}已恢复", logging.INFO)
             else:
-                data = response.get("data") if isinstance(response, dict) else None
-                task_id = (
-                    (data.get("operationId") or data.get("taskId") or data.get("task_id"))
-                    if isinstance(data, dict)
-                    else None
-                )
-                message = f"{spec.title}任务已提交" if task_id else f"完成{spec.title}"
-                if (
-                    not task_id
-                    and isinstance(data, dict)
-                    and isinstance(data.get("status"), str)
-                    and data.get("status") in {"pending", "running", "downloading"}
-                ):
-                    message = f"{spec.title}请求已受理，等待执行结果"
-                trace.log(state.logger, message, level)
+                _record_ipc_result(state.logger, spec, response, trace)
             return response
 
     return guarded

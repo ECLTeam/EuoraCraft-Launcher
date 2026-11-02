@@ -861,7 +861,6 @@ class ConnectorService:
         self._begin_transition()
         self._mode = "starting"
 
-        logger.debug("开始创建联机房间；游戏端口：%s", port)
         try:
             logger.info("准备创建联机房间，开始检查节点配置")
             self._nodes = self.fetch_nodes()
@@ -870,11 +869,9 @@ class ConnectorService:
                 launcher_info=self._launcher_info,
                 log_callback=self._scoped_log_callback(),
             )
-            logger.debug("Florolding 实例已创建")
 
             # 设置 EasyTier 节点列表
             florolding.set_nodes(self._nodes)
-            logger.debug("已设置 EasyTier 节点列表")
 
             room_code, server, easy_tier_node = florolding.create_room(
                 player_name=self._player_name,
@@ -903,7 +900,6 @@ class ConnectorService:
             self._error = str(exc)
             self._cleanup_room_handles()
             self._end_transition()
-            logger.exception("创建联机房间失败: %s", exc)
             if isinstance(exc, ConnectorNodeError):
                 raise
             raise ConnectorError(f"创建房间失败: {exc}") from exc
@@ -970,7 +966,6 @@ class ConnectorService:
         self._mode = "starting"
         self._room_code = code
         self._error = None
-        logger.debug("开始获取联机节点")
         try:
             self._nodes = self.fetch_nodes()
             logger.info("加入房间前的节点准备完成；节点数量：%s", len(self._nodes))
@@ -979,7 +974,6 @@ class ConnectorService:
                 log_callback=self._scoped_log_callback(),
             )
             florolding.set_nodes(self._nodes)
-            logger.debug("开始加入联机房间：房间码：%s；玩家名称：%s", "<已隐藏>", "<已隐藏>")
 
             node, mc_port = self._join_room(florolding, code, self._player_name)
             self._mc_host = "127.0.0.1"
@@ -996,7 +990,6 @@ class ConnectorService:
             self._error = str(exc)
             self._cleanup_room_handles()
             self._end_transition()
-            logger.exception("加入联机房间失败: %s", exc)
             if isinstance(exc, ConnectorNodeError):
                 raise
             raise ConnectorError(f"加入房间失败: {exc}") from exc
@@ -1060,7 +1053,6 @@ class ConnectorService:
         :returns: 包含 status 的字典
         """
         previous_context = self._session_context()
-        logger.info("开始退出联机房间并清理网络资源")
         if self._mode != "idle" and not self._is_cleanup_pending:
             self.extensions.before_leave(previous_context)
         self._is_cleanup_pending = True

@@ -358,7 +358,6 @@ class UpdateApplier:
                         self._emit_progress(asset, received)
         except Exception as exc:
             temporary.unlink(missing_ok=True)
-            self.logger.warning("安装包下载失败: %s", exc)
             raise AppUpdateError(
                 "请升级包下载失败，请检查网络后重试", error_code="UPDATE_DOWNLOAD_FAILED", phase="download"
             ) from exc

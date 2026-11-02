@@ -363,8 +363,6 @@ class OperationManager:
                 operation.effect = admission.initial_effect
             operation.trace = OperationTrace(self.kind_titles.get(kind, kind), monotonic(), True)
             self._operations[operation_id] = operation
-            if origin is None:
-                self._logger.info("后台任务已提交；任务类型：%s", self.kind_titles.get(kind, kind))
             try:
                 operation.future = self._executor.submit(copy_context().run, self._run, operation, worker)
             except RuntimeError as exc:
@@ -387,7 +385,11 @@ class OperationManager:
             operation.message = "正在执行"
             operation.revision += 1
         self._emit(operation)
-        self._logger.info("后台任务开始执行；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind))
+        title = self.kind_titles.get(operation.kind, operation.kind)
+        if operation.trace is not None:
+            operation.trace.log(self._logger, f"后台任务开始执行；任务类型：{title}", include_duration=False)
+        else:
+            self._logger.info("后台任务开始执行；任务类型：%s", title)
 
         context = OperationContext(
             operation.operation_id,
@@ -420,6 +422,13 @@ class OperationManager:
             if operation.status == "cancelled":
                 self._logger.info(
                     "后台任务已取消并停止执行；任务类型：%s", self.kind_titles.get(operation.kind, operation.kind)
+                )
+            elif isinstance(exc, GameServiceError):
+                self._logger.warning(
+                    "后台任务执行失败；任务类型：%s；错误码：%s；原因：%s",
+                    self.kind_titles.get(operation.kind, operation.kind),
+                    operation.error_code,
+                    exc,
                 )
             else:
                 self._logger.exception(
@@ -487,7 +496,9 @@ class OperationManager:
                 operation.last_log_at = now
         if should_log:
             safe_message = message if operation.origin is None else operation.phase
-            self._logger.debug("后台任务进度：%.0f%%；阶段：%s", percent, safe_message)
+            self._logger.debug(
+                "后台任务进度：%.0f%%；阶段：%s", percent, safe_message, extra={"has_operation_duration": True}
+            )
         return self._payload(operation)
 
     def _checkpoint(self, operation: _Operation) -> None:

@@ -254,7 +254,6 @@ class AccountManager:
         self.resource_path = Path(resource_path).resolve() if resource_path else None
         self._default_skins: dict[str, tuple[str, str]] | None = None
         self._load_state()
-        self.logger.debug("账户聚合状态读取完成")
 
         manager_was_provided = microsoft_manager is not None
         effective_client_id = (microsoft_client_id or BuildEnvironment.microsoft_client_id).strip()
@@ -345,12 +344,7 @@ class AccountManager:
                 self._plugin_accounts = {
                     str(account_id): info for account_id, info in plugin_accounts.items() if isinstance(info, dict)
                 }
-            self.logger.debug(
-                "已读取账户聚合状态：离线账户数：%d；插件：%d；已选择当前账户：%s",
-                len(self._offline_accounts),
-                len(self._plugin_accounts),
-                ("是" if self._current_account_id is not None else "否"),
-            )
+
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             self.logger.warning("读取账号状态失败，将使用空账号列表: %s", exc)
 
@@ -1016,7 +1010,6 @@ class AccountManager:
             raise AccountError("账号 ID 不能为空", "INVALID_ACCOUNT_ID")
         is_microsoft = False
         is_authlib = False
-        self.logger.info("开始刷新账户资料")
         with self._lock:
             if account_id in self._offline_accounts:
                 account = deepcopy(self._offline_accounts[account_id])

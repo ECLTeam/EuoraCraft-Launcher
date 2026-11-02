@@ -22,7 +22,8 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Event, RLock
 from time import monotonic
 
 from ECL.foundation.logging import ReadableLogFormatter, safe_log_text
@@ -51,6 +52,42 @@ class OperationTrace:
     action: str
     started_at: float
     timed: bool = False
+    _reported_failures: set[str] = field(default_factory=set, repr=False, compare=False)
+    _failure_lock: RLock = field(default_factory=RLock, repr=False, compare=False)
+    _result_recorded: Event = field(default_factory=Event, repr=False, compare=False)
+
+    @property
+    def has_result(self) -> bool:
+        """
+        判断实际执行方是否已经记录成功结果，供 IPC 避免重复追加。
+        """
+        return self._result_recorded.is_set()
+
+    def log_result(self, logger: logging.Logger, message: str) -> None:
+        """
+        记录实际执行结果并标记当前调用已拥有成功日志。
+
+        :param logger: 实际执行方的日志器
+        :param message: 已排除敏感数据的结果说明
+        """
+        self._result_recorded.set()
+        self.log(logger, message)
+
+    def claim_failure(self, error_code: str) -> bool:
+        """
+        为当前调用的一种失败领取唯一日志记录权，供错误转换边界共享。
+
+        操作对象随上下文传入工作线程，锁保护同一次失败不被线程与 IPC
+        返回路径重复记录；新的调用创建独立记录，不影响其他并发请求。
+
+        :param error_code: 当前操作的稳定错误码
+        :return: 此错误码尚未被当前调用记录时为 True
+        """
+        with self._failure_lock:
+            if error_code in self._reported_failures:
+                return False
+            self._reported_failures.add(error_code)
+            return True
 
     def log(
         self,

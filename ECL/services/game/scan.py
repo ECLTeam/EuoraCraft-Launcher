@@ -486,15 +486,11 @@ class ScanCoordinator(_GameState):
         """
         ecl_path = self._ecl_json_path(game_path)
         if not ecl_path.is_file():
-            self.logger.debug("ecl.json 不存在，返回空配置: %s", ecl_path)
             return {}
         try:
             raw = ecl_path.read_text(encoding="utf-8")
             data = json.loads(raw)
             result = data if isinstance(data, dict) else {}
-            self.logger.debug(
-                "读取 ecl.json 成功：%s，活动版本：%s", ("是" if ecl_path else "否"), result.get("activeVersion", "")
-            )
             return result
         except (OSError, ValueError, UnicodeDecodeError) as exc:
             self.logger.warning("读取 ecl.json 失败 %s: %s", ecl_path, exc)
@@ -518,11 +514,10 @@ class ScanCoordinator(_GameState):
                     except (OSError, ValueError, UnicodeDecodeError):
                         existing = None
                     if existing == data:
-                        self.logger.debug("跳过未变化的 ecl.json 写入: %s", ecl_path)
                         return
-                self.logger.debug("写入 ecl.json：%s，活动版本：%s", ecl_path, data.get("activeVersion", ""))
                 ecl_path.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(ecl_path, json.dumps(data, ensure_ascii=False, indent=2))
+            self.logger.info("游戏目录设置已保存")
         except OSError as exc:
             raise GameServiceError(f"写入 ecl.json 失败: {exc}", "ECL_CONFIG_WRITE_FAILED") from exc
 
@@ -541,9 +536,7 @@ class ScanCoordinator(_GameState):
             current = self.read_ecl_config(game_path)
             changed = {key: value for key, value in patch.items() if current.get(key) != value}
             if not changed:
-                self.logger.debug("跳过未变化的 ecl.json 增量更新: %s", self._ecl_json_path(game_path))
                 return current
-            self.logger.debug("增量更新 ecl.json：%s，字段：%s", self._ecl_json_path(game_path), list(changed.keys()))
             current.update(changed)
             self.write_ecl_config(game_path, current)
             return current
@@ -557,7 +550,6 @@ class ScanCoordinator(_GameState):
         config = self.read_ecl_config(game_path)
         version_id = config.get("activeVersion") or config.get("active_version")
         result = str(version_id).strip() if isinstance(version_id, str) and version_id.strip() else None
-        self.logger.debug("获取当前路径启动版本: %s -> %s", game_path, result)
         return result
 
     def set_active_version(self, game_path: Any, version_id: Any) -> None:
@@ -720,10 +712,9 @@ class ScanCoordinator(_GameState):
                         }
                         data = {**unknown, **data}
                     if existing == data:
-                        self.logger.debug("跳过未变化的版本独立设置写入: %s", settings_path)
                         return deepcopy(data)
                 atomic_write_text(settings_path, json.dumps(data, ensure_ascii=False, indent=2))
-                self.logger.debug("写入版本独立设置: %s", settings_path)
+                self.logger.info("实例启动设置已保存")
         except OSError as exc:
             raise GameServiceError(f"写入版本独立设置失败: {exc}", "ECL_CONFIG_WRITE_FAILED") from exc
         return deepcopy(data)

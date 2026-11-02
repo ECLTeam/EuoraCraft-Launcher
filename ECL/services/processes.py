@@ -98,7 +98,6 @@ class ProcessService:
         """
         if not name or not type_ or not args:
             raise ValueError("实例名称、类型与启动参数不能为空")
-        self._logger.info("开始创建子进程")
         instance_id, _process = self._manager.create_instance(
             instance_name=name,
             instance_type=type_,
@@ -152,9 +151,9 @@ class ProcessService:
         :param wait_timeout: 等待进程结束的秒数，None 表示不等待
         :return: 进程是否已结束
         """
-        self._logger.info("已请求%s子进程；实例编号：%s", "强制结束" if force else "停止", instance_id)
         has_stopped = self._manager.stop_instance(instance_id, force=force, wait_timeout=wait_timeout)
-        self._logger.info("子进程停止结果：%s；实例编号：%s", "已结束" if has_stopped else "尚未确认结束", instance_id)
+        if not has_stopped:
+            self._logger.info("已请求停止子进程，尚未确认退出")
         return has_stopped
 
     def list(self) -> list[dict[str, Any]]:

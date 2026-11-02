@@ -1419,6 +1419,9 @@ class LaunchCoordinator(_GameState):
             self._emit_launch_progress("error", str(error), 0, error.error_code)
             raise error from exc
         except Exception as exc:
+            trace = current_operation()
+            if trace is not None:
+                trace.claim_failure("GAME_LAUNCH_FAILED")
             self.logger.exception("启动 Minecraft 失败")
             error = GameServiceError(f"启动游戏失败: {exc}", "GAME_LAUNCH_FAILED")
             self._emit_launch_progress("error", str(error), 0, error.error_code)

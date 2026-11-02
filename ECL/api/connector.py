@@ -34,7 +34,7 @@ from ECL.api.models import InstanceTarget, KickRequest, PortRequest, PortsReques
 from ECL.services.connector import ConnectorError, ConnectorNatError, ConnectorNotAvailableError
 from ECL.services.connector_nodes import ConnectorNodeConfig
 
-from .bridge import _FrontendState, _ipc_handler
+from .bridge import _FrontendState, _ipc_handler, _record_ipc_exception
 
 
 def _run_in_daemon(func, *args):
@@ -68,7 +68,9 @@ def _connector_guard(error_code: str):
             except ConnectorNotAvailableError as exc:
                 return failure(str(exc), "CONNECTOR_NOT_AVAILABLE")
             except ConnectorError as exc:
-                return failure(str(exc), getattr(exc, "error_code", error_code))
+                code = getattr(exc, "error_code", error_code)
+                _record_ipc_exception(self, func.__name__, exc, code)
+                return failure(str(exc), code)
 
         return wrapper
 

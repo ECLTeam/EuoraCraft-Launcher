@@ -156,7 +156,6 @@ class UpdateChecker:
 
     def check(self) -> UpdateCheckResult:
         channel = self._channel()
-        self.logger.info("开始检查更新：当前版本 %s，通道 %s", self.current_version, channel)
         base = UpdateCheckResult(
             status="error",
             current_version=self.current_version,
@@ -225,12 +224,10 @@ class UpdateChecker:
                 params={"per_page": self.releases_per_page},
                 headers={"Accept": "application/vnd.github+json"},
             )
-        except httpx.RequestError as exc:
-            self.logger.warning("版本检测请求失败: %s", exc)
+        except httpx.RequestError:
             base.message = "无法连接更新服务器，请检查网络后重试"
             return None
         if response.status_code != 200:
-            self.logger.warning("版本检测接口返回异常状态: %s", response.status_code)
             base.message = "更新服务器响应异常，请稍后重试"
             return None
         try:

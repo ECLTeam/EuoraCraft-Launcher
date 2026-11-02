@@ -4,7 +4,7 @@ import ast
 import asyncio
 import logging
 from pathlib import Path
-from threading import Event
+from threading import Event, RLock
 from types import SimpleNamespace
 
 import pytest
@@ -58,7 +58,7 @@ def test_offline_uuid_preview_uses_quiet_logging_without_account_input(records) 
         return success({"uuid": "private-uuid"})
 
     asyncio.run(guard_ipc_handler(state, "accounts_preview_offline_uuid", handler)({"username": "private-name"}))
-    assert len(logs) == 2 and all(record.levelno == logging.DEBUG for record in logs)
+    assert logs == []
     assert all(
         "private-name" not in record.getMessage() and "private-uuid" not in record.getMessage() for record in logs
     )
@@ -72,10 +72,7 @@ def test_sidebar_notification_success_uses_debug(records) -> None:
         return success()
 
     asyncio.run(guard_ipc_handler(state, "plugin_notify_sidebar_state", handler)({"collapsed": False}))
-    assert len(logs) == 2
-    assert all(record.levelno == logging.DEBUG for record in logs)
-    assert "开始通知插件侧栏的折叠状态" in logs[0].getMessage()
-    assert "完成通知插件侧栏的折叠状态" in logs[1].getMessage()
+    assert logs == []
 
 
 def test_sidebar_notification_failure_remains_visible(records) -> None:
@@ -90,16 +87,30 @@ def test_sidebar_notification_failure_remains_visible(records) -> None:
     assert "SIDEBAR_NOTIFY_FAILED" in logs[-1].getMessage()
 
 
-def test_settings_save_success_keeps_info(records) -> None:
+def test_settings_save_only_logs_actual_write(tmp_path, records) -> None:
+    from ECL.utils.config import ConfigStore
+
     logger, logs = records
+    store = ConfigStore(tmp_path / "data", EventBus())
+    store.logger = logger
     state = SimpleNamespace(logger=logger, events=EventBus())
 
     async def handler(body):
+        await asyncio.to_thread(store.save_config, "ui", body)
         return success()
 
-    asyncio.run(guard_ipc_handler(state, "settings_set", handler)({"section": "ui", "data": {}}))
-    assert len(logs) == 2
-    assert all(record.levelno == logging.INFO for record in logs)
+    guarded = guard_ipc_handler(state, "settings_set", handler)
+    current = store.get_config("ui")
+    logs.clear()
+    asyncio.run(guarded(current))
+    assert logs == []
+    asyncio.run(guarded({**current, "locale": "de-DE"}))
+    assert len(logs) == 1
+    assert logs[0].levelno == logging.INFO
+    assert "已保存" in logs[0].getMessage()
+    assert "de-DE" not in logs[0].getMessage()
+    asyncio.run(guarded({**current, "locale": "de-DE"}))
+    assert len(logs) == 1
 
 
 def test_ipc_records_returned_failure_without_request_body(records) -> None:
@@ -111,10 +122,10 @@ def test_ipc_records_returned_failure_without_request_body(records) -> None:
 
     response = asyncio.run(guard_ipc_handler(state, "settings_set", handler)({"password": "never-log-this"}))
     assert response["success"] is False
-    assert len(logs) == 2
-    assert logs[0].operation_action == logs[1].operation_action == "保存设置"
+    assert len(logs) == 1
+    assert logs[0].operation_action == "保存设置"
     assert all("操作编号" not in record.getMessage() for record in logs)
-    assert "错误码：INVALID_REQUEST" in logs[1].getMessage()
+    assert "错误码：INVALID_REQUEST" in logs[0].getMessage()
     assert "never-log-this" not in str([record.getMessage() for record in logs])
     assert current_operation() is None
 
@@ -127,10 +138,8 @@ def test_async_task_submission_is_not_reported_as_completion(records) -> None:
         return success({"taskId": "install-123"})
 
     asyncio.run(guard_ipc_handler(state, "game_install", handler)({}))
-    assert "任务已提交" in logs[-1].getMessage()
-    assert "任务编号" not in logs[-1].getMessage()
-    assert "install-123" not in logs[-1].getMessage()
-    assert "完成" not in logs[-1].getMessage()
+    # 实际执行方负责记录执行阶段，IPC 受理不能再造一条成功或完成。
+    assert logs == []
 
 
 def test_poll_failure_sampling_and_recovery(records) -> None:
@@ -272,6 +281,9 @@ def test_background_task_lifecycle_sampling_and_thread_context(tmp_path, records
         assert worker_actions == ["安装资源"]
         assert sum("后台任务进度" in record.getMessage() for record in logs) == 1
         text = "\n".join(record.getMessage() for record in logs)
+        start_messages = [record.getMessage() for record in logs if "后台任务开始执行" in record.getMessage()]
+        assert len(start_messages) == 1 and "耗时" not in start_messages[0]
+        assert "任务已提交" not in text
         assert "来源操作" not in text
         assert "任务编号" not in text and "操作编号" not in text
         assert submitted["operationId"] not in text
@@ -459,7 +471,7 @@ def test_start_stage_never_outputs_duration(records) -> None:
     assert logs[-1].getMessage() == "开始下载安装包"
 
 
-def test_timed_command_keeps_duration_but_start_line_omits_it(records) -> None:
+def test_timed_query_success_is_silent_even_at_debug(records) -> None:
     logger, logs = records
     state = SimpleNamespace(logger=logger, events=EventBus())
 
@@ -467,18 +479,168 @@ def test_timed_command_keeps_duration_but_start_line_omits_it(records) -> None:
         return success()
 
     asyncio.run(guard_ipc_handler(state, "game_versions", handler)({}))
-    assert len(logs) == 2
-    assert logs[0].getMessage() == "开始查询 Minecraft 版本列表或分类目录"
-    assert logs[1].getMessage().startswith("完成查询 Minecraft 版本列表或分类目录；耗时：")
+    assert logs == []
 
 
-def test_untimed_command_omits_duration_entirely(records) -> None:
+def test_ordinary_operation_logs_result_without_start(records) -> None:
     logger, logs = records
     state = SimpleNamespace(logger=logger, events=EventBus())
 
     async def handler(body):
         return success()
 
-    asyncio.run(guard_ipc_handler(state, "settings_get", handler)({}))
+    asyncio.run(guard_ipc_handler(state, "user_agreement_save", handler)({}))
+    assert len(logs) == 1
+    assert logs[0].levelno == logging.INFO
+    assert "成功" in logs[0].getMessage()
+    assert "开始" not in logs[0].getMessage()
+
+
+def test_nested_error_conversion_records_one_failure_and_one_stack(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    @_ipc_handler()
+    async def settings_get(self, body):
+        raise RuntimeError("boom")
+
+    result = asyncio.run(guard_ipc_handler(state, "settings_get", lambda body: settings_get(state, body))({}))
+    assert result["errorCode"] == "INTERNAL_ERROR"
+    assert len(logs) == 1
+    assert logs[0].exc_info is not None
+
+
+def test_concurrent_failures_are_independent_and_each_recorded_once(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    @_ipc_handler("INVALID_REQUEST")
+    async def settings_set(self, body):
+        await asyncio.sleep(0)
+        raise ValueError("受控失败")
+
+    guarded = guard_ipc_handler(state, "settings_set", lambda body: settings_set(state, body))
+
+    async def requests():
+        return await asyncio.gather(guarded({}), guarded({}))
+
+    assert all(not result["success"] for result in asyncio.run(requests()))
     assert len(logs) == 2
-    assert all("耗时：" not in record.getMessage() for record in logs)
+    assert all(record.exc_info is None for record in logs)
+    assert all("错误码：INVALID_REQUEST" in record.getMessage() for record in logs)
+    assert current_operation() is None
+
+
+def test_service_result_from_worker_thread_is_not_repeated_by_ipc(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        await asyncio.to_thread(current_operation().log_result, logger, "实际操作已保存")
+        return success()
+
+    asyncio.run(guard_ipc_handler(state, "user_agreement_save", handler)({}))
+    assert len(logs) == 1
+    assert logs[0].getMessage() == "实际操作已保存"
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_user_cancellation_is_info_without_stack(records, raises) -> None:
+    from ECL.utils.errors import GameServiceError
+
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        if raises:
+            raise GameServiceError("用户取消", "LAUNCH_CANCELLED")
+        return failure("用户取消", "LAUNCH_CANCELLED")
+
+    response = asyncio.run(guard_ipc_handler(state, "game_launch", handler)({}))
+    assert response["errorCode"] == "LAUNCH_CANCELLED"
+    assert len(logs) == 1
+    assert logs[0].levelno == logging.INFO
+    assert logs[0].exc_info is None
+
+
+def test_query_and_sync_success_are_silent_in_debug_file_and_frontend_history(tmp_path) -> None:
+    import ECL.utils.logging as logging_module
+    from ECL.utils.logging import LoggingRuntime, get_frontend_log_history
+
+    events = EventBus()
+    manager = LoggingRuntime(colored=False, data_path=tmp_path)
+    manager.install_frontend_handler(events)
+    try:
+        state = SimpleNamespace(logger=manager.get_logger("FrontendApi"), events=events)
+
+        async def handler(body):
+            return success()
+
+        for command in ("settings_get", "plugin_list", "plugin_notify_sidebar_state", "launcher_errors_ack"):
+            asyncio.run(guard_ipc_handler(state, command, handler)({}))
+        for log_handler in manager.get_logger().handlers:
+            log_handler.flush()
+        text = (tmp_path / "logs/EuoraCraft-Launcher.log").read_text(encoding="utf-8")
+        assert "FrontendApi" not in text
+        assert not any(item["logger"].endswith("FrontendApi") for item in get_frontend_log_history())
+    finally:
+        manager.shutdown()
+        logging_module.FrontendLogRuntimeState.buffer = None
+
+
+def test_synchronous_long_operation_retains_start_and_timed_result(records) -> None:
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    async def handler(body):
+        return success()
+
+    asyncio.run(guard_ipc_handler(state, "export_logs", handler)({}))
+    assert len(logs) == 2
+    assert logs[0].getMessage() == "开始导出启动器日志"
+    assert "耗时" not in logs[0].getMessage()
+    assert logs[1].getMessage().startswith("导出启动器日志成功；耗时：")
+
+
+def test_directory_config_reads_and_noop_writes_are_silent(tmp_path, records) -> None:
+    from ECL.services.game.scan import ScanCoordinator
+
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, _lock=RLock(), _ecl_json_path=lambda root: tmp_path / "ecl.json")
+    state.read_ecl_config = lambda root: ScanCoordinator.read_ecl_config(state, root)
+    state.write_ecl_config = lambda root, value: ScanCoordinator.write_ecl_config(state, root, value)
+    value = {"activeVersion": "private-version-name"}
+    assert state.read_ecl_config(tmp_path) == {}
+    assert logs == []
+
+    state.write_ecl_config(tmp_path, value)
+    assert len(logs) == 1 and logs[0].levelno == logging.INFO
+    assert "private-version-name" not in logs[0].getMessage()
+    logs.clear()
+    assert state.read_ecl_config(tmp_path) == value
+    state.write_ecl_config(tmp_path, value)
+    assert ScanCoordinator.patch_ecl_config(state, tmp_path, value) == value
+    assert logs == []
+
+
+def test_connector_wrapped_program_error_keeps_one_stack(records) -> None:
+    from ECL.api.connector import _connector_guard
+    from ECL.utils.errors import ConnectorError
+
+    logger, logs = records
+    state = SimpleNamespace(logger=logger, events=EventBus())
+
+    @_connector_guard("CONNECTOR_HOST_PORT_FAILED")
+    async def connector_host_port(self, body):
+        try:
+            raise RuntimeError("受控程序异常")
+        except RuntimeError as cause:
+            raise ConnectorError("创建房间失败") from cause
+
+    response = asyncio.run(
+        guard_ipc_handler(state, "connector_host_port", lambda body: connector_host_port(state, body))({})
+    )
+    assert response["errorCode"] == "CONNECTOR_HOST_PORT_FAILED"
+    assert len(logs) == 1
+    assert logs[0].levelno == logging.ERROR
+    assert logs[0].exc_info is not None
