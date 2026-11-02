@@ -203,6 +203,14 @@ class PluginRegistry(_PluginState):
             cleanup_state=runtime["cleanup_state"],
             requested_permissions=[item["capability"] for item in permissions["items"]],
         )
+        source = next((item for item in self.worker_service.directory_sources() if item.name == name), None)
+        entry["source"] = "directory" if source is not None else "package"
+        entry["supports_hot_reload"] = source.manifest.supports_hot_reload if source is not None else False
+        entry["development"] = next(
+            (item for item in self.worker_service.development.view()["items"] if item["name"] == name), None
+        )
+        if entry["development"] is not None:
+            entry["supports_hot_reload"] = entry["development"]["supports_hot_reload"]
         if not entry["pending_restart"]:
             if runtime["run_state"] in {"enabled", "failed", "stopping", "disabled"}:
                 entry["status"] = runtime["run_state"]
@@ -391,7 +399,7 @@ class PluginRegistry(_PluginState):
         """
         if self._candidate_map.get(name) and not self._candidate_map[name]["is_system"]:
             assert self.worker_service is not None
-            return self.worker_service.broker(name).settings_view()
+            return self.worker_service.settings_view(name)
         plugin = self._plugins.get(name)
         if plugin is None:
             return {"schema": None, "values": {}}

@@ -31,6 +31,7 @@ htmlcov/
 
 # Python packaging and PyInstaller output
 build/
+output/playwright/plugin-development/
 dist/
 build-nuitka/
 .eggs/

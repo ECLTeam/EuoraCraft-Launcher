@@ -28,6 +28,7 @@ from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
+from ECL.plugins.development import DevelopmentSource, PluginDevelopmentService
 from ECL.plugins.environment_pool import PluginDependencyDirectory
 from ECL.plugins.grant_models import (
     GrantLease,
@@ -50,6 +51,7 @@ from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.plugins.runtime.public_queries import RuntimePublicQueries
 from ECL.plugins.runtime.resources import InstanceQueries, ResourcePages, RuntimeResources
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
 from ECL.utils import AccountError, get_logger
 from ECL.utils.account_reading import AccountSummary
@@ -83,6 +85,8 @@ class _WorkerEntry:
     cleanup_state: str = "not_needed"
     error_code: str | None = None
     lock: RLock = field(default_factory=RLock)
+    source_path: Path | None = None
+    development_token: str | None = None
 
 
 class PluginWorkerService:
@@ -119,6 +123,8 @@ class PluginWorkerService:
         auth_sink: Callable[[str, str | None, object | None, GrantLease | None], None] | None = None,
         connector_sink: Callable[[str, str | None, GrantLease | None], None] | None = None,
         connector: ConnectorService | None = None,
+        development_changed: Callable[[], None] | None = None,
+        settings_changed: Callable[[str], None] | None = None,
     ) -> None:
         """
         绑定唯一安装及授权存储，不发现或执行用户代码。
@@ -166,6 +172,8 @@ class PluginWorkerService:
         self._locks_by_name: dict[str, RLock] = {}
         self._executable = executable
         self._closed = Event()
+        self.settings = PluginSettingsService(data_path, changed=settings_changed)
+        self.development = PluginDevelopmentService(self, data_path, changed=development_changed)
         self._monitor_thread: Thread | None = None
         self._resource_refreshed_at = 0.0
         self._operations = operations
@@ -462,6 +470,8 @@ class PluginWorkerService:
         dependency: PluginDependencyDirectory | None = None,
         *,
         allow_network: bool = False,
+        development_token: str | None = None,
+        source_path: Path | None = None,
     ) -> None:
         """
         只登记已校验清单和内容身份；内容变更先停止旧运行，再要求重新审阅。
@@ -471,11 +481,23 @@ class PluginWorkerService:
         :param source: 宿主确定的目录或归档来源
         :param dependency: 已完成校验的锁定依赖
         :param allow_network: 安装阶段明确允许时补齐锁内 Wheel；发现阶段默认离线
+        :param development_token: 仅宿主开发服务传入的会话准入
+        :param source_path: 开发运行的实际安装目录，普通运行省略
         :raises ValueError: 清单、内容或安装身份无效时抛出
         """
         if self._closed.is_set():
             raise ProtocolError("插件宿主已经关闭", "PLUGIN_HOST_CLOSED")
         manifest = WorkerManifest.model_validate(metadata)
+        with self._lock:
+            previous = self._entries.get(manifest.name)
+        if (
+            development_token is None
+            and previous is not None
+            and previous.development_token is not None
+            and root_path == previous.source_path
+            and self.development.manages(manifest.name)
+        ):
+            return
         lock_file = root_path / "locks" / f"{current_plugin_target()}.txt"
         binding = PluginContentBinding.capture(
             root_path, manifest.permissions, current_plugin_target(), lock_file if lock_file.is_file() else None
@@ -490,23 +512,165 @@ class PluginWorkerService:
                     previous
                     and previous.installation_id == installation_id
                     and previous.session.binding.content_digest == binding.content_digest
+                    and previous.root_path == root_path
+                    and previous.development_token == development_token
                 ):
                     return
             if previous:
                 self.stop(manifest.name)
-            if source == "directory":
+            if source == "directory" and development_token is None:
                 dependency = PluginPackagePreparer(self.data_path).prepare_dependencies(
                     root_path, tuple(manifest.python_dependencies), allow_network=allow_network
                 )
             supervisor = WorkerSupervisor(
                 self._executable, host_handler=lambda request: self._handle(manifest.name, request)
             )
-            session = self.grants.open_session(installation_id, binding, supervisor.run_id)
+            session = self.grants.open_session(
+                installation_id, binding, supervisor.run_id, development_token=development_token
+            )
             entry = _WorkerEntry(
-                manifest, root_path, installation_id, dependency, source, supervisor, session, lock=installation_lock
+                manifest,
+                root_path,
+                installation_id,
+                dependency,
+                source,
+                supervisor,
+                session,
+                lock=installation_lock,
+                source_path=source_path or root_path,
+                development_token=development_token,
             )
             with self._lock:
                 self._entries[manifest.name] = entry
+
+    def directory_sources(self) -> tuple[DevelopmentSource, ...]:
+        """
+        返回宿主登记的第三方目录来源，执行副本不替代实际安装路径。
+
+        :return: 目录安装的独立摘要
+        """
+        with self._lock:
+            return tuple(
+                DevelopmentSource(
+                    name,
+                    entry.installation_id,
+                    (entry.source_path or entry.root_path).resolve(),
+                    entry.root_path.resolve(),
+                    entry.manifest,
+                    entry.state,
+                    entry.development_token is not None,
+                    entry.cleanup_state == "pending",
+                )
+                for name, entry in self._entries.items()
+                if entry.source == "directory"
+            )
+
+    def development_approval(self, name: str) -> str:
+        """
+        仅从当前宿主会话建立开发准入，不从插件元数据推导允许。
+
+        :param name: 已启用目录安装
+        :return: 本进程的开发会话凭据
+        """
+        entry = self._entry(name)
+        with entry.lock:
+            return self.grants.begin_development(entry.session)
+
+    def activate_development(self, name: str, code_path: Path, token: str) -> None:
+        """
+        复用原安装及依赖，在旧运行实际停止后启动稳定开发副本。
+
+        :param name: 安装名称
+        :param code_path: 开发服务创建并验证的副本
+        :param token: 已批准开发会话
+        """
+        entry = self._entry(name)
+        with entry.lock:
+            if not self.development.wants_enabled(name):
+                raise ProtocolError("开发运行已被用户停止", "PLUGIN_SESSION_EXPIRED")
+            if entry.development_token is None:
+                entry.session.binding.verify()
+            self.register(
+                json.loads((code_path / "plugin.json").read_bytes()),
+                code_path,
+                "directory",
+                entry.dependency,
+                development_token=token,
+                source_path=entry.source_path or entry.root_path,
+            )
+            self.enable(name, frontend_ready=True)
+
+    def restore_directory(self, name: str, source_path: Path) -> None:
+        """
+        停止开发运行后恢复实际源目录的普通审阅资格，不自动启用。
+
+        :param name: 安装名称
+        :param source_path: 宿主原始安装目录
+        """
+        self.stop(name)
+        if not source_path.is_dir():
+            with self._lock:
+                self._entries.pop(name, None)
+            return
+        self.register(json.loads((source_path / "plugin.json").read_bytes()), source_path, "directory")
+
+    def settings_view(self, name: str) -> dict[str, JsonValue]:
+        """
+        为可信管理页读取当前定义，插件禁用后也不执行代码探测。
+
+        :param name: 已安装名称
+        :return: 统一配置视图
+        """
+        self.permissions(name)
+        entry = self._entry(name)
+        with entry.lock:
+            return self.settings.view(
+                entry.installation_id,
+                entry.session.binding.content_digest,
+                entry.session.run_id if entry.state == "enabled" else None,
+            )
+
+    def update_settings(
+        self,
+        name: str,
+        content_digest: str,
+        schema_revision: str,
+        expected_revision: int,
+        values: dict[str, JsonValue],
+    ) -> dict[str, JsonValue]:
+        """
+        为可信主窗口保存统一配置，同时复核内容、定义和实际运行准入。
+
+        :param name: 安装名称
+        :param content_digest: 用户看到的内容身份
+        :param schema_revision: 用户看到的定义版本
+        :param expected_revision: 用户看到的值版本
+        :param values: 本次明确提交的键值
+        :return: 实际保存后的版本
+        """
+        entry = self._entry(name)
+        with entry.lock:
+            if content_digest != entry.session.binding.content_digest:
+                raise ProtocolError("插件内容已经变化", "PLUGIN_SETTING_SCHEMA_CHANGED")
+            lease = entry.session.authorize("plugin.base") if entry.state == "enabled" else None
+
+            def accept() -> None:
+                entry.session.binding.verify()
+                if entry.cleanup_state == "pending":
+                    raise ProtocolError("插件仍在清理", "PLUGIN_HOST_CLEANUP_PENDING")
+                if lease is not None:
+                    entry.session.accept(lease, lambda: None)
+
+            revision = self.settings.update(
+                entry.installation_id,
+                content_digest,
+                values,
+                expected_revision,
+                accept,
+                run_id=entry.session.run_id if entry.state == "enabled" else None,
+                schema_revision=schema_revision,
+            )
+            return {"revision": revision}
 
     def _entry(self, name: str) -> _WorkerEntry:
         with self._lock:
@@ -556,7 +720,10 @@ class PluginWorkerService:
                     self._executable, host_handler=lambda request: self._handle(name, request)
                 )
                 entry.session = self.grants.open_session(
-                    entry.installation_id, entry.session.binding, entry.supervisor.run_id
+                    entry.installation_id,
+                    entry.session.binding,
+                    entry.supervisor.run_id,
+                    development_token=entry.development_token,
                 )
             self._refresh_declared_resources(entry.session)
             entry.session.binding.verify()
@@ -607,6 +774,7 @@ class PluginWorkerService:
                     window_app=lambda: self._window_app,
                     connector=self._connector,
                     plugin_name=entry.manifest.name,
+                    settings_service=self.settings,
                     tool_channel=ToolChannel(
                         run=partial(self._tool_run, name),
                         stop=partial(self._tool_stop, name),
@@ -618,11 +786,13 @@ class PluginWorkerService:
                         call=partial(self._cross_plugin_call, name),
                     ),
                 )
+                entry.broker.initialize_settings()
                 entry.supervisor.authorize_load(
                     entry.session, entry.manifest.entry_file, entry.dependency, entry_class=entry.manifest.entry_class
                 )
                 self._phase(entry, "load", "loaded")
                 self._phase(entry, "enable", "loaded")
+                self.settings.publish(entry.installation_id, entry.session.run_id)
                 entry.state = "enabled"
                 entry.error_code = None
                 self._start_monitor()
@@ -1012,9 +1182,12 @@ class PluginWorkerService:
         :return: 内容身份、revision 和能力的实际决定
         """
         entry = self._entry(name)
-        self.register(
-            json.loads((entry.root_path / "plugin.json").read_bytes()), entry.root_path, entry.source, entry.dependency
-        )
+        root_path = entry.source_path or entry.root_path
+        try:
+            metadata = json.loads((root_path / "plugin.json").read_bytes())
+        except OSError as exc:
+            raise ProtocolError("插件安装目录不可用", "PLUGIN_RESOURCE_NOT_FOUND") from exc
+        self.register(metadata, root_path, entry.source, entry.dependency)
         entry = self._entry(name)
         with entry.lock:
             if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED" and entry.cleanup_state != "pending":
@@ -1022,7 +1195,10 @@ class PluginWorkerService:
                     self._executable, host_handler=lambda request: self._handle(name, request)
                 )
                 entry.session = self.grants.open_session(
-                    entry.installation_id, entry.session.binding, entry.supervisor.run_id
+                    entry.installation_id,
+                    entry.session.binding,
+                    entry.supervisor.run_id,
+                    development_token=entry.development_token,
                 )
             self._refresh_declared_resources(entry.session)
             view = entry.session.view()
@@ -1159,6 +1335,7 @@ class PluginWorkerService:
         entry = self._entry(name)
         with entry.lock:
             self.stop(name)
+            self.development.forget(name)
             self.installations.retire(name)
             remove_files()
             with self._lock:
@@ -1233,11 +1410,15 @@ class PluginWorkerService:
         """
         停止全部已登记 Worker，失败时保留对象和句柄供重试。
         """
+        failures: list[BaseException] = []
+        try:
+            self.development.close()
+        except (OSError, ValueError, PluginRuntimeError) as exc:
+            failures.append(exc)
         self._closed.set()
         self._resource_pages.clear()
         if self._monitor_thread is not None:
             self._monitor_thread.join(1)
-        failures = []
         for name in reversed(tuple(self._entries)):
             try:
                 self.stop(name)

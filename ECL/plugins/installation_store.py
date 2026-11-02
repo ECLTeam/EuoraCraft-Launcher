@@ -18,7 +18,16 @@ from pathlib import Path
 from typing import ClassVar, Literal, Self
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.environment_pool import _exclusive_lock
@@ -49,6 +58,7 @@ class WorkerManifest(BaseModel):
     dependencies: dict[str, str | dict[str, str | bool]] = Field(default_factory=dict, max_length=128)
     permissions: tuple[PermissionDeclaration, ...] = Field(default=(), max_length=128)
     custom_ui: CustomUiDeclaration | None = None
+    supports_hot_reload: StrictBool = True
     reserved_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
     )

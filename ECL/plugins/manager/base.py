@@ -218,6 +218,12 @@ class _PluginState:
             connector_sink=self._on_worker_connector,
             connector=self._connector,
             ui_injection_allowed=self._ui_injection_allowed,
+            development_changed=lambda: self.events.emit(
+                "plugin:status_changed", {"plugin": "", "status": "development"}
+            ),
+            settings_changed=lambda installation_id: self.events.emit(
+                "plugin:settings_updated", {"installation_id": installation_id}
+            ),
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
         self.events.subscribe("config:updated", self._on_plugins_config_changed)

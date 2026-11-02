@@ -113,6 +113,16 @@ class _SessionState:
     blocked_error: str | None = None
     is_closed: bool = False
     content_verified_at: float = 0.0
+    development_token: str | None = None
+    authorization_digest: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _DevelopmentApproval:
+    installation_id: str
+    binding: PluginContentBinding
+    revision: int
+    session_grants: tuple[PermissionDecision, ...]
 
 
 class PluginGrantSession:
@@ -360,6 +370,7 @@ class PluginGrantStore:
         self._io_locks: dict[tuple[str, str], RLock] = {}
         self._states_by_run: dict[str, _SessionState] = {}
         self._used_run_ids: set[str] = set()
+        self._development_approvals: dict[str, _DevelopmentApproval] = {}
         self._available_root_refs: frozenset[str] = frozenset()
         self._available_java_refs: frozenset[str] = frozenset()
         self._available_account_refs: frozenset[str] = frozenset()
@@ -423,8 +434,46 @@ class PluginGrantStore:
         """
         return uuid4().hex
 
+    def begin_development(self, session: PluginGrantSession) -> str:
+        """
+        为已审阅运行建立仅存在于本进程的开发准入，权限和依赖不得扩大。
+
+        :param session: 当前有效且必要权限满足的普通运行
+        :return: 仅宿主持有的随机开发会话凭据
+        :raises PluginGrantError: 未审阅、失权或内容变化时抛出
+        """
+        view = self._view(session, force_recheck=True)
+        state = self._state(session)
+        if view.error_code or view.revision == 0 or not view.required_satisfied or state.development_token:
+            raise PluginGrantError("插件需要先完成内容审阅", "PLUGIN_DEVELOPMENT_REVIEW_REQUIRED")
+        with self._lock:
+            if state.is_closed or state.revision != view.revision:
+                raise PluginGrantError("插件运行已经失效", "PLUGIN_SESSION_EXPIRED")
+            token = uuid4().hex
+            self._development_approvals[token] = _DevelopmentApproval(
+                state.installation_id, state.binding, state.revision, tuple(state.session_grants.values())
+            )
+            return token
+
+    def end_development(self, token: str) -> None:
+        """
+        撤销开发会话，旧运行及排队版本不能再次获得执行资格。
+
+        :param token: 宿主建立的开发凭据
+        """
+        with self._lock:
+            self._development_approvals.pop(token, None)
+            for state in tuple(self._states_by_run.values()):
+                if state.development_token == token:
+                    self._block(state, "PLUGIN_DEVELOPMENT_SESSION_EXPIRED")
+
     def open_session(
-        self, installation_id: str, binding: PluginContentBinding, run_id: str | None = None
+        self,
+        installation_id: str,
+        binding: PluginContentBinding,
+        run_id: str | None = None,
+        *,
+        development_token: str | None = None,
     ) -> PluginGrantSession:
         """
         复核已审阅内容并建立新运行代次，不承诺已经满足必要权限。
@@ -432,6 +481,7 @@ class PluginGrantStore:
         :param installation_id: 安装服务生成的身份
         :param binding: 宿主已捕获的内容和声明
         :param run_id: 已创建 Worker 的宿主运行标识；None 生成新值
+        :param development_token: 宿主开发会话凭据；普通运行省略，不接受客户端自报
         :return: 尚须检查 required_satisfied 的授权会话
         :raises PluginGrantError: 身份重复或内容已改变时抛出
         """
@@ -439,6 +489,20 @@ class PluginGrantStore:
         self._validate_token(installation_id)
         self._validate_token(run_id)
         state = _SessionState(installation_id, binding, run_id, 0, {})
+        if development_token is not None:
+            with self._lock:
+                approval = self._development_approvals.get(development_token)
+                if (
+                    approval is None
+                    or approval.installation_id != installation_id
+                    or approval.binding.declarations != binding.declarations
+                    or approval.binding.target_tag != binding.target_tag
+                    or approval.binding.lock_sha256 != binding.lock_sha256
+                ):
+                    raise PluginGrantError("开发版本超出批准范围", "PLUGIN_DEVELOPMENT_REVIEW_REQUIRED")
+                state.development_token = development_token
+                state.authorization_digest = approval.binding.content_digest
+                state.session_grants = {item.capability: item for item in approval.session_grants}
         with self._record_lock(state):
             self._verify_content(state)
             try:
@@ -480,6 +544,8 @@ class PluginGrantStore:
         if caller is not PermissionManagementCaller.main_webview:
             raise PluginGrantError("此入口不能管理插件授权", "PLUGIN_MANAGEMENT_CALLER_DENIED")
         state = self._state(session)
+        if state.development_token is not None:
+            raise PluginGrantError("请关闭开发模式后重新审阅权限", "PLUGIN_DEVELOPMENT_REVIEW_REQUIRED")
         if content_digest != state.binding.content_digest:
             raise PluginGrantError("授权审阅内容不匹配", "PLUGIN_GRANT_CONTENT_MISMATCH")
         with self._record_lock(state):
@@ -563,7 +629,11 @@ class PluginGrantStore:
         串行同一安装内容的磁盘准备和保存，等待时不持有全局授权锁。
         """
         with self._lock:
-            return self._io_locks.setdefault((state.installation_id, state.binding.content_digest), RLock())
+            return self._io_locks.setdefault((state.installation_id, self._authorization_digest(state)), RLock())
+
+    @staticmethod
+    def _authorization_digest(state: _SessionState) -> str:
+        return state.authorization_digest or state.binding.content_digest
 
     def _state(self, session: PluginGrantSession) -> _SessionState:
         """
@@ -580,7 +650,7 @@ class PluginGrantStore:
             item
             for item in self._states_by_run.values()
             if item.installation_id == state.installation_id
-            and item.binding.content_digest == state.binding.content_digest
+            and self._authorization_digest(item) == self._authorization_digest(state)
         )
 
     def _block(self, state: _SessionState, code: str) -> None:
@@ -597,7 +667,11 @@ class PluginGrantStore:
         拒绝审阅后变化的字节，不能以新摘要自动更新许可。
         """
         try:
+            if state.development_token is not None and state.development_token not in self._development_approvals:
+                raise PluginGrantError("开发会话已经结束", "PLUGIN_DEVELOPMENT_SESSION_EXPIRED")
             state.binding.verify()
+        except PluginGrantError:
+            raise
         except (OSError, ValueError) as exc:
             with self._lock:
                 self._block(state, "PLUGIN_CONTENT_CHANGED")
@@ -615,7 +689,9 @@ class PluginGrantStore:
         """
         路径完全由宿主安装标识和内容摘要决定，拒绝链接及越界祖先。
         """
-        target_path = self.data_path / "plugin_grants" / state.installation_id / f"{state.binding.content_digest}.json"
+        target_path = (
+            self.data_path / "plugin_grants" / state.installation_id / f"{self._authorization_digest(state)}.json"
+        )
         for entry in (target_path.parent.parent, target_path.parent, target_path):
             if entry.is_symlink() or not entry.resolve().is_relative_to(self.data_path):
                 raise PluginGrantError("授权存储路径无效", "PLUGIN_GRANT_STORE_CORRUPTED")
@@ -648,10 +724,18 @@ class PluginGrantStore:
                 raise ValueError("授权文件超过上限")
             payload: object = json.loads(record_path.read_bytes(), object_pairs_hook=self._unique_pairs)
             record = _GrantRecord.model_validate(payload)
-            if record.installation_id != state.installation_id or record.content_digest != state.binding.content_digest:
+            if record.installation_id != state.installation_id or record.content_digest != self._authorization_digest(
+                state
+            ):
                 raise ValueError("授权文件主体不匹配")
+            if state.development_token is not None:
+                approval = self._development_approvals.get(state.development_token)
+                if approval is None or record.revision != approval.revision:
+                    raise PluginGrantError("开发授权已经变化，请重新审阅", "PLUGIN_DEVELOPMENT_REVIEW_REQUIRED")
             self._validate_decisions(state, record.grants, is_disk=True)
             return record
+        except PluginGrantError:
+            raise
         except (OSError, ValueError, RecursionError) as exc:
             raise PluginGrantError("插件授权文件损坏或无法读取", "PLUGIN_GRANT_STORE_CORRUPTED") from exc
 

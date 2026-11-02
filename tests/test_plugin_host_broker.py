@@ -120,7 +120,7 @@ def test_closing_run_rejects_basic_writes(broker_setup):
 def test_storage_failure_keeps_original_settings_and_same_key_never_replays(broker_setup, monkeypatch):
     broker, _store, _session, _calls = broker_setup
     define_setting(broker)
-    import ECL.plugins.runtime.broker as module
+    import ECL.plugins.settings as module
 
     def fail(*args):
         raise OSError("test failure")

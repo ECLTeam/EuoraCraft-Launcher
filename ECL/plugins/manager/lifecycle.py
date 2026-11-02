@@ -84,6 +84,12 @@ class PluginLifecycle(_PluginState):
                 return False, self._plugin_errors[name]
             try:
                 assert self.worker_service is not None
+                self.worker_service.development.intent(name, True)
+                if (
+                    self.worker_service.development.manages(name)
+                    and self.worker_service.runtime_info(name)["run_state"] != "enabled"
+                ):
+                    self.worker_service.development.retry(name)
                 self.worker_service.enable(name, frontend_ready=self._frontend_ready)
                 self._status[name] = "enabled"
                 self._disabled_plugins.discard(name)
@@ -202,6 +208,8 @@ class PluginLifecycle(_PluginState):
         """
         if persist_state:
             self._disabled_plugins.add(name)
+            if self.worker_service is not None:
+                self.worker_service.development.intent(name, False)
             self._save_plugin_state()
             if name in self._package_entries and self._package_store:
                 self._package_store.set_enabled(name, False)
@@ -345,6 +353,20 @@ class PluginLifecycle(_PluginState):
         with self._plugin_action_lock(name):
             candidate = self._candidate_map.get(name)
             if candidate and not candidate["is_system"]:
+                if self.worker_service is not None and self.worker_service.development.manages(name):
+                    self.worker_service.development.intent(name, True)
+                    try:
+                        self.worker_service.development.retry(name)
+                        self.worker_service.enable(name, frontend_ready=self._frontend_ready)
+                    except (OSError, ValueError, PluginRuntimeError) as exc:
+                        return PluginActionResult(
+                            name,
+                            PluginAction.RELOAD,
+                            "failed",
+                            getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED"),
+                        )
+                    self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
+                    return PluginActionResult(name, PluginAction.RELOAD, "enabled")
                 stopped = self.disable(name, _persist_state=False)
                 if not stopped.success:
                     return PluginActionResult(name, PluginAction.RELOAD, stopped.status, stopped.message)
@@ -490,6 +512,7 @@ class PluginLifecycle(_PluginState):
                 if not stopped.success:
                     raise PluginInstallTransactionError("旧插件尚未停止，不能替换代码")
             has_begun = True
+            self.worker_service.development.forget(name)
             transaction.begin()
             assert self.worker_service is not None
             self.worker_service.register(metadata, transaction.target_path, "directory", allow_network=allow_network)

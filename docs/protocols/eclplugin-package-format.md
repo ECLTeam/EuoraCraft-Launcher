@@ -101,7 +101,21 @@ class Plugin(BasePlugin):
         return {"message": f"Hello, {name}"}
 ```
 
-插件获得 HostClient，不能取得宿主 framework、账户服务或配置对象。回调留在 Worker 内，跨进程只传 JSON。当前已开放自身命令、设置、自查询、自身设置变化订阅、获准实例读取和自身任务控制；尚未接线的业务方法明确失败，依赖未实现必要能力的插件不可启用。第三方自定义前端保持关闭。
+插件获得 HostClient，不能取得宿主 framework、账户服务或配置对象。回调留在 Worker 内，跨进程只传 JSON。当前业务、界面及扩展方法见[插件开发手册](../guides/plugin-development/README.md)；尚未接线或当前宿主缺少服务的方法明确失败，必要能力未实现的插件不可启用。主窗口注入与独立原生前端是两条不同边界，不能混用验收结论。
+
+### 开发模式与热重载
+
+可信主窗口可以开启仅本次进程有效的开发模式。已审阅启用的第三方目录插件使用宿主管理的稳定执行副本，监听实际安装目录；目录安装会复制源码，原始导入目录不自动同步。归档版本与系统插件不受监听。
+
+清单 `supports_hot_reload` 省略或严格布尔 true 表示允许，false 明确拒绝源码保存触发的自动重载；用户仍可手动重载。非法类型拒绝。文件集、750 ms 轮询与防抖、开发临时信任和清理状态见[开发模式](../guides/plugin-development/development-mode.md)。
+
+开发临时准入只沿用会话批准的范围，不向新摘要写永久 allow。权限、身份/入口、独立前端声明、插件/Python 依赖和锁等边界变化要求重新审阅；撤权或关闭模式使旧引用失效。普通模式的内容摘要检查继续有效。关闭开发模式停止开发 Worker，源目录按普通流程重新审阅，不清除配置和私有数据。
+
+### 统一配置
+
+Worker、面板、独立窗口与可信全屏设置界面共用 `PluginSettingsService`，用户值继续保存在原安装身份的 v2 设置文件。运行通过 `settings.define` 登记完整定义，只有成功加载后才发布独立 schema 元数据；禁用后可管理仍匹配当前内容的定义，没有定义时不执行插件探测。
+
+可信管理读取返回 installation_id、content_digest、schema_revision、schema、values、revision、editable 和 reason。管理写入必须携带当前内容、schema_revision 与 expected_revision；Worker 自身 settings.set 仍使用其运行绑定的定义和 expected_revision。旧页面不得覆盖新定义，新项投影默认值，移除项不后台删除，类型冲突保留原值并失败。完整使用方式见[统一配置管理](../guides/plugin-development/settings.md)。
 
 设置写入必须提供 `expected_revision`；变更 RPC 使用本运行 `mutation_key` 去重，同键不同内容拒绝。等待超时不能当作动作已经停止或回滚，也不能无条件换新键重放副作用。
 
@@ -254,7 +268,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 所有请求严格拒绝未知字段和错误类型。分页默认50，目录最多10000项；游标绑定当前运行、查询和授权代次，120秒过期，不跨运行复用。查询最多30秒，使用宿主当前有效下载源及已有目录服务，不接受URL、代理、源配置或账户信息。显式加载器版本必须存在于该游戏版本的目录；省略时由宿主选择兼容的最高版本。
 
-`LaunchOptions` 仅有 `memory_mb?:512..65536`（默认4096）、`width?:320..16384`（默认854）、`height?:240..16384`（默认480）、`fullscreen?:bool`（默认false）。整数不接受布尔值。账户、Java、下载源和游戏语言由宿主提供；不开放 `runtime_ref`、Java路径、JVM/游戏参数、wrapper、命令、脚本或环境变量。需要当前账户时返回 `PLUGIN_ACCOUNT_REQUIRED`，提交前账户变化返回 `PLUGIN_ACCOUNT_CHANGED`。
+`LaunchOptions` 提供 `memory_mb?:512..65536`（默认4096）、`width?:320..16384`（默认854）、`height?:240..16384`（默认480）、`fullscreen?:bool`（默认false），以及下述 Java 规则允许的 `runtime_ref`。整数不接受布尔值。账户、默认 Java、下载源和游戏语言由宿主提供；不开放裸 Java 路径、JVM/游戏参数、wrapper、命令、脚本或环境变量。需要当前账户时返回 `PLUGIN_ACCOUNT_REQUIRED`，提交前账户变化返回 `PLUGIN_ACCOUNT_CHANGED`。
 
 `GameRunView` 为 `{game_run_ref,instance_ref,pid,running,exit_code}`。引用是本运行随机引用，不返回路径、命令、日志、账户、内部任务编号或内部进程token。宿主按原始进程对象与所有者校验停止目标，不按PID、名称或可复用的实例编号找进程。每运行最多保留128条进程记录；跨运行查询不交付别人的进程，外来停止引用返回 `PLUGIN_OWNER_MISMATCH`。
 

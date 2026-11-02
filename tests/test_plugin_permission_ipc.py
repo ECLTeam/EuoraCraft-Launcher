@@ -71,3 +71,48 @@ async def test_resource_candidates_require_native_registered_main(api, label):
         window,
     )
     assert response["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
+
+
+@pytest.mark.parametrize(
+    "method,body",
+    [
+        ("plugin_development_get", {}),
+        ("plugin_development_set", {"enabled": True}),
+        ("plugin_open_directory", {"installation_id": "a" * 32}),
+        ("plugin_get_settings", {"plugin_name": "example"}),
+    ],
+)
+async def test_development_and_settings_management_require_native_main(api, method, body):
+    response = await getattr(api, method)(body, SimpleNamespace(label=lambda: "plugin-forged"))
+    assert response["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
+
+
+async def test_settings_without_schema_do_not_execute_plugin(api):
+    response = await api.plugin_get_settings({"plugin_name": "example"}, SimpleNamespace(label=lambda: "main"))
+    assert response["success"]
+    assert response["data"]["editable"] is False
+    assert response["data"]["schema"] == []
+    assert not (api.plugins._data_path.parent / "marker").exists()
+
+
+async def test_trusted_settings_edit_disabled_worker_without_running_it(api):
+    from test_plugin_worker_manager import review
+
+    review(api.plugins)
+    assert api.plugins.enable("example").success
+    window = SimpleNamespace(label=lambda: "main")
+    view = (await api.plugin_get_settings({"plugin_name": "example"}, window))["data"]
+    assert api.plugins.disable("example").success
+    body = {
+        "plugin_name": "example",
+        "key": "greeting",
+        "value": "from trusted settings",
+        "content_digest": view["content_digest"],
+        "schema_revision": view["schema_revision"],
+        "expected_revision": 0,
+    }
+    denied = await api.plugin_update_setting(body, SimpleNamespace(label=lambda: "plugin-forged"))
+    assert denied["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
+    saved = await api.plugin_update_setting(body, window)
+    assert saved["success"] and saved["data"]["revision"] == 1
+    assert api.plugins.worker_service.runtime_info("example")["run_state"] == "disabled"

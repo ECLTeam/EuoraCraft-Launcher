@@ -295,7 +295,7 @@ class Plugin:
         required: bool = False,
     ) -> str:
         """
-        登记启动钩子，需已获准 launch.hooks。
+        登记启动钩子，需已获准管理游戏。
 
         回调只收到版本、加载器与隔离标记三项有界上下文；prepare 阶段可返回
         ``{"jvm_args": [...], "game_args": [...], "env": {...}}`` 追加参数，

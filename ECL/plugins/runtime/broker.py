@@ -29,7 +29,6 @@ from pydantic import ValidationError
 from ECL.foundation.version import __version__
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
-from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.grant_models import GrantLease, PermissionDeclaration
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.runtime.connector_api import RuntimeConnector
@@ -68,8 +67,9 @@ from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.public_queries import RuntimePublicQueries
 from ECL.plugins.runtime.resource_queries import RuntimeResourceCatalog
 from ECL.plugins.runtime.resources import RuntimeResources
+from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
-from ECL.utils import atomic_write_text, get_logger
+from ECL.utils import get_logger
 from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
@@ -233,6 +233,7 @@ class PluginHostBroker:
         window_app: Callable[[], AppHandle | None] | None = None,
         connector: ConnectorService | None = None,
         plugin_name: str = "",
+        settings_service: PluginSettingsService | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -334,16 +335,15 @@ class PluginHostBroker:
             if resources is not None and instance_profiles is not None and self.operations is not None
             else None
         )
-        self._settings_path = data_path / "plugin_settings_v2" / f"{session.view().installation_id}.json"
+        self.settings = settings_service or PluginSettingsService(data_path)
+        self._settings_identity = session.view().installation_id
         self._lock = RLock()
-        self._settings_lock = RLock()
         self._closed = Event()
         self._idle = Event()
         self._idle.set()
         self._active_requests = 0
         self._commands: dict[str, tuple[str, CommandDefinition, GrantLease]] = {}
         self._panels: dict[str, tuple[PanelDefinition, GrantLease]] = {}
-        self._definitions: dict[str, SettingDefinition] = {}
         self._subscriptions: dict[str, tuple[str, GrantLease, str]] = {}
         self._receipts: dict[str, _Receipt] = {}
         self._events: Queue[tuple[str, dict[str, JsonValue], GrantLease]] = Queue(32)
@@ -1160,103 +1160,88 @@ class PluginHostBroker:
         :return: 当前设置视图
         """
         self.session.authorize("plugin.base")
-        with self._settings_lock:
-            values, revision = self._read_settings()
-            return {
-                "schema": [item.model_dump(mode="json") for item in self._definitions.values()],
-                "values": self._values(values),
-                "revision": revision,
-            }
+        return self.settings.view(self._settings_identity, self.session.binding.content_digest, self.session.run_id)
+
+    def initialize_settings(self) -> None:
+        """
+        在宿主已批准启动后登记空定义，使没有设置的插件也有明确空状态。
+
+        插件后续 settings.define 会替换完整集合；只在生命周期成功后发布到磁盘。
+        """
+        lease = self.session.authorize("plugin.base")
+        self.settings.define(
+            self._settings_identity,
+            self.session.binding.content_digest,
+            self.session.run_id,
+            [],
+            self._publish_settings,
+            lambda register: self.session.accept(lease, register),
+        )
+
+    @property
+    def _definitions(self) -> dict[str, SettingDefinition]:
+        return self.settings.definitions(
+            self._settings_identity, self.session.binding.content_digest, self.session.run_id
+        )
 
     def _settings(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
         lease = self.session.authorize("plugin.base")
-        with self._settings_lock:
-            if method == "settings.define":
-                self._keys(params, {"definitions"})
-                raw = params["definitions"]
-                if not isinstance(raw, list) or len(raw) > 64:
-                    raise ProtocolError("设置定义超过上限", "PLUGIN_SCHEMA_INVALID")
-                definitions = [SettingDefinition.model_validate(item) for item in raw]
-                if len({item.key for item in definitions}) != len(definitions):
-                    raise ProtocolError("设置键重复", "PLUGIN_SCHEMA_INVALID")
+        if method == "settings.define":
+            self._keys(params, {"definitions"})
+            raw = params["definitions"]
+            if not isinstance(raw, list) or len(raw) > 64:
+                raise ProtocolError("设置定义超过上限", "PLUGIN_SCHEMA_INVALID")
+            definitions = [SettingDefinition.model_validate(item) for item in raw]
 
-                def register() -> None:
+            def accept_definition(register: Callable[[], None]) -> None:
+                def publish() -> None:
                     self._ensure_accepting()
-                    self._definitions = {item.key: item for item in definitions}
+                    register()
 
-                self.session.accept(lease, register)
-                return {"schema_revision": 1}
-            if method == "settings.get":
-                self._keys(params, {"keys"})
-                keys = params["keys"]
-                if (
-                    not isinstance(keys, list)
-                    or len(keys) > 64
-                    or any(not isinstance(k, str) or k not in self._definitions for k in keys)
-                ):
-                    raise ProtocolError("设置未定义", "PLUGIN_SETTING_NOT_DEFINED")
-                values, revision = self._read_settings()
-                result = self._values(values)
-                self.session.check(lease)
-                return {"values": {key: result[key] for key in keys}, "revision": revision}
-            self._keys(params, {"values", "expected_revision"})
-            patch = params["values"]
-            if not isinstance(patch, dict) or type(params["expected_revision"]) is not int:
-                raise ProtocolError("设置提交无效", "PLUGIN_SCHEMA_INVALID")
-            if any(
-                key not in self._definitions or not self._definitions[key].accepts(value)
-                for key, value in patch.items()
-            ):
-                raise ProtocolError("设置值不符合定义", "PLUGIN_SETTING_TYPE_MISMATCH")
-            with _exclusive_lock(self._settings_path.with_suffix(".lock"), wait_seconds=2):
-                values, revision = self._read_settings()
-                if revision != params["expected_revision"]:
-                    raise ProtocolError("设置已由其他操作修改", "PLUGIN_REVISION_CONFLICT")
-                candidate = values | patch
-                request.check_deadline()
-                self.session.accept(lease, self._ensure_accepting)
-                atomic_write_text(
-                    self._settings_path,
-                    json.dumps(
-                        {"schema_version": 1, "revision": revision + 1, "values": candidate}, ensure_ascii=False
-                    ),
-                )
-            self._publish_settings(patch, revision + 1)
-            return {"revision": revision + 1}
+                self.session.accept(lease, publish)
 
-    def _read_settings(self) -> tuple[dict[str, JsonValue], int]:
-        """
-        只读取本安装 v2 设置；损坏原文件保留并明确失败，不回退旧格式。
-        """
-        if not self._settings_path.exists():
-            return {}, 0
-        try:
-            if self._settings_path.is_symlink() or self._settings_path.stat().st_size > 65536:
-                raise ValueError("设置文件超限")
-            value = _json_value(json.loads(self._settings_path.read_bytes()))
+            self.settings.define(
+                self._settings_identity,
+                self.session.binding.content_digest,
+                self.session.run_id,
+                definitions,
+                self._publish_settings,
+                accept_definition,
+            )
+            return {"schema_revision": self.settings_view()["schema_revision"]}
+        if method == "settings.get":
+            self._keys(params, {"keys"})
+            keys = params["keys"]
             if (
-                not isinstance(value, dict)
-                or set(value) != {"schema_version", "revision", "values"}
-                or type(value["schema_version"]) is not int
-                or value["schema_version"] != 1
-                or type(value["revision"]) is not int
-                or value["revision"] < 0
-                or not isinstance(value["values"], dict)
+                not isinstance(keys, list)
+                or len(keys) > 64
+                or any(not isinstance(key, str) or key not in self._definitions for key in keys)
             ):
-                raise ValueError("设置文件格式无效")
-            return value["values"], value["revision"]
-        except (OSError, ValueError) as exc:
-            raise ProtocolError("插件设置文件无法读取", "PLUGIN_STORAGE_FAILED") from exc
+                raise ProtocolError("设置未定义", "PLUGIN_SETTING_NOT_DEFINED")
+            view = self.settings_view()
+            result = view["values"]
+            assert isinstance(result, dict)
+            self.session.check(lease)
+            return {"values": {key: result[key] for key in keys}, "revision": view["revision"]}
+        self._keys(params, {"values", "expected_revision"})
+        patch = params["values"]
+        if not isinstance(patch, dict) or type(params["expected_revision"]) is not int:
+            raise ProtocolError("设置提交无效", "PLUGIN_SCHEMA_INVALID")
 
-    def _values(self, stored: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        result: dict[str, JsonValue] = {}
-        for key, definition in self._definitions.items():
-            value = stored.get(key, definition.default)
-            if not definition.accepts(value):
-                raise ProtocolError("持久化设置不符合当前定义", "PLUGIN_SETTING_TYPE_MISMATCH")
-            result[key] = value
-        return result
+        def accept() -> None:
+            request.check_deadline()
+            self.session.accept(lease, self._ensure_accepting)
+
+        revision = self.settings.update(
+            self._settings_identity,
+            self.session.binding.content_digest,
+            patch,
+            params["expected_revision"],
+            accept,
+            run_id=self.session.run_id,
+        )
+        return {"revision": revision}
 
     def _publish_settings(self, values: dict[str, JsonValue], revision: int) -> None:
         self._publish_event("settings.changed", {"values": values, "revision": revision})
@@ -1333,6 +1318,7 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        self.settings.release(self._settings_identity, self.session.run_id)
         for resource in (
             self.connector,
             self.custom_ui,

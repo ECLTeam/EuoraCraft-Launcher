@@ -59,6 +59,7 @@ class FrontendEventPolicy:
             ("plugin:unloaded", lambda name: {"name": name, "action": "unloaded", "result": True}),
         ],
         "plugin:installed": [("plugin:installed", lambda name: {"name": name})],
+        "plugin:settings_updated": [("plugin:settings_updated", lambda payload: payload)],
         "plugin:css_injected": [
             ("plugin:css_injected", lambda plugin, css, key: {"plugin": plugin, "css": css, "key": key})
         ],

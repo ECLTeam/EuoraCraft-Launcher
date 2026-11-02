@@ -423,7 +423,7 @@ def test_current_short_writes_recheck_at_acceptance(runtime, monkeypatch, method
     assert error.value.error_code == "PLUGIN_GRANT_EXPIRED"
     assert broker._commands == {}
     assert broker._subscriptions == {}
-    assert not broker._settings_path.exists()
+    assert not broker.settings._file_path(broker.session.view().installation_id).exists()
 
 
 def test_grant_disk_write_does_not_hold_global_authorization_lock(runtime, monkeypatch):

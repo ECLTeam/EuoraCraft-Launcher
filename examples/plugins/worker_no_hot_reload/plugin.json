@@ -1,0 +1,9 @@
+{
+  "name": "worker_no_hot_reload",
+  "api_version": 2,
+  "version": "1.0.0",
+  "title": "显式拒绝热重载示例",
+  "entry_point": "main:Plugin",
+  "supports_hot_reload": false,
+  "permissions": []
+}

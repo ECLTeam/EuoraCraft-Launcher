@@ -10,6 +10,8 @@
 #       - plugin_permission_resources(body, webview_window) — 只为原生主窗口发现可审阅实例资源。
 #       - plugin_permissions_get/update — 查询和保存本安装的内容及精确范围授权。
 #       - plugin_runtime_info — 查询实际 Worker 和清理状态。
+#       - plugin_development_get/set — 可信主窗口查询、开启和关闭开发会话。
+#       - plugin_open_directory — 打开宿主登记的目录安装。
 #       - plugin_list(body) -> dict[str, Any] — 获取插件列表。
 #       - plugin_info(body) -> dict[str, Any] — 获取插件信息。
 #       - plugin_enable(body) -> dict[str, Any] — 启用插件。
@@ -43,13 +45,16 @@ from uuid import uuid4
 from ECL.api.bridge import WebviewWindow
 from ECL.api.contracts import failure
 from ECL.api.plugin_models import (
+    PluginDevelopmentUpdate,
     PluginPermissionQuery,
     PluginPermissionResources,
     PluginPermissionUpdate,
+    PluginSettingsQuery,
+    PluginSettingsUpdate,
 )
 from ECL.java.models import JavaError
 from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugin_api.contracts import ProtocolError, _json_value
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
 from ECL.plugins.grant_models import PermissionManagementCaller
@@ -57,13 +62,76 @@ from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.package_archive import PluginPackageError
 from ECL.utils.instance_reading import InstanceReadError
 
-from .bridge import _FrontendState
+from .bridge import _FrontendState, _open_folder
 
 
 class PluginHandlers(_FrontendState):
     """
     处理插件的启用、禁用、路由、插槽和命令调用请求。
     """
+
+    async def plugin_development_get(
+        self, body: dict[str, Any], webview_window: WebviewWindow = None
+    ) -> dict[str, Any]:
+        """
+        向可信主窗口返回本次开发会话状态，不接受插件自报身份。
+
+        :param body: 空查询
+        :param webview_window: 原生调用窗口
+        :return: 开发状态
+        """
+        try:
+            self._permission_caller(webview_window)
+            if body:
+                raise ProtocolError("开发状态查询参数无效", "PLUGIN_SCHEMA_INVALID")
+            return {"success": True, "data": self.plugins.worker_service.development.view()}
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
+
+    async def plugin_development_set(
+        self, body: dict[str, Any], webview_window: WebviewWindow = None
+    ) -> dict[str, Any]:
+        """
+        开启或关闭本次开发信任；关闭成功只在实际清理完成后返回。
+
+        :param body: 严格布尔开关
+        :param webview_window: 原生调用窗口
+        :return: 实际开发状态
+        """
+        try:
+            self._permission_caller(webview_window)
+            request = PluginDevelopmentUpdate.model_validate(body)
+            result = await asyncio.to_thread(self.plugins.worker_service.development.set_enabled, request.enabled)
+            self.plugins.events.emit("plugin:status_changed", {"plugin": "", "status": "development"})
+            return {"success": True, "data": result}
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
+
+    async def plugin_open_directory(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
+        """
+        只打开宿主登记的实际目录安装，不接受客户端磁盘路径。
+
+        :param body: 安装身份
+        :param webview_window: 原生调用窗口
+        :return: 系统文件管理器请求结果
+        """
+        try:
+            self._permission_caller(webview_window)
+            query = PluginPermissionQuery.model_validate(body)
+            source = next(
+                (
+                    item
+                    for item in self.plugins.worker_service.directory_sources()
+                    if item.installation_id == query.installation_id
+                ),
+                None,
+            )
+            if source is None or source.source_path.is_symlink() or not source.source_path.is_dir():
+                raise ProtocolError("插件目录不可用", "PLUGIN_RESOURCE_NOT_FOUND")
+            await asyncio.to_thread(_open_folder, str(source.source_path))
+            return {"success": True}
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
 
     def _permission_caller(self, webview_window: WebviewWindow | None) -> PermissionManagementCaller:
         """
@@ -393,16 +461,21 @@ class PluginHandlers(_FrontendState):
             return failure(str(exc), exc.error_code)
         return {"success": True, "data": result}
 
-    async def plugin_get_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def plugin_get_settings(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
         """
         获取插件设置。
 
         :param body: 前端传入的 IPC 请求参数
         """
-        plugin_name = body.get("plugin_name")
-        return {"success": True, "data": await asyncio.to_thread(self.plugins.get_settings, plugin_name)}
+        try:
+            query = PluginSettingsQuery.model_validate(body)
+            if self.plugins.get_plugin(query.plugin_name) is None:
+                self._permission_caller(webview_window)
+            return {"success": True, "data": await asyncio.to_thread(self.plugins.get_settings, query.plugin_name)}
+        except (PluginGrantError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
 
-    async def plugin_update_setting(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def plugin_update_setting(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
         """
         更新插件设置。
 
@@ -412,17 +485,15 @@ class PluginHandlers(_FrontendState):
         service = self.plugins.worker_service
         if service is not None and self.plugins.get_plugin(plugin_name) is None:
             try:
+                self._permission_caller(webview_window)
+                request = PluginSettingsUpdate.model_validate(body)
                 result = await asyncio.to_thread(
-                    service.broker(plugin_name).handle,
-                    RpcRequest(
-                        "settings.set",
-                        {
-                            "values": {body.get("key"): body.get("value")},
-                            "expected_revision": body.get("expected_revision"),
-                        },
-                        monotonic() + 5,
-                        uuid4().hex,
-                    ),
+                    service.update_settings,
+                    request.plugin_name,
+                    request.content_digest,
+                    request.schema_revision,
+                    request.expected_revision,
+                    {request.key: _json_value(request.value)},
                 )
                 return {"success": True, "data": result}
             except (PluginGrantError, ProtocolError) as exc:

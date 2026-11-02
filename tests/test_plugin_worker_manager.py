@@ -306,7 +306,7 @@ def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path:
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
 
-    import ECL.plugins.runtime.broker as broker_module
+    import ECL.plugins.settings as broker_module
     from ECL.plugin_api._rpc import RpcRequest
 
     make_plugin(tmp_path / "data/plugins/example", tmp_path / "marker")
