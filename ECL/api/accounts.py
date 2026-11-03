@@ -20,6 +20,11 @@
 #       - authlib_resolve_server(body) -> dict[str, Any] — 解析外置登录网站实际使用的 API 地址。
 #       - accounts_start_microsoft_login(body) -> dict[str, Any] — 开始微软登录。
 #       - accounts_microsoft_login_config(body) -> dict[str, Any] — 获取微软登录配置。
+#       - accounts_littleskin_management(body) — 读取当前角色和管理授权状态。
+#       - accounts_littleskin_closet(body) — 读取云端衣柜分页。
+#       - accounts_littleskin_set_texture(body) — 穿戴已授权的云端材质。
+#       - accounts_littleskin_reset_texture(body) — 清除一项穿戴。
+#       - wardrobe_import_littleskin_texture(body) — 下载云端材质到本地衣柜。
 #       - accounts_littleskin_login_config(body) — 获取 LittleSkin 两种方式的配置可用性。
 #       - accounts_start_littleskin_login(body) — 创建 LittleSkin 登录会话。
 #       - accounts_poll_littleskin_login(body) — 查询无凭据的 LittleSkin 登录进度。
@@ -37,7 +42,7 @@
 #       - accounts_refresh_profile(body) -> dict[str, Any] — 刷新账户信息。
 #       - accounts_texture_urls(body) -> dict[str, Any] — 返回账户完整皮肤与当前披风地址，图片裁切和渲染由前端完成。
 #       - wardrobe_list(body) -> dict[str, Any] — 返回本地衣柜元数据，不包含纹理字节或本地绝对路径。
-#       - wardrobe_sync_account_skin(body) -> dict[str, Any] — 将账户当前穿戴的远程皮肤下载到本地衣柜，重复纹理沿用已有条目。
+#       - wardrobe_sync_account_texture(body) -> dict[str, Any] — 将账户当前穿戴的远程皮肤下载到本地衣柜，重复纹理沿用已有条目。
 #       - wardrobe_import(body) -> dict[str, Any] — 将用户选择的 PNG 复制到启动器衣柜，并返回去重结果。
 #       - wardrobe_update(body) -> dict[str, Any] — 修改衣柜条目的名称或皮肤模型，不转换原始图片。
 #       - wardrobe_delete(body) -> dict[str, Any] — 删除本地收藏；已经上传到外部账户的皮肤不受影响。
@@ -63,13 +68,16 @@ from pytauri_plugins.dialog import DialogExt
 
 from ECL.api.models import (
     AccountTextureRequest,
+    LittleSkinClosetRequest,
     LittleSkinProfileRequest,
     LittleSkinSessionRequest,
     LittleSkinStartRequest,
+    LittleSkinTextureRequest,
     MicrosoftCapeRequest,
     WardrobeApplySkinRequest,
     WardrobeImportRequest,
     WardrobeItemRequest,
+    WardrobeSyncTextureRequest,
     WardrobeUpdateRequest,
 )
 from ECL.services.account.wardrobe import WardrobeError, WardrobeStore
@@ -83,7 +91,7 @@ class AccountHandlers(_FrontendState):
     处理前端发来的账户、微软登录、皮肤和本地衣柜请求。
     """
 
-    skin_download_chunk_bytes = 64 * 1024
+    texture_download_chunk_bytes = 64 * 1024
     safe_filename_max_chars = 80
     skin_dimensions = (64, 64)
 
@@ -255,7 +263,95 @@ class AccountHandlers(_FrontendState):
         request, invalid = _validate_body(LittleSkinStartRequest, body)
         if invalid is not None:
             return invalid
-        return {"success": True, "data": await self.accounts.littleskin.start(request.method)}
+        return {"success": True, "data": await self.accounts.start_littleskin_login(request.method, request.account_id)}
+
+    @_ipc_handler("LITTLESKIN_MANAGEMENT_FAILED", timeout=120)
+    async def accounts_littleskin_management(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        获取当前角色穿戴与管理授权状态，不向前端返回凭据。
+
+        :param body: 本地账户标识
+        :return: 当前角色与授权状态
+        """
+        request, invalid = _validate_body(AccountTextureRequest, body)
+        if invalid is not None:
+            return invalid
+        return {
+            "success": True,
+            "data": await to_thread.run_sync(self.accounts.littleskin_management, request.account_id),
+        }
+
+    @_ipc_handler("LITTLESKIN_CLOSET_FAILED", timeout=120)
+    async def accounts_littleskin_closet(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        读取已授权用户指定类别的云端衣柜分页。
+
+        :param body: 账户、类别和页码
+        :return: 已校验的分页
+        """
+        request, invalid = _validate_body(LittleSkinClosetRequest, body)
+        if invalid is not None:
+            return invalid
+        result = await to_thread.run_sync(
+            self.accounts.littleskin_closet, request.account_id, request.kind, request.page
+        )
+        return {"success": True, "data": result}
+
+    @_ipc_handler("LITTLESKIN_TEXTURE_FAILED", timeout=120)
+    async def accounts_littleskin_set_texture(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        核对当前角色与衣柜后穿戴一项材质，不自动重放写请求。
+
+        :param body: 账户、类别和材质编号
+        :return: 已修改的角色
+        """
+        request, invalid = _validate_body(LittleSkinTextureRequest, body)
+        if invalid is not None:
+            return invalid
+        result = await to_thread.run_sync(
+            self.accounts.littleskin_set_texture, request.account_id, request.kind, request.tid
+        )
+        return {"success": True, "data": result}
+
+    @_ipc_handler("LITTLESKIN_TEXTURE_FAILED", timeout=120)
+    async def accounts_littleskin_reset_texture(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        仅清除用户指定的皮肤或披风，保留另一项穿戴。
+
+        :param body: 账户和类别
+        :return: 已修改的角色
+        """
+        request, invalid = _validate_body(WardrobeSyncTextureRequest, body)
+        if invalid is not None:
+            return invalid
+        result = await to_thread.run_sync(self.accounts.littleskin_set_texture, request.account_id, request.kind, None)
+        return {"success": True, "data": result}
+
+    @_ipc_handler("WARDROBE_IMPORT_FAILED", timeout=120)
+    async def wardrobe_import_littleskin_texture(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        从已核对的云端衣柜下载原始 PNG 并导入本地，凭据不会发送给材质地址。
+
+        :param body: 账户、类别和材质编号
+        :return: 本地条目及去重结果
+        """
+        request, invalid = _validate_body(LittleSkinTextureRequest, body)
+        if invalid is not None:
+            return invalid
+        texture = await to_thread.run_sync(
+            self.accounts.authlib_manager.manage_littleskin,
+            request.account_id,
+            lambda client, credentials, profile_id: client.closet_texture(credentials, request.kind, request.tid),
+        )
+        contents = await to_thread.run_sync(self._download_account_texture, texture.url)
+        item, deduplicated = await to_thread.run_sync(
+            self.wardrobe.import_bytes,
+            contents,
+            request.kind,
+            texture.name,
+            ("slim" if texture.type == "alex" else "classic") if request.kind == "skin" else None,
+        )
+        return {"success": True, "data": {"item": item, "deduplicated": deduplicated}}
 
     @_ipc_handler("LITTLESKIN_LOGIN_FAILED")
     async def accounts_poll_littleskin_login(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -427,14 +523,14 @@ class AccountHandlers(_FrontendState):
         return {"success": True, "data": self.wardrobe.list_items()}
 
     @_ipc_handler("WARDROBE_SYNC_FAILED")
-    async def wardrobe_sync_account_skin(self, body: dict[str, Any]) -> dict[str, Any]:
+    async def wardrobe_sync_account_texture(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        将账户当前穿戴的远程皮肤下载到本地衣柜，重复纹理沿用已有条目。
+        将账户指定种类的当前材质下载到本地衣柜，重复纹理沿用已有条目。
 
         :param body: 包含账户稳定标识的 IPC 请求数据
         :return: 本地衣柜条目与哈希去重标记
         """
-        request, invalid = _validate_body(AccountTextureRequest, body)
+        request, invalid = _validate_body(WardrobeSyncTextureRequest, body)
         if invalid is not None:
             return invalid
         account_data = await to_thread.run_sync(self.accounts.list_accounts)
@@ -443,36 +539,49 @@ class AccountHandlers(_FrontendState):
             None,
         )
         if account is None or account.get("type") == "offline":
-            raise WardrobeError("该账户没有可同步的在线皮肤", "WARDROBE_SKIN_UNAVAILABLE")
+            raise WardrobeError("该账户没有可下载的此类材质", "WARDROBE_TEXTURE_UNAVAILABLE")
         textures = await to_thread.run_sync(self.accounts.texture_urls, request.account_id)
-        skin_url = _normalize_image_url(textures.get("skinUrl"))
+        skin_url = _normalize_image_url(textures.get("skinUrl" if request.kind == "skin" else "capeUrl"))
         if skin_url is None:
-            raise WardrobeError("该账户没有可同步的在线皮肤", "WARDROBE_SKIN_UNAVAILABLE")
-        texture = await to_thread.run_sync(self._download_account_skin, skin_url)
+            raise WardrobeError("该账户没有可下载的此类材质", "WARDROBE_TEXTURE_UNAVAILABLE")
+        if account.get("auth_provider") == "littleskin":
+            parsed = urlsplit(skin_url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or parsed.netloc != "littleskin.cn"
+                or re.fullmatch(r"/textures/[0-9a-f]{64}", parsed.path) is None
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise WardrobeError("LittleSkin 材质来源无效", "WARDROBE_TEXTURE_SOURCE_REJECTED")
+            skin_url = f"https://littleskin.cn{parsed.path}"
+        texture = await to_thread.run_sync(self._download_account_texture, skin_url)
         item, deduplicated = await to_thread.run_sync(
             self.wardrobe.import_bytes,
             texture,
-            "skin",
-            f"{account.get('alias') or 'Minecraft'} 当前皮肤",
-            textures.get("skinModel") or "classic",
+            request.kind,
+            f"{account.get('alias') or 'Minecraft'} 当前{'皮肤' if request.kind == 'skin' else '披风'}",
+            (textures.get("skinModel") or "classic") if request.kind == "skin" else None,
         )
         self.logger.info(
-            "账户当前皮肤已同步到衣柜：账户标识：%s；纹理标识：%s；已去重：%s",
+            "账户当前材质已同步到衣柜：账户标识：%s；纹理标识：%s；已去重：%s",
             request.account_id,
             item["id"],
             ("是" if deduplicated else "否"),
         )
         return {"success": True, "data": {"item": item, "deduplicated": deduplicated}}
 
-    def _download_account_skin(self, url: str) -> bytes:
-        # 使用应用共享客户端流式下载账户皮肤，在写入衣柜前限制响应大小。
+    def _download_account_texture(self, url: str) -> bytes:
+        # 使用应用共享客户端流式下载账户材质，在写入衣柜前限制响应大小。
         data = bytearray()
-        with self.http.stream("GET", url) as response:
+        with self.http.stream("GET", url, follow_redirects=False) as response:
+            if response.is_redirect:
+                raise WardrobeError("材质下载返回了未允许的重定向", "WARDROBE_REDIRECT_REJECTED")
             response.raise_for_status()
-            for chunk in response.iter_bytes(self.skin_download_chunk_bytes):
+            for chunk in response.iter_bytes(self.texture_download_chunk_bytes):
                 data.extend(chunk)
                 if len(data) > WardrobeStore.max_texture_bytes:
-                    raise WardrobeError("账户皮肤超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
+                    raise WardrobeError("账户材质超过 5 MiB", "WARDROBE_FILE_TOO_LARGE")
         return bytes(data)
 
     @_ipc_handler("WARDROBE_IMPORT_FAILED")
@@ -564,7 +673,7 @@ class AccountHandlers(_FrontendState):
             lambda: DialogExt.file(self._webview).blocking_save_file(
                 add_filter=("PNG 图片", ["png"]),
                 set_file_name=f"{safe_name}.png",
-                set_title="另存为皮肤",
+                set_title="另存为皮肤" if item["kind"] == "skin" else "另存为披风",
             )
         )
         if not picked:

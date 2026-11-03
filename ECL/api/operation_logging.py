@@ -205,6 +205,11 @@ class IpcLogPolicy:
             "accounts_select_authlib_profile": IpcLogSpec("选择外置账户角色", "action"),
             "accounts_microsoft_login_config": IpcLogSpec("获取微软登录配置", "query"),
             "accounts_littleskin_login_config": IpcLogSpec("读取 LittleSkin 登录配置", "query"),
+            "accounts_littleskin_management": IpcLogSpec("读取 LittleSkin 账户管理", "query"),
+            "accounts_littleskin_closet": IpcLogSpec("读取 LittleSkin 云端衣柜", "query"),
+            "accounts_littleskin_set_texture": IpcLogSpec("更换 LittleSkin 材质", "action", result_owner="service"),
+            "accounts_littleskin_reset_texture": IpcLogSpec("清除 LittleSkin 材质", "action", result_owner="service"),
+            "wardrobe_import_littleskin_texture": IpcLogSpec("下载 LittleSkin 云端材质", "action"),
             "accounts_start_littleskin_login": IpcLogSpec("提交 LittleSkin 登录", "action", result_owner="service"),
             "accounts_poll_littleskin_login": IpcLogSpec("查询 LittleSkin 登录状态", "poll"),
             "accounts_select_littleskin_profile": IpcLogSpec("选择 LittleSkin 角色", "action", result_owner="service"),
@@ -223,8 +228,8 @@ class IpcLogPolicy:
             "accounts_texture_urls": IpcLogSpec("读取账户材质地址", "query"),
             "wardrobe_list": IpcLogSpec("读取衣柜列表", "query"),
             "wardrobe_import": IpcLogSpec("导入衣柜纹理", "action"),
-            "wardrobe_sync_account_skin": IpcLogSpec(
-                "同步账户皮肤到衣柜", "action", timed=True, result_owner="service"
+            "wardrobe_sync_account_texture": IpcLogSpec(
+                "同步账户材质到衣柜", "action", timed=True, result_owner="service"
             ),
             "wardrobe_update": IpcLogSpec("修改衣柜条目", "action"),
             "wardrobe_delete": IpcLogSpec("删除衣柜条目", "action"),

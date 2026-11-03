@@ -323,6 +323,11 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
 
     assert set(schemas) == {
         "accounts_littleskin_login_config",
+        "accounts_littleskin_management",
+        "accounts_littleskin_closet",
+        "accounts_littleskin_set_texture",
+        "accounts_littleskin_reset_texture",
+        "wardrobe_import_littleskin_texture",
         "accounts_start_littleskin_login",
         "accounts_poll_littleskin_login",
         "accounts_select_littleskin_profile",
@@ -387,7 +392,7 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "game_crash_output",
         "game_crash_export",
         "wardrobe_import",
-        "wardrobe_sync_account_skin",
+        "wardrobe_sync_account_texture",
         "wardrobe_update",
         "wardrobe_delete",
         "wardrobe_texture",

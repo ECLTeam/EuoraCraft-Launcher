@@ -114,6 +114,9 @@
 #   - class WardrobeUpdateRequest
 #   - class WardrobeApplySkinRequest
 #   - class AccountTextureRequest
+#   - class LittleSkinClosetRequest — 校验云端衣柜分页。
+#   - class LittleSkinTextureRequest — 校验云端材质选择。
+#   - class WardrobeSyncTextureRequest — 校验下载的材质种类。
 #   - class LittleSkinStartRequest — 校验 LittleSkin 登录方式。
 #   - class LittleSkinSessionRequest — 校验 LittleSkin 会话标识。
 #   - class LittleSkinProfileRequest — 校验 LittleSkin 角色选择。
@@ -908,6 +911,38 @@ class LittleSkinStartRequest(RequestModel):
     """
 
     method: Literal["device_code", "authorization_code"]
+    purpose: Literal["login", "management"] = "login"
+    account_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def _target_matches_purpose(self) -> LittleSkinStartRequest:
+        if (self.purpose == "management") != (self.account_id is not None):
+            raise ValueError("管理授权必须指定账户，普通登录不能指定目标账户")
+        return self
+
+
+class WardrobeSyncTextureRequest(AccountTextureRequest):
+    """
+    显式选择下载的账户材质，避免默认覆盖另一类别。
+    """
+
+    kind: Literal["skin", "cape"]
+
+
+class LittleSkinClosetRequest(WardrobeSyncTextureRequest):
+    """
+    限制云端衣柜类别与分页参数。
+    """
+
+    page: int = Field(default=1, ge=1, le=100000, strict=True)
+
+
+class LittleSkinTextureRequest(WardrobeSyncTextureRequest):
+    """
+    校验外部材质编号，实际衣柜归属由后端核对。
+    """
+
+    tid: int = Field(gt=0, strict=True)
 
 
 class LittleSkinSessionRequest(RequestModel):
@@ -1090,6 +1125,11 @@ class RequestModelRegistry:
 
     models: dict[str, type[BaseModel]] = {
         "accounts_littleskin_login_config": RequestModel,
+        "accounts_littleskin_management": AccountTextureRequest,
+        "accounts_littleskin_closet": LittleSkinClosetRequest,
+        "accounts_littleskin_set_texture": LittleSkinTextureRequest,
+        "accounts_littleskin_reset_texture": WardrobeSyncTextureRequest,
+        "wardrobe_import_littleskin_texture": LittleSkinTextureRequest,
         "accounts_start_littleskin_login": LittleSkinStartRequest,
         "accounts_poll_littleskin_login": LittleSkinSessionRequest,
         "accounts_select_littleskin_profile": LittleSkinProfileRequest,
@@ -1154,7 +1194,7 @@ class RequestModelRegistry:
         "game_crash_output": CrashReportRequest,
         "game_crash_export": CrashExportRequest,
         "wardrobe_import": WardrobeImportRequest,
-        "wardrobe_sync_account_skin": AccountTextureRequest,
+        "wardrobe_sync_account_texture": WardrobeSyncTextureRequest,
         "wardrobe_update": WardrobeUpdateRequest,
         "wardrobe_delete": WardrobeItemRequest,
         "wardrobe_texture": WardrobeItemRequest,
@@ -1232,9 +1272,11 @@ __all__ = [
     "JavaScanRequest",
     "KickRequest",
     "LaunchRequest",
+    "LittleSkinClosetRequest",
     "LittleSkinProfileRequest",
     "LittleSkinSessionRequest",
     "LittleSkinStartRequest",
+    "LittleSkinTextureRequest",
     "LoaderCatalogRequest",
     "MicrosoftCapeRequest",
     "OnlineResourceSearchRequest",
@@ -1250,6 +1292,7 @@ __all__ = [
     "WardrobeImportRequest",
     "WardrobeItemRequest",
     "WardrobeKind",
+    "WardrobeSyncTextureRequest",
     "WardrobeUpdateRequest",
     "WindowBoundsRequest",
     "WindowLabelRequest",

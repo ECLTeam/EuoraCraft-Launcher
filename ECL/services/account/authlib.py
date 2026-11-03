@@ -33,7 +33,7 @@ from copy import deepcopy
 from pathlib import Path
 from threading import RLock
 from time import time
-from typing import NotRequired, TypedDict
+from typing import NotRequired, TypedDict, TypeVar
 from uuid import uuid4
 
 import httpx
@@ -48,6 +48,9 @@ class _AuthlibToken(TypedDict):
     AccessToken: str
     ClientToken: str
     OAuth: NotRequired[dict[str, object]]
+
+
+management_result = TypeVar("management_result")
 
 
 class AuthlibInjector:
@@ -362,6 +365,8 @@ class AuthlibAccountManager:
         credentials: LittleSkinCredentials,
         result: LittleSkinMinecraftToken,
         on_saved: Callable[[str], None],
+        *,
+        target_account_id: str | None = None,
     ) -> tuple[str, dict]:
         """
         保存完整的 LittleSkin 凭据，再提交聚合账户选择，失败时恢复原文件。
@@ -371,6 +376,7 @@ class AuthlibAccountManager:
         :param credentials: 已授权的 OAuth 凭据
         :param result: 已核对角色的游戏令牌
         :param on_saved: 由聚合服务提供的当前账户原子保存函数；失败须抛出异常
+        :param target_account_id: 补充授权时必须原位更新的现有账户
         :return: 沿用或新增的稳定账户标识及无凭据元数据
         """
         with self._oauth_lock, self._lock:
@@ -385,7 +391,17 @@ class AuthlibAccountManager:
                 ),
                 uuid4().hex,
             )
+            if target_account_id is not None:
+                target = self.accounts.get(target_account_id)
+                if (
+                    target is None
+                    or target.get("AuthProvider") != "littleskin"
+                    or str(target["Profiles"]["selectedProfile"]["id"]).lower() != profile.id.lower()
+                ):
+                    raise AccountError("授权账户与当前角色不匹配", "LITTLESKIN_ACCOUNT_MISMATCH")
+                account_id = target_account_id
             account = {
+                **self.accounts.get(account_id, {}),
                 "AccountId": account_id,
                 "YggdrasilAPI": LittleSkinClient.server_url,
                 "Profiles": {"selectedProfile": profile.model_dump()},
@@ -430,7 +446,23 @@ class AuthlibAccountManager:
         if self.littleskin_client is None:
             raise AccountError("LittleSkin 登录配置缺失", "LITTLESKIN_CONFIG_REQUIRED")
         with self._lock:
+            account, _stored = self._read_account_token(account_id)
+        credentials = self._littleskin_credentials(account_id)
+        profile_id = account["Profiles"]["selectedProfile"]["id"]
+        result = self.littleskin_client.minecraft_token(credentials, profile_id)
+        _, refreshed = self.store_littleskin(credentials, result, lambda saved_id: None)
+        return refreshed
+
+    def _littleskin_credentials(self, account_id: str) -> LittleSkinCredentials:
+        """
+        在 OAuth 互斥锁内复用刷新结果并先保存旋转凭据，不为管理读取兑换游戏令牌。
+        """
+        if self.littleskin_client is None:
+            raise AccountError("LittleSkin 登录配置缺失", "LITTLESKIN_CONFIG_REQUIRED")
+        with self._lock:
             account, stored = self._read_account_token(account_id)
+            if account.get("AuthProvider") != "littleskin" or "OAuth" not in stored:
+                raise AccountError("该账户不支持 LittleSkin 管理", "LITTLESKIN_ACCOUNT_REQUIRED")
             token = deepcopy(stored)
         credentials = self._pending_oauth.get(account_id) or LittleSkinCredentials.model_validate(token["OAuth"])
         if credentials.client_id != self.littleskin_client.client_id:
@@ -444,10 +476,37 @@ class AuthlibAccountManager:
             with self._lock:
                 self.tokens[account_id] = deepcopy(token)
             self._pending_oauth.pop(account_id, None)
-        profile_id = account["Profiles"]["selectedProfile"]["id"]
-        result = self.littleskin_client.minecraft_token(credentials, profile_id)
-        _, refreshed = self.store_littleskin(credentials, result, lambda saved_id: None)
-        return refreshed
+        return credentials
+
+    def littleskin_profile_id(self, account_id: str) -> str:
+        """
+        读取现有 OAuth 账户绑定的角色，不能通过认证服务器地址冒充来源。
+
+        :param account_id: 本地账户标识
+        :return: 已绑定游戏 UUID
+        """
+        with self._lock:
+            account = self.accounts.get(account_id)
+            if account is None or account.get("AuthProvider") != "littleskin":
+                raise AccountError("该账户不支持 LittleSkin 管理", "LITTLESKIN_ACCOUNT_REQUIRED")
+            return account["Profiles"]["selectedProfile"]["id"]
+
+    def manage_littleskin(
+        self,
+        account_id: str,
+        operation: Callable[[LittleSkinClient, LittleSkinCredentials, str], management_result],
+    ) -> management_result:
+        """
+        在共享凭据互斥边界内执行管理请求，防止刷新、删除和授权替换互相覆盖。
+
+        :param account_id: 目标本地账户
+        :param operation: 账户领域定义的同步管理操作，不向 IPC 交付凭据
+        :return: 操作的无凭据业务结果
+        """
+        with self._oauth_lock:
+            profile_id = self.littleskin_profile_id(account_id)
+            credentials = self._littleskin_credentials(account_id)
+            return operation(self.littleskin_client, credentials, profile_id)
 
     def list_accounts(self) -> dict[str, dict]:
         """

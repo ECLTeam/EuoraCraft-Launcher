@@ -2,7 +2,7 @@
 
 日期：2026-11-03。
 
-状态：用户已选择第一阶段范围；本文待审阅确认，尚未批准功能实施。本轮只提交方案文档。
+状态：用户已审阅并明确批准“开始实施”；第一阶段本地实现及模拟提供方验收完成，官方完整授权和真实账户写操作仍待应用准入及测试目标。验证记录见第 11 节。
 
 ## 1. 已确认需求与取舍
 
@@ -166,3 +166,29 @@
 - [上游 OAuth 路由](https://github.com/bs-community/blessing-skin-server/blob/dev/routes/api.php)、[网站路由](https://github.com/bs-community/blessing-skin-server/blob/dev/routes/web.php)：OAuth 管理路由与网站上传路由的区分，不据此假定 LittleSkin OAuth 支持文件上传。
 
 本文以用户最新“上传先做 todo”为范围依据，取代本轮此前关于上传跳转按钮的设想；不修改已经完成的双 OAuth 登录交付记录。
+
+## 11. 实施与验证记录
+
+- 已实现角色 UUID 与 PID 绑定、云端衣柜分页、单项穿戴/清除、管理用途的补充授权。普通登录权限不扩大；管理授权绑定现有角色，原位替换凭据，不改变当前账户与本地偏好。
+- 管理请求复用现有 OAuth 凭据锁、令牌刷新与旋转写盘机制；列表读取不兑换游戏令牌。明确区分权限、令牌失效、限流、服务异常及写入结果未确认。
+- 原 `wardrobe_sync_account_skin` 已由显式指定类别的 `wardrobe_sync_account_texture` 替代，生产方、消费方、模型、Showcase、日志和测试同步更新，未保留旧命令别名。当前材质和云端材质均可导入本地，披风支持原生导出。
+- 现有衣柜增加 LittleSkin 云端来源、管理入口、预览、穿戴、清除、下载、分页和重新授权；新文案同步六语言。上传仅保留 TODO。
+- 云端材质归属核对最多 20 页、每页 100 项，并设 20 秒预算，避免为一个 TID 无限扫描；达到限制明确失败，不伪装为材质不存在。实际单次网络超时仍受原客户端限制。
+
+### 静态与自动化
+
+- `ruff check ECL tests`、`ruff format --check ECL tests` 通过；受 Git 管理的主仓库 Python 源码及新增测试的 Ruff 检查通过。
+- 按规范执行的 `ruff check . --output-format github` 扫到了原有及本轮未跟踪的 `output/` 验收脚本并失败；没有修改忽略规则或清理无关产物。报告：`output/littleskin-management-ruff-all.log`。该目录扫描失败与源码检查通过分别记录。
+- 后端全量使用仅对测试子进程生效的隔离 `USERPROFILE`，结果 **2880 passed、59 skipped**。报告：`output/littleskin-management-pytest.log`。后续补齐管理目标删除时的凭据清理和错误保留，并重跑登录、管理及直接下载调用方，最终 **66 passed**；报告：`output/littleskin-management-final-targeted.log`。未重复运行已通过的无关全量用例。
+- 前端全量 `pnpm check --maxWorkers=1` 通过，含格式、ESLint、设计检查、类型与 Vitest：**211 个测试文件通过，1349 passed、1 todo**。报告：`output/littleskin-management-frontend-check.log`。单 worker 仅限制资源，未缩小检查范围。
+- 后续完善 Showcase 的补充授权及穿戴模拟，仅重跑该文件格式、ESLint 和其 **18 项测试**；收尾补齐全屏衣柜隐藏时卸载云端面板的生命周期回归，衣柜、云端及登录的 **18 项定向测试通过**。最终 `pnpm build` 通过，包含再次类型检查，保留现有大分块提示。报告：`output/littleskin-management-build.log`。
+
+### 真实窗口与外部服务边界
+
+- Windows 实际启动器/WebView IPC 联调通过。使用隔离用户、数据目录和模拟 HTTP 提供方，真实执行本机授权代码回调、权限不足识别、管理授权、账户 ID/收藏/当前选择保留、皮肤/披风独立写入、当前及云端 PNG 下载、哈希去重。
+- 真实原生“另存为披风”对话框验证了取消后不写文件，以及保存 PNG 到本轮隔离产物目录；没有覆盖维护者文件。
+- 同一真实窗口检查 Classic/Folia × 亮暗 × 960×600、1200×800、1600×1000，共 12 组，覆盖透明度与模糊代表设置。云端选择和披风页面截图已查看，操作区可达；三维预览使用合成的测试 PNG。
+- 最终原始报告与截图：`output/playwright/littleskin-management/native/2da21d9f/result.json` 及同目录。额外通过实际界面进入管理授权并关闭全屏衣柜，确认回调端口可以重新绑定，再完成后续授权。模拟仅替换 HTTP 提供方，窗口、IPC、TCP 回调、文件写入和保存对话框为实际执行。首轮模拟遗漏图片异步 HTTP 通道导致预览失败，补齐验收夹具后通过，未用真实用户凭据补齐模拟。
+- 官方公共材质元数据及 `https://littleskin.cn/textures/{hash}` PNG 地址已通过只读请求核实；未使用维护者私有令牌读取云端收藏，未执行官方完整管理授权、真实角色穿戴/清除或游戏启动。`MinecraftToken.Create` 准入与指定测试角色仍是官方验收前提。
+- 未执行 Linux/macOS 原生验收；本轮未修改平台专属回调实现。现有 TCP 回调及既有平台分支用例随全量回归执行。
+- 未新增依赖、上传实现或云端收藏写操作，未修改 Core 子模块、推送、发布或发送邮件；无关删除和 `output/` 产物保留。

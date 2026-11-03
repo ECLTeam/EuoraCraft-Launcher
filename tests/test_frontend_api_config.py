@@ -264,6 +264,8 @@ class FakeWardrobe:
 
 
 class FakeHttpResponse:
+    is_redirect = False
+
     def __enter__(self):
         return self
 
@@ -278,7 +280,8 @@ class FakeHttpResponse:
 
 
 class FakeHttp:
-    def stream(self, method, url):
+    def stream(self, method, url, *, follow_redirects):
+        assert follow_redirects is False
         assert method == "GET"
         assert url == "https://textures.example.com/skin.png"
         return FakeHttpResponse()
@@ -1968,7 +1971,7 @@ def test_wardrobe_list_delegates_to_registered_store(tmp_path) -> None:
 def test_wardrobe_sync_downloads_current_account_skin_into_store(tmp_path) -> None:
     api = _build_api(tmp_path)
 
-    result = asyncio.run(api.wardrobe_sync_account_skin({"account_id": "microsoft-account"}))
+    result = asyncio.run(api.wardrobe_sync_account_texture({"account_id": "microsoft-account", "kind": "skin"}))
 
     assert result["success"] is True
     assert result["data"]["item"]["id"] == "synced-skin"

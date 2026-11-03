@@ -14,6 +14,9 @@
 #   - class LittleSkinCallback — 管理一次授权代码登录的回环监听器。
 #   - class LittleSkinLogin — 管理登录任务、角色选择、取消和账户提交。
 #   - class LittleSkinLoginSnapshot — 不含设备代码或令牌的登录进度。
+#   - class LittleSkinPlayer — 角色管理接口的角色与当前材质。
+#   - class LittleSkinClosetPage — 已校验的云端衣柜分页。
+#   - class LittleSkinTexture — 可预览和下载的云端材质。
 # ============================================================
 
 from __future__ import annotations
@@ -59,6 +62,49 @@ class LittleSkinCredentials(BaseModel):
     expires_at: float = Field(gt=0)
     client_id: str = Field(min_length=1)
     method: Literal["device_code", "authorization_code"]
+
+
+class LittleSkinPlayer(BaseModel):
+    """
+    区分角色管理 PID 与游戏 UUID，保存当前穿戴的材质编号。
+    """
+
+    model_config = ConfigDict(strict=True)
+    pid: int = Field(gt=0)
+    name: str = Field(min_length=1, max_length=256)
+    tid_skin: int = Field(ge=0)
+    tid_cape: int = Field(ge=0)
+
+
+class LittleSkinTexture(BaseModel):
+    """
+    校验云端衣柜中的材质，不信任提供方返回的任意下载地址。
+    """
+
+    model_config = ConfigDict(strict=True)
+    tid: int = Field(gt=0)
+    name: str = Field(min_length=1, max_length=256)
+    type: Literal["steve", "alex", "cape"]
+    hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @property
+    def url(self) -> str:
+        """
+        根据已校验的哈希构造官方原图地址。
+        """
+        return f"https://littleskin.cn/textures/{self.hash}"
+
+
+class LittleSkinClosetPage(BaseModel):
+    """
+    校验分页边界与材质列表，忽略外部提供的下一页地址。
+    """
+
+    model_config = ConfigDict(strict=True)
+    current_page: int = Field(gt=0)
+    last_page: int = Field(gt=0, le=100000)
+    total: int = Field(ge=0)
+    data: list[LittleSkinTexture] = Field(max_length=100)
 
 
 class LittleSkinMinecraftToken(BaseModel):
@@ -135,6 +181,7 @@ class LittleSkinClient:
 
     authorization_scopes: str = "Yggdrasil.PlayerProfiles.Read Yggdrasil.MinecraftToken.Create"
     device_scopes: str = authorization_scopes + " offline_access"
+    management_scopes: str = "Player.ReadWrite Closet.ReadWrite"
     server_url: str = "https://littleskin.cn/api/yggdrasil"
 
     def __init__(self, client_id: str, client_secret: str = "", http: httpx.Client | None = None) -> None:
@@ -155,7 +202,8 @@ class LittleSkinClient:
         url: str,
         *,
         data: dict[str, str] | None = None,
-        json: dict[str, str] | None = None,
+        json: dict[str, object] | None = None,
+        params: dict[str, str | int] | None = None,
         headers: dict[str, str] | None = None,
     ) -> object:
         """
@@ -172,11 +220,13 @@ class LittleSkinClient:
                     url,
                     data=data,
                     json=json,
+                    params=params,
                     headers={"Accept": "application/json", **(headers or {})},
                     follow_redirects=False,
                 )
         except httpx.HTTPError as exc:
             raise AccountError("连接 LittleSkin 失败，请检查网络后重试", "LITTLESKIN_NETWORK_FAILED") from exc
+        self._check_status(response.status_code)
         try:
             if len(response.content) > 1024 * 1024:
                 raise ValueError("响应过大")
@@ -198,22 +248,41 @@ class LittleSkinClient:
             }:
                 error = "server_error"
             raise _OAuthError(error)
+        if isinstance(result, dict) and result.get("code") == 403:
+            raise AccountError("LittleSkin 账户管理需要补充授权", "LITTLESKIN_PERMISSION_REQUIRED")
         if not response.is_success or (isinstance(result, dict) and result.get("code", 0) not in (0, None)):
             raise AccountError("LittleSkin 拒绝了请求，请检查授权权限", "LITTLESKIN_REQUEST_REJECTED")
         return result
 
-    def request_device_code(self) -> _DeviceCode:
+    def _check_status(self, status_code: int) -> None:
+        """
+        在解析响应正文前区分授权、限流和服务异常，防止 HTML 错误页掩盖业务原因。
+        """
+        if status_code == 401:
+            raise AccountError("LittleSkin 授权已失效，请重新授权", "LITTLESKIN_AUTH_REQUIRED")
+        if status_code == 403:
+            raise AccountError("LittleSkin 账户管理需要补充授权", "LITTLESKIN_PERMISSION_REQUIRED")
+        if status_code == 429:
+            raise AccountError("LittleSkin 请求过于频繁，请稍后重试", "LITTLESKIN_RATE_LIMITED")
+        if status_code >= 500:
+            raise AccountError("LittleSkin 服务暂时不可用，请稍后重试", "LITTLESKIN_SERVER_FAILED")
+
+    def request_device_code(self, *, management: bool = False) -> _DeviceCode:
         """
         请求设备代码对，结果只用于当前登录会话。
 
         :return: 经过类型和官方授权地址校验的设备代码对
+        :param management: 是否额外请求账户管理权限
         """
         try:
             return _DeviceCode.model_validate(
                 self._request(
                     "POST",
                     "https://open.littleskin.cn/oauth/device_code",
-                    data={"client_id": self.client_id, "scope": self.device_scopes},
+                    data={
+                        "client_id": self.client_id,
+                        "scope": self.device_scopes + (" " + self.management_scopes if management else ""),
+                    },
                 )
             )
         except ValidationError as exc:
@@ -266,6 +335,123 @@ class LittleSkinClient:
             return profiles
         except (ValidationError, ValueError) as exc:
             raise AccountError("LittleSkin 角色列表无效", "LITTLESKIN_INVALID_RESPONSE") from exc
+
+    def player(self, credentials: LittleSkinCredentials, profile_id: str) -> LittleSkinPlayer:
+        """
+        将授权角色 UUID 绑定到同一用户角色管理列表中的唯一 PID。
+
+        :param credentials: 同时有角色档案及管理读取权限的凭据
+        :param profile_id: 本地账户绑定的游戏 UUID
+        :return: 唯一匹配的角色；歧义或不属于该授权时明确失败
+        """
+        profiles = [profile for profile in self.profiles(credentials) if profile.id.lower() == profile_id.lower()]
+        if len(profiles) != 1:
+            raise AccountError("授权账户与当前角色不匹配", "LITTLESKIN_ACCOUNT_MISMATCH")
+        try:
+            players = TypeAdapter(list[LittleSkinPlayer]).validate_python(
+                self._request("GET", "https://littleskin.cn/api/players", headers=self._authorization(credentials))
+            )
+            matched = [player for player in players if player.name == profiles[0].name]
+            if len(matched) != 1 or len({player.pid for player in players}) != len(players):
+                raise ValueError("角色无法唯一绑定")
+            return matched[0]
+        except (ValidationError, ValueError) as exc:
+            raise AccountError("LittleSkin 角色信息无法匹配，请刷新账户", "LITTLESKIN_INVALID_RESPONSE") from exc
+
+    def _authorization(self, credentials: LittleSkinCredentials) -> dict[str, str]:
+        return {"Authorization": f"Bearer {credentials.access_token}"}
+
+    def closet(
+        self, credentials: LittleSkinCredentials, kind: Literal["skin", "cape"], page: int, *, per_page: int = 24
+    ) -> LittleSkinClosetPage:
+        """
+        读取指定类别的云端衣柜分页，只接受官方材质类型和哈希。
+
+        :param credentials: 用户授权凭据
+        :param kind: 皮肤或披风
+        :param page: 正整数页码
+        :param per_page: 每页数量，由服务端调用方固定
+        :return: 已验证且类别一致的分页
+        """
+        try:
+            result = LittleSkinClosetPage.model_validate(
+                self._request(
+                    "GET",
+                    "https://littleskin.cn/api/closet",
+                    headers=self._authorization(credentials),
+                    params={"category": kind, "page": page, "perPage": per_page},
+                )
+            )
+            if result.current_page != page or any((item.type == "cape") != (kind == "cape") for item in result.data):
+                raise ValueError("衣柜分页或类别无效")
+            if len({item.tid for item in result.data}) != len(result.data):
+                raise ValueError("重复材质")
+            return result
+        except (ValidationError, ValueError) as exc:
+            raise AccountError("LittleSkin 云端衣柜响应无效", "LITTLESKIN_INVALID_RESPONSE") from exc
+
+    def closet_texture(
+        self, credentials: LittleSkinCredentials, kind: Literal["skin", "cape"], tid: int
+    ) -> LittleSkinTexture:
+        """
+        在当前用户云端衣柜中重新核对材质，最多读取二十页。
+
+        :param credentials: 用户授权凭据
+        :param kind: 目标类别
+        :param tid: 不可信的请求材质编号
+        :return: 衣柜中存在的同类别材质
+        """
+        deadline = monotonic() + 20
+        for page in range(1, 21):
+            if monotonic() >= deadline:
+                break
+            result = self.closet(credentials, kind, page, per_page=100)
+            for item in result.data:
+                if item.tid == tid:
+                    return item
+            if page >= result.last_page:
+                raise AccountError("材质已不在当前账户云端衣柜中", "LITTLESKIN_TEXTURE_UNAVAILABLE")
+        raise AccountError("云端衣柜过大，无法在限定请求内核对材质", "LITTLESKIN_CLOSET_LIMIT")
+
+    def set_texture(
+        self, credentials: LittleSkinCredentials, profile_id: str, kind: Literal["skin", "cape"], tid: int | None
+    ) -> LittleSkinPlayer:
+        """
+        核对角色与衣柜归属后，仅修改指定的一项材质，不自动重放写请求。
+
+        :param credentials: 当前授权凭据
+        :param profile_id: 本地绑定 UUID
+        :param kind: 要变更的材质类别
+        :param tid: 衣柜材质编号；空值表示清除
+        :return: 提供方确认修改后的角色状态
+        """
+        if tid is not None:
+            self.closet_texture(credentials, kind, tid)
+        player = self.player(credentials, profile_id)
+        try:
+            response = self._request(
+                "DELETE" if tid is None else "PUT",
+                f"https://littleskin.cn/api/players/{player.pid}/textures",
+                headers=self._authorization(credentials),
+                json={"type": [kind]} if tid is None else {kind: tid},
+            )
+        except AccountError as exc:
+            if exc.error_code in {
+                "LITTLESKIN_NETWORK_FAILED",
+                "LITTLESKIN_SERVER_FAILED",
+                "LITTLESKIN_INVALID_RESPONSE",
+            }:
+                raise AccountError("修改结果尚未确认，请刷新后核对当前穿戴", "LITTLESKIN_WRITE_UNCONFIRMED") from exc
+            raise
+        try:
+            if not isinstance(response, dict):
+                raise ValueError("无效响应")
+            updated = LittleSkinPlayer.model_validate(response.get("data"))
+            if updated.pid != player.pid or getattr(updated, f"tid_{kind}") != (tid or 0):
+                raise ValueError("修改结果不匹配")
+            return updated
+        except (ValueError, ValidationError) as exc:
+            raise AccountError("修改结果尚未确认，请刷新后核对当前穿戴", "LITTLESKIN_WRITE_UNCONFIRMED") from exc
 
     def minecraft_token(self, credentials: LittleSkinCredentials, profile_id: str) -> LittleSkinMinecraftToken:
         """
@@ -438,6 +624,7 @@ class LittleSkinLoginSnapshot(TypedDict):
     """
 
     session_id: str
+    account_id: str | None
     status: Literal["starting", "pending", "selecting", "ready", "saving", "completed", "error", "cancelled"]
     method: Literal["device_code", "authorization_code"]
     user_code: str
@@ -464,6 +651,8 @@ class _LoginSession:
     cancellation: asyncio.Task | None = None
     callback: LittleSkinCallback | None = None
     error_code: str = ""
+    target_account_id: str | None = None
+    target_profile_id: str | None = None
 
 
 class LittleSkinLogin:
@@ -482,11 +671,14 @@ class LittleSkinLogin:
         redirect_uri: str,
         commit: Callable[[LittleSkinCredentials, LittleSkinMinecraftToken], dict[str, object]],
         emit: Callable[[LittleSkinLoginSnapshot], None],
+        management_commit: Callable[[str, LittleSkinCredentials, LittleSkinMinecraftToken], dict[str, object]]
+        | None = None,
     ) -> None:
         self.client = client
         self.redirect_uri = redirect_uri
         self._commit = commit
         self._emit = emit
+        self._management_commit = management_commit
         self._session: _LoginSession | None = None
         self._completion: asyncio.Task[dict[str, object]] | None = None
         self.logger = get_logger("LittleSkinLogin")
@@ -513,6 +705,7 @@ class LittleSkinLogin:
         session = self._require(session_id)
         return {
             "session_id": session.session_id,
+            "account_id": session.target_account_id,
             "status": session.status,
             "method": session.method,
             "user_code": session.user_code,
@@ -548,12 +741,20 @@ class LittleSkinLogin:
                 await task
             raise
 
-    async def start(self, method: Literal["device_code", "authorization_code"]) -> LittleSkinLoginSnapshot:
+    async def start(
+        self,
+        method: Literal["device_code", "authorization_code"],
+        *,
+        target_account_id: str | None = None,
+        target_profile_id: str | None = None,
+    ) -> LittleSkinLoginSnapshot:
         """
         创建有唯一身份的登录任务，重复启动在当前任务结束前明确拒绝。
 
         :param method: 用户选择的 OAuth 授权方式
         :return: 初始会话快照，后续通过事件和轮询更新
+        :param target_account_id: 管理授权要替换凭据的现有账户
+        :param target_profile_id: 该账户当前绑定 UUID，不能由前端指定
         """
         if not self.config()[method]:
             raise AccountError("LittleSkin 登录配置不完整", "LITTLESKIN_CONFIG_REQUIRED")
@@ -562,6 +763,8 @@ class LittleSkinLogin:
         if self._session and self._session.task and not self._session.task.done():
             raise AccountError("LittleSkin 登录正在结束，请稍后重试", "LITTLESKIN_LOGIN_BUSY")
         session = _LoginSession(uuid4().hex, method)
+        session.target_account_id = target_account_id
+        session.target_profile_id = target_profile_id
         self._session = session
         session.task = asyncio.create_task(self._run(session))
         return self.snapshot(session.session_id)
@@ -579,6 +782,13 @@ class LittleSkinLogin:
             session.profiles = await self._call(self.client.profiles, session.credentials)
             if not session.profiles:
                 raise AccountError("请先在 LittleSkin 创建游戏角色", "LITTLESKIN_NO_PROFILES")
+            if session.target_profile_id:
+                if session.target_profile_id.lower() not in {profile.id.lower() for profile in session.profiles}:
+                    raise AccountError("授权账户与当前角色不匹配", "LITTLESKIN_ACCOUNT_MISMATCH")
+                await self._call(self.client.player, session.credentials, session.target_profile_id)
+                await self._call(self.client.closet, session.credentials, "skin", 1)
+                await self._exchange(session, session.target_profile_id)
+                return
             self.logger.info("LittleSkin 授权完成，正在选择游戏角色")
             session.status = "selecting"
             if len(session.profiles) == 1:
@@ -600,7 +810,10 @@ class LittleSkinLogin:
         """
         按服务端间隔和截止时间轮询设备授权，降速不突破会话有效期。
         """
-        device = await self._call(self.client.request_device_code)
+        if session.target_account_id:
+            device = await self._call(self.client.request_device_code, management=True)
+        else:
+            device = await self._call(self.client.request_device_code)
         session.user_code = device.user_code
         session.verification_uri = device.verification_uri_complete or device.verification_uri
         session.expires_at = time() + device.expires_in
@@ -641,7 +854,8 @@ class LittleSkinLogin:
                 "client_id": self.client.client_id,
                 "redirect_uri": self.redirect_uri,
                 "response_type": "code",
-                "scope": self.client.authorization_scopes,
+                "scope": self.client.authorization_scopes
+                + (" " + self.client.management_scopes if session.target_account_id else ""),
                 "state": session.callback.state,
             }
         )
@@ -740,8 +954,23 @@ class LittleSkinLogin:
         让落盘任务独立于 IPC 等待方取消而完成，保持最终状态与实际保存一致。
         """
         try:
-            account = await self._call(self._commit, session.credentials, session.minecraft_token)
+            if session.target_account_id:
+                if self._management_commit is None:
+                    raise AccountError("账户管理尚未就绪", "LITTLESKIN_CONFIG_REQUIRED")
+                account = await self._call(
+                    self._management_commit, session.target_account_id, session.credentials, session.minecraft_token
+                )
+            else:
+                account = await self._call(self._commit, session.credentials, session.minecraft_token)
         except Exception as exc:
+            if isinstance(exc, AccountError) and exc.error_code in {
+                "LITTLESKIN_ACCOUNT_MISMATCH",
+                "LITTLESKIN_ACCOUNT_REQUIRED",
+                "ACCOUNT_NOT_FOUND",
+            }:
+                self._fail(session, exc)
+                self._notify(session)
+                raise
             session.status = "ready"  # 保留认证结果，磁盘恢复后可重新提交。
             self.logger.warning("LittleSkin 账户保存失败，可重试")
             raise AccountError("LittleSkin 账户保存失败，请重试", "LITTLESKIN_SAVE_FAILED") from exc

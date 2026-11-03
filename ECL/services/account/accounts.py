@@ -51,7 +51,7 @@ from contextlib import suppress
 from copy import deepcopy
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import httpx
@@ -297,6 +297,7 @@ class AccountManager:
             ).strip(),
             self._save_littleskin_account,
             lambda snapshot: self.events.emit("accounts:littleskin_login_status", snapshot),
+            self._save_littleskin_management,
         )
         self._deduplicate_microsoft_accounts()
         self._ensure_current_account()
@@ -342,6 +343,96 @@ class AccountManager:
             account = self._authlib_account(account_id, info)
         self._emit_changed((account_id,))
         return account
+
+    def _save_littleskin_management(
+        self, account_id: str, credentials: LittleSkinCredentials, result: LittleSkinMinecraftToken
+    ) -> dict[str, object]:
+        """
+        原位替换已核对角色的凭据，不改变当前账户或本地偏好。
+        """
+        with self._lock:
+            _, info = self.authlib_manager.store_littleskin(
+                credentials, result, lambda saved_id: None, target_account_id=account_id
+            )
+            account = self._authlib_account(account_id, info)
+        self._emit_changed((account_id,))
+        return account
+
+    async def start_littleskin_login(
+        self, method: Literal["device_code", "authorization_code"], target_account_id: str | None = None
+    ) -> dict[str, object]:
+        """
+        创建普通登录或绑定现有角色的管理补充授权会话。
+
+        :param method: 用户选择的授权方式
+        :param target_account_id: 管理授权目标；普通登录为空
+        :return: 不含凭据的会话快照
+        """
+        profile_id = None
+        if target_account_id:
+            profile_id = self.authlib_manager.littleskin_profile_id(target_account_id)
+        return await self.littleskin.start(method, target_account_id=target_account_id, target_profile_id=profile_id)
+
+    def littleskin_management(self, account_id: str) -> dict[str, object]:
+        """
+        获取已绑定角色当前穿戴，并区分缺少管理权限和普通读取失败。
+
+        :param account_id: LittleSkin 本地账户
+        :return: 当前角色及是否需要补充授权
+        """
+
+        def read(client: LittleSkinClient, credentials: LittleSkinCredentials, profile_id: str) -> dict[str, object]:
+            player = client.player(credentials, profile_id)
+            client.closet(credentials, "skin", 1)
+            return {"needs_authorization": False, "player": player.model_dump()}
+
+        try:
+            return self.authlib_manager.manage_littleskin(account_id, read)
+        except AccountError as exc:
+            if exc.error_code in {
+                "LITTLESKIN_PERMISSION_REQUIRED",
+                "LITTLESKIN_AUTH_REQUIRED",
+                "LITTLESKIN_INVALID_GRANT",
+            }:
+                return {"needs_authorization": True, "player": None}
+            raise
+
+    def littleskin_closet(self, account_id: str, kind: Literal["skin", "cape"], page: int) -> dict[str, object]:
+        """
+        读取当前用户云端衣柜，返回安全的分页元数据。
+
+        :param account_id: 本地账户
+        :param kind: 材质种类
+        :param page: 页码
+        :return: 已验证的分页
+        """
+        return self.authlib_manager.manage_littleskin(
+            account_id, lambda client, credentials, profile_id: client.closet(credentials, kind, page).model_dump()
+        )
+
+    def littleskin_set_texture(
+        self, account_id: str, kind: Literal["skin", "cape"], tid: int | None
+    ) -> dict[str, object]:
+        """
+        仅修改指定材质，实际写入或结果不确定后均使账户材质缓存失效。
+
+        :param account_id: 本地账户
+        :param kind: 皮肤或披风
+        :param tid: 穿戴材质；空值表示清除
+        :return: 提供方确认的角色状态
+        """
+        try:
+            player = self.authlib_manager.manage_littleskin(
+                account_id,
+                lambda client, credentials, profile_id: client.set_texture(credentials, profile_id, kind, tid),
+            )
+        except AccountError as exc:
+            if exc.error_code == "LITTLESKIN_WRITE_UNCONFIRMED":
+                self._emit_changed((account_id,))
+            raise
+        self._emit_changed((account_id,))
+        self.logger.info("LittleSkin 角色材质已%s：类型：%s", "清除" if tid is None else "更换", kind)
+        return player.model_dump()
 
     def _sanitize_offline_accounts(self, entries: dict[Any, Any]) -> dict[str, dict[str, Any]]:
         """
