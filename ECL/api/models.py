@@ -276,7 +276,7 @@ class SettingsQuery(RequestModel):
 
 class SettingsUpdate(RequestModel):
     section: str = Field(min_length=1)
-    data: JsonValue
+    data: dict[str, JsonValue]
 
 
 class FrontendLogLevel(StrEnum):

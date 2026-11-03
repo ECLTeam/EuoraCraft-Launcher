@@ -309,12 +309,15 @@ class ConfigStore:
         比较以持久化配置为准，不把运行时覆盖误当成已保存值。
         :param section: 配置分区名称
         :param data: 配置数据
+        :raises ConfigValidationError: 分区不受支持或配置数据不是对象时抛出
         """
         if not isinstance(section, str) or not section.strip():
             raise ConfigValidationError("配置分区名称不能为空")
         normalized_section = section.strip()
         if normalized_section not in self.allowed_sections:
             raise ConfigValidationError(f"配置分区不受支持: {normalized_section}")
+        if not isinstance(data, dict):
+            raise ConfigValidationError("配置分区必须为对象")
         if normalized_section == "connector":
             from ECL.services.connector_nodes import ConnectorNodeConfig
 

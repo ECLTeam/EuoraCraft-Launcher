@@ -648,6 +648,23 @@ def test_launcher_info_reports_current_system_summary(tmp_path) -> None:
     assert system["memory_total_mb"] > 0
 
 
+@pytest.mark.parametrize("invalid_data", [42, "invalid", [], True, None])
+def test_settings_write_rejects_non_object_without_changing_state(tmp_path: Path, invalid_data) -> None:
+    api = _build_api(tmp_path)
+    previous = api.config.get_config()
+    previous_file = api.config.config_path.read_bytes()
+    notifications: list[str] = []
+    api.config.events.subscribe("config:updated", lambda section, _snapshot: notifications.append(section))
+
+    result = asyncio.run(api.settings_set({"section": "ui", "data": invalid_data}))
+
+    assert result["success"] is False
+    assert result["errorCode"] == "INVALID_REQUEST"
+    assert api.config.get_config() == previous
+    assert api.config.config_path.read_bytes() == previous_file
+    assert notifications == []
+
+
 def test_settings_write_returns_effective_snapshot_without_losing_runtime_override(tmp_path: Path) -> None:
     api = _build_api(tmp_path)
     result = asyncio.run(api.settings_set({"section": "launcher", "data": {"debug": False}}))
