@@ -3,11 +3,13 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：构建期注入的 Microsoft Client ID 与 CurseForge API Key。
+# 文件作用：构建期注入的 Microsoft、LittleSkin 认证配置与 CurseForge API Key。
 #
 # 公开接口：
 #   - class BuildEnvironment — 构建期注入的认证配置。
 # ============================================================
+
+from __future__ import annotations
 
 
 class BuildEnvironment:
@@ -19,3 +21,6 @@ class BuildEnvironment:
 
     microsoft_client_id = ""  # Microsoft OAuth 客户端 ID，构建时注入
     curseforge_api_key = ""  # CurseForge API Key，构建时注入
+    littleskin_client_id = ""  # LittleSkin OAuth 应用 ID，构建时注入
+    littleskin_client_secret = ""  # LittleSkin 授权代码流密钥，构建时注入
+    littleskin_redirect_uri = ""  # 可选覆盖本机回调默认地址

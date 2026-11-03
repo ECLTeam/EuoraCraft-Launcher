@@ -9,6 +9,7 @@
 #   - class LauncherMicrosoftAccountManager — 将底层 Microsoft 认证流程适配为启动器账户管理流程。
 #       - add_microsoft_account() -> str — 完成 Microsoft 登录并保存可用于启动游戏的账户。
 #   - class AccountManager — 聚合离线、Microsoft 与 Authlib 账户，并维护当前账户选择。
+#       - littleskin — 本服务拥有的 LittleSkin 登录会话服务，退出时统一关闭。
 #   - class AccountSummary — 不包含邮箱、凭据或提供方私有数据的账户快照。
 #       - microsoft_login_config() -> dict[str, bool] — 返回微软设备代码登录是否具备有效客户端配置。
 #       - default_skins() -> list[dict[str, Any]] — 返回可供离线账户选择的默认皮肤列表。
@@ -62,6 +63,7 @@ from ECL.utils import AccountError, atomic_write_text, get_logger
 from ECL.utils.account_reading import AccountSummary
 
 from .authlib import AuthlibAccountManager, AuthlibError
+from .littleskin import LittleSkinClient, LittleSkinCredentials, LittleSkinLogin, LittleSkinMinecraftToken
 
 
 def _load_default_skins(resource_path: Path | None) -> dict[str, tuple[str, str]]:
@@ -215,6 +217,9 @@ class AccountManager:
         disable_ssl_verify: bool = False,
         resource_path: Path | str | None = None,
         state_dir: Path | str | None = None,
+        littleskin_client_id: str | None = None,
+        littleskin_client_secret: str | None = None,
+        littleskin_redirect_uri: str | None = None,
     ):
         """
         加载持久化账户，并连接两种在线认证提供者。
@@ -228,6 +233,9 @@ class AccountManager:
         :param resource_path: 只读资源目录，用于定位 ``resources/Skins`` 默认皮肤
         :param state_dir: 账户聚合状态目录；生产环境统一使用 ``~/.ECL/accounts``，
             缺省时保持数据目录内的历史位置（测试兼容）
+        :param littleskin_client_id: LittleSkin 应用 ID，缺省使用构建配置
+        :param littleskin_client_secret: 授权代码流密钥，仅用于后端请求
+        :param littleskin_redirect_uri: 已登记的本机回调，缺省使用默认回环地址
         """
         self.logger = get_logger("AccountManager")
         self.events = event_bus or EventBus()
@@ -275,6 +283,21 @@ class AccountManager:
             authlib_manager = AuthlibAccountManager()
             self.logger.debug("Authlib 账户管理器已创建")
         self.authlib_manager = authlib_manager
+        littleskin_client = LittleSkinClient(
+            (littleskin_client_id or BuildEnvironment.littleskin_client_id).strip(),
+            (littleskin_client_secret or BuildEnvironment.littleskin_client_secret).strip(),
+        )
+        self.authlib_manager.littleskin_client = littleskin_client
+        self.littleskin: LittleSkinLogin = LittleSkinLogin(
+            littleskin_client,
+            (
+                littleskin_redirect_uri
+                or BuildEnvironment.littleskin_redirect_uri
+                or LittleSkinLogin.default_redirect_uri
+            ).strip(),
+            self._save_littleskin_account,
+            lambda snapshot: self.events.emit("accounts:littleskin_login_status", snapshot),
+        )
         self._deduplicate_microsoft_accounts()
         self._ensure_current_account()
         self.logger.debug(
@@ -293,6 +316,32 @@ class AccountManager:
             "available": self._microsoft_login_available,
             "needs_client_id": not self._microsoft_login_available,
         }
+
+    def _save_littleskin_account(
+        self,
+        credentials: LittleSkinCredentials,
+        result: LittleSkinMinecraftToken,
+    ) -> dict[str, object]:
+        """
+        在外置账户事务内保存当前选择，成功后再发布账户变更。
+
+        聚合状态写入失败时恢复旧选择，外置账户领域同步恢复其文件与内存。
+        """
+        with self._lock:
+            previous_id = self._current_account_id
+
+            def select_saved(account_id: str) -> None:
+                self._current_account_id = account_id
+                try:
+                    self._save_state()
+                except Exception:
+                    self._current_account_id = previous_id
+                    raise
+
+            account_id, info = self.authlib_manager.store_littleskin(credentials, result, select_saved)
+            account = self._authlib_account(account_id, info)
+        self._emit_changed((account_id,))
+        return account
 
     def _sanitize_offline_accounts(self, entries: dict[Any, Any]) -> dict[str, dict[str, Any]]:
         """
@@ -430,6 +479,8 @@ class AccountManager:
             "auth_server": info.get("YggdrasilAPI") or "",
             "isCurrent": account_id == self._current_account_id,
         }
+        if info.get("AuthProvider") == "littleskin":
+            account["auth_provider"] = "littleskin"
         available_profiles = profiles.get("availableProfiles") or []
         if not profile and isinstance(available_profiles, list):
             account["profile_selection_required"] = True
@@ -727,7 +778,7 @@ class AccountManager:
             }
         if current.get("type") == "authlib":
             try:
-                token = self.authlib_manager.get_token(current["id"])
+                token = await asyncio.to_thread(self.authlib_manager.get_token, current["id"])
             except (AuthlibError, httpx.HTTPError, OSError, KeyError, TypeError, ValueError) as exc:
                 raise AccountError(f"刷新外置登录令牌失败: {exc}", "AUTHLIB_TOKEN_FAILED") from exc
             return {
@@ -1029,7 +1080,7 @@ class AccountManager:
                 info = self.microsoft_manager.get_microsoft_accounts()[account_id]
                 account = self._microsoft_account(account_id, info)
         elif is_authlib:
-            info = self.authlib_manager.refresh_account(account_id)
+            info = await asyncio.to_thread(self.authlib_manager.refresh_account, account_id)
             with self._lock:
                 account = self._authlib_account(account_id, info)
         self._emit_changed((account_id,))
@@ -1326,6 +1377,7 @@ class AccountManager:
         """
         取消仍在运行的认证任务并释放认证客户端。
         """
+        await self.littleskin.close()
         cancelled = self.cancel_microsoft_login()
         self.logger.debug("正在关闭账户服务：已请求取消登录：%s", ("是" if cancelled else "否"))
         if self._login_task is not None and not self._login_task.done():

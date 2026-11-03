@@ -11,6 +11,7 @@
 #       - ensure() -> Path — 返回可用的 authlib-injector；本地缺失时下载最新版。
 #       - close() -> None — 关闭下载客户端。
 #   - class AuthlibAccountManager — 持久化并维护外置登录（Yggdrasil）账户与访问令牌。
+#       - store_littleskin(credentials, result, on_saved) — 原子保存 LittleSkin 登录结果并提交账户选择。
 #       - list_accounts() -> dict[str, dict] — 返回全部外置登录账户。
 #       - resolve_server(server_url) -> str — 通过 ALI 返回实际的 Yggdrasil API 地址。
 #       - add_account(server_url, username, password) -> tuple[str, dict] — 登录外置账户并保存令牌与角色资料。
@@ -27,15 +28,26 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 from threading import RLock
+from time import time
+from typing import NotRequired, TypedDict
 from uuid import uuid4
 
 import httpx
 
 from ECL.game import YggdrasilClient
-from ECL.utils import AuthlibError, AuthlibProfileSelectionRequired, atomic_write_bytes, atomic_write_text
+from ECL.utils import AccountError, AuthlibError, AuthlibProfileSelectionRequired, atomic_write_bytes, atomic_write_text
+
+from .littleskin import LittleSkinClient, LittleSkinCredentials, LittleSkinMinecraftToken
+
+
+class _AuthlibToken(TypedDict):
+    AccessToken: str
+    ClientToken: str
+    OAuth: NotRequired[dict[str, object]]
 
 
 class AuthlibInjector:
@@ -137,9 +149,13 @@ class AuthlibAccountManager:
             trust_env=False,
         )
         self.accounts: dict[str, dict] = {}
-        self.tokens: dict[str, dict[str, str]] = {}
+        self.tokens: dict[str, _AuthlibToken] = {}
         self.pending_accounts: dict[str, dict] = {}
         self._lock = RLock()
+        # OAuth 写入、轮换与删除串行，网络阶段不占用列表读取锁。
+        self._oauth_lock = RLock()
+        self._pending_oauth: dict[str, LittleSkinCredentials] = {}
+        self.littleskin_client: LittleSkinClient | None = None
         self._load()
 
     def _load(self) -> None:
@@ -153,8 +169,17 @@ class AuthlibAccountManager:
             if not token_file.is_file():
                 continue
             token = json.loads(token_file.read_text(encoding="utf-8"))
+            if (
+                not isinstance(token, dict)
+                or not isinstance(token.get("AccessToken"), str)
+                or not isinstance(token.get("ClientToken"), str)
+            ):
+                raise AuthlibError("外置账户凭据文件格式无效")
+            saved_token: _AuthlibToken = {"AccessToken": token["AccessToken"], "ClientToken": token["ClientToken"]}
+            if "OAuth" in token:
+                saved_token["OAuth"] = LittleSkinCredentials.model_validate(token["OAuth"]).model_dump()
             self.accounts[account_id] = account
-            self.tokens[account_id] = token
+            self.tokens[account_id] = saved_token
 
     def _save_accounts(self) -> None:
         atomic_write_text(self.account_file, json.dumps(self.accounts, ensure_ascii=False, indent=2))
@@ -287,7 +312,7 @@ class AuthlibAccountManager:
             }
         return account_id, self._pending_info(account_id, server_url, username, profiles, existing_accounts)
 
-    def _read_account_token(self, account_id: str) -> tuple[dict, dict]:
+    def _read_account_token(self, account_id: str) -> tuple[dict, _AuthlibToken]:
         """
         在锁内读取账户与令牌快照。
 
@@ -319,7 +344,7 @@ class AuthlibAccountManager:
             "Profiles": profiles,
         }
         # 网络请求在锁外完成后才进入本方法，这里只短暂持锁完成状态写入与持久化
-        with self._lock:
+        with self._oauth_lock, self._lock:
             self.tokens[account_id] = {
                 "AccessToken": response["accessToken"],
                 "ClientToken": response["clientToken"],
@@ -331,6 +356,98 @@ class AuthlibAccountManager:
             self._save_token(account_id)
             self._save_accounts()
         return deepcopy(account)
+
+    def store_littleskin(
+        self,
+        credentials: LittleSkinCredentials,
+        result: LittleSkinMinecraftToken,
+        on_saved: Callable[[str], None],
+    ) -> tuple[str, dict]:
+        """
+        保存完整的 LittleSkin 凭据，再提交聚合账户选择，失败时恢复原文件。
+
+        OAuth 写入与刷新、删除共用互斥锁；只有全部写入成功后才修改内存。
+
+        :param credentials: 已授权的 OAuth 凭据
+        :param result: 已核对角色的游戏令牌
+        :param on_saved: 由聚合服务提供的当前账户原子保存函数；失败须抛出异常
+        :return: 沿用或新增的稳定账户标识及无凭据元数据
+        """
+        with self._oauth_lock, self._lock:
+            profile = result.selected_profile
+            account_id = next(
+                (
+                    key
+                    for key, account in self.accounts.items()
+                    if str(account.get("YggdrasilAPI", "")).rstrip("/") == LittleSkinClient.server_url
+                    and str((account.get("Profiles") or {}).get("selectedProfile", {}).get("id", "")).lower()
+                    == profile.id.lower()
+                ),
+                uuid4().hex,
+            )
+            account = {
+                "AccountId": account_id,
+                "YggdrasilAPI": LittleSkinClient.server_url,
+                "Profiles": {"selectedProfile": profile.model_dump()},
+                "AuthProvider": "littleskin",
+            }
+            token: _AuthlibToken = {
+                "AccessToken": result.access_token,
+                "ClientToken": result.client_token,
+                "OAuth": credentials.model_dump(),
+            }
+            accounts = {**self.accounts, account_id: account}
+            token_file = self.token_path / f"{account_id}.json"
+            token_before = token_file.read_bytes() if token_file.exists() else None
+            accounts_before = self.account_file.read_bytes() if self.account_file.exists() else None
+            try:
+                atomic_write_text(token_file, json.dumps(token, ensure_ascii=False, indent=2))
+                atomic_write_text(self.account_file, json.dumps(accounts, ensure_ascii=False, indent=2))
+                on_saved(account_id)
+            except Exception:
+                # 文件恢复失败继续向上抛出，不把残留文件宣称为事务已经恢复。
+                if token_before is None:
+                    token_file.unlink(missing_ok=True)
+                else:
+                    atomic_write_bytes(token_file, token_before)
+                if accounts_before is None:
+                    self.account_file.unlink(missing_ok=True)
+                else:
+                    atomic_write_bytes(self.account_file, accounts_before)
+                raise
+            self.accounts[account_id] = account
+            self.tokens[account_id] = token
+            self._pending_oauth.pop(account_id, None)
+            return account_id, deepcopy(account)
+
+    def _refresh_littleskin(self, account_id: str) -> dict:
+        """
+        串行刷新指定角色，OAuth 轮换后先落盘，再请求游戏令牌。
+
+        远程轮换成功而磁盘失败时保留新凭据供当前进程重试保存，绝不重用已失效的旧值。
+        调用方持有 OAuth 互斥锁，读取列表仍可使用独立的短持锁快照。
+        """
+        if self.littleskin_client is None:
+            raise AccountError("LittleSkin 登录配置缺失", "LITTLESKIN_CONFIG_REQUIRED")
+        with self._lock:
+            account, stored = self._read_account_token(account_id)
+            token = deepcopy(stored)
+        credentials = self._pending_oauth.get(account_id) or LittleSkinCredentials.model_validate(token["OAuth"])
+        if credentials.client_id != self.littleskin_client.client_id:
+            raise AccountError("LittleSkin 应用配置已改变，请重新登录", "LITTLESKIN_CONFIG_CHANGED")
+        if credentials.expires_at <= time() + 30 and account_id not in self._pending_oauth:
+            credentials = self.littleskin_client.refresh(credentials)
+            self._pending_oauth[account_id] = credentials
+        if account_id in self._pending_oauth:
+            token["OAuth"] = credentials.model_dump()
+            atomic_write_text(self.token_path / f"{account_id}.json", json.dumps(token, ensure_ascii=False, indent=2))
+            with self._lock:
+                self.tokens[account_id] = deepcopy(token)
+            self._pending_oauth.pop(account_id, None)
+        profile_id = account["Profiles"]["selectedProfile"]["id"]
+        result = self.littleskin_client.minecraft_token(credentials, profile_id)
+        _, refreshed = self.store_littleskin(credentials, result, lambda saved_id: None)
+        return refreshed
 
     def list_accounts(self) -> dict[str, dict]:
         """
@@ -492,11 +609,12 @@ class AuthlibAccountManager:
 
         :param account_id: 账户的稳定标识
         """
-        with self._lock:
+        with self._oauth_lock, self._lock:
             if account_id not in self.accounts:
                 raise KeyError(f"账户 '{account_id}' 不存在")
             self.accounts.pop(account_id)
             self.tokens.pop(account_id)
+            self._pending_oauth.pop(account_id, None)
             (self.token_path / f"{account_id}.json").unlink(missing_ok=True)
             self._save_accounts()
 
@@ -508,14 +626,17 @@ class AuthlibAccountManager:
 
         :param account_id: 账户的稳定标识
         """
-        account, token = self._read_account_token(account_id)
-        response = self.client.refresh(
-            account["YggdrasilAPI"],
-            token["AccessToken"],
-            token["ClientToken"],
-            follow_ali=False,
-        )
-        return self._store_response(account_id, account["YggdrasilAPI"], response)
+        with self._oauth_lock:
+            account, token = self._read_account_token(account_id)
+            if "OAuth" in token:
+                return self._refresh_littleskin(account_id)
+            response = self.client.refresh(
+                account["YggdrasilAPI"],
+                token["AccessToken"],
+                token["ClientToken"],
+                follow_ali=False,
+            )
+            return self._store_response(account_id, account["YggdrasilAPI"], response)
 
     def get_token(self, account_id: str) -> dict[str, str]:
         """
@@ -525,22 +646,26 @@ class AuthlibAccountManager:
 
         :param account_id: 账户的稳定标识
         """
-        account, token = self._read_account_token(account_id)
-        if not (account.get("Profiles") or {}).get("selectedProfile"):
-            raise AuthlibError("外置登录账户缺少默认角色")
-        if not self.client.validate(
-            account["YggdrasilAPI"],
-            token["AccessToken"],
-            token["ClientToken"],
-            follow_ali=False,
-        ):
-            self.refresh_account(account_id)
+        with self._oauth_lock:
             account, token = self._read_account_token(account_id)
-        return {
-            "AccessToken": token["AccessToken"],
-            "ClientToken": token["ClientToken"],
-            "YggdrasilAPI": account["YggdrasilAPI"],
-        }
+            if account_id in self._pending_oauth:
+                self._refresh_littleskin(account_id)
+                account, token = self._read_account_token(account_id)
+            if not (account.get("Profiles") or {}).get("selectedProfile"):
+                raise AuthlibError("外置登录账户缺少默认角色")
+            if not self.client.validate(
+                account["YggdrasilAPI"],
+                token["AccessToken"],
+                token["ClientToken"],
+                follow_ali=False,
+            ):
+                self.refresh_account(account_id)
+                account, token = self._read_account_token(account_id)
+            return {
+                "AccessToken": token["AccessToken"],
+                "ClientToken": token["ClientToken"],
+                "YggdrasilAPI": account["YggdrasilAPI"],
+            }
 
     def get_texture_urls(self, account_id: str) -> dict[str, str]:
         """
@@ -597,5 +722,6 @@ class AuthlibAccountManager:
         """
         关闭认证客户端。
         """
-        self.http.close()
-        self.client.close()
+        with self._oauth_lock:
+            self.http.close()
+            self.client.close()

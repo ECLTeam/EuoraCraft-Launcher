@@ -322,6 +322,12 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
     schemas = request_schemas()
 
     assert set(schemas) == {
+        "accounts_littleskin_login_config",
+        "accounts_start_littleskin_login",
+        "accounts_poll_littleskin_login",
+        "accounts_select_littleskin_profile",
+        "accounts_complete_littleskin_login",
+        "accounts_cancel_littleskin_login",
         "game_instance_export_preview",
         "game_instance_export",
         "game_modpack_prepare",

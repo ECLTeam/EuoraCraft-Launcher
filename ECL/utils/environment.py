@@ -12,6 +12,8 @@
 #       - apply_to_config(config) -> dict[str, Any] — 使用环境变量覆盖配置。
 # ============================================================
 
+from __future__ import annotations
+
 import os
 from copy import deepcopy
 from pathlib import Path
@@ -42,6 +44,9 @@ class Environment:
             return dict(self.env_data)
         self.env_data = dict(dotenv_values(self.env_path)) if self.env_path.exists() else {}
         self.env_data.update({key: value for key, value in os.environ.items() if key.startswith("ECL_")})
+        for key in ("LITTLESKIN_CLIENT_ID", "LITTLESKIN_CLIENT_SECRET", "LITTLESKIN_REDIRECT_URI"):
+            if (value := os.environ.get(key)) and value.strip():
+                self.env_data[key] = value
         system_client_id = os.environ.get("MICROSOFT_CLIENT_ID") or os.environ.get("ECL_MICROSOFT_CLIENT_ID")
         if system_client_id:
             self.env_data["MICROSOFT_CLIENT_ID"] = system_client_id

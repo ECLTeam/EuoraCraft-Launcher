@@ -114,6 +114,9 @@
 #   - class WardrobeUpdateRequest
 #   - class WardrobeApplySkinRequest
 #   - class AccountTextureRequest
+#   - class LittleSkinStartRequest — 校验 LittleSkin 登录方式。
+#   - class LittleSkinSessionRequest — 校验 LittleSkin 会话标识。
+#   - class LittleSkinProfileRequest — 校验 LittleSkin 角色选择。
 #   - class MicrosoftCapeRequest
 #   - class ImageSelectionRequest
 #   - class SkinAvatarExportRequest — 校验头像导出的图片、尺寸与源文件路径。
@@ -899,6 +902,30 @@ class AccountTextureRequest(RequestModel):
     account_id: str = Field(min_length=1)
 
 
+class LittleSkinStartRequest(RequestModel):
+    """
+    限制 LittleSkin 登录为本次支持的两种 OAuth 流程。
+    """
+
+    method: Literal["device_code", "authorization_code"]
+
+
+class LittleSkinSessionRequest(RequestModel):
+    """
+    为登录查询、取消和提交提供稳定且有长度限制的会话标识。
+    """
+
+    session_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+
+
+class LittleSkinProfileRequest(LittleSkinSessionRequest):
+    """
+    校验角色 UUID 的格式，实际角色归属由登录服务再次核对。
+    """
+
+    profile_id: str = Field(pattern=r"^[0-9a-fA-F]{32}$")
+
+
 class MicrosoftCapeRequest(AccountTextureRequest):
     cape_id: str = Field(min_length=1)
 
@@ -1062,6 +1089,12 @@ class RequestModelRegistry:
     """
 
     models: dict[str, type[BaseModel]] = {
+        "accounts_littleskin_login_config": RequestModel,
+        "accounts_start_littleskin_login": LittleSkinStartRequest,
+        "accounts_poll_littleskin_login": LittleSkinSessionRequest,
+        "accounts_select_littleskin_profile": LittleSkinProfileRequest,
+        "accounts_complete_littleskin_login": LittleSkinSessionRequest,
+        "accounts_cancel_littleskin_login": LittleSkinSessionRequest,
         "game_instance_export_preview": InstanceTarget,
         "game_instance_export": InstancePackExportRequest,
         "game_modpack_prepare": ModpackPrepareRequest,
@@ -1199,6 +1232,9 @@ __all__ = [
     "JavaScanRequest",
     "KickRequest",
     "LaunchRequest",
+    "LittleSkinProfileRequest",
+    "LittleSkinSessionRequest",
+    "LittleSkinStartRequest",
     "LoaderCatalogRequest",
     "MicrosoftCapeRequest",
     "OnlineResourceSearchRequest",

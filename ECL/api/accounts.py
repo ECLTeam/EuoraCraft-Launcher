@@ -20,6 +20,12 @@
 #       - authlib_resolve_server(body) -> dict[str, Any] — 解析外置登录网站实际使用的 API 地址。
 #       - accounts_start_microsoft_login(body) -> dict[str, Any] — 开始微软登录。
 #       - accounts_microsoft_login_config(body) -> dict[str, Any] — 获取微软登录配置。
+#       - accounts_littleskin_login_config(body) — 获取 LittleSkin 两种方式的配置可用性。
+#       - accounts_start_littleskin_login(body) — 创建 LittleSkin 登录会话。
+#       - accounts_poll_littleskin_login(body) — 查询无凭据的 LittleSkin 登录进度。
+#       - accounts_select_littleskin_profile(body) — 选择已授权角色。
+#       - accounts_complete_littleskin_login(body) — 保存准备完成的 LittleSkin 账户。
+#       - accounts_cancel_littleskin_login(body) — 等待实际取消 LittleSkin 登录。
 #       - accounts_authlib_login_config(body) -> dict[str, Any] — 获取外置登录可用性配置。
 #       - accounts_poll_microsoft_login(body) -> dict[str, Any] — 获取微软登录状态。
 #       - accounts_cancel_microsoft_login(body) -> dict[str, Any] — 取消微软登录。
@@ -44,6 +50,8 @@
 #       - authlib_servers(body) -> dict[str, Any] — 获取外置登录服务器。
 # ============================================================
 
+from __future__ import annotations
+
 import base64
 import re
 from pathlib import Path
@@ -55,6 +63,9 @@ from pytauri_plugins.dialog import DialogExt
 
 from ECL.api.models import (
     AccountTextureRequest,
+    LittleSkinProfileRequest,
+    LittleSkinSessionRequest,
+    LittleSkinStartRequest,
     MicrosoftCapeRequest,
     WardrobeApplySkinRequest,
     WardrobeImportRequest,
@@ -223,6 +234,80 @@ class AccountHandlers(_FrontendState):
         :param body: 前端传入的 IPC 请求参数
         """
         return {"success": True, "data": self.accounts.microsoft_login_config()}
+
+    async def accounts_littleskin_login_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        读取 LittleSkin 授权方式的可用性，应用配置不会交给界面。
+
+        :param body: 空 IPC 请求数据
+        :return: 两种授权方式及应用 ID 是否已配置
+        """
+        return {"success": True, "data": self.accounts.littleskin.config()}
+
+    @_ipc_handler("LITTLESKIN_LOGIN_FAILED")
+    async def accounts_start_littleskin_login(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        校验授权方式后创建可轮询和取消的登录会话。
+
+        :param body: 用户选择的授权方式
+        :return: 初始无凭据进度
+        """
+        request, invalid = _validate_body(LittleSkinStartRequest, body)
+        if invalid is not None:
+            return invalid
+        return {"success": True, "data": await self.accounts.littleskin.start(request.method)}
+
+    @_ipc_handler("LITTLESKIN_LOGIN_FAILED")
+    async def accounts_poll_littleskin_login(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        读取当前会话进度，旧会话不能读取新登录的结果。
+
+        :param body: 本次登录的会话标识
+        :return: 无凭据进度
+        """
+        request, invalid = _validate_body(LittleSkinSessionRequest, body)
+        if invalid is not None:
+            return invalid
+        return {"success": True, "data": self.accounts.littleskin.snapshot(request.session_id)}
+
+    @_ipc_handler("LITTLESKIN_LOGIN_FAILED")
+    async def accounts_select_littleskin_profile(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        为已授权的角色创建游戏令牌，尚不保存本地账户。
+
+        :param body: 会话标识和用户选择的角色 UUID
+        :return: 角色兑换任务的初始进度
+        """
+        request, invalid = _validate_body(LittleSkinProfileRequest, body)
+        if invalid is not None:
+            return invalid
+        return {"success": True, "data": await self.accounts.littleskin.select(request.session_id, request.profile_id)}
+
+    @_ipc_handler("LITTLESKIN_SAVE_FAILED")
+    async def accounts_complete_littleskin_login(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        等待准备好的角色账户实际落盘后返回公开信息。
+
+        :param body: 本次登录的会话标识
+        :return: 保存后的账户展示资料
+        """
+        request, invalid = _validate_body(LittleSkinSessionRequest, body)
+        if invalid is not None:
+            return invalid
+        return {"success": True, "data": await self.accounts.littleskin.complete(request.session_id)}
+
+    @_ipc_handler("LITTLESKIN_LOGIN_FAILED", timeout=30)
+    async def accounts_cancel_littleskin_login(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        等待实际网络请求和回调监听结束后确认取消。
+
+        :param body: 需要取消的会话标识
+        :return: 实际终止后的无凭据进度
+        """
+        request, invalid = _validate_body(LittleSkinSessionRequest, body)
+        if invalid is not None:
+            return invalid
+        return {"success": True, "data": await self.accounts.littleskin.cancel(request.session_id)}
 
     async def accounts_authlib_login_config(self, body: dict[str, Any]) -> dict[str, Any]:
         """

@@ -439,6 +439,9 @@ def create_application(
         accounts = AccountManager(
             state.data_path,
             microsoft_client_id=environment.get_value("MICROSOFT_CLIENT_ID"),
+            littleskin_client_id=environment.get_value("LITTLESKIN_CLIENT_ID"),
+            littleskin_client_secret=environment.get_value("LITTLESKIN_CLIENT_SECRET"),
+            littleskin_redirect_uri=environment.get_value("LITTLESKIN_REDIRECT_URI"),
             event_bus=events,
             disable_ssl_verify=disable_ssl_verify,
             resource_path=state.resource_path,

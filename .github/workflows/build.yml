@@ -162,9 +162,12 @@ jobs:
         env:
           CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
           CF_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+          LITTLESKIN_CLIENT_ID: ${{ secrets.LITTLESKIN_CLIENT_ID }}
+          LITTLESKIN_CLIENT_SECRET: ${{ secrets.LITTLESKIN_CLIENT_SECRET }}
+          LITTLESKIN_REDIRECT_URI: ${{ secrets.LITTLESKIN_REDIRECT_URI }}
         run: |
           python - <<'PY'
-          import os, re
+          import json, os, re
           path = "ECL/foundation/build_env.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
@@ -172,6 +175,10 @@ jobs:
           cfk = os.environ.get("CF_API_KEY", "")
           text = re.sub(r'microsoft_client_id\s*=\s*"[^"]*"', f'microsoft_client_id = "{cid}"', text)
           text = re.sub(r'curseforge_api_key\s*=\s*"[^"]*"', f'curseforge_api_key = "{cfk}"', text)
+          for attribute in ("littleskin_client_id", "littleskin_client_secret", "littleskin_redirect_uri"):
+              value = os.environ.get(attribute.upper(), "")
+              assignment = f"{attribute} = {json.dumps(value, ensure_ascii=True)}"
+              text = re.sub(rf'{attribute}\s*=\s*"[^\n]*"', lambda match: assignment, text)
           with open(path, "w", encoding="utf-8") as f:
               f.write(text)
           PY
@@ -361,9 +368,12 @@ jobs:
         env:
           CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
           CF_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+          LITTLESKIN_CLIENT_ID: ${{ secrets.LITTLESKIN_CLIENT_ID }}
+          LITTLESKIN_CLIENT_SECRET: ${{ secrets.LITTLESKIN_CLIENT_SECRET }}
+          LITTLESKIN_REDIRECT_URI: ${{ secrets.LITTLESKIN_REDIRECT_URI }}
         run: |
           .venv-arch/bin/python - <<'PY'
-          import os, re
+          import json, os, re
           path = "ECL/foundation/build_env.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
@@ -371,6 +381,10 @@ jobs:
           cfk = os.environ.get("CF_API_KEY", "")
           text = re.sub(r'microsoft_client_id\s*=\s*"[^"]*"', f'microsoft_client_id = "{cid}"', text)
           text = re.sub(r'curseforge_api_key\s*=\s*"[^"]*"', f'curseforge_api_key = "{cfk}"', text)
+          for attribute in ("littleskin_client_id", "littleskin_client_secret", "littleskin_redirect_uri"):
+              value = os.environ.get(attribute.upper(), "")
+              assignment = f"{attribute} = {json.dumps(value, ensure_ascii=True)}"
+              text = re.sub(rf'{attribute}\s*=\s*"[^\n]*"', lambda match: assignment, text)
           with open(path, "w", encoding="utf-8") as f:
               f.write(text)
           PY
