@@ -66,7 +66,7 @@ jobs:
       - name: Install fixed Rust toolchain
         run: rustup toolchain install 1.99.0 --profile minimal
       - name: Restore native compiler cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: build/native-target
           key: plugin-native-${{ runner.os }}-rust199-py311-${{ hashFiles('native/pytauri-runtime/runtime.patch', 'native/pytauri-runtime/*.rs') }}
@@ -81,7 +81,7 @@ jobs:
         run: python native/pytauri-runtime/build-wheel.py
       - name: Save native compiler cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: build/native-target
           key: plugin-native-${{ runner.os }}-rust199-py311-${{ hashFiles('native/pytauri-runtime/runtime.patch', 'native/pytauri-runtime/*.rs') }}
