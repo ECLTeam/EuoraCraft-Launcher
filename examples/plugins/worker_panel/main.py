@@ -62,7 +62,7 @@ class Plugin(BasePlugin):
                 {
                     "type": "group",
                     "title": "执行命令",
-                    "children": (
+                    "children": [
                         {
                             "type": "button",
                             "label": "问候一次",
@@ -71,14 +71,14 @@ class Plugin(BasePlugin):
                             "tone": "primary",
                             "confirm": "确认执行一次问候命令？",
                         },
-                    ),
+                    ],
                 },
                 {"type": "setting", "key": "greeting"},
                 {"type": "setting", "key": "detailed"},
                 {
                     "type": "list",
                     "source": "history",
-                    "columns": ({"key": "index", "label": "序号"}, {"key": "message", "label": "结果"}),
+                    "columns": [{"key": "index", "label": "序号"}, {"key": "message", "label": "结果"}],
                 },
                 {"type": "task", "source": "progress"},
             ),
