@@ -1,6 +1,6 @@
 # LittleSkin 云端衣柜缓存与工具栏调整方案
 
-2026-11-07。已选方案 A，待审阅实施。关联 [重复请求 #125](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/125) 和 [衣柜布局 #123](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/123)。
+2026-11-07。方案 A 已实施并通过本地验收。关联 [重复请求 #125](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/125) 和 [衣柜布局 #123](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/123)。
 
 ## 目标与现状
 
@@ -34,3 +34,10 @@
 3. 在现有账户 API 和衣柜测试中验证请求次数、60 秒过期、并发同键读取、账户隔离、返回旧页、成功空列表、手动刷新，以及写入、授权和删除后的更新。覆盖失效前已发出的旧请求、查询失败重试及穿戴结果未确认时无自动写重试。
 4. 按 [项目规范第 6 节](../../AGENTS.md#6-测试与验收) 执行改动文件的 Prettier、ESLint、设计检查、类型检查、构建和相关 Vitest。用真实浏览器对照各来源，覆盖 Classic / Folia、亮暗、960×600、默认和放大窗口、代表性背景及长译文。检查账号切换、导入、下载、刷新、菜单焦点和禁用状态，并在模拟请求日志中核对缓存命中。若实施范围涉及共享缓存默认行为、应用启动、账户凭据或 IPC 契约，按项目规范扩大测试范围。
 5. 验收通过后先提交前端，再更新主仓库指针，提交关联 #123 和 #125。
+
+## 验收记录
+
+- 账户 API、衣柜组件、登录与账户调用方、共享读取协调器共 67 项定向 Vitest 用例通过。Prettier、ESLint、设计检查、类型检查和生产构建通过。验证范围限于账户与衣柜的直接调用链，沿用现有共享缓存和 IPC。
+- Edge 使用 Showcase 模拟账户与材质，通过 14 组布局对照，覆盖 Classic / Folia、亮暗主题、960×600、1200×800、1600×1000，以及德语最小窗口和代表性背景配置。验证了菜单键盘操作、Esc 后焦点、导入、下载和各来源切换。
+- 模拟请求日志确认首次读取发出角色状态与目标页各一次 IPC。回到已读页、切换回已读分类以及关闭后重开均命中缓存，且未显示加载遮罩。未读页只发出列表查询，手动刷新重读角色状态和当前页，并使其他已缓存页在再次访问时重读。
+- 截图及请求记录保存在 `output/playwright/littleskin-wardrobe-cache-toolbar/`。右侧德语动画按钮遮挡仍由独立问题跟踪。 [#124](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/124)
