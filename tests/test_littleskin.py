@@ -170,7 +170,8 @@ def test_profile_token_must_match_selected_authorized_role():
 
 @pytest.mark.asyncio
 async def test_callback_rejects_foreign_state_host_path_and_replay_then_releases_port():
-    callback = LittleSkinCallback(free_callback_uri())
+    redirect_uri = free_callback_uri()
+    callback = LittleSkinCallback(redirect_uri)
     await callback.start()
     try:
         assert b"400 Bad Request" in await callback_request(callback, {"state": "wrong", "code": "secret"})
@@ -192,8 +193,15 @@ async def test_callback_rejects_foreign_state_host_path_and_replay_then_releases
         assert b"400 Bad Request" in await callback_request(callback, {"state": callback.state, "code": "again"})
     finally:
         await callback.close()
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", callback.uri.port))
+    # 用实际回调入口验证端口能再次监听，沿用该入口的地址复用行为。
+    next_callback = LittleSkinCallback(redirect_uri)
+    try:
+        await next_callback.start()
+        response = await callback_request(next_callback, {"state": next_callback.state, "code": "next-code"})
+        assert b"200 OK" in response
+        assert await next_callback.code == "next-code"
+    finally:
+        await next_callback.close()
 
 
 @pytest.mark.asyncio
