@@ -1,6 +1,6 @@
 # LittleSkin 云端衣柜布局对齐方案
 
-2026-11-07。已选方案 A，待审阅实施。关联 [#123](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/123)。
+2026-11-07。方案 A 已实施并通过本地衣柜界面验收。关联 [#123](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/123)。
 
 ## 对照基准与目标
 
@@ -22,3 +22,10 @@
 - 按 [项目规范第 6 节](../../AGENTS.md#6-测试与验收) 做前端定向验证。执行改动文件的 Prettier、ESLint、`pnpm check:design`、`pnpm typecheck`、`pnpm build`，以及 `WardrobeModal`、`WardrobeModal.requests` 和 `LittleSkinClosetPanel` 相关 Vitest 用例。卡片复用限于衣柜，覆盖直接消费方。
 - 补充定向回归，验证账户、类别或分页切换后旧缩略图不会覆盖当前卡片，单张图加载失败仍可选择、穿戴和下载，键盘选择与图标操作各自触发对应行为。核对现有防重入、授权、穿戴和下载流程。
 - 使用本地 Showcase 和模拟材质，在真实浏览器内并排记录同主题、同尺寸下的本地与云端对照截图。覆盖 Classic / Folia、亮暗主题、960×600、默认和放大窗口，以及背景、透明度、模糊的代表组合。确认工具栏对齐、长名称和长译文、列表末项可达、分页、已穿戴标识、焦点、加载、空列表、失败与补充授权状态。
+
+## 验收记录
+
+- 变更限于衣柜前端及其直接消费方，采用定向检查。Prettier、ESLint、设计检查、类型检查、生产构建和 15 项 Vitest 用例通过。
+- Edge 中以本地皮肤页对照 LittleSkin 云端页，使用 Showcase 模拟账户与材质。14 组场景覆盖 Classic / Folia、亮暗主题、960×600、1200×800、1600×1000，以及德语最小窗口和带背景、透明度、模糊的代表配置。另复核本地披风与官方披风入口。截图和报告保存在 `output/playwright/littleskin-wardrobe-layout/`。
+- 云端卡片与本地皮肤卡片宽高一致。当前穿戴标签占用材质说明所在的一行，材质类型仍可通过标签提示查看。Folia 分类支持键盘切换，已穿戴状态与卡片的可访问描述关联。
+- 德语最小窗口中，右侧三维预览的旋转控件覆盖部分动画按钮，作为独立问题跟踪。 [#124](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/124)
