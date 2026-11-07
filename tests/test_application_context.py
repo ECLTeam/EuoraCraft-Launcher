@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -202,7 +203,7 @@ def test_event_handler_failure_does_not_block_other_handlers() -> None:
     assert received == ["ok"]
 
 
-def test_composition_failure_closes_resources_already_created(monkeypatch, tmp_path: Path) -> None:
+def test_composition_failure_closes_resources_already_created(monkeypatch, tmp_path: Path, caplog) -> None:
     closed: list[str] = []
 
     class FakeHttp:
@@ -218,6 +219,9 @@ def test_composition_failure_closes_resources_already_created(monkeypatch, tmp_p
 
     monkeypatch.setattr(application_module.httpx, "Client", FakeHttp)
     monkeypatch.setattr(application_module, "AccountManager", FailingAccounts)
+    clock = iter((10.0, 10.2, 10.5, 11.0))
+    monkeypatch.setattr(application_module, "perf_counter", lambda: next(clock), raising=False)
+    caplog.set_level(logging.DEBUG, logger=application_module.logger.name)
 
     with pytest.raises(RuntimeError, match="account initialization failed"):
         create_application(
@@ -230,6 +234,82 @@ def test_composition_failure_closes_resources_already_created(monkeypatch, tmp_p
         )
 
     assert closed == ["http"]
+    failure = next(record.getMessage() for record in caplog.records if "后端服务初始化失败" in record.getMessage())
+    assert "账户与衣柜" in failure
+    assert "1000.0 毫秒" in failure
+    assert not any("后端服务初始化完成" in record.getMessage() for record in caplog.records)
+
+
+def test_startup_timings_cover_service_phases_without_reordering(monkeypatch, tmp_path: Path, caplog) -> None:
+    order: list[str] = []
+    stages = ("配置与环境", "共享资源", "账户与衣柜", "游戏与 Java", "联机", "插件", "尾部装配")
+    clock = iter(float(value) for value in range(9))
+    monkeypatch.setattr(application_module, "perf_counter", lambda: next(clock), raising=False)
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+
+    def service(name, constructor):
+        def create(*args, **kwargs):
+            order.append(name)
+            return constructor(*args, **kwargs)
+
+        return create
+
+    monkeypatch.setattr(application_module.httpx, "Client", service("http", _FakeHttp))
+    monkeypatch.setattr(application_module, "AccountManager", service("accounts", _FakeAccounts))
+    monkeypatch.setattr(application_module, "StartupUpdateService", _FakeStartupUpdate)
+    monkeypatch.setattr(application_module, "GameService", service("game", _FakeGame))
+    monkeypatch.setattr(application_module, "PluginManager", service("plugins", _FakePluginManager))
+    monkeypatch.setattr(connector_service_module, "ConnectorService", service("connector", _FakeConnector))
+    caplog.set_level(logging.DEBUG, logger=application_module.logger.name)
+    context = create_application(
+        {
+            "app_path": tmp_path,
+            "resource_path": tmp_path,
+            "data_path": tmp_path / "ECL_data",
+            "is_frozen": False,
+        }
+    )
+    try:
+        assert order == ["http", "accounts", "game", "connector", "plugins"]
+        messages = [record.getMessage() for record in caplog.records if record.name == application_module.logger.name]
+        summary = next(message for message in messages if message.startswith("后端初始化阶段耗时"))
+        assert all(f"{stage}：1000.0 毫秒" in summary for stage in stages)
+        assert sum(message.startswith("后端服务初始化完成") for message in messages) == 1
+        assert "总耗时：8000.0 毫秒" in messages[-1]
+    finally:
+        context.close()
+
+
+def test_startup_tail_failure_closes_services_and_does_not_report_success(monkeypatch, tmp_path: Path, caplog) -> None:
+    closed: list[str] = []
+    monkeypatch.setattr(application_module.httpx, "Client", _FakeHttp)
+    monkeypatch.setattr(application_module, "AccountManager", _FakeAccounts)
+    monkeypatch.setattr(application_module, "StartupUpdateService", _FakeStartupUpdate)
+    monkeypatch.setattr(application_module, "GameService", _FakeGame)
+    monkeypatch.setattr(application_module, "PluginManager", _FakePluginManager)
+    monkeypatch.setattr(connector_service_module, "ConnectorService", _FakeConnector)
+    monkeypatch.setattr(_FakeAccounts, "close", lambda self: closed.append("accounts"))
+    monkeypatch.setattr(_FakeHttp, "close", lambda self: closed.append("http"))
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+
+    def fail_start(self) -> None:
+        raise RuntimeError("startup check unavailable")
+
+    monkeypatch.setattr(_FakeStartupUpdate, "start", fail_start)
+    with pytest.raises(RuntimeError, match="startup check unavailable"):
+        create_application(
+            {
+                "app_path": tmp_path,
+                "resource_path": tmp_path,
+                "data_path": tmp_path / "ECL_data",
+                "is_frozen": False,
+            }
+        )
+    assert closed == ["accounts", "http"]
+    assert "尾部装配" in caplog.text
+    assert "后端服务初始化完成" not in caplog.text
 
 
 def test_composition_reports_loaded_state_before_services_are_created(monkeypatch, tmp_path: Path) -> None:

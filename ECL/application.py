@@ -26,6 +26,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 from urllib.request import getproxies
 
@@ -370,29 +371,43 @@ def create_application(
     :param on_state_ready: 配置读取后、服务构造前的可选回调，用于提前应用日志级别
     :return: 保存后端服务和共享资源的 ``ApplicationContext`` 对象
     """
-    state = ApplicationState(
-        app_path=runtime_info["app_path"],
-        resource_path=runtime_info["resource_path"],
-        data_path=runtime_info["data_path"],
-        is_frozen=runtime_info["is_frozen"],
-        launch_options=launch_options,
-    )
-    events = EventBus()
-    environment = Environment(state.app_path)
-    config = ConfigStore(state.data_path, events)
-    state.config = apply_launch_overrides(environment.apply_to_config(config.get_config()), launch_options)
-    state.debug = bool((state.config.get("launcher") or {}).get("debug"))
-    if on_state_ready is not None:
-        on_state_ready(state)
-    logger.debug(
-        "正在初始化后端服务：数据目录：%s；打包运行：%s；调试模式：%s",
-        state.data_path,
-        ("是" if state.is_frozen else "否"),
-        ("是" if state.debug else "否"),
-    )
-
+    startup_started_at = perf_counter()
+    phase_started_at = startup_started_at
+    phase_name = "配置与环境"
+    phase_durations: list[tuple[str, float]] = []
     created: list[Any] = []
+
+    def finish_phase(next_phase: str) -> None:
+        # 连续边界只记录当前阶段，不把嵌套总量重复计入摘要。
+        nonlocal phase_started_at, phase_name
+        now = perf_counter()
+        phase_durations.append((phase_name, (now - phase_started_at) * 1000))
+        phase_started_at = now
+        phase_name = next_phase
+
     try:
+        state = ApplicationState(
+            app_path=runtime_info["app_path"],
+            resource_path=runtime_info["resource_path"],
+            data_path=runtime_info["data_path"],
+            is_frozen=runtime_info["is_frozen"],
+            launch_options=launch_options,
+        )
+        events = EventBus()
+        environment = Environment(state.app_path)
+        config = ConfigStore(state.data_path, events)
+        state.config = apply_launch_overrides(environment.apply_to_config(config.get_config()), launch_options)
+        state.debug = bool((state.config.get("launcher") or {}).get("debug"))
+        if on_state_ready is not None:
+            on_state_ready(state)
+        logger.debug(
+            "正在初始化后端服务：数据目录：%s；打包运行：%s；调试模式：%s",
+            state.data_path,
+            ("是" if state.is_frozen else "否"),
+            ("是" if state.debug else "否"),
+        )
+
+        finish_phase("共享资源")
         logger.debug("正在创建共享 HTTP 客户端")
         launcher_config = state.config.get("launcher") or {}
         # 单实例监听最先创建（关闭时最后释放），写入发现文件供后续启动进程探测。
@@ -435,6 +450,7 @@ def create_application(
         )
         created.append(startup_update)
 
+        finish_phase("账户与衣柜")
         logger.info("正在初始化账户服务")
         accounts = AccountManager(
             state.data_path,
@@ -466,6 +482,7 @@ def create_application(
             request_retries=request_retries,
         )
 
+        finish_phase("游戏与 Java")
         logger.info("正在初始化游戏服务")
         # 共享进程管理器，使实例终端能同时展示插件与 Minecraft 实例的输出。
         shared_instances = InstancesManager()
@@ -500,6 +517,7 @@ def create_application(
         created.append(game)
         logger.info("游戏服务初始化完成")
 
+        finish_phase("联机")
         logger.debug("正在初始化联机服务 ConnectorService")
         from ECL.plugins.connector import ConnectorExtensionRegistry
         from ECL.services.connector import ConnectorService
@@ -517,6 +535,7 @@ def create_application(
         created.append(connector)
         logger.debug("联机服务初始化完成；EasyTier 版本：%s", connector.easytier_version)
 
+        finish_phase("插件")
         logger.debug("正在初始化子进程实例服务")
         processes = ProcessService(event_bus=events, instances_manager=shared_instances)
         created.append(processes)
@@ -552,6 +571,7 @@ def create_application(
         )
         logger.debug("插件管理器已初始化")
 
+        finish_phase("尾部装配")
         dev_channel: DevChannelService | None = None
         if bool(launcher_config.get("dev_channel", False)):
             logger.info("正在启动开发者通道")
@@ -565,8 +585,73 @@ def create_application(
             )
             dev_channel.start()
             created.append(dev_channel)
+        context = ApplicationContext(
+            state=state,
+            events=events,
+            config=config,
+            environment=environment,
+            http=http,
+            accounts=accounts,
+            wardrobe=wardrobe,
+            announcements=announcements,
+            game=game,
+            connector=connector,
+            plugins=plugins,
+            processes=processes,
+            operations=operations,
+            downloads=downloads,
+            java=java,
+            background_media=background_media,
+            startup_update=startup_update,
+            single_instance=single_instance,
+            dev_channel=dev_channel,
+        )
+
+        if dev_channel is not None:
+            from ECL.api import FrontendApi
+            from ECL.api.registry import command_handlers
+
+            dev_channel.install_frontend_handlers(command_handlers(FrontendApi(context)))
+
+        def update_runtime_config(section: str, data: Any) -> None:
+            """
+            在启动器设置变化后刷新运行状态和日志级别。
+
+            :param section: 被修改的配置分区
+            :param data: 分区更新后的配置数据
+            """
+            if section != "launcher":
+                return
+            launcher_config = data if isinstance(data, Mapping) else state.config.get("launcher") or {}
+            # 重新叠加命令行覆盖，使会话内粘滞的启动参数不被设置界面的任意改动清除。
+            state.config = apply_launch_overrides(
+                environment.apply_to_config(config.get_config()), state.launch_options
+            )
+            # 调试标记跟随叠加覆盖后的生效配置，与初始化阶段的派生逻辑保持一致。
+            state.debug = bool((state.config.get("launcher") or {}).get("debug"))
+            _apply_ssl_verify(
+                ssl_verify_context,
+                not bool((data or {}).get("disable_ssl_verify", False)),
+            )
+            _sync_download_proxy_env(launcher_config)
+            _apply_http_network_settings(http, launcher_config)
+            logger.debug("运行配置已刷新：调试模式：%s", ("是" if state.debug else "否"))
+
+        events.subscribe("config:updated", update_runtime_config)
+        startup_update.start()
+        finish_phase("完成")
+        logger.debug(
+            "后端初始化阶段耗时：%s",
+            "；".join(f"{name}：{duration:.1f} 毫秒" for name, duration in phase_durations),
+        )
+        logger.info("后端服务初始化完成；总耗时：%.1f 毫秒", (perf_counter() - startup_started_at) * 1000)
+        return context
     except Exception:
-        logger.exception("后端服务初始化失败，正在释放已创建的资源")
+        logger.exception(
+            "后端服务初始化失败，正在释放已创建的资源；阶段：%s；已耗时：%.1f 毫秒",
+            phase_name,
+            (perf_counter() - startup_started_at) * 1000,
+        )
         for resource in reversed(created):
             close = getattr(resource, "close", None)
             if callable(close):
@@ -577,61 +662,6 @@ def create_application(
                     else:
                         close()
         raise
-
-    context = ApplicationContext(
-        state=state,
-        events=events,
-        config=config,
-        environment=environment,
-        http=http,
-        accounts=accounts,
-        wardrobe=wardrobe,
-        announcements=announcements,
-        game=game,
-        connector=connector,
-        plugins=plugins,
-        processes=processes,
-        operations=operations,
-        downloads=downloads,
-        java=java,
-        background_media=background_media,
-        startup_update=startup_update,
-        single_instance=single_instance,
-        dev_channel=dev_channel,
-    )
-
-    if dev_channel is not None:
-        from ECL.api import FrontendApi
-        from ECL.api.registry import command_handlers
-
-        dev_channel.install_frontend_handlers(command_handlers(FrontendApi(context)))
-
-    def update_runtime_config(section: str, data: Any) -> None:
-        """
-        在启动器设置变化后刷新运行状态和日志级别。
-
-        :param section: 被修改的配置分区
-        :param data: 分区更新后的配置数据
-        """
-        if section != "launcher":
-            return
-        launcher_config = data if isinstance(data, Mapping) else state.config.get("launcher") or {}
-        # 重新叠加命令行覆盖，使会话内粘滞的启动参数不被设置界面的任意改动清除。
-        state.config = apply_launch_overrides(environment.apply_to_config(config.get_config()), state.launch_options)
-        # 调试标记跟随叠加覆盖后的生效配置，与初始化阶段的派生逻辑保持一致。
-        state.debug = bool((state.config.get("launcher") or {}).get("debug"))
-        _apply_ssl_verify(
-            ssl_verify_context,
-            not bool((data or {}).get("disable_ssl_verify", False)),
-        )
-        _sync_download_proxy_env(launcher_config)
-        _apply_http_network_settings(http, launcher_config)
-        logger.debug("运行配置已刷新：调试模式：%s", ("是" if state.debug else "否"))
-
-    events.subscribe("config:updated", update_runtime_config)
-    startup_update.start()
-    logger.info("后端服务初始化完成")
-    return context
 
 
 __all__ = ["ApplicationContext", "ApplicationState", "create_application"]
