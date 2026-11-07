@@ -9,8 +9,8 @@
 
 | 项目             | 联机插件                            | QomicEX 兼容插件                    |
 | ---------------- | ----------------------------------- | ----------------------------------- |
-| 插件标识 `name`  | `ecl-multiplayer`（本方案建议）     | `Qomicex-Compatible`                |
-| 显示名称 `title` | ECL 联机（本方案建议）              | Qomicex-Compatible                  |
+| 插件标识 `name`  | `ECL-OnlineGame`                    | `Qomicex-Compatible`                |
+| 显示名称 `title` | ECL-OnlineGame                      | Qomicex-Compatible                  |
 | 作者             | ECLTeam                             | ECLTeam                             |
 | 显示版本         | v1.0.0-beta                         | v1.0.0-beta                         |
 | 清单版本         | `1.0.0-beta`                        | `1.0.0-beta`                        |
@@ -18,6 +18,8 @@
 | 分发             | 独立 `.eclplugin`，不随主安装包分发 | 独立 `.eclplugin`，不随主安装包分发 |
 | 界面             | 主窗口内的插件页面                  | 宿主插件设置页，按需登记联机扩展    |
 | 特权             | 无内置、隐藏、免授权或不可禁用待遇  | 无内置、隐藏、免授权或不可禁用待遇  |
+
+用户已指定联机插件的标识和显示名称统一为 `ECL-OnlineGame`，分发文件名使用 `ECL-OnlineGame.eclplugin`。
 
 `Qomicex-Compatible` 是完整插件身份替换，不保留旧 `qomicex-compat` 身份别名。外部协议中的 `qml:*` 与第三方来源标识 `qomicex` 沿用其业务契约，不随显示名称重命名。
 
@@ -154,7 +156,7 @@
 
 ## 6. 数据、依赖与包结构
 
-- 源码建议在主仓库新增 `external_plugins/ecl_multiplayer/` 和 `external_plugins/qomicex_compatible/`，作为真实插件工程维护，产物单独输出；不得放入 `resources/system_plugins` 或主安装包资源。
+- 源码建议在主仓库新增 `external_plugins/ecl_onlinegame/` 和 `external_plugins/qomicex_compatible/`，作为真实插件工程维护，产物单独输出；不得放入 `resources/system_plugins` 或主安装包资源。
 - Florolding 固定当前已验证提交并作为联机插件私有依赖维护，保留许可证及来源；主仓库不再通过运行时 `ECL.services.florolding` 提供能力。完成全调用方清查后移除原 gitlink，并更新 `.gitmodules`；不修改无关子模块内容。
 - EasyTier 使用匹配宿主平台/架构/Python ABI 的锁和 wheels 随插件分发，包含实际需要的 DLL/驱动资源。冻结发行物内加载原生扩展必须实测，不能以源码导入成功代替。
 - 两个插件各自使用插件设置和私有数据目录。节点设置归联机插件，索引选择归兼容插件；主程序移除旧 `connector`、`game.qomicex_instances_path` 的生产和消费入口。

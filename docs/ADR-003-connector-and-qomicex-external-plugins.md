@@ -19,7 +19,7 @@
 
 ## 决策
 
-用户选择选项 1。联机插件和 `Qomicex-Compatible` 均使用 API v2 Worker、普通权限审阅与独立 `.eclplugin` 分发；作者均为 `ECLTeam`，显示版本均为 `v1.0.0-beta`，清单版本为 `1.0.0-beta`。
+用户选择选项 1，并指定联机插件的标识和显示名称统一为 `ECL-OnlineGame`。`ECL-OnlineGame` 和 `Qomicex-Compatible` 均使用 API v2 Worker、普通权限审阅与独立 `.eclplugin` 分发；作者均为 `ECLTeam`，显示版本均为 `v1.0.0-beta`，清单版本为 `1.0.0-beta`。
 
 QomicEX 实例元数据与四个 `qml:*` 协议全部归兼容插件。主程序不保留内置 QomicEX 读取器；联机插件独立提供基础联机，通过显式、带版本的可选扩展契约接入兼容语义。兼容插件也能在未安装联机插件时独立提供实例读取。
 
