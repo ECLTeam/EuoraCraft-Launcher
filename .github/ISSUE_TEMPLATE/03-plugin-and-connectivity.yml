@@ -1,0 +1,94 @@
+name: 插件与联机问题
+description: 报告插件安装、权限、页面或联机过程中出现的问题。
+title: "[插件] "
+labels: ["bug", "plugin"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索[已有 Issue](https://github.com/ECLTeam/EuoraCraft-Launcher/issues?q=is%3Aissue)，同一问题请补充到原 Issue。
+        插件自身的问题若已有独立仓库，优先到对应仓库反馈，这里可登记启动器侧的加载、授权或兼容问题。
+        提交前请确认正文与附件不含令牌、密码、房间码或个人路径，详见[贡献指南](https://github.com/ECLTeam/EuoraCraft-Launcher/blob/main/CONTRIBUTING.md)。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索已有 Issue，没有发现相同问题。
+          required: true
+        - label: 我已检查正文和附件，不含令牌、密码、账户凭据或未经脱敏的个人信息。
+          required: true
+  - type: input
+    id: plugin
+    attributes:
+      label: 涉及的插件或联机方式
+      description: 填写插件名称与版本；联机问题请说明使用的联机组件与网络环境。
+      placeholder: 例如 ECL-OnlineGame 1.2.0，或 EasyTier 联机
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 说明触发条件、操作路径与影响范围，例如安装、启用、授权、页面打开或连接阶段。
+      placeholder: 在什么操作之后出现问题？影响哪一步？
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 启动器版本或提交
+      description: 发布版填写完整版本；源码运行填写主仓库提交 SHA。涉及子模块时补充其 SHA。
+      placeholder: 完整版本号，或主仓库与相关子模块的提交 SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - 跨平台
+        - 尚未确认
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 复现步骤或证据
+      description: 写出最短复现步骤；有报错时说明错误码或提示原文，截图放在单独字段。
+      placeholder: |
+        1. 安装或启用哪个插件？
+        2. 执行什么操作后出现问题？
+    validations:
+      required: true
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual-result
+    attributes:
+      label: 实际结果
+      description: 说明实际行为、是否可重复，以及是否只在特定主题、语言或窗口尺寸下出现。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 只提供与问题有关且已脱敏的片段；此字段自动使用代码格式。
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图或录屏
+      description: 可粘贴或上传已脱敏的截图、录屏；日志请放在上一个字段。
+    validations:
+      required: false

@@ -1,6 +1,7 @@
 name: 功能建议
 description: 说明使用场景、当前问题和期望效果，提出功能建议。
 title: "[建议] "
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:

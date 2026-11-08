@@ -23,11 +23,12 @@ Alpha、RC 示例不新增序号或日期限制。Beta 必须使用 `vMAJOR.MINO
 
 | 触发方式 | 执行内容 |
 | --- | --- |
-| `main` 推送、面向 `main` 的 PR | `Backend Tests`：后端及 Core 检查和测试；`Frontend Checks`：当前子模块的 `pnpm check` |
+| `main` 推送 | `Backend Tests`：后端及 Core 检查和测试；`Frontend Checks`：当前子模块的 `pnpm check`（发布门禁依赖这两项成功记录，故推送不做路径过滤） |
+| 面向 `main` 的 PR | 同一组检查按改动范围执行：后端路径改动跑 `Backend Tests`，`frontend` 指针变动跑 `Frontend Checks`，依赖清单变动跑 `Dependency Review`，治理相关文件变动跑 `Engineering Governance`，纯文档改动不触发 |
 | 版本标签推送 | 发布条件校验、前端构建、Windows x64/ARM64、Linux、macOS、Arch 打包与发布 |
 | 手动运行 `Build` | 完整构建并上传 Actions 产物；显式选择发布时创建版本标签并上传 Release |
 
-日常推送不执行平台打包。手动运行可选择分支或版本标签，并可填写版本号与版本类型；不填写时，分支运行使用源码中的版本常量，标签运行使用标签版本，不把分支名当版本。手动运行默认不发布，只有勾选发布且满足全部门禁时才会创建标签并上传 Release。PR 的现有 Ruff 检查及子模块同步工作流继续按各自配置运行。
+日常推送不执行平台打包。手动运行可选择分支或版本标签，并可填写版本号与版本类型；不填写时，分支运行使用源码中的版本常量，标签运行使用标签版本，不把分支名当版本。手动运行默认不发布，只有勾选发布且满足全部门禁时才会创建标签并上传 Release。子模块同步工作流、插件平台矩阵与原生隔离检查按各自的路径触发条件运行。
 
 ### 手动构建输入
 

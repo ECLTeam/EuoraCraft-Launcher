@@ -1,6 +1,7 @@
 name: 缺陷报告
 description: 报告启动器中的异常行为，提供复现步骤或代码证据。
 title: "[问题] "
+labels: ["bug"]
 body:
   - type: markdown
     attributes:

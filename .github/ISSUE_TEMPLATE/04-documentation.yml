@@ -1,0 +1,42 @@
+name: 文档问题
+description: 指出文档站、README 或指南中的错误、过期内容与缺失说明。
+title: "[文档] "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        文档站内容见 [docs.euora.cn](https://docs.euora.cn)，仓库内文档见 `docs/` 与各目录的 `README.md`、`AGENTS.md`。
+        只描述文档与实际行为不一致的地方；如果怀疑是启动器本身出错，请改用缺陷报告表单。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索已有 Issue，没有发现相同问题。
+          required: true
+        - label: 我已确认这条内容确实错误或已过期，而不是自己尚未找到对应说明。
+          required: true
+  - type: input
+    id: location
+    attributes:
+      label: 文档位置
+      description: 填写页面链接或仓库内文件路径；有多处时列出最关键的几处。
+      placeholder: 例如 docs/guides/release-process.md，或文档站的具体页面链接
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题描述
+      description: 引用原文并说明错在哪里，或缺少什么信息、读者会在哪一步卡住。
+      placeholder: 原文是什么？实际行为或正确做法是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建议修改
+      description: 如有具体改法可以填写，没有也可以只指出问题。
+    validations:
+      required: false
