@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -25,6 +26,7 @@ async def main() -> None:
     data_path = output / "data"
     data_path.mkdir(parents=True)
     (data_path / "home").mkdir()
+    shutil.copytree(root / "examples/plugins/worker_no_hot_reload", data_path / "plugins/worker_no_hot_reload")
     config = deepcopy(default_config)
     config["user_agreement"] = {"accepted": True, "uuid": "cli-acceptance"}
     config["ui"]["locale"] = "zh-CN"
@@ -56,7 +58,8 @@ async def main() -> None:
             "--language",
             "en-US",
             "--start-minimized",
-            "--disable-plugins",
+            "--disable-plugin",
+            "worker_no_hot_reload",
             "--frontend-dist",
             f"http://127.0.0.1:{server.server_port}/",
             "--dev-channel",
@@ -101,6 +104,14 @@ async def main() -> None:
                 creationflags=0x08000000,
             )
             assert restored.returncode == 0
+            warning = (
+                page.get_by_role("dialog")
+                .filter(has_text="CurseForge API Key 未配置")
+                .get_by_role("button", name="OK", exact=True)
+            )
+            if await warning.is_visible():
+                await warning.click()
+            await page.wait_for_timeout(350)
             await page.screenshot(path=str(output / "java-en-US.png"))
             for target, suffix in (("plugins", "/more/plugins"), ("accounts", "/")):
                 result = await asyncio.to_thread(
@@ -114,6 +125,14 @@ async def main() -> None:
                 )
                 assert result.returncode == 0, result.stderr.decode(errors="replace")
                 await page.wait_for_function("suffix => location.hash.endsWith(suffix)", arg=suffix)
+                if target == "plugins":
+                    row = page.locator(".plugin-row").filter(has_text="worker_no_hot_reload")
+                    await row.wait_for()
+                    assert await row.get_by_role("button", name="Enable", exact=True).is_disabled()
+                    assert await row.get_by_role("button", name="Reload", exact=True).is_disabled()
+                    entries = await _call(page, "plugin_list")
+                    assert entries[0]["error"] == "PLUGIN_DISABLED_FOR_SESSION"
+                    await row.get_by_role("note").hover()
                 if target == "accounts":
                     await page.locator(".account-modal-body").wait_for()
                 await page.screenshot(path=str(output / f"{target}-en-US.png"))

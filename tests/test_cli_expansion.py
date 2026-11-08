@@ -19,6 +19,14 @@ def test_desktop_parameters_keep_request_and_process_settings_separate() -> None
     assert options.start_minimized
 
 
+def test_targeted_plugin_disable_is_deduplicated_and_validated() -> None:
+    assert parse_launch_options(["--disable-plugin", "example", "--disable-plugin", "example"]).disabled_plugin_ids == (
+        "example",
+    )
+    with pytest.raises(SystemExit):
+        parse_launch_options(["--disable-plugin", "../outside"])
+
+
 @pytest.mark.parametrize("page", ["accounts", "java", "plugins"])
 def test_management_destinations_are_explicit(page: str) -> None:
     assert parse_launch_options(["--open-page", page]).open_page == page

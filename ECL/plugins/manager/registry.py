@@ -181,7 +181,11 @@ class PluginRegistry(_PluginState):
             )
             entry["pending_restart"] = bool(package.get("pending_restart"))
             entry["installed_version"] = metadata.get("version", "")
-            if self.worker_service is not None and entry["status"] != "unsupported":
+            session_reason = self._session_disable_reason(name)
+            if session_reason:
+                entry["status"] = "disabled"
+                entry["error"] = session_reason
+            elif self.worker_service is not None and entry["status"] != "unsupported":
                 try:
                     self._apply_worker_details(name, entry)
                 except ValueError:

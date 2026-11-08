@@ -62,6 +62,9 @@ class PluginLifecycle(_PluginState):
         :param name: 插件名称
         """
         with self._plugin_action_lock(name):
+            reason = self._session_disable_reason(name)
+            if reason:
+                return PluginActionResult(name, PluginAction.ENABLE, "forbidden", reason)
             if name in self._package_entries:
                 return self._enable_package(name)
             enabled, reason = self._enable(name)
@@ -74,36 +77,12 @@ class PluginLifecycle(_PluginState):
 
     def _enable(self, name: str) -> tuple[bool, str]:
         # 启用单个插件；若因被禁用而未加载则先按候选信息加载。
+        reason = self._session_disable_reason(name)
+        if reason:
+            return False, reason
         candidate = self._candidate_map.get(name)
         if candidate and not candidate["is_system"]:
-            if not self._are_dependencies_satisfied(candidate["metadata"]):
-                self._plugin_errors[name] = "PLUGIN_DEPENDENCY_CONFLICT"
-                return False, "PLUGIN_DEPENDENCY_CONFLICT"
-            self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
-            if self._status.get(name) == "unsupported":
-                return False, self._plugin_errors[name]
-            try:
-                assert self.worker_service is not None
-                self.worker_service.development.intent(name, True)
-                self.worker_service.development.prepare_enable(name, frontend_ready=self._frontend_ready)
-                if (
-                    self.worker_service.development.manages(name)
-                    and self.worker_service.runtime_info(name)["run_state"] != "enabled"
-                ):
-                    self.worker_service.development.retry(name)
-                self.worker_service.enable(name, frontend_ready=self._frontend_ready)
-                self._status[name] = "enabled"
-                self._disabled_plugins.discard(name)
-                self._save_plugin_state()
-                self._plugin_errors.pop(name, None)
-                self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
-                self.logger.info("插件已启用：%s", name)
-                return True, ""
-            except (OSError, ValueError, PluginRuntimeError) as exc:
-                code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
-                self._status[name] = "review_required" if code == "PLUGIN_GRANT_REVIEW_REQUIRED" else "error"
-                self._plugin_errors[name] = code
-                return False, code
+            return self._enable_worker(name)
         plugin = self._plugins.get(name)
         # 若插件因被禁用或安全模式（--disable-plugins）而未加载，先按候选信息加载
         if (
@@ -146,6 +125,42 @@ class PluginLifecycle(_PluginState):
         if self._frontend_ready:
             self._call_plugin_hook(plugin, "on_frontend_ready")
         return True, ""
+
+    def _enable_worker(self, name: str) -> tuple[bool, str]:
+        """
+        完成第三方插件的依赖校验、内容审阅准入和 Worker 启动后提交运行状态。
+
+        返回失败时保留既有持久禁用偏好，不将准备成功误报为已启用。
+        """
+        candidate = self._candidate_map[name]
+        if not self._are_dependencies_satisfied(candidate["metadata"]):
+            self._plugin_errors[name] = "PLUGIN_DEPENDENCY_CONFLICT"
+            return False, "PLUGIN_DEPENDENCY_CONFLICT"
+        self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
+        if self._status.get(name) == "unsupported":
+            return False, self._plugin_errors[name]
+        try:
+            assert self.worker_service is not None
+            self.worker_service.development.intent(name, True)
+            self.worker_service.development.prepare_enable(name, frontend_ready=self._frontend_ready)
+            if (
+                self.worker_service.development.manages(name)
+                and self.worker_service.runtime_info(name)["run_state"] != "enabled"
+            ):
+                self.worker_service.development.retry(name)
+            self.worker_service.enable(name, frontend_ready=self._frontend_ready)
+            self._status[name] = "enabled"
+            self._disabled_plugins.discard(name)
+            self._save_plugin_state()
+            self._plugin_errors.pop(name, None)
+            self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
+            self.logger.info("插件已启用：%s", name)
+            return True, ""
+        except (OSError, ValueError, PluginRuntimeError) as exc:
+            code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
+            self._status[name] = "review_required" if code == "PLUGIN_GRANT_REVIEW_REQUIRED" else "error"
+            self._plugin_errors[name] = code
+            return False, code
 
     def disable(self, name: str, _persist_state: bool = True) -> PluginActionResult:
         """
@@ -352,6 +367,9 @@ class PluginLifecycle(_PluginState):
         :param name: 插件名称
         """
         with self._plugin_action_lock(name):
+            reason = self._session_disable_reason(name)
+            if reason:
+                return PluginActionResult(name, PluginAction.RELOAD, "forbidden", reason)
             candidate = self._candidate_map.get(name)
             if candidate and not candidate["is_system"]:
                 if self.worker_service is not None and self.worker_service.development.manages(name):
@@ -556,6 +574,7 @@ class PluginLifecycle(_PluginState):
                 if (
                     candidate
                     and self.worker_service is not None
+                    and not self._session_disable_reason(req.name)
                     and self.worker_service.runtime_info(req.name)["run_state"] == "enabled"
                 ):
                     version = parse_version(candidate["metadata"].get("version", "0.0.0"))

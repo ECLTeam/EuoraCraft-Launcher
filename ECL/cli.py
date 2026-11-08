@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Sequence
 from copy import deepcopy
@@ -74,6 +75,7 @@ class LaunchOptions:
     account_id: str | None = None
     start_minimized: bool = False
     language: str | None = None
+    disabled_plugin_ids: tuple[str, ...] = ()
 
     def game_overrides(self) -> dict[str, object]:
         """
@@ -247,6 +249,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--account", metavar="账户ID", help="为本次启动选择已有账户，不改变默认账户")
     parser.add_argument("--start-minimized", action="store_true", help="启动器首次打开时最小化")
     parser.add_argument(
+        "--disable-plugin", action="append", default=[], metavar="插件ID", help="本次禁止指定插件运行，可重复"
+    )
+    parser.add_argument(
         "--language", choices=("zh-CN", "zh-TW", "en-US", "ja-JP", "ru-RU", "de-DE"), help="本次界面语言，不写入设置"
     )
     return parser
@@ -407,6 +412,9 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         parser.error("--server 与 --world 不能同时使用")
     launch_target = _validate_quick_target(parser, "--launch", args.launch)
     _validate_game_options(parser, args, launch_target)
+    disabled_plugin_ids = tuple(dict.fromkeys(args.disable_plugin))
+    if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", value) is None for value in disabled_plugin_ids):
+        parser.error("--disable-plugin 必须为有效的插件 ID")
     return LaunchOptions(
         forwarded_argv=tuple(argv),
         run_mode=args.run_mode,
@@ -439,6 +447,7 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         account_id=_validate_quick_target(parser, "--account", args.account),
         start_minimized=args.start_minimized,
         language=args.language,
+        disabled_plugin_ids=disabled_plugin_ids,
     )
 
 
