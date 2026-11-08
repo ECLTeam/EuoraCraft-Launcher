@@ -193,7 +193,10 @@ class SingleInstanceService:
                 or self._has_headless_options(argv)
                 or any(
                     arg.startswith("--")
-                    and any(option.startswith(arg.split("=", 1)[0]) for option in ("--plugin-dev", "--no-plugin-dev"))
+                    and (
+                        any(option.startswith(arg.split("=", 1)[0]) for option in ("--plugin-dev", "--no-plugin-dev"))
+                        or arg.split("=", 1)[0] in {"--start-minimized", "--language", "--disable-plugin"}
+                    )
                     for arg in argv
                 )
             ):

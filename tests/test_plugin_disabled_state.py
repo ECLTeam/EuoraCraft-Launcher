@@ -6,7 +6,77 @@ from pathlib import Path
 import pytest
 from test_plugin_worker_manager import make_plugin
 
+from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugins import PluginManager
+
+
+def test_session_disable_blocks_load_enable_reload_and_worker_without_persisting(tmp_path):
+    source = tmp_path / "data/plugins/example"
+    marker = tmp_path / "executed"
+    make_plugin(source, marker)
+    manager = PluginManager()
+    manager.initialize(
+        tmp_path / "data", tmp_path / "resources", disabled_plugin_ids=frozenset({"example"}), development_mode=True
+    )
+    try:
+        entry = manager.list_plugins()[0]
+        assert entry["status"] == "disabled"
+        assert entry["error"] == "PLUGIN_DISABLED_FOR_SESSION"
+        assert manager.worker_service.directory_sources() == ()
+        assert manager.worker_service.development.view()["items"] == []
+        assert manager.enable("example").status == "forbidden"
+        assert manager.reload("example").status == "forbidden"
+        with pytest.raises(ProtocolError) as error:
+            manager.worker_service.enable("example")
+        assert error.value.error_code == "PLUGIN_DISABLED_FOR_SESSION"
+        manager._load_plugin(source, source / "plugin.json", False)
+        assert not marker.exists()
+        assert not (tmp_path / "data/plugin_state.json").exists()
+    finally:
+        manager.close()
+    restarted = PluginManager()
+    restarted.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        assert restarted.enable("example").success
+        assert marker.exists()
+    finally:
+        restarted.close()
+
+
+def test_session_disable_propagates_only_through_required_dependencies(tmp_path):
+    for name, dependency in (
+        ("example", {}),
+        ("required", {"example": "*"}),
+        ("optional", {"example": {"optional": True}}),
+    ):
+        source = tmp_path / "data/plugins" / name
+        make_plugin(source, tmp_path / name)
+        metadata = json.loads((source / "plugin.json").read_text())
+        metadata.update(name=name, dependencies=dependency)
+        (source / "plugin.json").write_text(json.dumps(metadata))
+    manager = PluginManager()
+    manager.initialize(tmp_path / "data", tmp_path / "resources", disabled_plugin_ids=frozenset({"example"}))
+    try:
+        entries = {entry["name"]: entry for entry in manager.list_plugins()}
+        assert entries["required"]["error"] == "PLUGIN_DEPENDENCY_DISABLED_FOR_SESSION"
+        assert manager.enable("required").status == "forbidden"
+        assert entries["optional"]["error"] != "PLUGIN_DEPENDENCY_DISABLED_FOR_SESSION"
+        assert not (tmp_path / "example").exists()
+        assert not (tmp_path / "required").exists()
+    finally:
+        manager.close()
+
+
+def test_unknown_session_disabled_plugin_fails_before_any_plugin_executes(tmp_path):
+    make_plugin(tmp_path / "data/plugins/example", tmp_path / "executed")
+    manager = PluginManager()
+    try:
+        with pytest.raises(ProtocolError) as error:
+            manager.initialize(tmp_path / "data", tmp_path / "resources", disabled_plugin_ids=frozenset({"missing"}))
+        assert error.value.error_code == "PLUGIN_NOT_FOUND"
+        assert not (tmp_path / "executed").exists()
+    finally:
+        manager.close()
 
 
 @pytest.fixture

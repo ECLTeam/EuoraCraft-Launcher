@@ -41,6 +41,7 @@ class Adapter:
     # 类级默认：允许测试经 object.__new__ 构造实例时按“未开启远程调试”处理。
     webview_debug_port: int | None = None  # --webview-debug-port 指定的调试端口，None 表示未开启
     _debug_profile_override_active: bool = False
+    _start_minimized: bool = False
     _debug_profile_original: str | None = None
 
     def __init__(self, context: ApplicationContext) -> None:
@@ -56,6 +57,7 @@ class Adapter:
         self.frontend_api_instance = FrontendApi(context)
         options = context.state.launch_options
         self.webview_debug_port = options.webview_debug_port if options is not None else None
+        self._start_minimized = options.start_minimized if options is not None else False
 
     def run(self) -> None:
         """
@@ -130,7 +132,10 @@ class Adapter:
             if main_window is None:
                 self.logger.warning("启动时未找到主窗口，无法请求焦点")
                 return
-            main_window.set_focus()
+            if self._start_minimized:
+                main_window.minimize()
+            else:
+                main_window.set_focus()
         except (OSError, RuntimeError):
             self.logger.exception("启动时请求主窗口焦点失败")
 
@@ -166,6 +171,7 @@ class Adapter:
             "minWidth": 960,  # 真神奇，这玩意会在启用窗口边缘阴影的情况下多出几个px
             "minHeight": 600,
             "visible": True,
+            "focus": not self._start_minimized,
         }
         self._apply_webview_debug_options(window_config)
         return {

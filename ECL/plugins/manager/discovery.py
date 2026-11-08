@@ -131,6 +131,11 @@ class PluginDiscovery(_PluginState):
         name = metadata.get("name")
         if not name:
             return
+        reason = self._session_disable_reason(name)
+        if reason:
+            self._status[name] = "disabled"
+            self._plugin_errors[name] = reason
+            return
         if not is_system:
             try:
                 assert self.worker_service is not None

@@ -218,6 +218,9 @@ class SystemHandlers(_FrontendState):
                 "debug": bool(self.launcher.debug),
                 "active_window_chrome": self.launcher.active_window_chrome,
                 "system_shadow_supported": sys.platform == "win32",
+                "session_language": (
+                    self.launcher.launch_options.language if self.launcher.launch_options is not None else None
+                ),
                 "system": _system_summary(),
             },
         }

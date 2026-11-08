@@ -867,10 +867,12 @@ class LaunchCoordinator(_GameState):
         window_title: Any = "",
         launcher_visibility: Any = "none",
         plugin_control: PluginLaunchControl | None = None,
+        account_id: str | None = None,
     ) -> dict[str, str] | PluginGameRun:
         """
         检查游戏文件并启动实例。
 
+        :param account_id: 本次明确选择的账户；不改变默认账户
         :param body: 前端传入的 IPC 请求参数
         :param game_path: Minecraft 游戏根目录
         :param source: 下载源名称，如 ``official`` 或 ``bmclapi``
@@ -980,7 +982,12 @@ class LaunchCoordinator(_GameState):
         try:
             self._emit_launch_progress("preparing", f"正在准备启动 {version_name}", 3)
             current_account_getter = getattr(self.accounts, "current_account", None)
-            current_account = current_account_getter() if callable(current_account_getter) else None
+            if account_id is not None:
+                current_account = self.accounts.launch_account(account_id)
+            elif callable(current_account_getter):
+                current_account = current_account_getter()
+            else:
+                current_account = None
             account_type = current_account.get("type") if isinstance(current_account, dict) else None
             if account_type == "microsoft":
                 self._emit_launch_progress(
@@ -998,7 +1005,11 @@ class LaunchCoordinator(_GameState):
                 self._emit_launch_progress("offline_account", "正在读取离线账户信息", 7)
             else:
                 self._emit_launch_progress("account", "正在验证游戏账户", 7)
-            credentials = await self.accounts.get_launch_credentials()
+            credentials = (
+                await self.accounts.get_launch_credentials(account_id)
+                if account_id is not None
+                else await self.accounts.get_launch_credentials()
+            )
             if credentials["user_type"] == "msa":
                 self._emit_launch_progress("account_ready", "正版登录令牌已就绪", 17)
             elif credentials["user_type"] == "yggdrasil":
@@ -1304,6 +1315,10 @@ class LaunchCoordinator(_GameState):
 
                 def create_process() -> PluginGameRun | None:
                     nonlocal instance_id, process
+                    if account_id is not None:
+                        selected_account = self.accounts.launch_account(account_id)
+                        if any(selected_account.get(key) != current_account.get(key) for key in ("id", "type", "uuid")):
+                            raise GameServiceError("启动期间所选账户发生变化", "ACCOUNT_CHANGED")
                     instance_id, process = self.instances.create_instance(
                         instance_name=version_name,
                         instance_type="Minecraft",

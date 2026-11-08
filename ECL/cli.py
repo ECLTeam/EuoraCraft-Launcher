@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Sequence
 from copy import deepcopy
@@ -71,6 +72,10 @@ class LaunchOptions:
     game_args: tuple[str, ...] = ()
     launcher_visibility: str | None = None
     open_page: str | None = None
+    account_id: str | None = None
+    start_minimized: bool = False
+    language: str | None = None
+    disabled_plugin_ids: tuple[str, ...] = ()
 
     def game_overrides(self) -> dict[str, object]:
         """
@@ -79,6 +84,8 @@ class LaunchOptions:
         :return: 等待启动流程校验的命令行选项
         """
         values: dict[str, object] = {}
+        if self.account_id is not None:
+            values["account_id"] = self.account_id
         for name in (
             "java_path",
             "memory",
@@ -112,6 +119,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="EuoraCraft Launcher",
+        allow_abbrev=False,
         description="EuoraCraft Launcher 命令行启动参数。除 --help/--version 外，参数均仅在本次运行内生效，不写入配置文件。",
     )
     parser.add_argument(
@@ -235,8 +243,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--open-page",
-        choices=("games", "instances", "download", "settings", "more"),
+        choices=("games", "instances", "download", "settings", "more", "accounts", "java", "plugins"),
         help="打开指定页面，与 --launch 互斥",
+    )
+    parser.add_argument("--account", metavar="账户ID", help="为本次启动选择已有账户，不改变默认账户")
+    parser.add_argument("--start-minimized", action="store_true", help="启动器首次打开时最小化")
+    parser.add_argument(
+        "--disable-plugin", action="append", default=[], metavar="插件ID", help="本次禁止指定插件运行，可重复"
+    )
+    parser.add_argument(
+        "--language", choices=("zh-CN", "zh-TW", "en-US", "ja-JP", "ru-RU", "de-DE"), help="本次界面语言，不写入设置"
     )
     return parser
 
@@ -284,6 +300,7 @@ def _validate_game_options(
     if args.open_page and launch_target:
         parser.error("--open-page 与 --launch 不能同时使用")
     options = (
+        args.account,
         args.game_dir,
         args.java_path,
         args.memory,
@@ -315,7 +332,7 @@ def _validate_run_mode(parser: argparse.ArgumentParser, args: argparse.Namespace
     """
     在加载运行入口前拒绝模式冲突和不可执行的任务参数。
 
-    根据原始选项检查桌面参数，防止显式 false、空值或选项缩写绕过模式约束。
+    根据原始选项检查桌面参数，防止显式 false 或空值绕过模式约束。
     """
     if args.run_mode == RunMode.desktop:
         if args.task is not None or args.result_file is not None:
@@ -324,14 +341,11 @@ def _validate_run_mode(parser: argparse.ArgumentParser, args: argparse.Namespace
     if args.task is None:
         parser.error("--headless 必须通过 --task 指定任务")
     allowed = {"--headless", "--task", "--result-file", "--data-dir", "--debug", "--log-level"}
-    # argparse 支持长选项缩写；通过已解析的 action 识别它对应的完整选项。
     for argument in argv:
         if argument.startswith("--"):
             flag = argument.split("=", 1)[0]
-            matches = [option for option in parser._option_string_actions if option.startswith(flag)]
-            canonical = flag if flag in parser._option_string_actions else matches[0] if len(matches) == 1 else flag
-            if canonical not in allowed:
-                parser.error(f"{canonical} 不支持无头模式")
+            if flag not in allowed:
+                parser.error(f"{flag} 不支持无头模式")
 
 
 def _validate_webview_debug_port(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -398,6 +412,9 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         parser.error("--server 与 --world 不能同时使用")
     launch_target = _validate_quick_target(parser, "--launch", args.launch)
     _validate_game_options(parser, args, launch_target)
+    disabled_plugin_ids = tuple(dict.fromkeys(args.disable_plugin))
+    if any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", value) is None for value in disabled_plugin_ids):
+        parser.error("--disable-plugin 必须为有效的插件 ID")
     return LaunchOptions(
         forwarded_argv=tuple(argv),
         run_mode=args.run_mode,
@@ -427,6 +444,10 @@ def parse_launch_options(argv: Sequence[str]) -> LaunchOptions:
         game_args=tuple(args.game_arg),
         launcher_visibility=args.launcher_visibility,
         open_page=args.open_page,
+        account_id=_validate_quick_target(parser, "--account", args.account),
+        start_minimized=args.start_minimized,
+        language=args.language,
+        disabled_plugin_ids=disabled_plugin_ids,
     )
 
 

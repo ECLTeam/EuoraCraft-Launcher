@@ -116,6 +116,7 @@ class PluginWorkerService:
         auth_sink: Callable[[str, str | None, object | None, PluginLease | None], None] | None = None,
         development_changed: Callable[[], None] | None = None,
         settings_changed: Callable[[str], None] | None = None,
+        enable_block_reason: Callable[[str], str | None] | None = None,
     ) -> None:
         """
         绑定唯一安装与运行存储，不发现或执行用户代码。
@@ -138,8 +139,10 @@ class PluginWorkerService:
         :param tool_spawner: 受管工具启动方；未提供时拒绝工具调用
         :param tool_stopper: 受管工具停止方；未提供时拒绝停止
         :param auth_sink: 认证提供方接收方；提供方为 None 表示撤销
+        :param enable_block_reason: 插件管理器维护的会话运行限制，覆盖开发和重启入口
         """
         self.data_path: Path = data_path
+        self._enable_block_reason = enable_block_reason or (lambda _name: None)
         self._slot_sink = slot_sink
         self._hook_sink = hook_sink
         self._crash_sink = crash_sink
@@ -498,6 +501,9 @@ class PluginWorkerService:
         :param frontend_ready: 可信主界面是否已经就绪
         :raises ProtocolError: 平台、授权或生命周期未完成时抛出
         """
+        reason = self._enable_block_reason(name)
+        if reason:
+            raise ProtocolError("本次运行禁止启用此插件，请调整启动参数后重启", reason)
         entry = self._entry(name)
         with entry.lock:
             if self._closed.is_set():

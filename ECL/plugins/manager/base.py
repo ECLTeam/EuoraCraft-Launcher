@@ -36,7 +36,7 @@ from ECL.plugins.crash_extensions import (
     limit_reasons,
     sanitize_extension_result,
 )
-from ECL.plugins.dependencies import DependencyResolution
+from ECL.plugins.dependencies import DependencyResolution, parse_dependency
 from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.instance_compat import (
     ExternalInstanceMetadata,
@@ -148,6 +148,7 @@ class _PluginState:
         self._dependency_resolution: DependencyResolution = DependencyResolution()  # 插件依赖解析结果
         # 被禁用的插件名集合，持久化到 plugin_state.json
         self._disabled_plugins: set[str] = set()
+        self._session_disabled_plugin_ids: frozenset[str] = frozenset()
         # 启动阶段是否自动加载并启用插件；--disable-plugins 安全模式下为 False
         self._startup_auto_enable = True
         self._plugin_state_path: Path | None = None  # plugin_state.json 的路径
@@ -181,6 +182,7 @@ class _PluginState:
         *,
         auto_enable: bool = True,
         development_mode: bool = False,
+        disabled_plugin_ids: frozenset[str] = frozenset(),
     ) -> None:
         """
         从用户和系统目录发现插件，按依赖顺序加载并启用可用插件。
@@ -191,12 +193,15 @@ class _PluginState:
             安装事务恢复与依赖解析（对应命令行 --disable-plugins 安全模式），
             插件保持未加载状态，可由用户在插件页或开发通道按需启用
         :param development_mode: 本次启动是否开启目录插件开发模式；安全模式下不生效
+        :param disabled_plugin_ids: 本次运行始终禁止装载和启用的插件，不改变持久偏好
         """
         self._data_path = Path(data_path)
+        self._session_disabled_plugin_ids = disabled_plugin_ids
         if type(development_mode) is not bool:
             raise ValueError("插件开发模式配置必须为布尔值")
         self.worker_service = PluginWorkerService(
             self._data_path,
+            enable_block_reason=self._session_disable_reason,
             instance_queries=self._instance_queries,
             instance_profiles=self._instance_profiles,
             instance_roots=self._instance_roots,
@@ -264,6 +269,8 @@ class _PluginState:
             len(self._disabled_plugins),
         )
         self._candidate_map = {c["name"]: c for c in candidates}
+        if self._session_disabled_plugin_ids - self._candidate_map.keys():
+            raise ProtocolError("指定停用的插件不存在", "PLUGIN_NOT_FOUND")
         for candidate in candidates:
             if not candidate["is_system"]:
                 self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
@@ -292,6 +299,31 @@ class _PluginState:
             len(self._plugins),
             len(self._disabled_plugins),
         )
+
+    def _session_disable_reason(self, name: str) -> str | None:
+        """
+        从会话禁用与必要依赖推导运行阻断原因，不修改持久禁用集合。
+
+        每次按当前候选元数据计算，安装、重载或替换同 ID 插件不能绕过限制。
+        访问集合避免依赖环导致无限遍历；可选依赖不传播阻断。
+        """
+        pending = [name]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in self._session_disabled_plugin_ids:
+                return "PLUGIN_DISABLED_FOR_SESSION" if current == name else "PLUGIN_DEPENDENCY_DISABLED_FOR_SESSION"
+            if current in visited:
+                continue
+            visited.add(current)
+            dependencies = self._candidate_map.get(current, {}).get("metadata", {}).get("dependencies", {})
+            if not isinstance(dependencies, dict):
+                continue
+            for dependency_name, declaration in dependencies.items():
+                requirement = parse_dependency(dependency_name, declaration)
+                if requirement is not None and not requirement.optional:
+                    pending.append(requirement.name)
+        return None
 
     def _on_worker_hook(self, name: str, phase: str | None, callback_ref: str | None, required: bool) -> None:
         """
