@@ -14,8 +14,8 @@ QomicEX 索引在插件设置的 `instances_index` 中由用户填写。宿主�
 从主仓库运行：
 
 ```powershell
-python package_external_plugins.py --download
-python package_external_plugins.py --install-dir ECL_data/plugins
+python -m ECL.tooling.external_plugins --download
+python -m ECL.tooling.external_plugins --install-dir ECL_data/plugins
 ```
 
 下载按 `locks/*.txt` 校验版本和哈希；wheel 放在忽略的 `wheels/<目标>/`，不向主程序安装依赖。已经准备好 wheel 时省略 `--download`。CI 可附加 `--download-target linux-x86_64-cp312` 只准备当前目标，仍按完整锁文件校验。产物为 `output/plugins/*.eclplugin`；安装参数只创建不存在的同名目录，不覆盖已有插件、不自动批准权限。

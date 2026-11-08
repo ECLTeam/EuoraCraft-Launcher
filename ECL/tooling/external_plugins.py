@@ -76,7 +76,7 @@ def main() -> None:
     arguments = parser.parse_args()
     if arguments.download_target is not None and not arguments.download:
         parser.error("--download-target 需要同时使用 --download")
-    source_root = Path(__file__).resolve().parent / "external_plugins"
+    source_root = Path(__file__).resolve().parents[2] / "external_plugins"
     if arguments.install_dir is not None:
         arguments.install_dir.mkdir(parents=True, exist_ok=True)
         for directory in ("ecl_onlinegame", "qomicex_compatible"):
