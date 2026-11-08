@@ -26,7 +26,7 @@ def _install_fake_commands(
     *,
     head: str = commit_sha,
     main: str = commit_sha,
-    tag_exists: bool = False,
+    published_tags: tuple[str, ...] = (),
     check_success: bool = True,
 ) -> None:
     def fake_run(arguments: list[str], root_path: Path) -> str:
@@ -37,9 +37,10 @@ def _install_fake_commands(
         if arguments[:2] == ["git", "rev-parse"] and arguments[-1] == "origin/main":
             return main
         if arguments[:2] == ["git", "tag"]:
-            return "v0.3.0" if tag_exists else ""
+            requested = arguments[-1]
+            return requested if requested in published_tags else ""
         if arguments[:2] == ["git", "ls-remote"]:
-            return "refs/tags/v0.3.0" if tag_exists else ""
+            return "\n".join(f"{commit_sha}\trefs/tags/{name}" for name in published_tags)
         if arguments[0] == "gh":
             run = {
                 "id": 1,
@@ -134,7 +135,7 @@ def test_manual_publish_rejects_failed_checks(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_manual_publish_rejects_existing_tag(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_fake_commands(monkeypatch, tag_exists=True)
+    _install_fake_commands(monkeypatch, published_tags=("v0.3.0",))
 
     with pytest.raises(release_metadata.ReleaseValidationError, match="同名版本标签"):
         release_metadata.resolve_build(
@@ -153,6 +154,72 @@ def test_manual_publish_accepts_valid_request(monkeypatch: pytest.MonkeyPatch) -
 
     assert outputs["publish"] == "true"
     assert outputs["filename_version"] == "v0.3.0"
+
+
+def test_manual_publish_requires_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_commands(monkeypatch)
+
+    with pytest.raises(release_metadata.ReleaseValidationError, match="必须填写版本号"):
+        release_metadata.resolve_build(_manual_environment(ECL_MANUAL_PUBLISH="true"), repo_root)
+
+
+def test_manual_publish_rejects_lower_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_commands(monkeypatch, published_tags=("v0.2.0", "v0.3.0-beta.1+20261101"))
+
+    with pytest.raises(release_metadata.ReleaseValidationError, match=r"必须高于已发布的最新版本 v0\.3\.0-beta\.1"):
+        release_metadata.resolve_build(
+            _manual_environment(ECL_MANUAL_VERSION="0.2.1", ECL_MANUAL_PUBLISH="true"),
+            repo_root,
+        )
+
+
+def test_manual_publish_rejects_prerelease_after_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_commands(monkeypatch, published_tags=("v0.2.0",))
+
+    with pytest.raises(release_metadata.ReleaseValidationError, match="必须高于已发布的最新版本"):
+        release_metadata.resolve_build(
+            _manual_environment(ECL_MANUAL_VERSION="0.2.0-beta.1", ECL_MANUAL_PUBLISH="true"),
+            repo_root,
+        )
+
+
+def test_manual_publish_accepts_version_above_latest(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_commands(monkeypatch, published_tags=("v0.2.0-beta.1+20261025",))
+
+    outputs = release_metadata.resolve_build(
+        _manual_environment(ECL_MANUAL_VERSION="0.3.0-beta.1", ECL_MANUAL_PUBLISH="true"),
+        repo_root,
+    )
+
+    assert outputs["publish"] == "true"
+    assert outputs["filename_version"].startswith("v0.3.0-beta.1+")
+
+
+def test_version_order_follows_semver_precedence() -> None:
+    ordered = [
+        "0.3.0-alpha.1",
+        "0.3.0-beta.1",
+        "0.3.0-beta.2",
+        "0.3.0-beta.2+20261108",
+        "0.3.0-rc.1",
+        "0.3.0",
+        "0.3.1",
+    ]
+
+    keys = [release_metadata._version_order(version) for version in ordered]
+
+    assert keys == sorted(keys)
+    assert len(set(keys)) == len(keys)
+
+
+def test_release_summary_describes_release_intent() -> None:
+    outputs = release_metadata.parse_version_tag("v0.3.0-beta.1+20261108").as_outputs()
+
+    summary = "\n".join(release_metadata._release_summary({**outputs, "publish": "false"}))
+
+    assert "0.3.0-beta.1+20261108" in summary
+    assert "Beta（预发布）" in summary
+    assert "仅上传 Actions 产物" in summary
 
 
 def test_beta_release_date_is_filled() -> None:

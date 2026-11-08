@@ -27,6 +27,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from types import MappingProxyType
+from typing import ClassVar
 
 # 上海自 1991 年起不再使用夏令时，固定 +08:00 与 Asia/Shanghai 的当前日期一致，
 # 同时避免依赖 Windows 环境可能缺失的 tzdata。
@@ -49,6 +51,11 @@ class ReleaseMetadata:
     full_version: str
     version_type: str
     filename_version: str
+
+    # 版本类型比较顺序：alpha < beta < rc < 正式版，用于判断版本是否回退。
+    type_rank: ClassVar[Mapping[str, int]] = MappingProxyType(
+        {"alpha": 0, "beta": 1, "rc": 2, "release": 3},
+    )
 
     def as_outputs(self) -> dict[str, str]:
         """
@@ -159,6 +166,109 @@ def _with_beta_release_date(metadata: ReleaseMetadata, release_date: date) -> Re
         return metadata
     full_version = f"{core_version}+{expected_date}"
     return ReleaseMetadata(metadata.version, full_version, metadata.version_type, f"v{full_version}")
+
+
+def _version_order(full_version: str) -> tuple[int, int, int, int, int, int]:
+    """
+    把完整版本转换为可比较的顺序键，用于判断发布版本是否回退。
+
+    顺序与语义化版本一致：核心版本逐段比较，`alpha` < `beta` < `rc` < 正式版，
+    同类预发布按序号递增，Beta 的发布日期作为最后一级比较。预发布标识后附加的
+    额外段不参与比较，重复版本由“必须更高”的规则拒绝。
+
+    :param full_version: 不含 `v` 的完整版本，例如 `0.3.0-beta.1+20261108`
+    :return: 核心版本三段、版本类型序、预发布序号与发布日期数字
+    :raises ReleaseValidationError: 版本号或预发布标识不符合项目格式时抛出
+    """
+    matched = re.fullmatch(
+        r"(?P<major>[0-9]+)\.(?P<minor>[0-9]+)\.(?P<patch>[0-9]+)"
+        r"(?:-(?P<prerelease>[0-9A-Za-z.-]+))?"
+        r"(?:\+(?P<build>[0-9A-Za-z.-]+))?",
+        full_version,
+    )
+    if matched is None:
+        raise ReleaseValidationError("版本号格式无效")
+    version_type = "release"
+    sequence = 0
+    prerelease = matched["prerelease"]
+    if prerelease:
+        prerelease_matched = re.fullmatch(
+            r"(?P<type>alpha|beta|rc)(?:\.(?P<sequence>[0-9]+))?(?:\.[0-9A-Za-z-]+)*",
+            prerelease,
+        )
+        if prerelease_matched is None:
+            raise ReleaseValidationError("预发布标识无效")
+        version_type = prerelease_matched["type"]
+        sequence = int(prerelease_matched["sequence"] or 0)
+    build = matched["build"] or ""
+    release_day = int(build) if build.isdigit() else 0
+    return (
+        int(matched["major"]),
+        int(matched["minor"]),
+        int(matched["patch"]),
+        ReleaseMetadata.type_rank[version_type],
+        sequence,
+        release_day,
+    )
+
+
+def _tag_version_order(tag_name: str) -> tuple[int, int, int, int, int, int] | None:
+    """
+    把已有版本标签转换为顺序键，用于比较已发布版本。
+
+    只接受项目约定的四类版本标签；不符合格式的标签不参与比较，
+    避免历史遗留标签阻断发布。
+
+    :param tag_name: 远端或本地已有的标签名称
+    :return: 可比较的顺序键；标签不符合项目版本格式时返回 None
+    """
+    try:
+        metadata = parse_version_tag(tag_name)
+    except ReleaseValidationError:
+        return None
+    return _version_order(metadata.full_version)
+
+
+def _remote_tag_names(root_path: Path) -> tuple[str, ...]:
+    """
+    读取远端全部版本标签名称，用于同名占用与版本回退判断。
+
+    :param root_path: 当前检出的主仓库根目录
+    :return: 形如 `v0.3.0` 的标签名称，按远端输出顺序
+    """
+    output = _run_command(["git", "ls-remote", "--tags", "--refs", "origin", "refs/tags/v*"], root_path)
+    tag_names: list[str] = []
+    for line in output.splitlines():
+        _, separator, reference = line.partition("\t")
+        if separator and reference.startswith("refs/tags/"):
+            tag_names.append(reference.removeprefix("refs/tags/"))
+    return tuple(tag_names)
+
+
+def _reject_version_regression(metadata: ReleaseMetadata, published_tags: tuple[str, ...]) -> None:
+    """
+    拒绝不高于已发布最新版本的发布，避免用户端永远获取不到的版本占用标签。
+
+    更新检查只在候选版本中挑选最高版本，因此后发布的低版本既不会推送给
+    用户，也会占用一个不可删除的标签。
+
+    :param metadata: 本次构建使用的版本信息
+    :param published_tags: 远端已有的标签名称
+    :raises ReleaseValidationError: 本次版本不高于已发布最高版本时抛出
+    """
+    highest_tag: str | None = None
+    highest_order: tuple[int, int, int, int, int, int] | None = None
+    for tag_name in published_tags:
+        order = _tag_version_order(tag_name)
+        if order is None:
+            continue
+        if highest_order is None or order > highest_order:
+            highest_tag = tag_name
+            highest_order = order
+    if highest_order is None or highest_tag is None:
+        return
+    if _version_order(metadata.full_version) <= highest_order:
+        raise ReleaseValidationError(f"版本必须高于已发布的最新版本 {highest_tag}")
 
 
 def _manual_metadata(
@@ -280,15 +390,15 @@ def _validate_publication(metadata: ReleaseMetadata, repository: str, root_path:
 
 def _validate_manual_publication(metadata: ReleaseMetadata, repository: str, root_path: Path) -> None:
     """
-    校验手动发布的目标提交、质量检查与标签占用情况。
+    校验手动发布的目标提交、质量检查、标签占用与版本回退。
 
     标签由工作流在门禁通过后创建，因此这里只确认同名标签尚未使用，
-    不再要求标签已经存在。
+    不再要求标签已经存在；同时要求本次版本高于已发布的最新版本。
 
     :param metadata: 本次构建使用的版本信息
     :param repository: GitHub 仓库标识
     :param root_path: 当前检出的主仓库根目录
-    :raises ReleaseValidationError: 提交不是远端 main、检查未通过或标签已被使用时抛出
+    :raises ReleaseValidationError: 提交不是远端 main、检查未通过、标签已被使用或版本回退时抛出
     """
     _run_command(["git", "fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main"], root_path)
     commit_sha = _run_command(["git", "rev-parse", "HEAD"], root_path)
@@ -298,8 +408,10 @@ def _validate_manual_publication(metadata: ReleaseMetadata, repository: str, roo
     _validate_main_checks(commit_sha, repository, root_path)
     if _run_command(["git", "tag", "--list", metadata.filename_version], root_path):
         raise ReleaseValidationError("本地已存在同名版本标签")
-    if _run_command(["git", "ls-remote", "--tags", "origin", f"refs/tags/{metadata.filename_version}"], root_path):
+    published_tags = _remote_tag_names(root_path)
+    if metadata.filename_version in published_tags:
         raise ReleaseValidationError("远端已存在同名版本标签")
+    _reject_version_regression(metadata, published_tags)
 
 
 def resolve_build(environment: Mapping[str, str], root_path: Path) -> dict[str, str]:
@@ -307,7 +419,8 @@ def resolve_build(environment: Mapping[str, str], root_path: Path) -> dict[str, 
     解析标签或手动输入的版本，并判断本次构建是否允许发布。
 
     标签推送使用完整发布门禁；手动运行默认只构建 Actions 产物，显式选择
-    发布时必须从远端 main 当前提交发起，并通过同一套主分支质量检查。
+    发布时必须填写版本号、从远端 main 当前提交发起，并通过同一套主分支
+    质量检查与版本递增校验。
 
     :param environment: 当前 GitHub Actions 事件与仓库环境
     :param root_path: 当前检出的主仓库根目录
@@ -327,6 +440,8 @@ def resolve_build(environment: Mapping[str, str], root_path: Path) -> dict[str, 
         if ref_type not in {"branch", "tag"}:
             raise ReleaseValidationError("完整构建只接受版本标签推送或手动运行")
         request = _manual_build_input(environment)
+        if request.publish and not request.version:
+            raise ReleaseValidationError("手动发布必须填写版本号，留空只会沿用源码版本")
         metadata = _manual_metadata(request, environment, root_path, datetime.now(release_timezone).date())
         if request.publish:
             if ref_type != "branch" or environment.get("GITHUB_REF_NAME") != "main":
@@ -334,6 +449,51 @@ def resolve_build(environment: Mapping[str, str], root_path: Path) -> dict[str, 
             _validate_manual_publication(metadata, repository, root_path)
         return {**metadata.as_outputs(), "publish": str(request.publish).lower()}
     raise ReleaseValidationError("完整构建只接受版本标签推送或手动运行")
+
+
+def _release_summary(outputs: Mapping[str, str]) -> list[str]:
+    """
+    生成发布摘要，供 Actions 运行页面核对本次构建的版本与发布意图。
+
+    :param outputs: 即将写入 Actions 输出的版本字段
+    :return: Markdown 摘要行
+    """
+    version_type = outputs.get("type", "")
+    type_labels = {"alpha": "Alpha", "beta": "Beta", "rc": "RC", "release": "正式版"}
+    type_label = type_labels.get(version_type, version_type)
+    is_prerelease = outputs.get("prerelease") == "true"
+    filename_version = outputs.get("filename_version", "")
+    if outputs.get("publish") == "true":
+        publish_line = f"- 发布 Release：是，随后创建标签 `{filename_version}`"
+    else:
+        publish_line = "- 发布 Release：否，仅上传 Actions 产物"
+    return [
+        "## 构建版本",
+        "",
+        f"- 完整版本：`{outputs.get('full_version', '')}`",
+        f"- 产物版本名：`{filename_version}`",
+        f"- 版本类型：{type_label}{'（预发布）' if is_prerelease else ''}",
+        publish_line,
+    ]
+
+
+def _write_job_summary(lines: list[str]) -> None:
+    """
+    把构建摘要追加到 Actions 运行页面。
+
+    摘要只用于人工核对，未在 Actions 中运行或写入失败都不改变已经通过的
+    版本校验，因此降级为 stderr 提示而不让构建失败。
+
+    :param lines: 摘要文本行
+    """
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+    if not summary_path:
+        return
+    try:
+        with Path(summary_path).open("a", encoding="utf-8") as summary_file:
+            summary_file.write("\n".join(lines) + "\n")
+    except OSError as exc:
+        print(f"写入构建摘要失败：{exc}", file=sys.stderr)
 
 
 def main() -> int:
@@ -349,6 +509,7 @@ def main() -> int:
         return 1
     for name, value in outputs.items():
         print(f"{name}={value}")
+    _write_job_summary(_release_summary(outputs))
     return 0
 
 

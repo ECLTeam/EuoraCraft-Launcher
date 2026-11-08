@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号（不含 v，例如 0.3.0 或 0.3.0-beta.1；留空使用源码版本）'
+        description: '版本号（不含 v，例如 0.3.0 或 0.3.0-beta.1；勾选发布时必填，未勾选可留空使用源码版本）'
         required: false
         type: string
       version_type:
