@@ -1516,13 +1516,23 @@ def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> 
                 "inheritsFrom": parent_name,
                 "arguments": {
                     # Forge 的真实形态：模块路径中 ${classpath_separator} 紧跟下一个
-                    # 引号段，分隔符若被加引号会产生 `";""` 序列破坏引号解析
+                    # 引号段，分隔符若被加引号会产生 `";""` 序列破坏引号解析；
+                    # --add-opens/--add-exports 成对重复出现，token 去重会丢弃
+                    # 后续标志使其值裸露为 JVM 主类
                     "jvm": [
                         "-DignoreList=bootstraplauncher,...,forge-,${version_name}.jar",
                         "-p",
                         "${library_directory}/cpw/a.jar${classpath_separator}"
                         "${library_directory}/cpw/b.jar${classpath_separator}"
                         "${library_directory}/cpw/c.jar",
+                        "--add-opens",
+                        "java.base/java.util.jar=cpw.mods.securejarhandler",
+                        "--add-opens",
+                        "java.base/java.lang.invoke=cpw.mods.securejarhandler",
+                        "--add-exports",
+                        "java.base/sun.security.util=cpw.mods.securejarhandler",
+                        "--add-exports",
+                        "jdk.naming.dns/com.sun.jndi.dns=java.naming",
                     ],
                     "game": ["--launchTarget", "forgeclient"],
                 },
@@ -1555,6 +1565,12 @@ def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> 
     assert len(module_path_tokens) == 1
     expected_lib = str(game_path / "libraries")
     assert module_path_tokens[0] == f"{expected_lib}/cpw/a.jar;{expected_lib}/cpw/b.jar;{expected_lib}/cpw/c.jar"
+
+    opens_values = [argv[i + 1] for i, token in enumerate(argv) if token == "--add-opens"]
+    assert opens_values == [
+        "java.base/java.util.jar=cpw.mods.securejarhandler",
+        "java.base/java.lang.invoke=cpw.mods.securejarhandler",
+    ]
     assert "Invade" not in argv
     assert argv.count("cpw.mods.bootstraplauncher.BootstrapLauncher") == 1
 
