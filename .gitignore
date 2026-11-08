@@ -77,7 +77,9 @@ frontend/.vite/
 .vscode/
 .trae/
 .trae-html-share-packages/
-.agents/
+.agents/*
+# 项目 AI 技能随仓库分发，见 .agents/skills/
+!.agents/skills/
 *.swp
 *.swo
 *~
@@ -101,9 +103,6 @@ docs/junsi-dev-docs
 
 /.zcode/
 .pytest_tmp/
-
-# 本地 AI 技能目录
-.skills/
 
 # 本地 AI 助手工作目录
 /.workbuddy-ai/

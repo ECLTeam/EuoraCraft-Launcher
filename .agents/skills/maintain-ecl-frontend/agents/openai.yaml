@@ -1,0 +1,6 @@
+interface:
+  display_name: "EuoraCraft 前端样式规范"
+
+  short_description: "统一 ECL 页面布局、控件密度、主题与浏览器视觉验收"
+
+  default_prompt: "Use $maintain-ecl-frontend to design or review this frontend UI consistently."
