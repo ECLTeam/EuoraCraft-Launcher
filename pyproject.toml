@@ -136,7 +136,6 @@ exclude = [
     "EuoraCraftLauncher-UI",
     "frontend",
     "ECL/game",
-    "external_plugins/ecl_onlinegame/onlinegame/florolding",
     "ECL_Libs",
     "resources",
     ".git",

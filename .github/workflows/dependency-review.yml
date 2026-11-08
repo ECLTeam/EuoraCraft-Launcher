@@ -33,7 +33,6 @@ jobs:
               - "pyproject.toml"
               - "frontend/package.json"
               - "frontend/pnpm-lock.yaml"
-              - "external_plugins/**/locks/**"
               - ".github/workflows/dependency-review.yml"
 
   python-audit:

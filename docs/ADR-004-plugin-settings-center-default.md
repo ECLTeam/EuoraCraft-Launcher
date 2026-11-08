@@ -17,7 +17,7 @@
 - 多行配置使用通用 `text` 类型，值仍为有界字符串，保留换行并复用原有身份、schema、revision、原子保存和失败反馈。
 - 只在值变化后保存；房间码、端口等当次操作参数仍属于业务页面。
 
-约束真源为 [独立插件开发约束](../external_plugins/AGENTS.md)，公开调用方法见[配置指南](guides/plugin-development/settings.md)。这不新增 Worker 权限、不代替用户授权，也不将主窗口脚本注入描述为沙箱。
+约束真源为各插件独立仓库内的 AGENTS.md，公开调用方法见[配置指南](guides/plugin-development/settings.md)。这不新增 Worker 权限、不代替用户授权，也不将主窗口脚本注入描述为沙箱。
 
 ## 验证
 

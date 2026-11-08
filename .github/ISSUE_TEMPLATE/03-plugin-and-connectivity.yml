@@ -23,7 +23,7 @@ body:
     attributes:
       label: 涉及的插件或联机方式
       description: 填写插件名称与版本；联机问题请说明使用的联机组件与网络环境。
-      placeholder: 例如 ECL-OnlineGame 1.2.0，或 EasyTier 联机
+      placeholder: 例如 ECL-Plugin-OnlineGame 1.2.0，或 EasyTier 联机
     validations:
       required: true
   - type: textarea

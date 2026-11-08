@@ -1,7 +1,7 @@
 # ADR-003：联机与 QomicEX 兼容分别外置为普通插件
 
 - 日期：2026-11-07。
-- 状态：用户已批准实施；本地代码与普通插件已实现，公开网络双端验收及发布尚未完成。
+- 状态：用户已批准实施；本地代码与普通插件已实现，公开网络双端验收及发布尚未完成。2026-11-08 起两个插件迁出为独立仓库（ECL-Plugin-OnlineGame、ECL-Plugin-QomicexCompatible），插件标识更名为 `ECL-Plugin-*`，本仓库不再携带其源码；本文保留原决策记录。
 - 决策者：用户。
 
 打包入口归入现有 `ECL/tooling`，通过 `python -m ECL.tooling.external_plugins` 调用；仓库根目录仍只保留 `main.py`，不放宽架构检查。

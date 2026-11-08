@@ -65,12 +65,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Prepare locked external plugin dependencies
-        run: |
-          python -m ECL.tooling.external_plugins --download --download-target linux-x86_64-cp312
-          # 节点单元测试直接导入插件服务；仅在 CI 测试环境安装插件锁，宿主运行依赖保持独立。
-          python -m pip install --no-index --require-hashes --find-links external_plugins/ecl_onlinegame/wheels/linux-x86_64-cp312 -r external_plugins/ecl_onlinegame/locks/linux-x86_64-cp312.txt
-
       - name: Run ruff
         run: ruff check ECL tests
 

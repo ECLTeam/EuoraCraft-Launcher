@@ -375,13 +375,21 @@ def test_queued_task_cancellation_is_logged_after_future_stops(tmp_path, records
 
 
 def test_validation_exception_does_not_dump_request_into_logs(records) -> None:
-    from external_plugins.ecl_onlinegame.onlinegame.nodes import ConnectorNodeConfig
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
+
+    class ProbeConfig(BaseModel):
+        """替代已迁出的插件模型，仅用于构造结构校验失败。"""
+
+        mode: Literal["public", "private"]
+        nodes: list[str] = Field(min_length=1)
 
     logger, logs = records
     state = SimpleNamespace(logger=logger, events=EventBus())
 
     async def handler(body):
-        ConnectorNodeConfig.model_validate(body)
+        ProbeConfig.model_validate(body)
 
     result = asyncio.run(guard_ipc_handler(state, "settings_set", handler)({"mode": "private-input", "nodes": []}))
     assert result["success"] is False
