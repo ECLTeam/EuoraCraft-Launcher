@@ -70,6 +70,31 @@ def reviewed(service):
     return service.permission_resources("public-test", view["content_digest"], None, "", None, 100, "accounts.read")
 
 
+def test_skin_chunks_are_bound_to_selected_account_and_revision(public):
+    import base64
+
+    service, _, broker = public
+    page = reviewed(service)
+    selected = page["items"][0]["resource_id"]
+    approve(service, [selected], page["catalog_revision"])
+    reference = call(broker, "accounts.list")["items"][0]["account_ref"]
+    observed = []
+    broker.public_queries._skin = lambda account_id: observed.append(account_id) or b"x" * 9000
+    first = call(broker, "accounts.skin", {"account_ref": reference})
+    assert len(base64.b64decode(first["content"])) == 8192
+    second = call(
+        broker,
+        "accounts.skin",
+        {"account_ref": reference, "offset": first["next_offset"], "revision": first["revision"]},
+    )
+    assert len(base64.b64decode(second["content"])) == 808
+    assert second["next_offset"] is None
+    assert len(observed) == 1
+    with pytest.raises(ProtocolError):
+        call(broker, "accounts.skin", {"account_ref": "f" * 32})
+    assert len(observed) == 1
+
+
 def test_account_query_requires_explicit_selection_and_never_returns_persistent_identity(public):
     service, _, broker = public
     page = reviewed(service)

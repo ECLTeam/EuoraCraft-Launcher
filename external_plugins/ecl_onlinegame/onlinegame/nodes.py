@@ -3,12 +3,12 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：区分原始联机配置与连接时可用节点，隔离房间协调服务地址。
+# 文件作用：校验插件自己的节点设置，不操作宿主全局配置。
 #
 # 公开接口：
-#   - class ConnectorNodeConfig — 保存尚未做地址业务校验的节点配置。
-#   - class ConnectorNodeSettings — 连接时校验并规范化节点。
-#   - class ConnectorNodeError — 节点配置无法用于连接时的领域错误。
+#   - class ConnectorNodeConfig — 插件业务接口。
+#   - class ConnectorNodeError — 插件业务接口。
+#   - class ConnectorNodeSettings — 插件业务接口。
 # ============================================================
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from ECL.utils.errors import ConnectorError
+from .errors import ConnectorError
 
 
 class ConnectorNodeConfig(BaseModel):

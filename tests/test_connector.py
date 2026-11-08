@@ -38,7 +38,7 @@ import pytest
 
 pytest.importorskip("easytier_pyo3")
 
-from ECL.services.connector import ConnectorService
+from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorService
 
 
 class _FailingHttpClient:
@@ -144,7 +144,7 @@ def test_nat_detection_starts_and_stops_temporary_easytier_node(monkeypatch) -> 
         def stop(self) -> None:
             self.stopped = True
 
-    monkeypatch.setattr("ECL.services.connector.easytier_pyo3.Node", Node)
+    monkeypatch.setattr("external_plugins.ecl_onlinegame.onlinegame.service.easytier_pyo3.Node", Node)
     result = ConnectorService().get_nat_type()
     node = captured["node"]
 
@@ -162,9 +162,14 @@ def test_minecraft_listener_ports_limits_candidates_to_java_processes(monkeypatc
         SimpleNamespace(pid=101, status="ESTABLISHED", laddr=SimpleNamespace(port=25565)),
         SimpleNamespace(pid=102, status="LISTEN", laddr=SimpleNamespace(port=25565)),
     ]
-    monkeypatch.setattr("ECL.services.connector.psutil.process_iter", lambda _attrs: [java_process, other_process])
-    monkeypatch.setattr("ECL.services.connector.psutil.net_connections", lambda kind: connections)
-    monkeypatch.setattr("ECL.services.connector.psutil.CONN_LISTEN", "LISTEN")
+    monkeypatch.setattr(
+        "external_plugins.ecl_onlinegame.onlinegame.service.psutil.process_iter",
+        lambda _attrs: [java_process, other_process],
+    )
+    monkeypatch.setattr(
+        "external_plugins.ecl_onlinegame.onlinegame.service.psutil.net_connections", lambda kind: connections
+    )
+    monkeypatch.setattr("external_plugins.ecl_onlinegame.onlinegame.service.psutil.CONN_LISTEN", "LISTEN")
 
     assert ConnectorService._minecraft_listener_ports() == [38123]
 
@@ -200,7 +205,10 @@ def test_minecraft_status_probe_accepts_valid_status_response(monkeypatch) -> No
             del self.response[:length]
             return bytes(chunk)
 
-    monkeypatch.setattr("ECL.services.connector.socket.create_connection", lambda *_args, **_kwargs: Connection())
+    monkeypatch.setattr(
+        "external_plugins.ecl_onlinegame.onlinegame.service.socket.create_connection",
+        lambda *_args, **_kwargs: Connection(),
+    )
 
     assert ConnectorService._is_minecraft_server(38123) is True
 
@@ -247,7 +255,9 @@ def test_close_stops_active_room() -> None:
 
 
 def test_florolding_host_uses_room_specific_scaffolding_ipv4(monkeypatch) -> None:
-    florolding_module = importlib.import_module("ECL.services.florolding.Florolding.Florolding")
+    florolding_module = importlib.import_module(
+        "external_plugins.ecl_onlinegame.onlinegame.florolding.Florolding.Florolding"
+    )
     captured: dict[str, object] = {}
 
     class Node:
@@ -305,7 +315,9 @@ def test_florolding_host_uses_room_specific_scaffolding_ipv4(monkeypatch) -> Non
 
 
 def test_florolding_host_ipv4_is_stable_per_room() -> None:
-    florolding_module = importlib.import_module("ECL.services.florolding.Florolding.Florolding")
+    florolding_module = importlib.import_module(
+        "external_plugins.ecl_onlinegame.onlinegame.florolding.Florolding.Florolding"
+    )
 
     first = florolding_module.Florolding.host_virtual_ipv4("U/AAAA-AAAA-AAAA-AAAA")
     repeated = florolding_module.Florolding.host_virtual_ipv4("U/AAAA-AAAA-AAAA-AAAA")
@@ -316,8 +328,8 @@ def test_florolding_host_ipv4_is_stable_per_room() -> None:
 
 
 async def test_florolding_server_reads_coalesced_requests_without_dropping_frames() -> None:
-    client_module = importlib.import_module("ECL.services.florolding.Florolding.F_Client")
-    server_module = importlib.import_module("ECL.services.florolding.Florolding.F_Server")
+    client_module = importlib.import_module("external_plugins.ecl_onlinegame.onlinegame.florolding.Florolding.F_Client")
+    server_module = importlib.import_module("external_plugins.ecl_onlinegame.onlinegame.florolding.Florolding.F_Server")
     reader = asyncio.StreamReader()
     reader.feed_data(
         client_module.AsyncFloroldingClient._create_request("c:ping", b"first")
@@ -329,7 +341,7 @@ async def test_florolding_server_reads_coalesced_requests_without_dropping_frame
 
 
 async def test_florolding_client_serializes_concurrent_requests() -> None:
-    client_module = importlib.import_module("ECL.services.florolding.Florolding.F_Client")
+    client_module = importlib.import_module("external_plugins.ecl_onlinegame.onlinegame.florolding.Florolding.F_Client")
     client = client_module.AsyncFloroldingClient(machine_id="m1", easytier_id=1, player_name="Player")
     reader = asyncio.StreamReader()
 
@@ -365,25 +377,6 @@ async def test_florolding_client_serializes_concurrent_requests() -> None:
     assert writer.max_active == 1
 
 
-async def test_run_in_daemon_returns_result() -> None:
-    from ECL.api.connector import _run_in_daemon
-
-    assert await _run_in_daemon(lambda: 42) == 42
-
-
-async def test_run_in_daemon_uses_daemon_thread() -> None:
-    from ECL.api.connector import _run_in_daemon
-
-    captured: dict[str, bool] = {}
-
-    def probe() -> str:
-        captured["daemon"] = threading.current_thread().daemon
-        return "ok"
-
-    assert await _run_in_daemon(probe) == "ok"
-    assert captured["daemon"] is True
-
-
 @pytest.fixture
 def nat_probe(monkeypatch):
     class Node:
@@ -407,14 +400,14 @@ def nat_probe(monkeypatch):
                 raise RuntimeError("stop failed")
 
     node = Node({})
-    monkeypatch.setattr("ECL.services.connector.easytier_pyo3.Node", lambda config: node)
-    monkeypatch.setattr("ECL.services.connector.sleep", lambda seconds: None)
+    monkeypatch.setattr("external_plugins.ecl_onlinegame.onlinegame.service.easytier_pyo3.Node", lambda config: node)
+    monkeypatch.setattr("external_plugins.ecl_onlinegame.onlinegame.service.sleep", lambda seconds: None)
     return node
 
 
 @pytest.mark.parametrize("phase", ["start", "read"])
 def test_nat_failure_cleans_node_and_allows_retry(nat_probe, phase: str) -> None:
-    from ECL.services.connector import ConnectorNatError
+    from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorNatError
 
     service = ConnectorService()
     nat_probe.failure = phase
@@ -428,22 +421,24 @@ def test_nat_failure_cleans_node_and_allows_retry(nat_probe, phase: str) -> None
 
 
 def test_nat_creation_failure_releases_lock(monkeypatch, nat_probe) -> None:
-    from ECL.services.connector import ConnectorNatError
+    from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorNatError
 
     def fail(config):
         raise RuntimeError("creation failed")
 
     service = ConnectorService()
-    monkeypatch.setattr("ECL.services.connector.easytier_pyo3.Node", fail)
+    monkeypatch.setattr("external_plugins.ecl_onlinegame.onlinegame.service.easytier_pyo3.Node", fail)
     with pytest.raises(ConnectorNatError) as captured:
         service.get_nat_type()
     assert captured.value.error_code == "CONNECTOR_NAT_TYPE_FAILED"
-    monkeypatch.setattr("ECL.services.connector.easytier_pyo3.Node", lambda config: nat_probe)
+    monkeypatch.setattr(
+        "external_plugins.ecl_onlinegame.onlinegame.service.easytier_pyo3.Node", lambda config: nat_probe
+    )
     assert service.get_nat_type()["type"] == "cone"
 
 
 def test_nat_empty_timeout_is_not_success(nat_probe) -> None:
-    from ECL.services.connector import ConnectorNatError
+    from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorNatError
 
     service = ConnectorService()
     service.nat_probe_timeout_seconds = 0
@@ -455,11 +450,11 @@ def test_nat_empty_timeout_is_not_success(nat_probe) -> None:
 
 @pytest.mark.parametrize("public_ips,has_partial_result", [([], False), (["203.0.113.9"], True)])
 def test_nat_unknown_requires_probe_information(monkeypatch, nat_probe, public_ips, has_partial_result: bool) -> None:
-    from ECL.services.connector import ConnectorNatError
+    from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorNatError
 
     nat_probe.info = {"stun_info": {"udp_nat_type": "Unknown", "public_ip": public_ips}}
     ticks = iter([0.0, 0.0, 26.0])
-    monkeypatch.setattr("ECL.services.connector.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("external_plugins.ecl_onlinegame.onlinegame.service.monotonic", lambda: next(ticks))
     service = ConnectorService()
     if has_partial_result:
         result = service.get_nat_type()
@@ -478,7 +473,7 @@ def test_nat_room_node_is_never_stopped(nat_probe) -> None:
     assert service.get_nat_type()["type"] == "cone"
     assert not nat_probe.stopped
     nat_probe.failure = "read"
-    from ECL.services.connector import ConnectorNatError
+    from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorNatError
 
     with pytest.raises(ConnectorNatError):
         service.get_nat_type()
@@ -494,7 +489,7 @@ def test_nat_udp_blocked_is_valid_result(nat_probe) -> None:
 
 
 def test_nat_stop_failure_keeps_original_error(monkeypatch, nat_probe, caplog) -> None:
-    from ECL.services.connector import ConnectorNatError
+    from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorNatError
 
     nat_probe.failure = "stop"
 
@@ -509,7 +504,7 @@ def test_nat_stop_failure_keeps_original_error(monkeypatch, nat_probe, caplog) -
 
 
 def test_nat_concurrent_detection_is_rejected(nat_probe, monkeypatch) -> None:
-    from ECL.services.connector import ConnectorNatError
+    from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorNatError
 
     service = ConnectorService()
     entered = threading.Event()
@@ -537,22 +532,3 @@ def test_nat_concurrent_detection_is_rejected(nat_probe, monkeypatch) -> None:
     assert not worker.is_alive()
     assert results[0]["type"] == "cone"
     assert service.get_nat_type()["type"] == "cone"
-
-
-@pytest.mark.parametrize(
-    "error_code", ["CONNECTOR_NAT_TYPE_TIMEOUT", "CONNECTOR_NAT_TYPE_BUSY", "CONNECTOR_NAT_TYPE_FAILED"]
-)
-async def test_nat_ipc_preserves_domain_error_codes(error_code: str) -> None:
-    from ECL.api.connector import ConnectorHandlers
-    from ECL.services.connector import ConnectorNatError
-
-    def fail():
-        raise ConnectorNatError("探测未完成", error_code)
-
-    state = SimpleNamespace(
-        connector=SimpleNamespace(get_nat_type=fail),
-        logger=logging.getLogger("test"),
-        events=SimpleNamespace(emit=lambda *args: None),
-    )
-    result = await ConnectorHandlers.connector_nat_type(state, {})
-    assert result == {"success": False, "message": "探测未完成", "errorCode": error_code, "presentation": "message"}

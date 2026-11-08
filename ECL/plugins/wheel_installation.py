@@ -287,6 +287,17 @@ class _LibraryDestination(SchemeDictionaryDestination):
             False,
         )
 
+    def _path_with_destdir(self, scheme: Scheme, path: str) -> str:
+        """
+        在 Windows 长路径前缀下把 wheel 记录的分隔符转换成本地分隔符。
+
+        依赖安装池可能使用扩展长度路径，该模式不把正斜杠视为分隔符，而
+        installer 会把此返回值直接交给 open()。RECORD 条目仍由父类使用原始
+        path 生成，因此只改变实际写入路径，不改变归档记录格式。
+        """
+        normalized = str(Path(path)) if sys.platform == "win32" else path
+        return super()._path_with_destdir(scheme, normalized)
+
     def write_to_fs(self, scheme: Scheme, path: str, stream: BinaryIO, is_executable: bool) -> RecordEntry:
         """
         约束所有安装路径并拒绝多个 wheels 覆盖同一文件。

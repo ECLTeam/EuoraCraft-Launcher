@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from collections.abc import Callable
 from threading import RLock
 from time import monotonic
@@ -35,6 +37,15 @@ class _AccountList(RequestModel):
     limit: StrictInt = Field(default=50, ge=1, le=100)
 
 
+class _AccountSkin(_AccountQuery):
+    """
+    绑定本运行账户与固定皮肤快照的分块读取。
+    """
+
+    offset: StrictInt = Field(default=0, ge=0, le=512 * 1024)
+    revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class _PublicConfig(RequestModel):
     locale: str = Field(min_length=1, max_length=32)
     theme_id: str = Field(min_length=1, max_length=64)
@@ -54,6 +65,7 @@ class RuntimePublicQueries:
         catalog: PluginAccountResourceCatalog | None,
         refresh: Callable[[], int],
         config: Callable[[], JsonValue] | None,
+        skin: Callable[[str], bytes | None] | None = None,
     ) -> None:
         """
         绑定应用现有查询来源，不创建账户服务或配置副本。
@@ -67,6 +79,8 @@ class RuntimePublicQueries:
         self._catalog = catalog
         self._refresh = refresh
         self._config = config
+        self._skin = skin
+        self._skins: dict[str, bytes] = {}
         self._lock = RLock()
         self._epoch = -1
         self._refs: dict[str, str] = {}
@@ -83,6 +97,7 @@ class RuntimePublicQueries:
         with self._lock:
             if lease.grant_epoch != self._epoch:
                 self._refs.clear()
+                self._skins.clear()
                 self._epoch = lease.grant_epoch
             for resource_id in lease.resource_refs:
                 if resource_id not in self._refs.values():
@@ -130,11 +145,15 @@ class RuntimePublicQueries:
         """
         if method == "config.public":
             return self._configuration(params, deadline)
-        if method not in {"accounts.list", "accounts.get", "resources.list"} or self._catalog is None:
+        if method not in {"accounts.list", "accounts.get", "accounts.skin", "resources.list"} or self._catalog is None:
             raise ProtocolError("账户查询尚未提供", "PLUGIN_API_METHOD_NOT_FOUND")
         query = None
-        if method == "accounts.get":
-            requested = _AccountQuery.model_validate(params).account_ref
+        if method in {"accounts.get", "accounts.skin"}:
+            requested = (
+                _AccountSkin.model_validate(params)
+                if method == "accounts.skin"
+                else _AccountQuery.model_validate(params)
+            ).account_ref
         else:
             query = (
                 ResourceListRequest.model_validate(params)
@@ -164,6 +183,8 @@ class RuntimePublicQueries:
 
         if requested is not None:
             result = project({"account_ref": requested})
+            if method == "accounts.skin":
+                result = self._read_skin(requested, _AccountSkin.model_validate(params))
         else:
             assert query is not None
             result = self._pages.page(
@@ -179,3 +200,32 @@ class RuntimePublicQueries:
         if monotonic() >= deadline:
             raise ProtocolError("账户查询已超时", "PLUGIN_DEADLINE_EXCEEDED")
         return result
+
+    def _read_skin(self, reference: str, query: _AccountSkin) -> dict[str, JsonValue]:
+        """
+        只有已通过账户引用检查的调用可获取皮肤，不交付其来源地址。
+        """
+        if self._skin is None or self._catalog is None:
+            raise ProtocolError("账户皮肤查询不可用", "PLUGIN_API_METHOD_NOT_FOUND")
+        with self._lock:
+            if query.offset == 0 and query.revision is None:
+                if len(self._skins) >= 16:
+                    self._skins.clear()
+                account = self._catalog.resolve(self._refs[reference])
+                self._skins[reference] = self._skin(account.account_id) or b""
+            content = self._skins.get(reference)
+            if content is None or len(content) > 512 * 1024:
+                raise ProtocolError("皮肤快照已失效", "PLUGIN_RESOURCE_CHANGED")
+            revision = hashlib.sha256(content).hexdigest()
+            if (query.offset and query.revision is None) or (query.revision and query.revision != revision):
+                raise ProtocolError("皮肤快照已变化", "PLUGIN_REVISION_CONFLICT")
+            if query.offset > len(content):
+                raise ProtocolError("皮肤分块位置无效", "PLUGIN_SCHEMA_INVALID")
+            block = content[query.offset : query.offset + 8192]
+            following = query.offset + len(block)
+            return {
+                "content": base64.b64encode(block).decode("ascii"),
+                "revision": revision,
+                "size": len(content),
+                "next_offset": following if following < len(content) else None,
+            }

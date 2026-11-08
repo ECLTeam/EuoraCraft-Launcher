@@ -233,10 +233,69 @@ class PluginSettingsService:
                 "schema_revision": schema.schema_revision if schema else None,
                 "schema": [_json_value(item.model_dump(mode="json")) for item in schema.definitions] if schema else [],
                 "values": values,
+                "readonly_files": self._selected_files(installation_id, content_digest),
                 "revision": revision,
                 "editable": schema is not None,
                 "reason": None if schema else "PLUGIN_SETTING_SCHEMA_UNAVAILABLE",
             }
+
+    def _selection_path(self, installation_id: str) -> Path:
+        """
+        选择记录由宿主独立维护，不从 Worker 的设置定义推导授权。
+        """
+        self._installation_lock(installation_id)
+        target = self._data_path / "plugin_file_selections" / f"{installation_id}.json"
+        if any(
+            item.is_symlink() or not item.resolve().is_relative_to(self._data_path) for item in (target.parent, target)
+        ):
+            raise ProtocolError("文件选择存储路径无效", "PLUGIN_STORAGE_FAILED")
+        return target
+
+    def _selected_files(self, installation_id: str, content_digest: str) -> dict[str, str]:
+        """
+        只恢复由可信管理界面写入并绑定当前内容的文件选择。
+        """
+        target = self._selection_path(installation_id)
+        if not target.exists():
+            return {}
+        try:
+            if target.stat().st_size > 65536:
+                raise ValueError("文件选择超过上限")
+            record = json.loads(target.read_bytes())
+            if not isinstance(record, dict) or set(record) != {"content_digest", "values"}:
+                raise ValueError("文件选择结构无效")
+            values = record["values"]
+            if (
+                not isinstance(values, dict)
+                or len(values) > 64
+                or any(not isinstance(key, str) or not isinstance(value, str) for key, value in values.items())
+            ):
+                raise ValueError("文件选择内容无效")
+            return values if record["content_digest"] == content_digest else {}
+        except (OSError, ValueError) as exc:
+            raise ProtocolError("文件选择无法读取", "PLUGIN_STORAGE_FAILED") from exc
+
+    def _write_values_and_selections(
+        self, target_path: Path, candidate: str, installation_id: str, content_digest: str, selections: dict[str, str]
+    ) -> None:
+        """
+        文件选择和普通设置一起提交；设置写入失败则恢复旧选择记录。
+        """
+        if not selections:
+            atomic_write_text(target_path, candidate)
+            return
+        selection_path = self._selection_path(installation_id)
+        previous = selection_path.read_text(encoding="utf-8") if selection_path.exists() else None
+        values = self._selected_files(installation_id, content_digest) | selections
+        atomic_write_text(selection_path, json.dumps({"content_digest": content_digest, "values": values}))
+        try:
+            atomic_write_text(target_path, candidate)
+        except OSError:
+            if previous is None:
+                selection_path.unlink(missing_ok=True)
+            else:
+                atomic_write_text(selection_path, previous)
+            raise
 
     def update(
         self,
@@ -267,6 +326,10 @@ class PluginSettingsService:
             if schema is None or (schema_revision is not None and schema_revision != schema.schema_revision):
                 raise ProtocolError("插件设置定义已经变化", "PLUGIN_SETTING_SCHEMA_CHANGED")
             definitions = {item.key: item for item in schema.definitions}
+            if run_id is not None and any(
+                key in definitions and definitions[key].type == "readonly_file" for key in patch
+            ):
+                raise ProtocolError("外部文件只能由用户在插件设置中选择", "PLUGIN_PERMISSION_DENIED")
             if not patch or any(
                 key not in definitions or not definitions[key].accepts(value) for key, value in patch.items()
             ):
@@ -283,7 +346,14 @@ class PluginSettingsService:
                     if len(candidate.encode("utf-8")) > 65536:
                         raise ProtocolError("插件设置超过上限", "PLUGIN_SCHEMA_INVALID")
                     accept()
-                    atomic_write_text(target_path, candidate)
+                    selections = {
+                        key: str(value)
+                        for key, value in patch.items()
+                        if run_id is None and definitions[key].type == "readonly_file"
+                    }
+                    self._write_values_and_selections(
+                        target_path, candidate, installation_id, content_digest, selections
+                    )
             except OSError as exc:
                 raise ProtocolError("插件设置保存失败", "PLUGIN_STORAGE_FAILED") from exc
             with self._lock:

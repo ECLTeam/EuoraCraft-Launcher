@@ -41,7 +41,6 @@ class PermissionScope(Enum):
     NETWORK = "network"
     UI = "ui"
     INSTANCES = "instances"
-    CONNECTOR = "connector"
     LAUNCH = "launch"
     ACCOUNTS = "accounts"
     CRASH = "crash"

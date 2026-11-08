@@ -18,7 +18,6 @@
 #       - register_instance_source — 登记实例识别来源。
 #       - define_tool / run_tool / stop_tool — 声明并运行受管工具进程。
 #       - register_auth_provider — 登记第三方登录提供方。
-#       - register_connector_status — 登记联机状态补充。
 # ============================================================
 
 from __future__ import annotations
@@ -153,6 +152,7 @@ class Plugin:
         input_fields: tuple[dict[str, JsonValue], ...] = (),
         output_fields: tuple[dict[str, JsonValue], ...] = (),
         exported: bool = False,
+        is_query: bool = False,
     ) -> str:
         """
         向宿主提交命令定义，实际授权与输入输出 schema 由宿主复核。
@@ -179,6 +179,7 @@ class Plugin:
                 "output_fields": list(output_fields),
                 "callback_ref": reference,
                 "exported": exported,
+                "is_query": is_query,
             },
         )
         command_ref = result.get("command_ref")
@@ -287,6 +288,55 @@ class Plugin:
             },
         )
 
+    def define_vue_page(
+        self,
+        path: str,
+        title: str,
+        component_name: str,
+        template: str,
+        *,
+        script: str = "",
+        style: str = "",
+        icon: str = "puzzle",
+        locales: tuple[str, ...] = (),
+        container: str = "top",
+        nav: dict[str, str | int] | None = None,
+    ) -> None:
+        """
+        登记当前插件的主窗口页面，需用户批准 ui.inject。
+
+        默认挂在插件命名空间内的顶层路由；container="more" 时挂到宿主
+        「更多」页的有界子路由并声明导航入口。页面随当前运行退出或撤销
+        注入权限移除，不保留跨运行路由与菜单项。
+
+        :param path: 插件内以斜杠开头的相对路由
+        :param title: 入口显示名称
+        :param component_name: 本插件组件标识
+        :param template: Vue 模板
+        :param script: 在主窗口执行的组件脚本
+        :param style: 页面的局部样式
+        :param icon: 入口图标名
+        :param locales: 允许显示的语言，空表示不限
+        :param container: top 顶层插件路由 / more 宿主「更多」页子路由
+        :param nav: 宿主容器导航声明，含 path、label_key、icon 与可选 order
+        :raises HostApiError: 未授权或页面声明无效时抛出
+        """
+        self.host.call(
+            "ui.register_page",
+            {
+                "path": path,
+                "title": title,
+                "component_name": component_name,
+                "template": template,
+                "script": script,
+                "style": style,
+                "icon": icon,
+                "locales": list(locales),
+                "container": container,
+                "nav": nav,
+            },
+        )
+
     def register_launch_hook(
         self,
         phase: str,
@@ -364,24 +414,6 @@ class Plugin:
                 "resolve_ref": resolve_ref,
             },
         )
-
-    def register_connector_status(
-        self,
-        callback: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
-    ) -> str:
-        """
-        登记联机状态补充，需已获准「联机扩展」。
-
-        回调只收到玩家数量与协议名，返回 ``{"fields": {...}}`` 补充展示字段；
-        不能创建、加入或关闭房间。
-
-        :param callback: 处理状态上下文的回调
-        :return: 本运行登记的回调标识
-        :raises HostApiError: 未获准或宿主未提供联机扩展时抛出
-        """
-        reference = self.register_callback(callback)
-        self.host.call("connector.register_status", {"callback_ref": reference})
-        return reference
 
     def define_tool(
         self,

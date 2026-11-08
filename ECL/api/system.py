@@ -13,7 +13,6 @@
 #       - system_memory(body) -> dict[str, Any] — 获取内存信息。
 #       - launcher_info(body) -> dict[str, Any] — 获取启动器信息与当前系统信息。
 #       - launcher_check_update(body) -> dict[str, Any] — 按当前版本通道检查 GitHub Releases 是否有新版本。
-#       - launcher_preload_connector(body) -> dict[str, Any] — 预热联机节点缓存，避免首次创建或加入房间等待网络。
 #       - launcher_announcements_get(body) -> dict[str, Any] — 获取启动器公告。
 #       - launcher_update_status(body) -> dict[str, Any] — 返回当前运行形态是否允许自动更新。
 #       - launcher_update_download(body) -> dict[str, Any] — 下载当前通道最新版本的安装包并落盘替换计划。
@@ -48,7 +47,6 @@ from ECL.host.app_update import AppUpdateError, UpdateApplier
 from ECL.host.maintenance import schedule_debug_maintenance
 from ECL.services.custom_downloads import CustomDownloadRequest
 from ECL.services.updates import UpdateChecker
-from ECL.utils.ui_locale import is_simplified_chinese
 
 from .bridge import _FrontendState, _ipc_handler, _record_ipc_exception
 
@@ -251,28 +249,6 @@ class SystemHandlers(_FrontendState):
                 "message": result.message,
             }
         )
-
-    @_ipc_handler("CONNECTOR_PRELOAD_FAILED")
-    async def launcher_preload_connector(self, body: dict[str, Any]) -> dict[str, Any]:
-        """
-        请求后端在后台预先读取节点列表，供旧版调用方继续使用。
-
-        主窗口首次就绪时会自动读取；重复请求或前端重载不会再次发起网络任务，
-        此命令只确认是否已开始读取，不等待网络返回。联机只面向简体中文用户，
-        其他语言直接返回成功但不发起读取。
-
-        :param body: 必须为空的请求对象
-        :return: 标准 IPC 响应
-        """
-        if body:
-            return {
-                "success": False,
-                "message": "launcher_preload_connector 不接受参数",
-                "errorCode": "INVALID_REQUEST",
-            }
-        if is_simplified_chinese(self._get_effective_config()):
-            self.connector.start_node_preload()
-        return success()
 
     async def launcher_announcements_get(self, body: dict[str, Any]) -> dict[str, Any]:
         """

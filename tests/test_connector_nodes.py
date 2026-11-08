@@ -6,9 +6,12 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from pydantic import ValidationError
 
-from ECL.services.connector import ConnectorService
-from ECL.services.connector_nodes import ConnectorNodeConfig, ConnectorNodeError, ConnectorNodeSettings
-from ECL.utils.config import ConfigStore
+from external_plugins.ecl_onlinegame.onlinegame.nodes import (
+    ConnectorNodeConfig,
+    ConnectorNodeError,
+    ConnectorNodeSettings,
+)
+from external_plugins.ecl_onlinegame.onlinegame.service import ConnectorService
 
 
 @pytest.mark.parametrize(
@@ -70,16 +73,6 @@ def test_append_deduplicates_and_live_room_keeps_nodes(monkeypatch) -> None:
         service.close()
 
 
-def test_config_accepts_drafts_but_rejects_invalid_structure(tmp_path) -> None:
-    store = ConfigStore(tmp_path)
-    for nodes in ([], [" unfinished ", ""]):
-        store.save_config("connector", {"mode": "custom", "nodes": nodes})
-        assert ConfigStore(tmp_path).get_config("connector") == {"mode": "custom", "nodes": nodes}
-    with pytest.raises(ValidationError):
-        store.save_config("connector", {"mode": "custom", "nodes": [42]})
-    assert store.get_config("connector")["nodes"] == [" unfinished ", ""]
-
-
 def test_runtime_normalizes_without_changing_saved_draft() -> None:
     draft = ConnectorNodeConfig(mode="custom", nodes=[" tcp://Relay.test:1 ", "", "tcp://relay.test:1"])
     assert ConnectorNodeSettings.for_connection(draft).nodes == ["tcp://relay.test:1"]
@@ -104,7 +97,7 @@ def test_automatic_and_preload_ignore_custom_drafts(monkeypatch) -> None:
 
 @pytest.mark.parametrize("operation", ["join", "host_port"])
 def test_invalid_nodes_restore_idle_and_release_transition(monkeypatch, operation) -> None:
-    import ECL.services.connector as connector_module
+    import external_plugins.ecl_onlinegame.onlinegame.service as connector_module
 
     draft = ConnectorNodeConfig(mode="custom", nodes=[])
     service = ConnectorService(node_settings_provider=lambda: draft)
@@ -119,43 +112,6 @@ def test_invalid_nodes_restore_idle_and_release_transition(monkeypatch, operatio
             assert not service._transitioning
     finally:
         service.close()
-
-
-def test_concurrent_node_and_game_writes_preserve_both_sections(tmp_path, monkeypatch) -> None:
-    store = ConfigStore(tmp_path)
-    store.get_config()
-    entered = threading.Event()
-    release = threading.Event()
-    second_started = threading.Event()
-    original_write = store._write_config
-    writes = []
-
-    def controlled_write(config):
-        writes.append(config)
-        if len(writes) == 1:
-            entered.set()
-            assert release.wait(timeout=3)
-        original_write(config)
-
-    def save_game():
-        second_started.set()
-        store.save_config("game", {"memory_size": 6144})
-
-    monkeypatch.setattr(store, "_write_config", controlled_write)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(store.save_config, "connector", {"mode": "custom", "nodes": ["tcp://relay.test:1"]})
-        assert entered.wait(timeout=3)
-        second = pool.submit(save_game)
-        assert second_started.wait(timeout=3)
-        try:
-            assert not second.done()
-        finally:
-            release.set()
-        first.result(timeout=3)
-        second.result(timeout=3)
-    persisted = ConfigStore(tmp_path)
-    assert persisted.get_config("connector")["mode"] == "custom"
-    assert persisted.get_config("game")["memory_size"] == 6144
 
 
 def test_backend_node_preload_is_nonblocking_and_runs_once(monkeypatch) -> None:

@@ -3,27 +3,12 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：管理 EasyTier 连接、可用节点和联机房间状态。
+# 文件作用：拥有联机房间、EasyTier 节点与网络资源的生命周期。
 #
 # 公开接口：
-#   - class ConnectorService — 联机服务，封装 Florolding + EasyTier 的多人联机能力。
-#       - easytier_version() -> str — EasyTier 版本号。
-#       - fetch_nodes(force) -> list[str] — 获取可用的 EasyTier 中继节点 URI 列表。
-#       - preload_nodes() -> list[str] — 仅预热公共节点，不验证用户地址。
-#       - start_node_preload() -> bool — 服务启动后在后台预先读取一次节点列表。
-#       - get_status() -> dict[str, Any] — 获取当前联机状态。
-#       - get_nat_type() -> dict[str, Any] — 使用 EasyTier 内置 STUN 探测检测 NAT 类型。
-#       - host_port(port) -> dict[str, Any] — 以指定端口创建联机房间。
-#       - host_instance(game_path, version_id) -> dict[str, Any] — 为指定实例创建联机房间。
-#       - join(code) -> dict[str, Any] — 加入联机房间。
-#       - leave() -> dict[str, Any] — 退出联机房间。
-#       - close() -> None — 关闭联机服务，停止运行中的房间与 EasyTier 节点。
-#       - kick(machine_id) -> dict[str, Any] — 移出玩家。
-#       - detect_ports() -> dict[str, Any] — 探测本机 Java 进程开放的候选端口。
-#       - search_mc_port(ports) -> dict[str, Any] — 在候选端口中搜索确认 Minecraft 服务端口。
-#   - class ConnectorNatError — NAT 探测失败，携带稳定 IPC 错误码。
-#   - class ConnectorRoomError — 会话归属与实际清理失败。
-#   - class PluginConnectorRoom / PluginConnectorStatus — 宿主绑定的插件会话代次及最小状态。
+#   - class ConnectorRoomError — 插件业务接口。
+#   - class ConnectorNatError — 插件业务接口。
+#   - class ConnectorService — 插件业务接口。
 # ============================================================
 
 from __future__ import annotations
@@ -36,7 +21,6 @@ import struct
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
-from dataclasses import dataclass
 from ipaddress import ip_address
 from threading import Event, Lock, RLock, Thread, current_thread
 from time import monotonic, sleep
@@ -47,23 +31,22 @@ import easytier_pyo3
 import httpx
 import psutil
 
-from ECL.plugins.connector import (
+from .errors import ConnectorError
+from .extensions import (
     ConnectorExtensionRegistry,
     ConnectorProtocolRequest,
     ConnectorSessionContext,
 )
-from ECL.services.connector_nodes import ConnectorNodeConfig, ConnectorNodeError, ConnectorNodeSettings
-from ECL.services.florolding import (
+from .florolding import (
     AsyncFloroldingClient,
     AsyncFloroldingServer,
     Florolding,
     find_free_port,
     validate_code,
 )
-from ECL.services.florolding.Florolding.Broadcaster import MinecraftLANBroadcaster
-from ECL.services.operations import OperationOrigin
-from ECL.utils import ConnectorError, ConnectorNotAvailableError  # noqa: F401  # re-export
-from ECL.utils.operation_logging import current_operation, operation_scope, trace_scope
+from .florolding.Florolding.Broadcaster import MinecraftLANBroadcaster
+from .logging import current_operation, operation_scope, trace_scope
+from .nodes import ConnectorNodeConfig, ConnectorNodeError, ConnectorNodeSettings
 
 logger = logging.getLogger("EuoraCraft-Launcher.Connector")
 ConnectorMode = str  # "idle" | "starting" | "host" | "guest"
@@ -85,28 +68,6 @@ class ConnectorRoomError(ConnectorError):
         """
         super().__init__(message)
         self.error_code = error_code
-
-
-@dataclass(frozen=True, slots=True)
-class PluginConnectorRoom:
-    """
-    保存宿主分配的联机来源和代次，不接受插件自报。
-    """
-
-    origin: OperationOrigin
-    generation: int
-
-
-@dataclass(frozen=True, slots=True)
-class PluginConnectorStatus:
-    """
-    仅投影当前来源会话的必要状态，不交付网络节点、机器标识或其他房间信息。
-    """
-
-    mode: str
-    room_code: str | None
-    local_port: int | None
-    cleanup_pending: bool
 
 
 class ConnectorNatError(ConnectorError):
@@ -209,7 +170,7 @@ class ConnectorService:
         # 建房/加入的状态迁移守卫：防止并发 host/join 互相覆盖房间状态
         self._transition_lock = RLock()
         self._room_action_lock = RLock()
-        self._room_owner: OperationOrigin | None = None
+        self._room_owner: None = None
         self._room_generation = 0
         self._is_plugin_reserved = False
         self._is_cleanup_pending = False
@@ -731,119 +692,6 @@ class ConnectorService:
                 raise ConnectorRoomError("当前已有联机会话，请先退出", "CONNECTOR_ROOM_BUSY")
             self._room_generation += 1
             self._room_owner = None
-
-    def reserve_plugin_room(self, origin: OperationOrigin) -> PluginConnectorRoom:
-        """
-        为已授权来源保留一次联机代次，不启动网络资源。
-
-        :param origin: 宿主持有的插件来源
-        :return: 该来源专属的代次
-        :raises ConnectorRoomError: 现有房间不能被覆盖时抛出
-        """
-        if not self._room_action_lock.acquire(blocking=False):
-            raise ConnectorRoomError("联机会话正在切换", "CONNECTOR_ROOM_BUSY")
-        try:
-            with self._transition_lock:
-                if self._mode != "idle" or self._transitioning or self._is_cleanup_pending:
-                    raise ConnectorRoomError("当前已有联机会话，请先退出", "CONNECTOR_ROOM_BUSY")
-                self._room_generation += 1
-                self._room_owner = origin
-                self._is_plugin_reserved = True
-                self._mode = "starting"
-                return PluginConnectorRoom(origin, self._room_generation)
-        finally:
-            self._room_action_lock.release()
-
-    def owns_plugin_room(self, room: PluginConnectorRoom) -> bool:
-        """
-        复核当前来源与代次；相同插件的新会话也不能恢复旧引用。
-
-        :param room: 原始保留代次
-        :return: 是否仍为同一会话
-        """
-        with self._transition_lock:
-            return self._room_owner == room.origin and self._room_generation == room.generation
-
-    def is_plugin_room_origin(self, origin: OperationOrigin) -> bool:
-        """
-        供受信扩展注册表过滤当前来源，用户房间不会协商第三方私有协议。
-
-        :param origin: 宿主绑定的插件来源
-        :return: 是否为当前会话的实际来源
-        """
-        with self._transition_lock:
-            return self._room_owner == origin
-
-    def start_plugin_room(self, room: PluginConnectorRoom, *, port: int | None = None, code: str | None = None) -> None:
-        """
-        执行已保留来源的实际建房或加入，迟到请求不能覆盖后来的会话。
-
-        :param room: 宿主保留的原始来源代次
-        :param port: 建房端口，与 code 二选一
-        :param code: 加入自己的目标房间，不用于读取其他本机会话
-        :raises ConnectorRoomError: 来源、代次或选择无效时抛出
-        """
-        with self._room_action_lock:
-            if not self.owns_plugin_room(room) or not self._is_plugin_reserved or (port is None) == (code is None):
-                raise ConnectorRoomError("联机保留已经失效", "PLUGIN_RESOURCE_DENIED")
-            self._is_plugin_reserved = False
-            self._mode = "idle"
-            if port is not None:
-                self._host_port(port)
-            else:
-                assert code is not None
-                self._join(code)
-
-    def plugin_room_status(self, room: PluginConnectorRoom) -> PluginConnectorStatus:
-        """
-        仅交付指定来源代次的状态，迁移期间不交付尚未提交的房间数据。
-
-        :param room: 原始来源代次
-        :return: 有界会话状态
-        :raises ConnectorRoomError: 当前会话已经属于其他来源或代次时抛出
-        """
-        with self._transition_lock:
-            if not self.owns_plugin_room(room):
-                raise ConnectorRoomError("联机会话不属于当前运行", "PLUGIN_RESOURCE_DENIED")
-            is_starting = self._transitioning or self._is_plugin_reserved
-            return PluginConnectorStatus(
-                "starting" if is_starting else self._mode,
-                None if is_starting else self._room_code,
-                None if is_starting else self._mc_port,
-                self._is_cleanup_pending,
-            )
-
-    def leave_plugin_room(self, room: PluginConnectorRoom) -> bool:
-        """
-        只清理同一来源代次；旧会话已结束时不能影响后来创建的用户房间。
-
-        :param room: 原始来源代次
-        :return: 原会话已不再活动或已完成实际清理时为 True
-        :raises ConnectorRoomError: 实际资源清理未完成时保留句柄并抛出
-        """
-        with self._room_action_lock:
-            if not self.owns_plugin_room(room):
-                return True
-            self._leave()
-            return True
-
-    def request_plugin_room(self, room: PluginConnectorRoom, protocol: str, body: bytes) -> tuple[int, bytes]:
-        """
-        仅向同一来源代次的房主发送请求，退出期间拒绝新的网络调用。
-
-        :param room: 原始会话代次
-        :param protocol: 适配器已经校验的私有协议名
-        :param body: 有界请求载荷
-        :return: 原始响应状态及载荷，由适配器继续校验
-        :raises ConnectorRoomError: 会话已失效、正在清理或不是房客时抛出
-        """
-        with self._room_action_lock:
-            if not self.owns_plugin_room(room) or self._mode != "guest" or self._is_cleanup_pending:
-                raise ConnectorRoomError("联机会话当前不能发送请求", "PLUGIN_RESOURCE_DENIED")
-            try:
-                return self._send_extension_request(protocol, body)
-            except (TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError, RuntimeError):
-                raise ConnectorRoomError("联机协议请求未完成", "PLUGIN_CONNECTOR_FAILED") from None
 
     def _host_port(self, port: int) -> dict[str, Any]:
         """

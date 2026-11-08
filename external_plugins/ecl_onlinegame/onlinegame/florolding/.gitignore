@@ -1,0 +1,14 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.tox/
+.nox/
+
+.memory/
+.venv/
+docs/junsi-dev-docs

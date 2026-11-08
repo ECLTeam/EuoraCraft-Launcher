@@ -20,6 +20,24 @@ def spec_for(tmp_path: Path, *wheels: Path, direct: tuple[str, ...] = ()) -> Plu
     return PluginEnvironmentSpec(plugin_target(), lock_path, wheels[0].parent if wheels else None, direct)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="需要真实 Windows 长路径")
+def test_committed_dependency_with_long_filename_remains_readable(tmp_path: Path) -> None:
+    name = "ecl_test_dependency-1.0.0.dist-info/sboms/" + "x" * 100 + ".json"
+    wheel = make_wheel(tmp_path / "wheels", members={name: b"{}"})
+    pool = PluginEnvironmentPool(tmp_path / ("d" * 70))
+    spec = spec_for(tmp_path, wheel)
+    directory = pool.ensure(spec)
+    target = directory.site_path / name
+    assert len(str(target)) > 260
+    assert target.read_bytes() == b"{}"
+    assert pool.ready_directory(directory.key) is not None
+
+
+def test_posix_dependency_path_does_not_get_windows_prefix(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert PluginEnvironmentPool(tmp_path).data_path == tmp_path.absolute()
+
+
 def test_offline_install_reuses_directory_and_cache_without_interpreter(tmp_path: Path, monkeypatch) -> None:
     wheel = make_wheel(tmp_path / "wheels")
     pool = PluginEnvironmentPool(tmp_path / "data")

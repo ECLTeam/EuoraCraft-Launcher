@@ -86,18 +86,84 @@ def sanitize_external_metadata(payload: object, source: str) -> ExternalInstance
     fields = payload.get("fields")
     if not isinstance(fields, dict):
         return None
-    cleaned: dict[str, str] = {}
+    cleaned: dict[str, object] = {}
     for key, value in list(fields.items())[:limit_metadata_fields]:
-        if isinstance(key, str) and isinstance(value, str):
+        if not isinstance(key, str):
+            continue
+        if isinstance(value, str):
             cleaned[key[:64]] = value[:limit_metadata_text]
-    warnings = [
-        item[:limit_metadata_text]
-        for item in (payload.get("warnings") or [])[:limit_metadata_warnings]
-        if isinstance(item, str)
-    ]
-    if not cleaned and not warnings:
+        elif key in {"hidden", "pinned"} and type(value) is bool:
+            cleaned[key] = value
+        elif key == "icon":
+            icon = _safe_external_icon(value)
+            if icon is not None:
+                icon["source"] = source
+                cleaned[key] = icon
+    raw_warnings = payload.get("warnings")
+    warnings = (
+        [item[:limit_metadata_text] for item in raw_warnings[:limit_metadata_warnings] if isinstance(item, str)]
+        if isinstance(raw_warnings, list)
+        else []
+    )
+    stats = _external_stats(payload.get("stats"))
+    modified_ns = payload.get("modified_ns", 0)
+    if type(modified_ns) is not int or not 0 <= modified_ns <= 2**53 - 1:
+        modified_ns = 0
+    if not cleaned and not warnings and not stats:
         return None
-    return ExternalInstanceMetadata(source=source, modified_ns=0, fields=cleaned, warnings=warnings)
+    return ExternalInstanceMetadata(
+        source=source, modified_ns=modified_ns, fields=cleaned, stats=stats, warnings=warnings
+    )
+
+
+def _external_stats(raw_stats: object) -> dict[str, int | str]:
+    """
+    保留有限非负运行时间与时间字符串，不接受任意统计对象。
+    """
+    stats: dict[str, int | str] = {}
+    if isinstance(raw_stats, dict):
+        duration = raw_stats.get("totalRunDurationSeconds")
+        launched = raw_stats.get("lastLaunchedAt")
+        if type(duration) is int and 0 <= duration <= 2**53 - 1:
+            stats["totalRunDurationSeconds"] = duration
+        if isinstance(launched, str) and len(launched) <= 64:
+            stats["lastLaunchedAt"] = launched
+    return stats
+
+
+def _safe_external_icon(value: object) -> dict[str, str] | None:
+    """
+    只接受受控图标名称和有界 PNG，防止外部元数据注入 URL 或脚本图像。
+    """
+    if not isinstance(value, dict) or set(value) != {"type", "value", "source"}:
+        return None
+    kind, content = value.get("type"), value.get("value")
+    if kind in {"loader", "builtin"} and isinstance(content, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", content):
+        return {"type": kind, "value": content}
+    if (
+        kind != "data"
+        or not isinstance(content, str)
+        or not content.startswith("data:image/png;base64,")
+        or len(content) > 700000
+    ):
+        return None
+    import base64
+    import binascii
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        decoded = base64.b64decode(content.split(",", 1)[1], validate=True)
+        if len(decoded) > 512 * 1024:
+            return None
+        with Image.open(BytesIO(decoded)) as picture:
+            if picture.format != "PNG" or max(picture.size) > 2048:
+                return None
+            picture.verify()
+    except (ValueError, OSError, binascii.Error, Image.DecompressionBombError):
+        return None
+    return {"type": "data", "value": content}
 
 
 InstanceMetadataReader = Callable[[InstanceCompatibilityContext], ExternalInstanceMetadata | None]

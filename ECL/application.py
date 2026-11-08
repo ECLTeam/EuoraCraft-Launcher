@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import inspect
 import logging
 import os
@@ -24,6 +23,7 @@ import ssl
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from threading import RLock
 from time import perf_counter
@@ -44,6 +44,7 @@ from ECL.java.models import JavaReferenceConfig
 from ECL.java.queries import JavaQueries
 from ECL.plugins import PluginManager
 from ECL.services.account import AccountManager, WardrobeStore
+from ECL.services.account.plugin_textures import read_account_skin
 from ECL.services.custom_downloads import CustomDownloadService
 from ECL.services.game import GameService
 from ECL.services.game.launch_settings import scan_instance_java_references
@@ -55,7 +56,7 @@ from ECL.utils.download_settings import resolve_mirror_source, resolve_mod_sourc
 from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
-    from ECL.services.connector import ConnectorService
+    pass
 
 logger = logging.getLogger("EuoraCraft-Launcher.Application")
 
@@ -182,45 +183,6 @@ def _resolve_proxy_url(proxy_mode: str, custom_url: str) -> str | None:
     return None
 
 
-def _build_local_player_icon_provider(
-    account_manager: AccountManager, http_client: httpx.Client
-) -> Callable[[], str | None]:
-    # 构造本机玩家完整皮肤的 base64 解析器，供联机头像上传复用。
-    cache: dict[str, str | None] = {}
-    cache_lock = RLock()
-
-    def resolve() -> str | None:
-        account = account_manager.current_account()
-        if account is None:
-            return None
-        account_id = str(account.get("id") or "")
-        if not account_id:
-            return None
-        with cache_lock:
-            if account_id in cache:
-                return cache[account_id]
-            try:
-                skin_url = account_manager.texture_urls(account_id).get("skinUrl")
-            except Exception:
-                skin_url = None
-            icon: str | None = None
-            if skin_url and skin_url.startswith("data:image/"):
-                icon = skin_url.split(",", 1)[1] if "," in skin_url else None
-            elif skin_url:
-                try:
-                    with http_client.stream("GET", skin_url) as response:
-                        response.raise_for_status()
-                        data = b"".join(response.iter_bytes(64 * 1024))
-                    if data:
-                        icon = base64.b64encode(data).decode("ascii")
-                except Exception:
-                    icon = None
-            cache[account_id] = icon
-            return icon
-
-    return resolve
-
-
 @dataclass
 class ApplicationState:
     """
@@ -264,7 +226,6 @@ class ApplicationContext:
     wardrobe: WardrobeStore
     announcements: AnnouncementService
     game: GameService
-    connector: ConnectorService
     plugins: PluginManager
     processes: ProcessService
     operations: OperationManager | None = None
@@ -296,7 +257,6 @@ class ApplicationContext:
                 self.processes,
                 self.game,
                 self.java,
-                self.connector,
                 self.operations,
                 self.accounts,
                 self.background_media,
@@ -517,24 +477,6 @@ def create_application(
         created.append(game)
         logger.info("游戏服务初始化完成")
 
-        finish_phase("联机")
-        logger.debug("正在初始化联机服务 ConnectorService")
-        from ECL.plugins.connector import ConnectorExtensionRegistry
-        from ECL.services.connector import ConnectorService
-        from ECL.services.connector_nodes import ConnectorNodeConfig
-
-        current_account = accounts.current_account()
-        connector_extensions = ConnectorExtensionRegistry()
-        connector = ConnectorService(
-            player_name=(current_account or {}).get("alias") or "Player",
-            extensions=connector_extensions,
-            local_player_icon_provider=_build_local_player_icon_provider(accounts, http),
-            http_client=http,
-            node_settings_provider=lambda: ConnectorNodeConfig.model_validate(config.get_config("connector") or {}),
-        )
-        created.append(connector)
-        logger.debug("联机服务初始化完成；EasyTier 版本：%s", connector.easytier_version)
-
         finish_phase("插件")
         logger.debug("正在初始化子进程实例服务")
         processes = ProcessService(event_bus=events, instances_manager=shared_instances)
@@ -545,8 +487,6 @@ def create_application(
             events,
             processes=processes,
             instance_compatibility=game.instance_compatibility,
-            connector_extensions=connector_extensions,
-            connector=connector,
             launch_hooks=game.launch_hooks,
             http_client=http,
             auth_providers=accounts.plugin_auth_providers,
@@ -559,6 +499,7 @@ def create_application(
             java_manager=java,
             instance_roots=lambda: _plugin_instance_roots(config),
             account_snapshot=accounts.plugin_account_snapshot,
+            account_skin=partial(read_account_skin, accounts, http),
             public_config=config.get_config,
             ui_injection_allowed=lambda: _ui_injection_allowed(config),
         )
@@ -595,7 +536,6 @@ def create_application(
             wardrobe=wardrobe,
             announcements=announcements,
             game=game,
-            connector=connector,
             plugins=plugins,
             processes=processes,
             operations=operations,

@@ -26,7 +26,6 @@
 #       - register_setting(key, default, description=…, type_=…) -> None — 注册设置项，前端设置页根据此定义渲染控件。
 #       - get_setting(key) -> Any — 读取插件设置当前值；尚未保存时返回声明的默认值。
 #       - register_instance_compatibility(source, title, reader, watch_paths=…) -> None — 注册一个只读实例元数据兼容来源。
-#       - register_connector_extension(name, protocols, on_guest_joined, enrich_status, before_leave, on_reset) -> None — 注册 Scaffolding 扩展协议及其联机会话钩子。
 #       - register_launch_hook(name, on_prepare, pre_launch, post_launch, on_exit) -> None — 注册启动钩子，可修改 Minecraft 启动参数，并在游戏进程启动或退出时执行回调。
 #       - http_request(method, url, params, headers, json, data, timeout) -> PluginHttpResponse — 发起受控的 HTTP 请求。
 #       - http_get(url, **kwargs) -> PluginHttpResponse — 受控的 GET 请求，参数与 ``http_request`` 一致。
@@ -471,40 +470,6 @@ class Plugin:
             title=title,
             reader=reader,
             watch_paths=watch_paths,
-        )
-
-    def register_connector_extension(
-        self,
-        name: str,
-        protocols: Mapping[str, Callable],
-        *,
-        on_guest_joined: Callable | None = None,
-        enrich_status: Callable | None = None,
-        before_leave: Callable | None = None,
-        on_reset: Callable | None = None,
-    ) -> None:
-        """注册 Scaffolding 扩展协议及其联机会话钩子。
-
-        ``protocols`` 的处理器接收 ``ConnectorProtocolRequest``；房客加入、
-        状态刷新、离开与会话清理钩子接收 ``ConnectorSessionContext``。插件
-        禁用或卸载时，宿主会自动移除其全部注册项。
-
-        :param name: 稳定的扩展标识
-        :param protocols: 协议名到处理器的映射
-        :param on_guest_joined: 房客完成基础连接后的回调
-        :param enrich_status: 补充联机状态的回调
-        :param before_leave: 断开连接前的回调
-        :param on_reset: 会话缓存清理回调
-        """
-        self._check_permission(PermissionScope.CONNECTOR, PermissionAction.WRITE, name)
-        self.framework.connector_extensions.register(
-            owner=self.name,
-            name=name,
-            protocols=protocols,
-            on_guest_joined=on_guest_joined,
-            enrich_status=enrich_status,
-            before_leave=before_leave,
-            on_reset=on_reset,
         )
 
     def register_launch_hook(

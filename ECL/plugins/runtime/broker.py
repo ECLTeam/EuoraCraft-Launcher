@@ -31,7 +31,6 @@ from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.grant_models import GrantLease, PermissionDeclaration
 from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
-from ECL.plugins.runtime.connector_api import RuntimeConnector
 from ECL.plugins.runtime.custom_ui import RuntimeCustomUi
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.plugins.runtime.download_api import RuntimeDownloads
@@ -47,7 +46,6 @@ from ECL.plugins.runtime.models import (
     AuthProviderDefinition,
     CommandDefinition,
     CompatSourceDefinition,
-    ConnectorStatusDefinition,
     CrashExtensionDefinition,
     HtmlSlotDefinition,
     LaunchHookDefinition,
@@ -75,7 +73,6 @@ from ECL.utils.instance_reading import InstanceReadError
 if TYPE_CHECKING:
     from pytauri import AppHandle
 
-    from ECL.services.connector import ConnectorService
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -149,8 +146,6 @@ class PluginHostBroker:
             "ui.inject",
             "ui.custom.execute",
             "auth.provider",
-            "connector.extend",
-            "connector.manage",
         }
     )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
@@ -174,13 +169,8 @@ class PluginHostBroker:
             "crash.register",
             "compat.register",
             "auth.register",
-            "connector.register_status",
-            "connector.open",
-            "connector.leave",
-            "connector.protocols.register",
-            "connector.request",
-            "connector.status.set",
             "ui.register_vue",
+            "ui.register_page",
             "ui.windows.open",
             "ui.windows.focus",
             "ui.windows.close",
@@ -228,10 +218,8 @@ class PluginHostBroker:
         compat_sink: Callable[[str, str, str], None] | None = None,
         tool_channel: ToolChannel | None = None,
         online_sink: Callable[[str, AuthProviderDefinition | None], None] | None = None,
-        connector_sink: Callable[[str, str | None], None] | None = None,
         custom_ui: CustomUiDeclaration | None = None,
         window_app: Callable[[], AppHandle | None] | None = None,
-        connector: ConnectorService | None = None,
         plugin_name: str = "",
         settings_service: PluginSettingsService | None = None,
     ) -> None:
@@ -257,10 +245,8 @@ class PluginHostBroker:
         :param compat_sink: 实例兼容来源接收方；未提供时拒绝登记
         :param tool_channel: 受管工具通道；未提供时拒绝工具调用
         :param online_sink: 认证提供方接收方；提供方为 None 表示撤销
-        :param connector_sink: 联机状态补充接收方；回调为 None 表示撤销
         :param custom_ui: 已审阅的单文件独立前端声明
         :param window_app: 原生宿主启动后提供应用句柄
-        :param connector: 应用唯一联机服务
         :param plugin_name: 宿主解析的安装名称，用于私有协议命名空间
         """
         self.session: PluginGrantSession = session
@@ -276,19 +262,11 @@ class PluginHostBroker:
         self._tool_channel = tool_channel
         self._tools: dict[str, ToolDefinition] = {}
         self._online_sink = online_sink
-        self._connector_sink = connector_sink
         self._resources = resources
         self.game_catalog: RuntimeGameCatalog | None = (
             RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
         )
         self.operations: RuntimeOperations | None = RuntimeOperations(session, operations) if operations else None
-        self.connector = (
-            RuntimeConnector(
-                session, connector, self.operations, plugin_name, self._invoke_callback, self._publish_event
-            )
-            if connector is not None and self.operations is not None and plugin_name
-            else None
-        )
         self.game_install: RuntimeGameInstall | None = (
             RuntimeGameInstall(session, game_operations, resources, self.operations)
             if game_operations is not None and resources is not None and self.operations is not None
@@ -343,6 +321,7 @@ class PluginHostBroker:
         self._idle.set()
         self._active_requests = 0
         self._commands: dict[str, tuple[str, CommandDefinition, GrantLease]] = {}
+        self._page_paths: set[str] = set()
         self._panels: dict[str, tuple[PanelDefinition, GrantLease]] = {}
         self._subscriptions: dict[str, tuple[str, GrantLease, str]] = {}
         self._receipts: dict[str, _Receipt] = {}
@@ -515,8 +494,6 @@ class PluginHostBroker:
             return self._tool_service(request)
         if method.startswith("auth."):
             return self._auth_service(request)
-        if method.startswith("connector."):
-            return self._connector_service(request)
         return self._control_service(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
@@ -762,11 +739,7 @@ class PluginHostBroker:
         self._keys(params, {"event", "callback_ref"})
         lease = self.session.authorize("plugin.base")
         callback = params["callback_ref"]
-        if (
-            params["event"] not in {"settings.changed", "connector.changed"}
-            or not isinstance(callback, str)
-            or len(callback) != 32
-        ):
+        if params["event"] not in {"settings.changed"} or not isinstance(callback, str) or len(callback) != 32:
             raise ProtocolError("该事件或回调尚未开放", "PLUGIN_EVENT_NOT_EXPOSED")
         reference = uuid4().hex
 
@@ -779,6 +752,24 @@ class PluginHostBroker:
 
         self.session.accept(lease, register)
         return {"subscription_ref": reference}
+
+    def call_query(self, name: str, args: dict[str, JsonValue], timeout: float = 30) -> JsonValue:
+        """
+        只通过查询入口执行当前运行明确登记的查询命令，绑定原始命令引用。
+
+        :param name: 查询命令名
+        :param args: 查询输入
+        :param timeout: 当前调用预算
+        :return: 已校验的查询结果
+        :raises ProtocolError: 命令未声明为查询或已失效
+        """
+        with self._lock:
+            reference = next(
+                (key for key, value in self._commands.items() if value[1].name == name and value[1].is_query), None
+            )
+        if reference is None:
+            raise ProtocolError("命令不是已登记查询", "PLUGIN_QUERY_NOT_DECLARED")
+        return self.call_command(reference, args, timeout)
 
     def call_command(self, reference: str, args: dict[str, JsonValue], timeout: float = 30) -> JsonValue:
         """
@@ -888,25 +879,6 @@ class PluginHostBroker:
         self._online_sink("auth", definition)
         return {"registered": True}
 
-    def _connector_service(self, request: RpcRequest) -> dict[str, JsonValue]:
-        """
-        状态补充和自身会话分别按独立许可分派给应用唯一联机服务。
-
-        :param request: 已通过变更检查的请求
-        :return: 登记结果
-        :raises ProtocolError: 未获准或通道缺失时抛出
-        """
-        if request.method != "connector.register_status":
-            if self.connector is None:
-                raise ProtocolError("当前宿主未提供联机会话", "PLUGIN_API_METHOD_NOT_FOUND")
-            return self.connector.handle(request.method, request.params, request.deadline)
-        self.session.authorize("connector.extend")
-        if self._connector_sink is None:
-            raise ProtocolError("当前宿主未提供联机扩展", "PLUGIN_API_METHOD_NOT_FOUND")
-        definition = ConnectorStatusDefinition.model_validate(request.params)
-        self._connector_sink("status", definition.callback_ref)
-        return {"registered": True}
-
     def _tool_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         """
         只允许调用本插件已声明的工具，进程归属由宿主校验。
@@ -966,6 +938,17 @@ class PluginHostBroker:
         if permission is None:
             raise ProtocolError("插件未获准查看游戏", "PLUGIN_PERMISSION_DENIED")
         self.session.authorize(permission.capability, tuple(permission.resource_refs))
+        if request.method == "compat.read_index":
+            from ECL.plugins.runtime.selected_files import read_selected_file
+
+            lease = self.session.authorize(permission.capability, tuple(permission.resource_refs))
+            view = self.settings_view()
+            result = read_selected_file(view, request.params)
+            self.session.check(lease)
+            if self.settings_view()["revision"] != view["revision"]:
+                raise ProtocolError("索引选择已经变化", "PLUGIN_REVISION_CONFLICT")
+            request.check_deadline()
+            return result
         if request.method != "compat.register":
             raise ProtocolError("此兼容方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
         if self._compat_sink is None:
@@ -1125,18 +1108,40 @@ class PluginHostBroker:
             if self.custom_ui is None:
                 raise ProtocolError("原生插件窗口不可用", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
             return self.custom_ui.handle(request.method, request.params)
-        self.session.authorize("ui.inject")
+        lease = self.session.authorize("ui.inject")
         if self._slot_sink is None:
             raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
-        if request.method == "ui.register_html":
+        page_key = ""
+        if request.method == "ui.register_page":
+            from ECL.plugins.runtime.models import VuePageDefinition
+
+            page = VuePageDefinition.model_validate(request.params)
+            # 顶层页面按插件内路径计数，宿主容器页面按容器导航路径计数。
+            page_key = f"{page.container}:{page.nav.path if page.nav else page.path}"
+            with self._lock:
+                if page_key not in self._page_paths and len(self._page_paths) >= 16:
+                    raise ProtocolError("插件页面数量超过上限", "PLUGIN_RATE_LIMITED")
+            payload: dict[str, JsonValue] = {"kind": "page", **page.model_dump(mode="json")}
+        elif request.method == "ui.register_html":
             definition = HtmlSlotDefinition.model_validate(request.params)
-            payload: dict[str, JsonValue] = {"kind": "html", **definition.model_dump(mode="json")}
+            payload = {"kind": "html", **definition.model_dump(mode="json")}
         elif request.method == "ui.register_vue":
             definition = VueSlotDefinition.model_validate(request.params)
             payload = {"kind": "vue", **definition.model_dump(mode="json")}
         else:
             raise ProtocolError("此界面方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
-        self._slot_sink(payload)
+
+        def publish() -> None:
+            self._ensure_accepting()
+            assert self._slot_sink is not None
+            if payload["kind"] == "page":
+                with self._lock:
+                    if page_key not in self._page_paths and len(self._page_paths) >= 16:
+                        raise ProtocolError("插件页面数量超过上限", "PLUGIN_RATE_LIMITED")
+                    self._page_paths.add(page_key)
+            self._slot_sink(payload)
+
+        self.session.accept(lease, publish)
         return {"registered": True}
 
     def _invoke_callback(self, params: dict[str, JsonValue], timeout: float) -> dict[str, JsonValue]:
@@ -1320,7 +1325,6 @@ class PluginHostBroker:
         self._closed.set()
         self.settings.release(self._settings_identity, self.session.run_id)
         for resource in (
-            self.connector,
             self.custom_ui,
             self.modpacks,
             self.game_catalog,
@@ -1359,8 +1363,6 @@ class PluginHostBroker:
         授权版本变化后只保留仍获准的注册，并为自身事件重新建立有效准入。
         """
         self.refresh_pending_work()
-        if self.connector is not None:
-            self.connector.invalidate()
         view = self.session.view()
         if view.error_code or not view.required_satisfied:
             self.close()

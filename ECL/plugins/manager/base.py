@@ -29,7 +29,6 @@ from ECL.plugins.auth_providers import (
     sanitize_credentials_payload,
     sanitize_private_auth_data,
 )
-from ECL.plugins.connector import ConnectorExtensionRegistry, sanitize_status_fields
 from ECL.plugins.crash_extensions import (
     CrashAnalysisContext,
     CrashAnalysisExtensionRegistry,
@@ -60,7 +59,6 @@ from .install_transaction import recover_plugin_install_transactions
 
 if TYPE_CHECKING:
     from ECL.plugins.package_activation import PluginPackageActivationStore
-    from ECL.services.connector import ConnectorService
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -77,7 +75,6 @@ class _PluginState:
         event_bus: EventBus | None = None,
         processes: Any = None,
         instance_compatibility: InstanceCompatibilityRegistry | None = None,
-        connector_extensions: ConnectorExtensionRegistry | None = None,
         launch_hooks: LaunchHookRegistry | None = None,
         http_client: httpx.Client | None = None,
         auth_providers: AuthProviderRegistry | None = None,
@@ -90,9 +87,9 @@ class _PluginState:
         java_queries: JavaQueries | None = None,
         java_manager: JavaManager | None = None,
         account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
+        account_skin: Callable[[str], bytes | None] | None = None,
         public_config: Callable[[], JsonValue] | None = None,
         ui_injection_allowed: Callable[[], bool] | None = None,
-        connector: ConnectorService | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -100,7 +97,6 @@ class _PluginState:
         :param event_bus: 当前应用使用的事件总线
         :param processes: 面向插件的通用子进程注册服务；None 表示当前环境未提供该能力
         :param instance_compatibility: 与游戏服务共享的实例兼容提供者注册表
-        :param connector_extensions: 与联机服务共享的扩展协议注册表
         :param launch_hooks: 与游戏服务共享的启动钩子注册表
         :param http_client: 应用共享 HTTP 客户端，供插件的受控网络请求使用
         :param auth_providers: 与账户服务共享的自定义认证提供方注册表
@@ -115,14 +111,11 @@ class _PluginState:
         :param instance_roots: 当前配置中的游戏根目录快照
         :param game_operations: 应用唯一游戏业务入口
         :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
-        :param connector: 应用唯一联机服务
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
         self.processes = processes  # 插件可经 framework.processes 启动子进程实例
         self.instance_compatibility = instance_compatibility or InstanceCompatibilityRegistry()
-        self.connector_extensions = connector_extensions or ConnectorExtensionRegistry()
-        self._connector = connector
         self.launch_hooks = launch_hooks or LaunchHookRegistry()
         self.http_client = http_client
         self._operations = operations
@@ -130,6 +123,7 @@ class _PluginState:
         self._java_queries = java_queries
         self._java_manager = java_manager
         self._account_snapshot = account_snapshot
+        self._account_skin = account_skin
         self._public_config = public_config
         self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
         self._ui_injection_was_allowed = self._ui_injection_allowed()
@@ -217,6 +211,7 @@ class _PluginState:
             java_queries=self._java_queries,
             java_manager=self._java_manager,
             account_snapshot=self._account_snapshot,
+            account_skin=self._account_skin,
             public_config=self._public_config,
             slot_sink=self._on_worker_slot,
             hook_sink=self._on_worker_hook,
@@ -225,8 +220,6 @@ class _PluginState:
             tool_spawner=self._spawn_worker_tool,
             tool_stopper=self._stop_worker_tool,
             auth_sink=self._on_worker_auth,
-            connector_sink=self._on_worker_connector,
-            connector=self._connector,
             ui_injection_allowed=self._ui_injection_allowed,
             development_changed=lambda: self.events.emit(
                 "plugin:status_changed", {"plugin": "", "status": "development"}
@@ -395,40 +388,6 @@ class _PluginState:
             description=definition.description,
         )
 
-    def _on_worker_connector(self, name: str, callback_ref: str | None, lease: GrantLease | None) -> None:
-        """
-        登记或撤销第三方联机状态补充，只允许补充展示字段。
-
-        :param name: 安装名称
-        :param callback_ref: 本运行登记的回调标识；None 表示撤销
-        """
-        if callback_ref is None:
-            self.connector_extensions.unregister_owner(name)
-            return
-        if lease is None:
-            raise ProtocolError("联机扩展缺少原始许可", "PLUGIN_PERMISSION_DENIED")
-
-        def enrich(_context: object, status: dict[str, object]) -> dict[str, object]:
-            if self.worker_service is None:
-                return {}
-            players = status.get("players")
-            protocols = status.get("protocols")
-            payload = {
-                "player_count": len(players) if isinstance(players, list) else 0,
-                "protocols": [str(item)[:64] for item in protocols[:16]] if isinstance(protocols, list) else [],
-            }
-            fields = sanitize_status_fields(
-                self.worker_service.invoke_hook(name, callback_ref, payload, 5.0, lease=lease)
-            )
-            return {"plugin_fields": fields} if fields else {}
-
-        self.connector_extensions.register(
-            owner=name,
-            name="status",
-            protocols={},
-            enrich_status=enrich,
-        )
-
     def _spawn_worker_tool(self, owner: str, title: str, argv: list[str], cwd: str) -> str:
         """
         以插件归属启动工具进程，游戏实例不经过这条路径。
@@ -476,7 +435,18 @@ class _PluginState:
             source=source,
             title=title or source,
             reader=self._worker_compat_reader(name, source, callback_ref),
+            watch_paths=lambda _options: self._worker_selected_files(name),
         )
+
+    def _worker_selected_files(self, name: str) -> list[Path]:
+        """
+        把用户选择的外部索引纳入现有扫描缓存的文件修订检查。
+        """
+        from ECL.plugins.runtime.selected_files import selected_file_paths
+
+        if self.worker_service is None:
+            return []
+        return selected_file_paths(self.worker_service.settings_view(name))
 
     def _worker_compat_reader(self, name: str, source: str, callback_ref: str):
         """
@@ -504,6 +474,7 @@ class _PluginState:
                 "version_id": context.version_id,
                 "vanilla_name": context.vanilla_name,
                 "primary_loader": context.primary_loader,
+                "instance_path": str(context.instance_path),
             }
             value = self.worker_service.invoke_hook(name, callback_ref, payload, 5.0)
             return sanitize_external_metadata(value, source)
@@ -612,6 +583,9 @@ class _PluginState:
         if kind == "clear":
             self.clear_plugin_slots(name)
             return
+        if kind == "page":
+            self._register_worker_page(name, payload)
+            return
         if kind == "html":
             self.events.emit(
                 "plugin:html_injected",
@@ -635,6 +609,61 @@ class _PluginState:
             )
             return
         self.logger.warning("插件插槽内容类型无效，已忽略: %s", kind)
+
+    def _register_worker_page(self, name: str, payload: dict[str, object]) -> None:
+        """
+        把已批准的 Worker 页面交给既有路由收集器，组件身份包含插件名称。
+
+        :param name: 宿主确认的安装名称
+        :param payload: Broker 校验后的页面声明
+        """
+        from ECL.plugins.runtime.models import VuePageDefinition
+
+        page = VuePageDefinition.model_validate({key: value for key, value in payload.items() if key != "kind"})
+        component_name = f"{name}__{page.component_name}"
+        self._routes = [route for route in self._routes if not (route["plugin"] == name and route["path"] == page.path)]
+        self._vue_routes = [
+            route for route in self._vue_routes if not (route["plugin"] == name and route["path"] == page.path)
+        ]
+        nav_payload = page.nav.model_dump(mode="json") if page.nav is not None else None
+        self._routes.append(
+            {
+                "plugin": name,
+                "path": page.path,
+                "title": page.title,
+                "icon": page.icon,
+                "component": component_name,
+                "type": "vue",
+                "locales": page.locales,
+                "container": page.container,
+                "nav": nav_payload,
+            }
+        )
+        definition = {"plugin": name, "template": page.template, "script": page.script, "style": page.style}
+        self._vue_components[component_name] = definition
+        self._vue_routes.append(
+            {
+                **definition,
+                "component_name": component_name,
+                "path": page.path,
+                "title": page.title,
+                "icon": page.icon,
+                "container": page.container,
+                "nav": nav_payload,
+            }
+        )
+        self.events.emit(
+            "plugin:vue_route_registered",
+            name,
+            page.path,
+            page.title,
+            component_name,
+            page.template,
+            page.script,
+            page.style,
+            page.icon,
+        )
+        self.events.emit("plugin:route_registered", name, page.path, page.title, page.icon)
 
     def _on_instance_config_changed(self, section: str, value: object) -> None:
         """

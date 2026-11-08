@@ -17,7 +17,7 @@ import asyncio
 import json
 
 import pytest
-from test_accounts import FakeMicrosoftManager
+from test_accounts import FakeAuthlibManager, FakeMicrosoftManager
 
 from ECL.plugins import PluginManager
 from ECL.services import AccountManager
@@ -74,7 +74,7 @@ def _build(tmp_path, *, permission: bool = True) -> tuple[AccountManager, Plugin
     data_path = tmp_path / "data"
     data_path.mkdir(parents=True)
     _register_provider_plugin(data_path, permission=permission)
-    manager = AccountManager(data_path, microsoft_manager=FakeMicrosoftManager())
+    manager = AccountManager(data_path, microsoft_manager=FakeMicrosoftManager(), authlib_manager=FakeAuthlibManager())
     framework = PluginManager(auth_providers=manager.plugin_auth_providers)
     framework.initialize(data_path, tmp_path / "resources")
     return manager, framework
@@ -122,7 +122,9 @@ def test_plugin_account_persists_across_restart(tmp_path) -> None:
     manager, _ = _build(tmp_path)
     manager.add_plugin_account("demo", {"token": "abc"})
 
-    restored = AccountManager(tmp_path / "data", microsoft_manager=FakeMicrosoftManager())
+    restored = AccountManager(
+        tmp_path / "data", microsoft_manager=FakeMicrosoftManager(), authlib_manager=FakeAuthlibManager()
+    )
     accounts = restored.list_accounts()["accounts"]
     assert any(item["type"] == "plugin" and item["provider"] == "demo" for item in accounts)
 
@@ -141,7 +143,7 @@ def test_plugin_without_accounts_permission_cannot_register_provider(tmp_path) -
     data_path = tmp_path / "data"
     data_path.mkdir(parents=True)
     _register_provider_plugin(data_path, permission=False)
-    manager = AccountManager(data_path, microsoft_manager=FakeMicrosoftManager())
+    manager = AccountManager(data_path, microsoft_manager=FakeMicrosoftManager(), authlib_manager=FakeAuthlibManager())
     framework = PluginManager(auth_providers=manager.plugin_auth_providers)
     framework.initialize(data_path, tmp_path / "resources")
 
@@ -152,7 +154,9 @@ def test_plugin_without_accounts_permission_cannot_register_provider(tmp_path) -
 def test_private_provider_data_is_available_after_restart_only_to_provider(tmp_path) -> None:
     manager, _ = _build(tmp_path)
     manager.add_plugin_account("demo", {"token": "persisted-secret"})
-    restored = AccountManager(tmp_path / "data", microsoft_manager=FakeMicrosoftManager())
+    restored = AccountManager(
+        tmp_path / "data", microsoft_manager=FakeMicrosoftManager(), authlib_manager=FakeAuthlibManager()
+    )
     received = []
 
     def resolve(account):

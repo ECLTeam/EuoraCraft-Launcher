@@ -60,7 +60,6 @@ from ECL.utils.instance_reading import InstanceReadError
 if TYPE_CHECKING:
     from pytauri import AppHandle
 
-    from ECL.services.connector import ConnectorService
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -112,6 +111,7 @@ class PluginWorkerService:
         java_queries: JavaQueries | None = None,
         java_manager: JavaManager | None = None,
         account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
+        account_skin: Callable[[str], bytes | None] | None = None,
         public_config: Callable[[], JsonValue] | None = None,
         slot_sink: Callable[[str, dict[str, JsonValue]], None] | None = None,
         ui_injection_allowed: Callable[[], bool] | None = None,
@@ -121,8 +121,6 @@ class PluginWorkerService:
         tool_spawner: Callable[[str, str, list[str], str], str] | None = None,
         tool_stopper: Callable[[str, str], bool] | None = None,
         auth_sink: Callable[[str, str | None, object | None, GrantLease | None], None] | None = None,
-        connector_sink: Callable[[str, str | None, GrantLease | None], None] | None = None,
-        connector: ConnectorService | None = None,
         development_changed: Callable[[], None] | None = None,
         settings_changed: Callable[[str], None] | None = None,
     ) -> None:
@@ -148,8 +146,6 @@ class PluginWorkerService:
         :param tool_spawner: 受管工具启动方；未提供时拒绝工具调用
         :param tool_stopper: 受管工具停止方；未提供时拒绝停止
         :param auth_sink: 认证提供方接收方；提供方为 None 表示撤销
-        :param connector_sink: 联机状态补充接收方；回调为 None 表示撤销
-        :param connector: 应用唯一联机服务，创建和停止均保留会话来源
         """
         self.data_path: Path = data_path
         self._slot_sink = slot_sink
@@ -160,8 +156,6 @@ class PluginWorkerService:
         self._tool_spawner = tool_spawner
         self._tool_stopper = tool_stopper
         self._auth_sink = auth_sink
-        self._connector_sink = connector_sink
-        self._connector = connector
         self._window_app: AppHandle | None = None
         self.installations: PluginInstallationStore = PluginInstallationStore(data_path)
         self.grants: PluginGrantStore = PluginGrantStore(
@@ -182,6 +176,7 @@ class PluginWorkerService:
         self._java_manager = java_manager
         self._account_catalog = PluginAccountResourceCatalog(data_path, account_snapshot) if account_snapshot else None
         self._public_config = public_config
+        self._account_skin = account_skin
         self._java_catalog = PluginJavaResourceCatalog(data_path, java_queries) if java_queries is not None else None
         self._file_storage = PluginFileStorage(data_path)
         self._network_service = PluginNetworkService()
@@ -749,7 +744,11 @@ class PluginWorkerService:
                     instance_profiles=self._instance_profiles,
                     game_operations=self._game_operations,
                     public_queries=RuntimePublicQueries(
-                        entry.session, self._account_catalog, self.refresh_account_resources, self._public_config
+                        entry.session,
+                        self._account_catalog,
+                        self.refresh_account_resources,
+                        self._public_config,
+                        self._account_skin,
                     ),
                     java=RuntimeJava(
                         entry.session,
@@ -770,10 +769,8 @@ class PluginWorkerService:
                     crash_sink=partial(self._publish_crash, name),
                     compat_sink=partial(self._publish_compat, name),
                     online_sink=partial(self._publish_auth, name),
-                    connector_sink=partial(self._publish_connector, name),
                     custom_ui=entry.manifest.custom_ui,
                     window_app=lambda: self._window_app,
-                    connector=self._connector,
                     plugin_name=entry.manifest.name,
                     settings_service=self.settings,
                     tool_channel=ToolChannel(
@@ -879,28 +876,6 @@ class PluginWorkerService:
         """
         if self._auth_sink is not None:
             self._auth_sink(name, None, None, None)
-
-    def _publish_connector(self, name: str, kind: str, callback_ref: str | None) -> None:
-        """
-        把已获准的联机状态补充回调交给管理器。
-
-        :param name: 安装名称
-        :param kind: 登记类型，固定为 status
-        :param callback_ref: 本运行登记的回调标识；None 表示撤销
-        """
-        if self._connector_sink is None:
-            raise ProtocolError("当前宿主未提供联机扩展", "PLUGIN_API_METHOD_NOT_FOUND")
-        lease = self._entry(name).session.authorize("connector.extend") if callback_ref is not None else None
-        self._connector_sink(name, callback_ref, lease)
-
-    def _clear_connector(self, name: str) -> None:
-        """
-        撤销该安装登记的全部联机扩展，禁用后不再补充状态。
-
-        :param name: 安装名称
-        """
-        if self._connector_sink is not None:
-            self._connector_sink(name, None, None)
 
     def _tool_run(self, name: str, definition: object, args: tuple[str, ...]) -> str:
         """
@@ -1169,7 +1144,6 @@ class PluginWorkerService:
             self._clear_crash(name)
             self._clear_compat(name)
             self._clear_auth(name)
-            self._clear_connector(name)
             entry.state = "disabled"
             entry.cleanup_state = "completed"
             if entry.error_code in {"PLUGIN_JOB_STOP_PENDING", "PLUGIN_HOST_CLEANUP_PENDING"}:
@@ -1274,7 +1248,6 @@ class PluginWorkerService:
         if entry.broker:
             entry.broker.refresh_permissions()
         self._clear_auth(name)
-        self._clear_connector(name)
         if not view.required_satisfied and entry.state == "enabled":
             try:
                 self.stop(name)

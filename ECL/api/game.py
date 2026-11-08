@@ -200,15 +200,10 @@ class GameHandlers(_FrontendState):
         else:
             game_config = self._get_effective_config().get("game") or {}
         scan_paths = [str(path) for path in paths if path]
-        qomicex_path = game_config.get("qomicex_instances_path")
-        compatibility_options = {
-            "qomicex": {"instances_path": qomicex_path},
-        }
         versions = await to_thread.run_sync(
             lambda: self.game.scan_versions(
                 scan_paths,
                 force=request.force,
-                compatibility_options=compatibility_options,
             )
         )
         return success(versions)

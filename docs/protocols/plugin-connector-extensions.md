@@ -1,89 +1,25 @@
-# 联机扩展协议插件开发
+# 外置联机插件的扩展协议
 
-ECL 的联机核心只实现通用 Scaffolding/Florolding 与 EasyTier 会话。启动器特有的协议应由插件通过
-`Plugin.register_connector_extension()` 注册，避免把 `qml:*` 等第三方语义写死在宿主中。
+联机网络由普通 Worker 插件 **ECL-OnlineGame** 持有。宿主不再提供 `connector.*` 接口、联机权限或系统级协议注册。可选兼容插件通过普通的导出命令接入，不需要成为联机插件的清单依赖。
 
-## 清单与权限
+## 发现与运行绑定
 
-普通插件需要声明写入联机扩展的权限；系统插件跳过权限校验，但仍使用同一注册接口。
+提供方导出 `onlinegame.extension.v1`，输入、输出分别为有界 JSON 字段 `payload`、`result`。联机插件发现已启用且导出该命令的插件，发送 `{"event":"describe"}`。提供方返回：
 
 ```json
-{
-  "permissions": [
-    { "scope": "connector", "action": "write", "resource": "example" }
-  ],
-  "contributes": {
-    "connectorExtensions": [
-      {
-        "name": "example",
-        "protocols": ["example:metadata"]
-      }
-    ]
-  }
-}
+{"name":"example","version":1,"binding":"本次 Worker 的随机标识","protocols":["example:metadata"]}
 ```
 
-`contributes.connectorExtensions` 用于描述能力，实际处理器仍须在 `on_enable()` 中注册。插件禁用、
-卸载或启用失败时，宿主会自动移除它拥有的全部联机扩展。
+其余请求携带原 `binding` 和本房间随机 `session`。重新启用后的提供方拒绝旧绑定。提供方退出时，联机插件移除它的协议；缺少任何可选提供方均不阻止基础建房和加入。
 
-## 注册协议
+## 请求与生命周期
 
-```python
-from ECL.plugins import ConnectorProtocolResponse, Plugin
+事件包括 `protocol`、`joined`、`enrich`、`leaving`、`reset`。网络请求由联机插件投影为协议名、对端机器标识、JSON 请求和必要的房间公开上下文。提供方只返回数据及后续请求描述，不在同步回调中反向等待联机插件。
 
+普通跨插件命令维持原 16 KiB 校验；大头像和列表使用绑定同一运行、房间的分块传输，每块 8192 字节，单个完整对象最多 1 MiB。临时传输有总容量、引用数量和 30 秒过期限制。具体字段以 [RemoteExtensions](../../external_plugins/ecl_onlinegame/onlinegame/remote_extensions.py) 和 [兼容提供方](../../external_plugins/qomicex_compatible/main.py) 为准。
 
-class ExamplePlugin(Plugin):
-    def on_enable(self) -> None:
-        super().on_enable()
-        self.register_connector_extension(
-            "example",
-            {"example:metadata": self.metadata},
-            on_guest_joined=self.on_guest_joined,
-            enrich_status=self.enrich_status,
-            before_leave=self.before_leave,
-            on_reset=self.on_reset,
-        )
+## QomicEX 兼容
 
-    def metadata(self, request):
-        payload = request.json({})
-        return ConnectorProtocolResponse.json({"received": payload})
-```
+普通插件 **Qomicex-Compatible** 提供 `qml:game_info`、`qml:player_icons`、`qml:player_leave`、`qml:game_mods`。它同时提供独立的 QomicEX 实例来源；停用联机插件不影响实例来源。退出协议核对真实对端身份，不能代替其他玩家退出。
 
-协议名必须符合 `namespace:action`，仅使用小写 ASCII 字母、数字和下划线。处理器可同步或异步，
-返回值支持：
-
-- `ConnectorProtocolResponse`
-- `tuple[int, bytes]`
-- `bytes` 或 `str`（状态码为 0）
-- JSON 可序列化值（自动编码为 UTF-8 JSON）
-
-处理器收到 `ConnectorProtocolRequest`，可读取原始 `body`、调用 `json()`、读取
-`peer_machine_id` 与房主 `game_info`。优雅离房等协议可以 `await request.remove_player(machine_id)`。
-单个处理器抛出的异常会被隔离，并转换为状态码 255，不会终止联机服务。
-
-## 房客会话钩子
-
-`on_guest_joined`、`enrich_status`、`before_leave` 和 `on_reset` 接收
-`ConnectorSessionContext`。房客可以使用：
-
-```python
-data = context.request_json("example:metadata", {"key": "value"})
-```
-
-`enrich_status(context, status)` 可以原位补充状态，也可以返回要合并的字典。会话钩子的异常会被
-隔离；网络请求应自行容忍房主不支持对应扩展的情况，以保持不同启动器之间的基础联机兼容。
-
-每次创建或加入房间时，宿主会对当时已注册的协议做一次协商快照。因此运行中新增协议会从下一个
-房间开始生效。
-
-## 内置 QomicEX 兼容
-
-隐藏且不可禁用的 `qomicex-compat` 系统插件实现了 QomicEX 联机系统的四个扩展协议：
-
-- `qml:game_info`：房主游戏版本与加载器信息
-- `qml:player_icons`：玩家头像上传与映射交换
-- `qml:player_leave`：房客优雅退出通知
-- `qml:game_mods`：房主模组来源、项目 ID 与 SHA-1 清单
-
-ECL 作为房主会响应这些协议；作为房客会在加入、状态刷新与退出阶段主动调用它们。对端不支持
-任一扩展时，基础建房、加入和 Minecraft 端口映射仍可继续工作。
+两个插件均为 ECLTeam 的 v1.0.0-beta，安装、锁定依赖和可选权限见[外置插件说明](../../external_plugins/README.md)。本地 Worker 和页面验收不等于公开网络及真实 QomicEX 对端验收。

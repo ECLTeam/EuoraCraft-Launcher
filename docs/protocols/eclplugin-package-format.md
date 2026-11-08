@@ -352,7 +352,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 ## 第二批独立窗口、认证与联机契约
 
-这三项分别声明 `ui.custom.execute`、`auth.provider`、`connector.manage`，不能从基本启用推导。原有 `connector.extend` 仅允许状态补充。权限审阅和六语言能力说明同步展示，撤权使旧运行许可失效。
+独立窗口与认证分别声明 `ui.custom.execute`、`auth.provider`，不能从基本启用推导。联机已迁入普通外置插件，不再提供宿主联机能力。权限审阅和六语言能力说明同步展示，撤权使旧运行许可失效。
 
 ### 包内独立前端
 
@@ -366,7 +366,7 @@ Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`�
 
 ### 认证与联机
 
-方法、参数、返回模型、预算及原始许可生命周期集中定义于[第三方登录与联机契约](../designs/plugin-auth-and-connector-extension-design.md)。认证只交付本提供方自己的持久数据；联机只操作本来源会话。撤权再授权不复活旧注册或旧引用。会话退出请求不代表实际资源已停止，最终状态以所属任务及清理结果为准。
+方法、参数、返回模型、预算及原始许可生命周期集中定义于[第三方登录与联机契约](../designs/plugin-auth-and-connector-extension-design.md)。认证只交付本提供方自己的持久数据；外置联机的协作协议见[当前协议](plugin-connector-extensions.md)。撤权再授权不复活旧注册或旧引用。会话退出请求不代表实际资源已停止，最终状态以所属任务及清理结果为准。
 
 ## 第三批 Worker 平台引导契约
 

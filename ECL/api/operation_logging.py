@@ -294,23 +294,10 @@ class IpcLogPolicy:
             "plugin_get_vue_slots": IpcLogSpec("获取插件 Vue 插槽", "query"),
             "plugin_get_vue_components": IpcLogSpec("获取插件 Vue 组件", "query"),
             "plugin_call_command": IpcLogSpec("调用插件命令", "action"),
+            "plugin_query_command": IpcLogSpec("查询插件状态", "poll"),
             "plugin_get_settings": IpcLogSpec("获取插件设置", "query"),
             "plugin_update_setting": IpcLogSpec("更新插件设置", "action"),
             "plugin_notify_sidebar_state": IpcLogSpec("同步侧栏折叠状态", "action", result_owner="silent"),
-            "connector_nodes_get": IpcLogSpec("读取联机节点配置", "query"),
-            "connector_nodes_set": IpcLogSpec("保存联机节点配置", "action", result_owner="service"),
-            "connector_status": IpcLogSpec("查询联机状态", "poll"),
-            "launcher_preload_connector": IpcLogSpec("预加载联机节点", "query", timed=True),
-            "connector_host_port": IpcLogSpec("创建联机房间", "action", timed=True, result_owner="service"),
-            "connector_host_instance": IpcLogSpec(
-                "为游戏实例创建联机房间", "action", timed=True, result_owner="service"
-            ),
-            "connector_join": IpcLogSpec("加入联机房间", "action", timed=True, result_owner="service"),
-            "connector_leave": IpcLogSpec("退出联机房间", "action", result_owner="service"),
-            "connector_kick": IpcLogSpec("移出房间玩家", "action", result_owner="service"),
-            "connector_detect_ports": IpcLogSpec("探测服务端口", "action", timed=True),
-            "connector_search_mc_port": IpcLogSpec("查找游戏服务端口", "action", timed=True),
-            "connector_nat_type": IpcLogSpec("检测网络 NAT 类型", "action", timed=True, result_owner="service"),
         }
     )
 

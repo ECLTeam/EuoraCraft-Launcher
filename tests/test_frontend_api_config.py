@@ -720,7 +720,8 @@ def test_scan_versions_delegates_to_registered_service(tmp_path) -> None:
         "data": [{"id": "1.20.1", "versionId": "1.20.1"}],
     }
     assert [Path(path) for path in api.game.requested_paths] == [Path("D:/Games/.minecraft")]
-    assert api.game.compatibility_options == {"qomicex": {"instances_path": None}}
+    # 宿主不再内置 QomicEX 索引读取，扫描不再传入兼容来源选项。
+    assert api.game.compatibility_options is None
 
     forced_result = asyncio.run(api.game_scan({"paths": ["D:/Games/.minecraft"], "force": True}))
     assert forced_result["success"] is True
@@ -1698,61 +1699,16 @@ def test_unexpected_ipc_error_returns_correlated_modal_and_emits_event(tmp_path,
     ]
 
 
-def test_startup_preload_warms_connector_nodes_without_arguments(tmp_path) -> None:
+def test_host_does_not_own_connector_node_preload(tmp_path) -> None:
     api = _build_api(tmp_path)
-    calls: list[str] = []
-    api.connector.start_node_preload = lambda: calls.append("scheduled")
+    # 联机节点预热随业务移入外部插件，宿主不再注册该命令或持有联机服务。
+    assert "launcher_preload_connector" not in command_handlers(api)
+    assert not hasattr(api, "connector")
 
-    result = asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
-
-    assert result["success"] is True
-    assert calls == ["scheduled"]
-    invalid = asyncio.run(command_handlers(api)["launcher_preload_connector"]({"unexpected": True}))
-    assert invalid["errorCode"] == "INVALID_REQUEST"
-
-
-def test_connector_preload_is_skipped_outside_simplified_chinese(tmp_path) -> None:
-    api = _build_api(tmp_path)
-    api._get_effective_config = lambda: {"ui": {"locale": "en-US"}}
-    calls: list[str] = []
-    api.connector.start_node_preload = lambda: calls.append("scheduled")
-
-    result = asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
-
-    assert result["success"] is True
-    assert calls == []
-
-
-def test_main_ready_skips_node_preload_outside_simplified_chinese(tmp_path) -> None:
-    api = _build_api(tmp_path)
-    api._get_effective_config = lambda: {"ui": {"locale": "ja-JP"}}
-    calls: list[str] = []
-    api.connector.start_node_preload = lambda: calls.append("scheduled")
-
+    # 前端重复就绪也不得创建联机资源。
     asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
-
-    assert calls == []
-
-
-def test_main_ready_owns_backend_node_preload_across_frontend_reload(tmp_path) -> None:
-    from ECL.services.connector import ConnectorService
-
-    api = _build_api(tmp_path)
-    service = ConnectorService()
-    calls = []
-    service.preload_nodes = lambda: calls.append("network")
-    api.connector = service
-    try:
-        asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
-        service._node_preload_thread.join(timeout=3)
-        asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
-        asyncio.run(command_handlers(api)["launcher_preload_connector"]({}))
-        assert calls == ["network"]
-        service.close()
-        asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
-        assert calls == ["network"]
-    finally:
-        service.close()
+    asyncio.run(api.frontend_ready({}, FakeWebviewWindow()))
+    assert not hasattr(api, "connector")
 
 
 def test_vanilla_search_shares_unfiltered_backend_session(tmp_path, monkeypatch) -> None:

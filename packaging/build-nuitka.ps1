@@ -89,9 +89,6 @@ try {
         --include-package=pytauri_wheel `
         --include-module=pytauri_wheel.ext_mod `
         --include-distribution-metadata=pytauri-wheel `
-        --include-package-data=easytier_pyo3 `
-        --include-data-files=.venv/Lib/site-packages/easytier_pyo3/Packet.dll=easytier_pyo3/Packet.dll `
-        --include-data-files=.venv/Lib/site-packages/easytier_pyo3/wintun.dll=easytier_pyo3/wintun.dll `
         --include-raw-dir=resources=resources `
         --include-data-dir=frontend/dist=frontend/dist `
         --include-data-dir=capabilities=capabilities `
