@@ -6,6 +6,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 from ECL.plugins.host_dependencies import build_host_dependency_manifest
+from ECL.tooling.package_data import filter_runtime_data
 
 SPEC_DIR = Path(SPECPATH).resolve()
 
@@ -202,6 +203,9 @@ a = Analysis(
     noarchive=False,
     optimize=2,
 )
+
+# 资源目录可能残留已删除插件的字节码；运行代码由 PYZ 收集，不把历史缓存作为资源分发。
+a.datas = filter_runtime_data(a.datas)
 
 pyz = PYZ(a.pure)
 upx_enabled = UPX_ENABLED

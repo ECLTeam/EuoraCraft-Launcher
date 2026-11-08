@@ -245,3 +245,7 @@
 CI 保留现有完整检查，增加按 Linux CPython 3.12 完整锁文件准备插件 wheel 的步骤，使真实插件用例不依赖本机缓存，也不以跳过用例规避原生依赖。此处未推送、未运行远端 CI、未发布；#131 仍待远端默认分支交付及验收后关闭。公开网络双端 Minecraft 与 QomicEX 对端、其他原生平台仍未验收。
 
 两个实际插件目录及校验后的归档均已更新。预览入口现指向原工作区，不再依赖隔离工作树；正在运行的旧启动器需重启后读取新代码和插件内容，权限仍由用户在专用管理界面审阅。
+
+最终本地 main 重建的 PyInstaller 单文件为 36,206,501 字节，基线为 45,545,114 字节，减少 20.5%；CArchive/PYZ 中不含 EasyTier、Florolding 或 QomicEX 系统插件。该值包含本轮 WebP 与样式集成，仅代表同平台同构建器的主程序单文件，不等于全部平台、安装总占用或外网联机验收。原始记录为隔离工作树的 output/final-main-size.json。最终前端 main 为 4765fa1。
+
+最终验包发现原资源树仍有已移除系统插件的 Python 3.13 缓存。PyInstaller 资源清单现通过 ECL.tooling.package_data.filter_runtime_data 排除缓存目录与 pyc/pyo，保留 SDK 源码及正常资源；Windows/POSIX 路径的 4 项回归通过。实际构建在旧缓存仍存在时通过归档排除检查，随后该缓存保留到 ECL_data/source-backups，不随程序分发。
