@@ -233,6 +233,9 @@ def test_pack_manifest_download_cannot_bypass_plugin_network_authorization(packs
         pytest.fail("Plugin manifest URLs must not use the shared downloader")
 
     monkeypatch.setattr(state.game, "_downloader_factory", shared_downloader)
+    # unapproved.invalid 属于保留 TLD，公网 DNS 必然 NXDOMAIN，各平台差异只影响
+    # 先抛解析失败还是先抛目标拒绝；注入固定内网解析结果，让拒绝判定确定化。
+    monkeypatch.setattr(state.worker._network_service, "_resolver", lambda *_: ("127.0.0.1",))
     result = finish(
         broker,
         state.manager,
