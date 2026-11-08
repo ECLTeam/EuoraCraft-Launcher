@@ -80,6 +80,11 @@ def main() -> None:
                 wait(lambda: broker.settings_view()["values"]["message"].startswith("{"))
                 result = json.loads(broker.settings_view()["values"]["message"])
                 assert result == {"text": "Hello, actual native UI", "parentDenied": True, "refused": True}, result
+                stage = "close-first"
+                # 权限系统移除后不再有撤销关窗路径，is_idle 要求全部窗口销毁，
+                # 因此打开第二个窗口前必须显式关闭并确认第一个窗口。
+                broker.custom_ui.handle("ui.windows.close", {"window_ref": opened["window_ref"]})
+                wait(broker.custom_ui.is_idle)
                 stage = "reopen"
                 second = broker.call_command("open", {}, 20)
                 assert second["window_ref"] != opened["window_ref"]
