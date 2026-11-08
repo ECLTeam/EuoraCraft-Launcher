@@ -139,8 +139,6 @@ class OperationAdmission:
 
     check: Callable[[], None]
     accept: Callable[[Callable[[], None]], None]
-    capability: str
-    resource_refs: tuple[str, ...] = ()
     cleanup: Callable[[], bool] | None = None
     initial_effect: Literal["none", "staged"] = "none"
 
@@ -185,9 +183,7 @@ class _PluginJournal(BaseModel):
     installation_id: str
     content_digest: str
     run_id: str
-    capability: str
     kind: str
-    resource_refs: tuple[str, ...]
     phase: OperationPhase
     status: str
     effect: OperationEffect
@@ -606,9 +602,7 @@ class OperationManager:
                     journal = _PluginJournal(
                         operation_id=operation.operation_id,
                         **asdict(operation.origin),
-                        capability=operation.admission.capability,
                         kind=operation.kind,
-                        resource_refs=operation.admission.resource_refs,
                         phase=operation.phase,
                         status=operation.status,
                         effect=operation.effect,

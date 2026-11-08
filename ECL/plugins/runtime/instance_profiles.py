@@ -15,7 +15,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from ECL.plugin_api.contracts import JsonValue
-from ECL.plugins.grant_store import PluginGrantSession
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import InstanceProfilePatchRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -31,7 +31,7 @@ class RuntimeInstanceProfiles:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         resources: RuntimeResources,
         transactions: InstanceProfileTransactions,
         operations: RuntimeOperations,

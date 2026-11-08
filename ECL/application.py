@@ -279,19 +279,6 @@ class ApplicationContext:
             logger.debug("后台服务已关闭")
 
 
-def _ui_injection_allowed(config: ConfigStore) -> bool:
-    """
-    读取用户级界面注入总开关；分区缺失或格式异常时按允许处理。
-
-    :param config: 应用配置存储
-    :return: 是否允许第三方插件向主窗口注入内容
-    """
-    section = config.get_config("plugins")
-    if not isinstance(section, dict):
-        return True
-    return section.get("allow_ui_injection", True) is not False
-
-
 def _plugin_instance_roots(config: ConfigStore) -> tuple[Path, ...]:
     """
     向插件资源目录提供现有游戏路径快照，不读取账户或其他配置分区。
@@ -501,7 +488,6 @@ def create_application(
             account_snapshot=accounts.plugin_account_snapshot,
             account_skin=partial(read_account_skin, accounts, http),
             public_config=config.get_config,
-            ui_injection_allowed=lambda: _ui_injection_allowed(config),
         )
         created.append(plugins)
         plugins.initialize(

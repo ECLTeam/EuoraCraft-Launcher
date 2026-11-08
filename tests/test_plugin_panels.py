@@ -24,13 +24,8 @@ import pytest
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import (
-    PermissionDecision,
-    PermissionDeclaration,
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 
 TEXT_NODE = {"type": "text", "text": "说明"}
@@ -41,17 +36,9 @@ def panel_setup(tmp_path: Path):
     root = tmp_path / "code"
     root.mkdir()
     (root / "main.py").write_text("value = 1", encoding="utf-8")
-    declarations = (PermissionDeclaration(capability="instances.read"),)
-    binding = PluginContentBinding.capture(root, declarations, "windows-x86_64-cp311")
-    store = PluginGrantStore(tmp_path, implemented_capabilities=PluginHostBroker.implemented_capabilities)
+    binding = PluginContentBinding.capture(root, "windows-x86_64-cp311")
+    store = PluginRunStore()
     session = store.open_session(store.new_installation_id(), binding)
-    store.update(
-        session,
-        (PermissionDecision(capability="instances.read", decision="allow"),),
-        expected_revision=0,
-        content_digest=binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
     payload: dict[str, object] = {}
 
     def invoke(_method, params, _timeout):

@@ -7,8 +7,6 @@
 #
 # 公开接口：
 #   - class PluginHandlers — 处理插件的启用、禁用、路由、插槽和命令调用请求。
-#       - plugin_permission_resources(body, webview_window) — 只为原生主窗口发现可审阅实例资源。
-#       - plugin_permissions_get/update — 查询和保存本安装的内容及精确范围授权。
 #       - plugin_runtime_info — 查询实际 Worker 和清理状态。
 #       - plugin_development_get — 可信主窗口只读查询本次开发会话。
 #       - plugin_open_directory — 打开宿主登记的目录安装。
@@ -45,21 +43,16 @@ from uuid import uuid4
 from ECL.api.bridge import WebviewWindow
 from ECL.api.contracts import failure
 from ECL.api.plugin_models import (
-    PluginPermissionQuery,
-    PluginPermissionResources,
-    PluginPermissionUpdate,
+    PluginInstallationQuery,
     PluginSettingsQuery,
     PluginSettingsUpdate,
 )
-from ECL.java.models import JavaError
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError, _json_value
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
-from ECL.plugins.grant_models import PermissionManagementCaller
-from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.package_archive import PluginPackageError
-from ECL.utils.instance_reading import InstanceReadError
+from ECL.plugins.run_store import PluginRunError
 
 from .bridge import _FrontendState, _open_folder
 
@@ -80,11 +73,11 @@ class PluginHandlers(_FrontendState):
         :return: 开发状态
         """
         try:
-            self._permission_caller(webview_window)
+            self._require_main_window(webview_window)
             if body:
                 raise ProtocolError("开发状态查询参数无效", "PLUGIN_SCHEMA_INVALID")
             return {"success": True, "data": self.plugins.worker_service.development.view()}
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_open_directory(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
@@ -96,8 +89,8 @@ class PluginHandlers(_FrontendState):
         :return: 系统文件管理器请求结果
         """
         try:
-            self._permission_caller(webview_window)
-            query = PluginPermissionQuery.model_validate(body)
+            self._require_main_window(webview_window)
+            query = PluginInstallationQuery.model_validate(body)
             source = next(
                 (
                     item
@@ -110,99 +103,19 @@ class PluginHandlers(_FrontendState):
                 raise ProtocolError("插件目录不可用", "PLUGIN_RESOURCE_NOT_FOUND")
             await asyncio.to_thread(_open_folder, str(source.source_path))
             return {"success": True}
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
 
-    def _permission_caller(self, webview_window: WebviewWindow | None) -> PermissionManagementCaller:
+    def _require_main_window(self, webview_window: WebviewWindow | None) -> None:
         """
-        只接受原生注入且已登记的主窗口，未知入口和客户端字段都不能获得管理资格。
+        只接受原生注入且已登记的主窗口，未知入口不能调用受信查询。
         """
         if (
             webview_window is None
             or webview_window.label() != "main"
             or self._window_metadata.get("main", {}).get("windowType") != "main"
         ):
-            raise PluginGrantError("此入口不能管理插件授权", "PLUGIN_MANAGEMENT_CALLER_DENIED")
-        return PermissionManagementCaller.main_webview
-
-    async def plugin_permissions_get(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        向可信主窗口返回安装权限，查询不会自动允许或执行插件。
-
-        :param body: 已安装插件身份
-        :param webview_window: 原生调用窗口，不来自请求体
-        :return: 当前授权视图
-        """
-        try:
-            self._permission_caller(webview_window)
-            query = PluginPermissionQuery.model_validate(body)
-            service = self.plugins.worker_service
-            name = service.name_for_installation(query.installation_id)
-            return {"success": True, "data": await asyncio.to_thread(service.permissions, name)}
-        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
-            return failure(str(exc), exc.error_code)
-
-    async def plugin_permissions_update(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        保存主窗口审阅决定并返回独立的运行清理状态，不把落盘成功当成进程停止。
-
-        :param body: 安装身份、内容、revision 与实际决定
-        :param webview_window: 原生调用窗口
-        :return: 持久化结果和清理状态
-        """
-        try:
-            caller = self._permission_caller(webview_window)
-            request = PluginPermissionUpdate.model_validate(body)
-            service = self.plugins.worker_service
-            name = service.name_for_installation(request.installation_id)
-            result = await asyncio.to_thread(
-                service.update_permissions,
-                name,
-                request.content_digest,
-                request.expected_revision,
-                tuple(request.decisions),
-                caller,
-                request.resource_revision,
-                request.java_resource_revision,
-                request.account_resource_revision,
-            )
-            self.plugins.events.emit("plugin:status_changed", {"plugin": name})
-            return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
-            return failure(str(exc), exc.error_code)
-
-    async def plugin_permission_resources(
-        self, body: dict[str, Any], webview_window: WebviewWindow = None
-    ) -> dict[str, Any]:
-        """
-        向原生登记的主窗口返回资源候选，发现不会替用户授予权限。
-
-        :param body: 安装、内容与受限候选查询
-        :param webview_window: 原生注入的调用窗口
-        :return: 不含完整路径的候选分页
-        """
-        try:
-            self._permission_caller(webview_window)
-            request = PluginPermissionResources.model_validate(body)
-            service = self.plugins.worker_service
-            name = service.name_for_installation(request.installation_id)
-            result = await asyncio.to_thread(
-                service.permission_resources,
-                name,
-                request.content_digest,
-                request.parent_ref,
-                request.search,
-                request.cursor,
-                request.limit,
-                request.capability,
-            )
-            return {"success": True, "data": result}
-        except (PluginGrantError, ProtocolError, InstanceReadError, JavaError) as exc:
-            return failure(str(exc), exc.error_code)
+            raise ProtocolError("此入口只接受原生主窗口", "PLUGIN_MANAGEMENT_CALLER_DENIED")
 
     async def plugin_runtime_info(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
         """
@@ -213,8 +126,8 @@ class PluginHandlers(_FrontendState):
         :return: 当前运行及清理状态
         """
         try:
-            self._permission_caller(webview_window)
-            query = PluginPermissionQuery.model_validate(body)
+            self._require_main_window(webview_window)
+            query = PluginInstallationQuery.model_validate(body)
             service = self.plugins.worker_service
             return {
                 "success": True,
@@ -222,7 +135,7 @@ class PluginHandlers(_FrontendState):
                     service.runtime_info, service.name_for_installation(query.installation_id)
                 ),
             }
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def _run_plugin_lifecycle(self, name: str, action: Callable[[str], PluginActionResult]) -> PluginActionResult:
@@ -408,7 +321,7 @@ class PluginHandlers(_FrontendState):
             return failure("插件运行服务不可用", "PLUGIN_RUNTIME_UNAVAILABLE")
         try:
             panels = await asyncio.to_thread(service.broker(body.get("plugin_name")).panels_view)
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
         return {"success": True, "data": {"panels": panels}}
 
@@ -431,7 +344,7 @@ class PluginHandlers(_FrontendState):
                     uuid4().hex,
                 ),
             )
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
         return {"success": True, "data": data}
 
@@ -450,7 +363,7 @@ class PluginHandlers(_FrontendState):
             return failure("面板动作参数无效", "PLUGIN_SCHEMA_INVALID")
         try:
             result = await asyncio.to_thread(service.broker(body.get("plugin_name")).call_command, command, args, 30.0)
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
         return {"success": True, "data": result}
 
@@ -463,9 +376,9 @@ class PluginHandlers(_FrontendState):
         try:
             query = PluginSettingsQuery.model_validate(body)
             if self.plugins.get_plugin(query.plugin_name) is None:
-                self._permission_caller(webview_window)
+                self._require_main_window(webview_window)
             return {"success": True, "data": await asyncio.to_thread(self.plugins.get_settings, query.plugin_name)}
-        except (PluginGrantError, ProtocolError) as exc:
+        except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
 
     async def plugin_update_setting(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
@@ -478,7 +391,7 @@ class PluginHandlers(_FrontendState):
         service = self.plugins.worker_service
         if service is not None and self.plugins.get_plugin(plugin_name) is None:
             try:
-                self._permission_caller(webview_window)
+                self._require_main_window(webview_window)
                 request = PluginSettingsUpdate.model_validate(body)
                 result = await asyncio.to_thread(
                     service.update_settings,
@@ -489,7 +402,7 @@ class PluginHandlers(_FrontendState):
                     {request.key: _json_value(request.value)},
                 )
                 return {"success": True, "data": result}
-            except (PluginGrantError, ProtocolError) as exc:
+            except (PluginRunError, ProtocolError) as exc:
                 return failure(str(exc), exc.error_code)
         result = self.plugins.update_setting(plugin_name, body.get("key"), body.get("value"))
         return {"success": True} if result.success else failure(result.message, "PLUGIN_SETTING_UPDATE_FAILED")

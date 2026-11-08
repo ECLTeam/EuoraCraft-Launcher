@@ -4,7 +4,7 @@ import hashlib
 import sys
 from pathlib import Path
 
-from ECL.plugins.grant_models import GrantLease
+from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.file_storage import PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import FileRef
 from ECL.utils.windows_file_handles import FileHandle
@@ -12,7 +12,7 @@ from ECL.utils.windows_file_handles import FileHandle
 
 def prepare_case(data_path: Path) -> tuple[PluginFileStorage, StagedFile, FileHandle]:
     storage = PluginFileStorage(data_path)
-    lease = GrantLease("a" * 32, "b" * 64, "c" * 32, 1, "plugin.base", ())
+    lease = PluginLease("a" * 32, "b" * 64, "c" * 32, 1, "plugin.base", ())
     with storage.access(lease.installation_id, initialize=True, admit=lambda: None) as space:
         source = space.directory.file(".initial", create=True)
         source.write(0, b"original")

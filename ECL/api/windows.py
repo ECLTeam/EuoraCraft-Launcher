@@ -45,7 +45,6 @@ except ImportError:  # pragma: no cover - lightweight unit-test stubs omit windo
 from ECL.api.bridge import _FrontendState, _validate_body
 from ECL.api.contracts import failure, success
 from ECL.api.models import WindowBoundsRequest, WindowLabelRequest, WindowOpenRequest
-from ECL.plugins.permissions import Permission, PermissionAction, PermissionScope
 
 
 class WindowDescriptorRegistry:
@@ -95,9 +94,6 @@ class WindowHandlers(_FrontendState):
             (item.get("status") for item in self.plugins.list_plugins() if item.get("name") == plugin_name), None
         )
         if status != "enabled":
-            return None
-        permission = Permission(PermissionScope.UI, PermissionAction.WRITE, f"window:{window_id}")
-        if not self.plugins._permission_manager.has_permission(plugin_name, permission):
             return None
         contributes = plugin.metadata.get("contributes") or {}
         windows = contributes.get("windows") if isinstance(contributes, dict) else None

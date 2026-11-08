@@ -741,8 +741,6 @@ class DevChannelService:
             {
                 "name": entry.get("name", ""),
                 "installationId": entry.get("installation_id"),
-                "reviewRequired": entry.get("review_required", False),
-                "requiredSatisfied": entry.get("required_satisfied", False),
                 "cleanupState": entry.get("cleanup_state", "not_needed"),
                 "title": entry.get("title", ""),
                 "version": entry.get("version", ""),

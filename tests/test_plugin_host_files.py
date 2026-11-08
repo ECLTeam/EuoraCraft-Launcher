@@ -14,13 +14,8 @@ from pydantic import ValidationError
 from ECL.foundation import EventBus
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import (
-    PermissionDecision,
-    PermissionDeclaration,
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import FileRef, FileWriteBeginRequest
@@ -61,38 +56,19 @@ def test_create_only_requires_explicit_strict_false(overwrite):
         FileWriteBeginRequest(target=FileRef(root_ref="a" * 32, relative_path="x"), total_bytes=0, overwrite=overwrite)
 
 
-def test_filesystem_declaration_cannot_select_host_paths():
-    for capability in ():
-        with pytest.raises(ValidationError):
-            PermissionDeclaration(capability=capability, resource_refs=("host-path",))
-
-
 @pytest.fixture
 def files(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "main.py").write_text("value = 1", encoding="utf-8")
-    capabilities = set()
-    binding = PluginContentBinding.capture(
-        code, tuple(PermissionDeclaration(capability=c) for c in sorted(capabilities)), "windows-x86_64-cp311"
-    )
-    store = PluginGrantStore(tmp_path, implemented_capabilities=frozenset(capabilities))
+    binding = PluginContentBinding.capture(code, "windows-x86_64-cp311")
+    store = PluginRunStore()
     manager = OperationManager(tmp_path, EventBus(), max_workers=1)
     storage = PluginFileStorage(tmp_path)
     brokers = []
 
     def create(installation=None, allowed=None):
         session = store.open_session(installation or uuid4().hex, binding)
-        store.update(
-            session,
-            tuple(
-                PermissionDecision(capability=c, decision="allow")
-                for c in (capabilities if allowed is None else allowed)
-            ),
-            expected_revision=session.view().revision,
-            content_digest=binding.content_digest,
-            caller=PermissionManagementCaller.main_webview,
-        )
         broker = PluginHostBroker(
             session, tmp_path, lambda *args: {}, run_state=lambda: "enabled", operations=manager, file_storage=storage
         )
@@ -151,23 +127,7 @@ def finish(broker, manager, receipt):
 
 
 def invalidate_base(broker, store):
-    store.update(
-        broker.session,
-        (),
-        expected_revision=broker.session.view().revision,
-        content_digest=broker.session.binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
-
-
-def deny(broker, store, capability):
-    store.update(
-        broker.session,
-        (PermissionDecision(capability=capability, decision="deny"),),
-        expected_revision=broker.session.view().revision,
-        content_digest=broker.session.binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
+    broker.session.close()
 
 
 def test_first_read_has_no_writes_and_zero_length_commit_is_real(files, tmp_path):
@@ -252,7 +212,7 @@ def test_strict_chunks_reject_invalid_or_oversized_base64(files, encoded):
 
 
 def test_basic_private_access_returns_result_and_old_epoch_hides_snapshot(files):
-    broker, manager, _, store, create = files
+    broker, manager, _, _store, create = files
     writer = create(allowed=set())
     target, write_ref = begin(writer)
     chunk(writer, write_ref)
@@ -262,16 +222,13 @@ def test_basic_private_access_returns_result_and_old_epoch_hides_snapshot(files)
     chunk(broker, write_ref)
     receipt = commit(broker, write_ref, key="accepted")
     assert finish(broker, manager, receipt)["result"] is not None
-    invalidate_base(broker, store)
-    assert call(broker, "operations.get", {"operation_ref": receipt["operation_ref"]})["result"] is None
     assert call(broker, "mutations.get", {"mutation_key": "accepted"})["result"] == receipt
 
 
-def test_permission_change_and_full_receipt_table_still_allow_abort(files):
-    broker, _, storage, store, _ = files
+def test_receipt_table_still_allows_abort(files):
+    broker, _, storage, _, _ = files
     _, write_ref = begin(broker)
     broker.max_receipts = len(broker._receipts)
-    invalidate_base(broker, store)
     assert call(broker, "files.write_abort", {"write_ref": write_ref}) == {"released": True}
     assert not storage.uploads(broker.session.run_id)
 
@@ -385,7 +342,7 @@ def test_upload_count_disk_quota_expiry_and_foreign_ref(files, tmp_path):
     other = create()
     assert call(other, "files.write_abort", {"write_ref": references[0]}) == {"released": False}
     storage.find(references[0], broker.session.run_id).touched_at -= 61
-    broker.refresh_permissions()
+    broker.refresh_leases()
     assert len(storage.uploads(broker.session.run_id)) == 3
     for reference in references[1:]:
         call(broker, "files.write_abort", {"write_ref": reference})
@@ -447,8 +404,8 @@ def test_file_task_journal_failure_never_republishes(files, tmp_path, monkeypatc
     assert commit(broker, write_ref, key="commit-journal") == receipt
 
 
-def test_revoked_before_publication_removes_only_own_staging(files, tmp_path, monkeypatch):
-    broker, manager, _, store, _ = files
+def test_run_close_before_publication_removes_only_own_staging(files, tmp_path, monkeypatch):
+    broker, manager, _, _, _ = files
     target, write_ref = begin(broker)
     chunk(broker, write_ref)
     entered, release = Event(), Event()
@@ -463,12 +420,13 @@ def test_revoked_before_publication_removes_only_own_staging(files, tmp_path, mo
     receipt = commit(broker, write_ref)
     try:
         assert entered.wait(3)
-        invalidate_base(broker, store)
-        broker.refresh_permissions()
+        broker.session.close()
+        broker.refresh_leases()
     finally:
         release.set()
-    view = finish(broker, manager, receipt)
-    assert view["state"] in {"failed", "cancelled"} and view["effect"] == "none"
+    with pytest.raises(ProtocolError):
+        finish(broker, manager, receipt)
+    assert broker.wait_idle(1)
     exported = tmp_path / "plugin_data" / broker.session.view().installation_id / "files" / target["relative_path"]
     assert not exported.exists()
 
@@ -513,21 +471,13 @@ def test_same_install_restart_preserves_data_reinstall_uses_new_space(files, tmp
     assert not (tmp_path / "plugin_data" / reinstalled.session.view().installation_id).exists()
 
 
-def test_unrecorded_space_is_preserved_and_base_cannot_be_separately_granted(files, tmp_path):
-    broker, _, _, store, _ = files
+def test_unrecorded_space_is_preserved_and_unknown_root_rejected(files, tmp_path):
+    broker, _, _, _, _ = files
     identity = broker.session.view().installation_id
     (tmp_path / "plugin_data" / identity / "files").mkdir(parents=True)
     with pytest.raises(ProtocolError) as error:
         root(broker)
     assert error.value.error_code == "PLUGIN_FILE_INVALID"
-    with pytest.raises(ValueError):
-        store.update(
-            broker.session,
-            (PermissionDecision(capability="plugin.base", decision="allow"),),
-            expected_revision=broker.session.view().revision,
-            content_digest=broker.session.binding.content_digest,
-            caller=PermissionManagementCaller.main_webview,
-        )
 
 
 def test_shared_quota_reservations_and_entry_limit(files, tmp_path):

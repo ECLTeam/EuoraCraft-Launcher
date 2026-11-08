@@ -10,13 +10,13 @@ from time import monotonic, sleep
 
 import httpcore
 import pytest
-from plugin_network_helpers import MappedDialer, decide, make_runtime, server
+from plugin_network_helpers import MappedDialer, make_runtime, server
 from plugin_network_helpers import trusted_ssl_context as ssl_context
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.network_targets import NetworkOrigin
+from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.network_api import RuntimeNetwork
 
@@ -228,17 +228,19 @@ def test_cross_origin_redirect_permanently_removes_authentication(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "location,code",
+    "location,code,connects",
     [
-        ("http://unapproved.example/", "PLUGIN_RESOURCE_DENIED"),
-        ("/", "PLUGIN_REDIRECT_DENIED"),
-        ("http://127.0.0.1/", "PLUGIN_REDIRECT_DENIED"),
-        ("/a#fragment", "PLUGIN_REDIRECT_DENIED"),
-        ("", "PLUGIN_REDIRECT_DENIED"),
-        ("/" + "x" * 4096, "PLUGIN_REDIRECT_DENIED"),
+        # 站点允许清单已随权限移除；跨站重定向按跳转策略执行，回环由 visited 检测拦截。
+        # 第二跳连到不可解析主机，按网络失败上抛
+        ("http://unapproved.example/", "PLUGIN_NETWORK_FAILED", 2),
+        ("/", "PLUGIN_REDIRECT_DENIED", 1),
+        ("http://127.0.0.1/", "PLUGIN_REDIRECT_DENIED", 1),
+        ("/a#fragment", "PLUGIN_REDIRECT_DENIED", 1),
+        ("", "PLUGIN_REDIRECT_DENIED", 1),
+        ("/" + "x" * 4096, "PLUGIN_REDIRECT_DENIED", 1),
     ],
 )
-def test_redirect_rejected_before_next_connection(tmp_path, location, code):
+def test_redirect_rejected_before_next_connection(tmp_path, location, code, connects):
     with server(lambda *_: f"HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n".encode()) as (
         port,
         _requests,
@@ -252,7 +254,7 @@ def test_redirect_rejected_before_next_connection(tmp_path, location, code):
             with pytest.raises(ProtocolError) as error:
                 read(runtime, f"http://p10.example.test:{port}/")
             assert error.value.error_code == code
-            assert len(dialer.connects) == 1
+            assert len(dialer.connects) == connects
         finally:
             runtime.close()
             assert runtime.service.close()
@@ -263,12 +265,12 @@ def test_revoke_at_real_connection_tls_boundaries_never_sends_http(tmp_path, sta
     with server(lambda *_: b"", is_tls=True) as (port, requests, _sni):
         references = [f"https:p10.example.test:{port}"]
         dialer = MappedDialer()
-        runtime, store = make_runtime(
+        runtime, _store = make_runtime(
             tmp_path, references, resolver=lambda *_: ("1.1.1.1",), dialer=dialer, ssl_context=ssl_context()
         )
-        setattr(dialer, stage, lambda: decide(store, runtime.session, [], is_allowed=False))
+        setattr(dialer, stage, lambda: runtime.session.close())
         try:
-            with pytest.raises(PluginGrantError):
+            with pytest.raises(PluginRunError):
                 read(runtime, f"https://p10.example.test:{port}/")
             assert not dialer.writes and not requests
             assert runtime.is_idle()
@@ -345,18 +347,17 @@ def test_revocation_during_body_wakes_reader_and_does_not_affect_other_run(tmp_p
         references = [f"http:p10.example.test:{port}"]
         runtime, store = make_runtime(tmp_path, references, resolver=lambda *_: ("1.1.1.1",), dialer=MappedDialer())
         other_session = store.open_session(store.new_installation_id(), runtime.session.binding)
-        decide(store, other_session, references)
         other = RuntimeNetwork(other_session, runtime.service)
         try:
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(read, runtime, f"http://p10.example.test:{port}/")
                 assert entered.wait(1)
-                decide(store, runtime.session, [], is_allowed=False)
-                runtime.refresh_permissions()
-                with pytest.raises(PluginGrantError):
+                runtime.session.close()
+                runtime.refresh_leases()
+                with pytest.raises(PluginRunError):
                     future.result(2)
             assert not other.is_closed
-            assert other.session.authorize("network.read", tuple(references))
+            assert other.session.lease()
             assert runtime.is_idle()
         finally:
             release.set()
@@ -449,13 +450,12 @@ def test_host_limit_is_eight_real_calls_across_runs(tmp_path):
     try:
         for _ in range(4):
             session = store.open_session(store.new_installation_id(), runtime.session.binding)
-            decide(store, session, ["http:p10.example.test:80"])
             owners.append(RuntimeNetwork(session, runtime.service))
         for owner in owners[:4]:
-            lease = owner.session.authorize("network.read", ("http:p10.example.test:80",))
+            lease = owner.session.lease()
             calls.extend(runtime.service.begin(owner, lease, monotonic() + 10) for _ in range(2))
         owner = owners[4]
-        lease = owner.session.authorize("network.read", ("http:p10.example.test:80",))
+        lease = owner.session.lease()
         with pytest.raises(ProtocolError) as error:
             runtime.service.begin(owner, lease, monotonic() + 10)
         assert error.value.error_code == "PLUGIN_RATE_LIMITED"
@@ -481,7 +481,6 @@ def test_dns_four_real_jobs_no_queue_and_late_results_only_release(tmp_path):
     try:
         for _ in range(4):
             session = store.open_session(store.new_installation_id(), runtime.session.binding)
-            decide(store, session, ["http:p10.example.test:80"])
             owners.append(RuntimeNetwork(session, runtime.service))
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(read, owner, "http://p10.example.test/", timeout=0.2) for owner in owners[:4]]
@@ -583,18 +582,18 @@ def test_delivery_rechecks_original_lease_after_final_cleanup(tmp_path, monkeypa
     from ECL.plugins.runtime.network_api import NetworkCall
 
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") as (port, _requests, _sni):
-        runtime, store = make_runtime(
+        runtime, _store = make_runtime(
             tmp_path, [f"http:p10.example.test:{port}"], resolver=lambda *_: ("1.1.1.1",), dialer=MappedDialer()
         )
         original = NetworkCall.finish
 
         def finish(call):
             original(call)
-            decide(store, runtime.session, [], is_allowed=False)
+            runtime.session.close()
 
         monkeypatch.setattr(NetworkCall, "finish", finish)
         try:
-            with pytest.raises(PluginGrantError):
+            with pytest.raises(PluginRunError):
                 read(runtime, f"http://p10.example.test:{port}/")
             assert runtime.is_idle()
         finally:
@@ -608,7 +607,7 @@ def test_public_backend_with_actual_numeric_peer_preserves_tls_identity_without_
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", is_tls=True) as (port, requests, sni):
         reference = f"https:p10.example.test:{port}"
         runtime, _ = make_runtime(tmp_path, [reference], dialer=httpcore.SyncBackend(), ssl_context=ssl_context())
-        lease = runtime.session.authorize("network.read", (reference,))
+        lease = runtime.session.lease()
         call = NetworkCall(runtime, lease, monotonic() + 4)
         original = socket.getaddrinfo
         lookups = []

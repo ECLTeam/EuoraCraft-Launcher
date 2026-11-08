@@ -13,7 +13,6 @@ from pydantic import ValidationError
 
 from ECL.foundation import EventBus
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.game_models import GameInstallRequest, GameLaunchOptions
@@ -61,20 +60,7 @@ def game_install(tmp_path, monkeypatch):
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("value=1", encoding="utf-8")
     worker.register(metadata, source, "directory")
-    view = worker.permissions("game-test")
-    page = worker.permission_resources("game-test", view["content_digest"], None, "", None, 100, "instances.manage")
-    root_id = page["items"][0]["resource_id"]
-    worker.update_permissions(
-        "game-test",
-        view["content_digest"],
-        view["revision"],
-        tuple(
-            PermissionDecision(capability=cap, decision="allow", resource_refs=(root_id,))
-            for cap in ["instances.manage", "instances.read"]
-        ),
-        PermissionManagementCaller.main_webview,
-        page["catalog_revision"],
-    )
+    worker.refresh_resources()
     entry = worker._entry("game-test")
     resources = RuntimeResources(entry.session, worker._catalog, game, worker.refresh_resources)
     broker = PluginHostBroker(
@@ -124,16 +110,8 @@ def test_plugin_launch_options_are_explicit_and_do_not_inherit_unimplemented_jav
         GameLaunchOptions.model_validate(options)
 
 
-def test_install_scope_is_root_only_and_declarations_cannot_supply_host_refs(game_install):
-    from ECL.plugins.grant_models import PermissionDeclaration
-
+def test_install_scope_is_root_only(game_install):
     state = game_install
-    with pytest.raises(ValidationError):
-        PermissionDeclaration(capability="instances.manage", resource_refs=("a" * 32,))
-    page = call(state.broker, "permissions.list")
-    assert next(item for item in page["items"] if item["capability"] == "instances.manage")["resource_refs"] == [
-        state.ref
-    ]
     with pytest.raises(ProtocolError) as error:
         call(state.broker, "game.install", {"root_ref": "f" * 32, "version_id": "1.20.1"})
     assert error.value.error_code == "PLUGIN_RESOURCE_OUT_OF_SCOPE"
@@ -190,26 +168,6 @@ def test_actual_worker_catalog_install_result_and_duplicate_submission(game_inst
     example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_game_install"
     metadata = json.loads((example / "plugin.json").read_bytes())
     state.worker.register(metadata, example, "directory")
-    view = state.worker.permissions(metadata["name"])
-    page = state.worker.permission_resources(
-        metadata["name"], view["content_digest"], None, "", None, 50, "instances.manage"
-    )
-    root_id = page["items"][0]["resource_id"]
-    state.worker.update_permissions(
-        metadata["name"],
-        view["content_digest"],
-        view["revision"],
-        tuple(
-            PermissionDecision(
-                capability=item["capability"],
-                decision="allow",
-                resource_refs=(root_id,) if item["capability"] in {"instances.manage", "instances.read"} else (),
-            )
-            for item in view["items"]
-        ),
-        PermissionManagementCaller.main_webview,
-        page["catalog_revision"],
-    )
     state.worker.enable(metadata["name"])
     broker = state.worker.broker(metadata["name"])
 

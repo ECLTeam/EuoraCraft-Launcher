@@ -15,7 +15,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_store import PluginGrantSession
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameCatalogRequest, GameLoadersRequest
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.utils.errors import GameServiceError
@@ -29,7 +29,7 @@ class RuntimeGameCatalog:
     每次查询和交付均复核原始目录许可，游标不跨运行或查询复用。
     """
 
-    def __init__(self, session: PluginGrantSession, game: PluginGameCoordinator) -> None:
+    def __init__(self, session: PluginRunSession, game: PluginGameCoordinator) -> None:
         """
         绑定宿主已创建的游戏服务，不从请求构造客户端。
 
@@ -56,7 +56,7 @@ class RuntimeGameCatalog:
             query = GameLoadersRequest.model_validate(params)
         else:
             raise ProtocolError("游戏查询尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         self._session.check(lease)
         deadline = min(deadline, monotonic() + 30)
 
@@ -74,7 +74,7 @@ class RuntimeGameCatalog:
         try:
             result = self._pages.page(
                 method + query.model_dump_json(exclude={"cursor"}),
-                str(lease.grant_epoch),
+                str(lease.run_epoch),
                 query.cursor,
                 query.limit,
                 load,

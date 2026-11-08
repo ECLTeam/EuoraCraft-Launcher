@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-from time import monotonic
 
 import httpx
 
@@ -11,7 +10,6 @@ from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
 from ECL.java.queries import JavaQueries
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -33,48 +31,30 @@ def make_service(tmp_path, monkeypatch, transport=None, launch_spec=None, instal
         records.append(record)
     with manager.registry.locked():
         manager.registry.write(manager.registry.read().model_copy(update={"runtimes": tuple(records)}))
-    capabilities = {"java.read", "java.use", "java.catalog.read"}
-    if install:
-        capabilities.add("java.install")
     queries = JavaQueries(manager)
     service = PluginWorkerService(
         tmp_path / "data", launch_spec, java_queries=queries, java_manager=manager, operations=operations
     )
     source = tmp_path / "plugin"
     source.mkdir()
-    metadata = {
-        "name": "java-test",
-        "api_version": 2,
-        "permissions": [{"capability": name, "required": False} for name in sorted(capabilities)],
-    }
+    metadata = {"name": "java-test", "api_version": 2}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("from ECL.plugin_api import Plugin\n", encoding="utf-8")
     service.register(metadata, source, "directory")
     return service, manager, records, client, operations
 
 
-def candidates(service, capability="java.read"):
-    view = service.permissions("java-test")
-    return service.permission_resources("java-test", view["content_digest"], None, "", None, 100, capability)
+def candidates(service):
+    """返回宿主目录中全部活动 Java 资源身份；权限决定流程已移除。"""
+    service.refresh_java_resources(discover=True)
+    return {
+        "items": [{"resource_id": item.resource_id} for item in service._java_catalog.resources() if item.is_active]
+    }
 
 
 def allow(service, ids, *, use=True, catalog=True, revision=None, install=False):
-    view = service.permissions("java-test")
-    decisions = [PermissionDecision(capability="java.read", decision="allow", resource_refs=tuple(ids))]
-    if use:
-        decisions.append(PermissionDecision(capability="java.use", decision="allow", resource_refs=tuple(ids)))
-    if catalog:
-        decisions.append(PermissionDecision(capability="java.catalog.read", decision="allow"))
-    if install:
-        decisions.append(PermissionDecision(capability="java.install", decision="allow"))
-    return service.update_permissions(
-        "java-test",
-        view["content_digest"],
-        view["revision"],
-        tuple(decisions),
-        PermissionManagementCaller.main_webview,
-        java_resource_revision=revision if revision is not None else service.refresh_java_resources(),
-    )
+    """权限决定已移除；保留签名使调用点无需变动。"""
+    return 0
 
 
 def runtime(service):
@@ -88,4 +68,6 @@ def runtime(service):
 
 
 def invoke(api, method, **params):
+    from time import monotonic
+
     return api.handle(method, params, monotonic() + 5)

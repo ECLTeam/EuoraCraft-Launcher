@@ -2,14 +2,13 @@
 
 本页覆盖当前 Host API 方法族；所有请求为 JSON，除明确可选字段外严格校验。具体枚举、配额、失败语义集中见[插件包协议](../../protocols/eclplugin-package-format.md)，不同宿主未接入服务时返回明确失败。
 
-运行引用不是磁盘路径，不能跨 Worker、授权代次或安装复用。表中“基础”指当前内容已确认启用后的内部 `plugin.base`，不能写进权限清单。
+运行引用不是磁盘路径，不能跨 Worker、运行代次或安装复用。表中“基础”指启用后的内部 `plugin.base`。
 
 ## 基础控制、命令、设置和面板
 
 | 方法                  | 主要输入                                   | 结果                                          |
 | --------------------- | ------------------------------------------ | --------------------------------------------- |
 | `runtime.info`        | `{}`                                       | API/协议版本、平台、Python ABI、运行状态      |
-| `permissions.list`    | `{}`                                       | 当前运行能力和获准资源投影                    |
 | `mutations.get`       | `mutation_key`                             | 原变更 pending/succeeded/failed 及结果/错误码 |
 | `commands.register`   | 名称、callback_ref、输入输出字段、exported | command_ref、registration_ref                 |
 | `commands.unregister` | 已登记注册引用                             | 解除自身注册                                  |
@@ -29,7 +28,7 @@
 
 ## 资源与实例
 
-| 方法                      | 主要输入                                   | 权限与结果                                                                    |
+| 方法                      | 主要输入                                   | 行为与结果                                                                    |
 | ------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
 | `resources.list`          | capability、cursor?、limit?                | 对应能力的运行引用列表；基础可发现自身私有根                                  |
 | `instances.scan`          | root_ref、force?、cursor?、limit?          | 获准根中的实例引用和摘要                                                      |
@@ -68,7 +67,7 @@ GameRunView 包含 game_run_ref、instance_ref、pid、running、exit_code。停
 | `accounts.get`      | account_ref                                    | 单项账户摘要                                       |
 | `config.public`     | `{}`                                           | 基础；语言、主题、强调色、默认内存                 |
 
-已登记 Java 的使用需要 `java.use` 明确选择；读取许可不自动赋予使用或全局删除。账户摘要不包含邮箱、令牌、真实宿主账户 ID 和提供方私有数据。没有任意配置分区读取或通用配置写入口。
+已登记 Java 的使用按运行准入执行；运行引用不提供全局删除能力。账户摘要不包含邮箱、令牌、真实宿主账户 ID 和提供方私有数据。没有任意配置分区读取或通用配置写入口。
 
 ## 模组、资源包与光影
 
@@ -82,7 +81,7 @@ GameRunView 包含 game_run_ref、instance_ref、pid、running、exit_code。停
 | `mods.set_enabled`     | resource_ref、enabled                                        | 设置明确目标状态，不是反复切换          |
 | `<kind>.search`        | source?、query?、game_version?、loader?、offset?、limit?     | Modrinth/CurseForge 公开项目摘要        |
 | `<kind>.versions`      | source?、project_id、game_version?、loader?、cursor?、limit? | 公开版本分页                            |
-| `<kind>.download_info` | source?、project_id、version_id                              | 公开文件信息，不自动下载或授予站点权限  |
+| `<kind>.download_info` | source?、project_id、version_id                              | 公开文件信息，不自动下载或写入  |
 
 查看使用 instances.read 或相同管理范围；写入使用 instances.manage。下载信息查询为固定来源基础能力，实际网络下载仍单独批准站点。实际目录沿用实例隔离/共享规则，不能根据名称猜路径。
 
@@ -97,7 +96,7 @@ GameRunView 包含 game_run_ref、instance_ref、pid、running、exit_code。停
 | `modpacks.export_files`   | preview_ref、cursor?、limit?                                                  | 候选文件分页，不自动全选           |
 | `modpacks.export`         | preview_ref、selected_file_ids、destination: FileRef、name、version、summary? | 明确选择文件导出到私有新 .mrpack   |
 
-导入需要管理范围，导出需要查看实例和私有写入；每个下载地址单独经过联网许可校验。取消可能保留共享基础安装，按真实 partial/committed 结果处理，不承诺全流程回滚。
+导入与导出按运行准入执行；每个下载地址单独经过重定向、DNS 与连接检查。取消可能保留共享基础安装，按真实 partial/committed 结果处理，不承诺全流程回滚。
 
 ## 私有文件与下载
 
@@ -119,7 +118,7 @@ FileRef 为 `{root_ref, relative_path}`，root_ref 通过基础资源发现获�
 
 文件和私有下载单文件上限 8 MiB，块最大 32 KiB，安装空间 64 MiB。响应和任务配额详见包协议。资源安装的 64 MiB 领域上限不能解除私有源文件的 8 MiB 限制。
 
-`network.read` 必须批准 1—16 个精确 origin，重定向逐跳校验。认证头仅允许 HTTPS；没有 POST、请求体、任意 Socket 或 HTTP 客户端对象。Python 自身 OS 能力不受这些 Host API 权限自动限制。
+重定向逐跳校验，内网与特殊用途地址防护保留。认证头仅允许 HTTPS；没有 POST、请求体、任意 Socket 或 HTTP 客户端对象。Python 自身 OS 能力不受 Host API 限制。
 
 ## 自身任务
 

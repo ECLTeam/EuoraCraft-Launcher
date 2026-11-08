@@ -21,9 +21,8 @@ from typing import ClassVar
 import httpcore
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
-from ECL.plugins.network_targets import NetworkOrigin
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import DownloadSubmitRequest, NetworkRequest
@@ -49,7 +48,7 @@ class RuntimeDownloads:
     task_seconds: ClassVar[float] = 1800
 
     def __init__(
-        self, session: PluginGrantSession, files: RuntimeFiles, network: RuntimeNetwork, operations: RuntimeOperations
+        self, session: PluginRunSession, files: RuntimeFiles, network: RuntimeNetwork, operations: RuntimeOperations
     ) -> None:
         """
         绑定宿主共享领域入口，不接受 Worker 提供的路径、执行器或网络后端。
@@ -72,19 +71,14 @@ class RuntimeDownloads:
         :param deadline: 提交 RPC 截止，最多五秒
         :return: queued 状态的自身任务引用
         :raises ProtocolError: 请求、文件边界、截止或任务接纳失败时抛出
-        :raises PluginGrantError: 原始网络和文件准入不同时有效时抛出
+        :raises PluginRunError: 原始网络和文件准入不同时有效时抛出
         """
         task_deadline = monotonic() + self.task_seconds
         deadline = min(deadline, monotonic() + 5)
         query = DownloadSubmitRequest.model_validate(params)
-        view = self._session.view()
-        permission = next((item for item in view.items if item.capability == "network.read"), None)
-        network_lease = self._session.authorize("network.read", permission.resource_refs if permission else ())
-        write_lease = self._session.authorize("plugin.base")
+        network_lease = self._session.lease()
+        write_lease = self._session.lease()
         self._session.check_all((write_lease, network_lease))
-        origin, _ = NetworkOrigin.from_url(query.url)
-        if origin.reference not in network_lease.resource_refs:
-            raise ProtocolError("插件下载站点未获准", "PLUGIN_RESOURCE_DENIED")
         read_lease = write_lease
         staged = self._files.prepare(
             query.target,
@@ -129,7 +123,7 @@ class RuntimeDownloads:
     def _execute(
         self,
         query: DownloadSubmitRequest,
-        lease: GrantLease,
+        lease: PluginLease,
         resources: _DownloadResources,
         deadline: float,
         context: OperationContext,
@@ -161,7 +155,7 @@ class RuntimeDownloads:
                     raise ProtocolError("插件下载文件摘要不符", "PLUGIN_HASH_MISMATCH")
                 context.progress(95, "正在校验文件")
                 return self._files.publish(resources.staged, digest, context, deadline=deadline)
-            except (ProtocolError, PluginGrantError, GameServiceError):
+            except (ProtocolError, PluginRunError, GameServiceError):
                 raise
             except (httpcore.NetworkError, httpcore.ProtocolError, httpcore.TimeoutException, OSError):
                 # 取消或撤销唤醒 socket 时使用已经存在的实际信号，而非猜测异常文本。

@@ -7,7 +7,6 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.models import FieldSpec, VuePageDefinition
 from ECL.plugins.worker_service import PluginWorkerService
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
@@ -42,8 +41,7 @@ def test_page_rejects_routes_outside_namespace(path: str) -> None:
         VuePageDefinition(path=path, title="Test", component_name="Page", template="<div />")
 
 
-@pytest.mark.parametrize("allowed", [True, False])
-def test_real_worker_page_requires_grant_and_clears_on_exit(tmp_path: Path, allowed: bool) -> None:
+def test_real_worker_page_publishes_and_clears_on_exit(tmp_path: Path) -> None:
     received: list[tuple[str, dict]] = []
     service = PluginWorkerService(tmp_path / "data", slot_sink=lambda name, payload: received.append((name, payload)))
     code = tmp_path / "plugin"
@@ -64,23 +62,10 @@ def test_real_worker_page_requires_grant_and_clears_on_exit(tmp_path: Path, allo
         encoding="utf-8",
     )
     service.register(metadata, code, "directory")
-    view = service.permissions(metadata["name"])
-    service.update_permissions(
-        metadata["name"],
-        view["content_digest"],
-        view["revision"],
-        (PermissionDecision(capability="ui.inject", decision="allow" if allowed else "deny"),),
-        PermissionManagementCaller.main_webview,
-    )
     try:
-        if allowed:
-            service.enable(metadata["name"])
-            assert received[0][1]["kind"] == "page"
-            assert received[0][1]["path"] == "/room"
-        else:
-            with pytest.raises(ProtocolError):
-                service.enable(metadata["name"])
-            assert all(payload["kind"] == "clear" for _, payload in received)
+        service.enable(metadata["name"])
+        assert received[0][1]["kind"] == "page"
+        assert received[0][1]["path"] == "/room"
     finally:
         service.close()
     assert received[-1][1] == {"kind": "clear"}

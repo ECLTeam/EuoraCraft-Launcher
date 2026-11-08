@@ -16,7 +16,7 @@ import platform
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread, current_thread
@@ -29,8 +29,8 @@ from pydantic import ValidationError
 from ECL.foundation.version import __version__
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
-from ECL.plugins.grant_models import GrantLease, PermissionDeclaration
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.custom_ui import RuntimeCustomUi
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.plugins.runtime.download_api import RuntimeDownloads
@@ -105,7 +105,7 @@ class CrossPluginChannel:
 @dataclass(slots=True)
 class _Receipt:
     fingerprint: str
-    grant_epoch: int
+    run_epoch: int
     ready: Event = field(default_factory=Event)
     result: dict[str, JsonValue] | None = None
     error_code: str | None = None
@@ -133,21 +133,6 @@ class PluginHostBroker:
     回调与磁盘操作不持有注册表锁。变更回执在本 run 内保留，容量耗尽时拒绝新提交。
     """
 
-    implemented_capabilities: ClassVar[frozenset[str]] = frozenset(
-        {
-            "instances.read",
-            "instances.manage",
-            "network.read",
-            "java.read",
-            "java.use",
-            "java.catalog.read",
-            "java.install",
-            "accounts.read",
-            "ui.inject",
-            "ui.custom.execute",
-            "auth.provider",
-        }
-    )
     mutation_methods: ClassVar[frozenset[str]] = frozenset(
         {
             "mods.install",
@@ -198,7 +183,7 @@ class PluginHostBroker:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         data_path: Path,
         invoke: Callable[[str, dict[str, JsonValue], float], dict[str, JsonValue]],
         *,
@@ -249,7 +234,7 @@ class PluginHostBroker:
         :param window_app: 原生宿主启动后提供应用句柄
         :param plugin_name: 宿主解析的安装名称，用于私有协议命名空间
         """
-        self.session: PluginGrantSession = session
+        self.session: PluginRunSession = session
         self.custom_ui = RuntimeCustomUi(self, custom_ui, data_path, window_app) if window_app is not None else None
         self.error_code: str | None = None
         self._invoke = invoke
@@ -320,14 +305,14 @@ class PluginHostBroker:
         self._idle = Event()
         self._idle.set()
         self._active_requests = 0
-        self._commands: dict[str, tuple[str, CommandDefinition, GrantLease]] = {}
+        self._commands: dict[str, tuple[str, CommandDefinition, PluginLease]] = {}
         self._page_paths: set[str] = set()
-        self._panels: dict[str, tuple[PanelDefinition, GrantLease]] = {}
-        self._subscriptions: dict[str, tuple[str, GrantLease, str]] = {}
+        self._panels: dict[str, tuple[PanelDefinition, PluginLease]] = {}
+        self._subscriptions: dict[str, tuple[str, PluginLease, str]] = {}
         self._receipts: dict[str, _Receipt] = {}
-        self._events: Queue[tuple[str, dict[str, JsonValue], GrantLease]] = Queue(32)
+        self._events: Queue[tuple[str, dict[str, JsonValue], PluginLease]] = Queue(32)
         self._sequence = 0
-        self._observed_epoch = session.view().grant_epoch
+        self._observed_epoch = session.view().run_epoch
         self._event_thread = Thread(target=self._deliver_events, name="plugin_settings_events", daemon=True)
         self._event_thread.start()
 
@@ -352,7 +337,7 @@ class PluginHostBroker:
                 if request.method not in self.mutation_methods:
                     return self._bounded_result(self._dispatch(request))
                 return self._mutate(request, payload)
-            except PluginGrantError as exc:
+            except PluginRunError as exc:
                 raise ProtocolError("插件权限检查未通过", exc.error_code) from exc
             except InstanceReadError as exc:
                 raise ProtocolError(str(exc), exc.error_code) from exc
@@ -408,7 +393,7 @@ class PluginHostBroker:
         if not request.mutation_key or len(request.mutation_key) > 64:
             raise ProtocolError("变更请求缺少有效去重键", "PLUGIN_INVALID_REQUEST")
         fingerprint = json.dumps([request.method, payload], sort_keys=True, ensure_ascii=False)
-        epoch = 0 if request.method == "operations.cancel" else self.session.view().grant_epoch
+        epoch = 0 if request.method == "operations.cancel" else self.session.view().run_epoch
         with self._lock:
             receipt = self._receipts.get(request.mutation_key)
             is_new = receipt is None
@@ -429,7 +414,7 @@ class PluginHostBroker:
         try:
             receipt.result = self._bounded_result(self._dispatch(request))
             return receipt.result
-        except (ProtocolError, PluginGrantError) as exc:
+        except (ProtocolError, PluginRunError) as exc:
             receipt.error_code = exc.error_code
             raise
         except ValidationError as exc:
@@ -455,7 +440,7 @@ class PluginHostBroker:
             self._ensure_accepting()
         else:
             self._check_open()
-        if not receipt.is_owner_control and receipt.grant_epoch != self.session.view().grant_epoch:
+        if not receipt.is_owner_control and receipt.run_epoch != self.session.view().run_epoch:
             raise ProtocolError("回执授权版本已失效", "PLUGIN_PERMISSION_REVOKED")
         if receipt.error_code:
             raise ProtocolError("此前变更未完成", receipt.error_code)
@@ -513,8 +498,6 @@ class PluginHostBroker:
             }
         if method == "mutations.get":
             return self._receipt_view(params)
-        if method == "permissions.list":
-            return self._permission_view(params)
         if method == "commands.register":
             return self._register_command(params)
         if method in {"commands.unregister", "events.unsubscribe"}:
@@ -662,30 +645,6 @@ class PluginHostBroker:
                 raise ProtocolError("订阅标识无效", "PLUGIN_SCHEMA_INVALID")
             return {"released": self._subscriptions.pop(reference, None) is not None}
 
-    def _permission_view(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        """
-        自查询只暴露当前运行引用，不交付资源目录的持久身份。
-        """
-        self._keys(params, set())
-        view = self.session.view()
-        items = [dict(asdict(item), resource_refs=list(item.resource_refs)) for item in view.items]
-        for item in items:
-            if item["capability"] == "accounts.read":
-                item["resource_refs"] = (
-                    self.public_queries.permission_refs() if self.public_queries and item["decision"] == "allow" else []
-                )
-            elif item["capability"] in {"java.read", "java.use"}:
-                item["resource_refs"] = (
-                    self.java.permission_refs(item["capability"]) if self.java and item["decision"] == "allow" else []
-                )
-            elif item["capability"] in PermissionDeclaration.host_selected_capabilities:
-                item["resource_refs"] = (
-                    self._resources.permission_refs(item["capability"])
-                    if self._resources and item["decision"] == "allow"
-                    else []
-                )
-        return {"items": items, "grant_epoch": view.grant_epoch}
-
     def _receipt_view(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         """
         查询本运行已经接受的变更，不重放副作用或交付旧授权下的结果。
@@ -698,7 +657,7 @@ class PluginHostBroker:
             receipt = self._receipts.get(key)
         if receipt is None:
             raise ProtocolError("本运行没有此变更回执", "PLUGIN_RESOURCE_NOT_FOUND")
-        if not receipt.is_owner_control and receipt.grant_epoch != self.session.view().grant_epoch:
+        if not receipt.is_owner_control and receipt.run_epoch != self.session.view().run_epoch:
             raise ProtocolError("回执授权版本已失效", "PLUGIN_PERMISSION_REVOKED")
         if not receipt.ready.is_set():
             state = "pending"
@@ -716,7 +675,7 @@ class PluginHostBroker:
         """
         在授权接受点原子登记本 run 的命令，实际回调在锁外执行。
         """
-        lease = self.session.authorize("plugin.base")
+        lease = self.session.lease()
         definition = CommandDefinition.model_validate(params)
         reference, registration = uuid4().hex, uuid4().hex
 
@@ -737,7 +696,7 @@ class PluginHostBroker:
         只在授权接受点登记自身设置订阅，不开放完整宿主事件总线。
         """
         self._keys(params, {"event", "callback_ref"})
-        lease = self.session.authorize("plugin.base")
+        lease = self.session.lease()
         callback = params["callback_ref"]
         if params["event"] not in {"settings.changed"} or not isinstance(callback, str) or len(callback) != 32:
             raise ProtocolError("该事件或回调尚未开放", "PLUGIN_EVENT_NOT_EXPOSED")
@@ -782,7 +741,7 @@ class PluginHostBroker:
         :raises ProtocolError: 命令、授权、schema 或回调无效时抛出
         """
         self._check_open()
-        lease = self.session.authorize("plugin.base")
+        lease = self.session.lease()
         with self._lock:
             item = self._commands.get(reference) or next(
                 (v for v in self._commands.values() if v[1].name == reference), None
@@ -822,7 +781,7 @@ class PluginHostBroker:
         :return: 仅含名称、说明与字段 schema 的列表
         :raises ProtocolError: 运行已关闭或授权失效时抛出
         """
-        self.session.authorize("plugin.base")
+        self.session.lease()
         with self._lock:
             return [
                 {
@@ -843,17 +802,7 @@ class PluginHostBroker:
         :return: 登记结果
         :raises ProtocolError: 未获准、通道缺失或阶段无效时抛出
         """
-        permission = next(
-            (
-                item
-                for item in self.session.view().items
-                if item.capability == "instances.manage" and item.decision == "allow" and item.resource_refs
-            ),
-            None,
-        )
-        if permission is None:
-            raise ProtocolError("插件未获准管理游戏", "PLUGIN_PERMISSION_DENIED")
-        self.session.authorize("instances.manage", tuple(permission.resource_refs))
+        self.session.lease()
         if request.method != "hooks.register":
             raise ProtocolError("此钩子方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
         if self._hook_sink is None:
@@ -870,7 +819,7 @@ class PluginHostBroker:
         :return: 登记结果
         :raises ProtocolError: 未获准或通道缺失时抛出
         """
-        self.session.authorize("auth.provider")
+        self.session.lease()
         if request.method != "auth.register":
             raise ProtocolError("此登录方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
         if self._online_sink is None:
@@ -887,7 +836,7 @@ class PluginHostBroker:
         :return: 登记结果、进程标识或停止结果
         :raises ProtocolError: 未声明工具、通道缺失或归属不符时抛出
         """
-        self.session.authorize("plugin.base")
+        self.session.lease()
         if self._tool_channel is None:
             raise ProtocolError("当前宿主未提供受管工具", "PLUGIN_API_METHOD_NOT_FOUND")
         if request.method == "tools.register":
@@ -925,23 +874,11 @@ class PluginHostBroker:
         :return: 登记结果
         :raises ProtocolError: 未获准查看游戏或通道缺失时抛出
         """
-        permission = next(
-            (
-                item
-                for item in self.session.view().items
-                if item.capability in {"instances.read", "instances.manage"}
-                and item.decision == "allow"
-                and item.resource_refs
-            ),
-            None,
-        )
-        if permission is None:
-            raise ProtocolError("插件未获准查看游戏", "PLUGIN_PERMISSION_DENIED")
-        self.session.authorize(permission.capability, tuple(permission.resource_refs))
+        self.session.lease()
         if request.method == "compat.read_index":
             from ECL.plugins.runtime.selected_files import read_selected_file
 
-            lease = self.session.authorize(permission.capability, tuple(permission.resource_refs))
+            lease = self.session.lease()
             view = self.settings_view()
             result = read_selected_file(view, request.params)
             self.session.check(lease)
@@ -965,19 +902,7 @@ class PluginHostBroker:
         :return: 登记结果
         :raises ProtocolError: 未获准查看游戏或通道缺失时抛出
         """
-        permission = next(
-            (
-                item
-                for item in self.session.view().items
-                if item.capability in {"instances.read", "instances.manage"}
-                and item.decision == "allow"
-                and item.resource_refs
-            ),
-            None,
-        )
-        if permission is None:
-            raise ProtocolError("插件未获准查看游戏", "PLUGIN_PERMISSION_DENIED")
-        self.session.authorize(permission.capability, tuple(permission.resource_refs))
+        self.session.lease()
         if request.method != "crash.register":
             raise ProtocolError("此崩溃方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
         if self._crash_sink is None:
@@ -994,7 +919,7 @@ class PluginHostBroker:
         :return: 发现结果或目标命令返回值
         :raises ProtocolError: 通道缺失、参数无效或目标拒绝时抛出
         """
-        self.session.authorize("plugin.base")
+        self.session.lease()
         if self._cross_plugin is None:
             raise ProtocolError("当前宿主未提供跨插件通道", "PLUGIN_API_METHOD_NOT_FOUND")
         if request.method == "plugins.list":
@@ -1036,7 +961,7 @@ class PluginHostBroker:
         在授权接受点原子登记本运行面板，设置引用与当前 schema 一并核对。
         """
         self._keys(params, {"panels"})
-        lease = self.session.authorize("plugin.base")
+        lease = self.session.lease()
         raw = params["panels"]
         if not isinstance(raw, list) or not 1 <= len(raw) <= 8:
             raise ProtocolError("面板注册数量无效", "PLUGIN_SCHEMA_INVALID")
@@ -1068,7 +993,7 @@ class PluginHostBroker:
         :return: 不含回调标识以外实现细节的面板定义
         :raises ProtocolError: 运行已关闭或授权失效时抛出
         """
-        self.session.authorize("plugin.base")
+        self.session.lease()
         with self._lock:
             return [
                 definition.model_dump(mode="json", exclude={"data_callback_ref"})
@@ -1080,7 +1005,7 @@ class PluginHostBroker:
         按请求拉取面板列表与任务快照，未声明数据回调时返回空结构。
         """
         self._keys(request.params, {"key"})
-        lease = self.session.authorize("plugin.base")
+        lease = self.session.lease()
         key = request.params["key"]
         if not isinstance(key, str):
             raise ProtocolError("面板标识无效", "PLUGIN_SCHEMA_INVALID")
@@ -1108,7 +1033,7 @@ class PluginHostBroker:
             if self.custom_ui is None:
                 raise ProtocolError("原生插件窗口不可用", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
             return self.custom_ui.handle(request.method, request.params)
-        lease = self.session.authorize("ui.inject")
+        lease = self.session.lease()
         if self._slot_sink is None:
             raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
         page_key = ""
@@ -1164,7 +1089,7 @@ class PluginHostBroker:
 
         :return: 当前设置视图
         """
-        self.session.authorize("plugin.base")
+        self.session.lease()
         return self.settings.view(self._settings_identity, self.session.binding.content_digest, self.session.run_id)
 
     def initialize_settings(self) -> None:
@@ -1173,7 +1098,7 @@ class PluginHostBroker:
 
         插件后续 settings.define 会替换完整集合；只在生命周期成功后发布到磁盘。
         """
-        lease = self.session.authorize("plugin.base")
+        lease = self.session.lease()
         self.settings.define(
             self._settings_identity,
             self.session.binding.content_digest,
@@ -1191,7 +1116,7 @@ class PluginHostBroker:
 
     def _settings(self, request: RpcRequest) -> dict[str, JsonValue]:
         method, params = request.method, request.params
-        lease = self.session.authorize("plugin.base")
+        lease = self.session.lease()
         if method == "settings.define":
             self._keys(params, {"definitions"})
             raw = params["definitions"]
@@ -1287,7 +1212,7 @@ class PluginHostBroker:
                     self.error_code = "PLUGIN_EVENT_DELIVERY_FAILED"
                     self._closed.set()
                     get_logger("PluginHostBroker").warning("插件事件回调失败，停止本运行继续接收请求")
-            except (PluginGrantError, ProtocolError, OSError):
+            except (PluginRunError, ProtocolError, OSError):
                 get_logger("PluginHostBroker").debug("插件事件未交付，订阅或运行已经失效")
 
     def _ensure_accepting(self) -> None:
@@ -1298,11 +1223,9 @@ class PluginHostBroker:
         self._ensure_accepting()
         view = self.session.view()
         if view.error_code:
-            raise ProtocolError("插件授权状态不可用", view.error_code)
-        if view.revision == 0 or not view.required_satisfied:
-            raise ProtocolError("插件尚未完成授权", "PLUGIN_REQUIRED_PERMISSION_DENIED")
-        if view.grant_epoch != self._observed_epoch:
-            self.refresh_permissions()
+            raise ProtocolError("插件运行状态不可用", view.error_code)
+        if view.run_epoch != self._observed_epoch:
+            self.refresh_leases()
 
     @property
     def is_closed(self) -> bool:
@@ -1350,27 +1273,27 @@ class PluginHostBroker:
         监管现有任务、网络和暂存的原始授权及取消信号，并重试真实资源清理。
         """
         if self.custom_ui is not None:
-            self.custom_ui.refresh_permissions()
+            self.custom_ui.refresh_leases()
         if self.operations is not None:
-            self.operations.refresh_permissions()
+            self.operations.refresh_leases()
         if self.network is not None:
-            self.network.refresh_permissions()
+            self.network.refresh_leases()
         if self.files is not None:
-            self.files.refresh_permissions()
+            self.files.refresh_leases()
 
-    def refresh_permissions(self) -> None:
+    def refresh_leases(self) -> None:
         """
         授权版本变化后只保留仍获准的注册，并为自身事件重新建立有效准入。
         """
         self.refresh_pending_work()
         view = self.session.view()
-        if view.error_code or not view.required_satisfied:
+        if view.error_code:
             self.close()
             return
-        event_lease = self.session.authorize("plugin.base")
-        command_lease = self.session.authorize("plugin.base")
+        event_lease = self.session.lease()
+        command_lease = self.session.lease()
         with self._lock:
-            self._observed_epoch = view.grant_epoch
+            self._observed_epoch = view.run_epoch
             self._commands = (
                 {key: (item[0], item[1], command_lease) for key, item in self._commands.items()}
                 if command_lease

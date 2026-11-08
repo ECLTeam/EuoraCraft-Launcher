@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from pydantic import Field, StrictInt
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
-from ECL.plugins.grant_store import PluginGrantSession
 from ECL.plugins.network_targets import NetworkOrigin
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import RequestModel
 from ECL.plugins.runtime.resources import ResourcePages
@@ -69,7 +69,7 @@ class RuntimeResourceCatalog:
     查询固定平台和用户配置的模组源，下载仍需独立站点许可及私有文件任务。
     """
 
-    def __init__(self, session: PluginGrantSession, game: PluginGameCoordinator) -> None:
+    def __init__(self, session: PluginRunSession, game: PluginGameCoordinator) -> None:
         """
         绑定已有资源领域服务与当前运行预算，不创建另一份目录缓存。
 
@@ -189,7 +189,7 @@ class RuntimeResourceCatalog:
         kind, _, action = method.partition(".")
         if kind not in {"mods", "resourcepacks", "shaders"}:
             raise ProtocolError("资源平台类型无效", "PLUGIN_API_METHOD_NOT_FOUND")
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         if monotonic() >= deadline:
             raise ProtocolError("资源查询已超时", "PLUGIN_DEADLINE_EXCEEDED")
         if not self._lock.acquire(blocking=False):
@@ -198,7 +198,7 @@ class RuntimeResourceCatalog:
             if action == "search":
                 result = self._search(kind, _Search.model_validate(params))
             elif action == "versions":
-                result = self._versions(kind, _Project.model_validate(params), lease.grant_epoch)
+                result = self._versions(kind, _Project.model_validate(params), lease.run_epoch)
             elif action == "download_info":
                 result = self._download(_Download.model_validate(params))
             else:

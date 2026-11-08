@@ -178,7 +178,6 @@ class PluginDevelopmentService:
             if plugin is not None:
                 plugin.wants_enabled = False
         if plugin is not None:
-            self._workers.grants.end_development(plugin.token)
             self._changed()
 
     def view(self) -> dict[str, JsonValue]:
@@ -224,7 +223,6 @@ class PluginDevelopmentService:
             else:
                 self._stop.set()
                 for name, plugin in tuple(self._plugins.items()):
-                    self._workers.grants.end_development(plugin.token)
                     try:
                         self._workers.stop(name)
                         self._workers.restore_directory(name, plugin.source.source_path)
@@ -381,7 +379,6 @@ class PluginDevelopmentService:
             with self._lock:
                 plugin.supports_hot_reload = supports
             if not initial and protected != plugin.protected_digest:
-                self._workers.grants.end_development(plugin.token)
                 self._workers.stop(plugin.source.name)
                 with self._lock:
                     plugin.status = "review_required"
@@ -422,7 +419,6 @@ class PluginDevelopmentService:
                 status = "cleanup_pending"
             if getattr(exc, "error_code", None) == "PLUGIN_DEVELOPMENT_REVIEW_REQUIRED":
                 status = "review_required"
-                self._workers.grants.end_development(plugin.token)
             self._failure(plugin, exc, status)
         finally:
             self._cleanup_copies()
@@ -473,12 +469,10 @@ class PluginDevelopmentService:
                     self._reload_changed_source(plugin, current)
                 except (OSError, ValueError, PluginRuntimeError) as exc:
                     if not plugin.source.source_path.is_dir():
-                        self._workers.grants.end_development(plugin.token)
                         self._workers.restore_directory(name, plugin.source.source_path)
                         self.forget(name)
                         continue
                     if getattr(exc, "error_code", None) == "PLUGIN_DEVELOPMENT_REVIEW_REQUIRED":
-                        self._workers.grants.end_development(plugin.token)
                         self._workers.stop(name)
                         self._failure(plugin, exc, "review_required")
                     else:

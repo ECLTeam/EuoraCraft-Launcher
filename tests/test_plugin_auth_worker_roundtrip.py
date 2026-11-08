@@ -10,8 +10,6 @@ import pytest
 from test_accounts import FakeAuthlibManager, FakeMicrosoftManager
 
 from ECL.plugins import PluginManager
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
-from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services import AccountManager
@@ -31,7 +29,6 @@ def test_real_auth_worker_persists_only_own_data_and_restarts(tmp_path: Path, fr
     source = tmp_path / "code"
     shutil.copytree(Path(__file__).resolve().parents[1] / "examples/plugins/worker_auth", source)
     metadata = json.loads((source / "plugin.json").read_bytes())
-    metadata["permissions"][0]["required"] = False
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     name = metadata["name"]
     data_path = tmp_path / "data"
@@ -45,15 +42,6 @@ def test_real_auth_worker_persists_only_own_data_and_restarts(tmp_path: Path, fr
         framework.worker_service = service
         try:
             service.register(metadata, source, "directory")
-            view = service.permissions(name)
-            if not restart:
-                service.update_permissions(
-                    name,
-                    view["content_digest"],
-                    view["revision"],
-                    (PermissionDecision(capability="auth.provider", decision="allow"),),
-                    PermissionManagementCaller.main_webview,
-                )
             service.enable(name)
             providers = accounts.list_auth_providers()
             assert len(providers) == 1
@@ -69,19 +57,11 @@ def test_real_auth_worker_persists_only_own_data_and_restarts(tmp_path: Path, fr
             assert asyncio.run(accounts.get_launch_credentials())["access_token"] == "synthetic-test-token"
             assert all("data" not in item for item in accounts.list_accounts()["accounts"])
             if not restart:
+                service.stop(name)
+                assert accounts.list_auth_providers() == []
                 old_provider = accounts.plugin_auth_providers.get(provider_id)
-                for decision in ("deny", "allow"):
-                    current = service.permissions(name)
-                    service.update_permissions(
-                        name,
-                        current["content_digest"],
-                        current["revision"],
-                        (PermissionDecision(capability="auth.provider", decision=decision),),
-                        PermissionManagementCaller.main_webview,
-                    )
-                    assert service._entry(name).supervisor.is_alive()
-                    assert accounts.list_auth_providers() == []
-                    with pytest.raises(PluginGrantError):
+                if old_provider is not None:
+                    with pytest.raises(AccountError):
                         old_provider.resolve_credentials(
                             {
                                 "id": "demo",
@@ -90,7 +70,6 @@ def test_real_auth_worker_persists_only_own_data_and_restarts(tmp_path: Path, fr
                                 "data": {"token": "synthetic-test-token"},
                             }
                         )
-                service.stop(name)
                 service.enable(name)
                 assert asyncio.run(accounts.get_launch_credentials())["access_token"] == "synthetic-test-token"
             service.stop(name)

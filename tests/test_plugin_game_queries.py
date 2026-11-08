@@ -9,11 +9,8 @@ import pytest
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import (
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.services.game import GameService
 
@@ -23,8 +20,8 @@ def catalogs(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     (source / "main.py").write_text("value=1", encoding="utf-8")
-    binding = PluginContentBinding.capture(source, (), "windows-x86_64-cp311")
-    store = PluginGrantStore(tmp_path, implemented_capabilities=PluginHostBroker.implemented_capabilities)
+    binding = PluginContentBinding.capture(source, "windows-x86_64-cp311")
+    store = PluginRunStore()
     game = GameService.__new__(GameService)
     game._game_download_source_provider = lambda: "official"
     game.minecraft_versions_classified = lambda source: {
@@ -37,13 +34,6 @@ def catalogs(tmp_path):
 
     def create(allow=True):
         session = store.open_session(uuid4().hex, binding)
-        store.update(
-            session,
-            (),
-            expected_revision=0,
-            content_digest=binding.content_digest,
-            caller=PermissionManagementCaller.main_webview,
-        )
         broker = PluginHostBroker(
             session, tmp_path, lambda *args: {}, run_state=lambda: "enabled", game_operations=game
         )
@@ -114,7 +104,7 @@ def test_latest_flag_matches_install_default_even_when_upstream_order_is_unsorte
 
 
 def test_revocation_during_network_read_prevents_result_delivery(catalogs):
-    broker, game, store, _ = catalogs
+    broker, game, _store, _ = catalogs
     entered, release = Event(), Event()
     original = game.minecraft_versions_classified
 
@@ -128,18 +118,12 @@ def test_revocation_during_network_read_prevents_result_delivery(catalogs):
         result = executor.submit(call, broker)
         assert entered.wait(3)
         try:
-            store.update(
-                broker.session,
-                (),
-                expected_revision=broker.session.view().revision,
-                content_digest=broker.session.binding.content_digest,
-                caller=PermissionManagementCaller.main_webview,
-            )
+            broker.session.close()
         finally:
             release.set()
         with pytest.raises(ProtocolError) as error:
             result.result(5)
-        assert error.value.error_code == "PLUGIN_GRANT_EXPIRED"
+        assert error.value.error_code == "PLUGIN_RUN_EXPIRED"
 
 
 def test_expired_query_is_not_delivered(catalogs):

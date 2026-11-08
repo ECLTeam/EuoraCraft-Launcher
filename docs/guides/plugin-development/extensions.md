@@ -1,6 +1,6 @@
 # 扩展开发
 
-所有回调在 Worker 执行，只传有界 JSON。注册前检查权限，回调前后复核原始许可；禁用、重载、卸载和会话结束使旧注册失效。
+所有回调在 Worker 执行，只传有界 JSON。回调前后复核运行准入；禁用、重载、卸载和会话结束使旧注册失效。
 
 ## 启动钩子
 
@@ -11,7 +11,7 @@ def prepare(self, version_id, loader, version_isolation):
     return {"jvm_args": ["-Dexample.feature=true"], "game_args": [], "env": {}}
 ```
 
-阶段为 prepare、pre_launch、post_launch、exit，当前第三方注册使用已批准的游戏管理范围 `instances.manage`；不要声明旧注释中的独立 `launch.hooks` 权限名。
+阶段为 prepare、pre_launch、post_launch、exit；不要使用旧注释中的独立 `launch.hooks` 名称。
 
 上下文只有版本、加载器与隔离标记。prepare 可以按宿主数量、长度及字段规则补充 JVM/游戏参数和环境变量；其他阶段不提供同样的修改通道。必要前置回调失败可阻止本次启动，启动后/退出失败仅记录。
 
@@ -29,7 +29,7 @@ def prepare(self, version_id, loader, version_isolation):
 
 `register_instance_source(source, title, callback)` 需要实例查看或管理范围。宿主只对获准、已索引实例投递 root_ref、instance_rel、version_id、vanilla_name、primary_loader 等有界上下文；返回 `{fields: {键: 字符串}, warnings?: [...]}`，字段数量和文本长度受限。
 
-该接口不等于可信系统插件的带 Path 上下文和监听文件解析器的接口，也不授予任意第三方配置文件读取权限。不要把 `ECL.plugins.ExternalInstanceMetadata` 的内部示例直接复制到 Worker。
+该接口不等于可信系统插件的带 Path 上下文和监听文件解析器的接口。不要把 `ECL.plugins.ExternalInstanceMetadata` 的内部示例直接复制到 Worker。
 
 参考 [worker_instance_source](../../../examples/plugins/worker_instance_source)。
 
@@ -37,7 +37,7 @@ def prepare(self, version_id, loader, version_isolation):
 
 `define_tool(name, title, executable, args=())` 声明包内可执行文件。`run_tool(name, args=())` 返回 process_ref，`stop_tool(process_ref)` 只控制本插件所属工具。
 
-声明和运行基于基础启用，不额外制造不存在的权限项。可执行文件必须在包内，路径、参数数量和文本长度有边界；没有 shell 字符串解释器或任意系统程序选择。不同平台需提供实际兼容二进制并验证退出行为。
+声明和运行基于基础启用。可执行文件必须在包内，路径、参数数量和文本长度有边界；没有 shell 字符串解释器或任意系统程序选择。不同平台需提供实际兼容二进制并验证退出行为。
 
 宿主未接入通用进程服务时返回 `PLUGIN_API_METHOD_NOT_FOUND`。工具进程与游戏进程是不同来源，不能用工具引用停止游戏或其他插件的进程。
 

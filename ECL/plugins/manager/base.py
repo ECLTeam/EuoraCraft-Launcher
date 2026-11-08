@@ -37,7 +37,6 @@ from ECL.plugins.crash_extensions import (
     sanitize_extension_result,
 )
 from ECL.plugins.dependencies import DependencyResolution
-from ECL.plugins.grant_models import GrantLease
 from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.instance_compat import (
     ExternalInstanceMetadata,
@@ -46,8 +45,8 @@ from ECL.plugins.instance_compat import (
     sanitize_external_metadata,
 )
 from ECL.plugins.launch_hooks import LaunchContext, LaunchHookRegistry, apply_remote_modifications
-from ECL.plugins.permissions import PermissionManager
 from ECL.plugins.plugin import Plugin
+from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.resources import InstanceQueries
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -89,7 +88,6 @@ class _PluginState:
         account_snapshot: Callable[[], tuple[AccountSummary, ...]] | None = None,
         account_skin: Callable[[str], bytes | None] | None = None,
         public_config: Callable[[], JsonValue] | None = None,
-        ui_injection_allowed: Callable[[], bool] | None = None,
     ):
         """
         创建相互隔离的插件状态与命令执行器。
@@ -110,7 +108,6 @@ class _PluginState:
         :param public_config: 当前配置快照，仅在宿主边界投影公开字段
         :param instance_roots: 当前配置中的游戏根目录快照
         :param game_operations: 应用唯一游戏业务入口
-        :param ui_injection_allowed: 用户级界面注入总开关；None 视为允许
         """
         self.logger = get_logger("PluginManager")
         self.events = event_bus or EventBus()
@@ -125,8 +122,6 @@ class _PluginState:
         self._account_snapshot = account_snapshot
         self._account_skin = account_skin
         self._public_config = public_config
-        self._ui_injection_allowed = ui_injection_allowed or (lambda: True)
-        self._ui_injection_was_allowed = self._ui_injection_allowed()
         self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
         self._instance_roots = instance_roots
@@ -151,7 +146,6 @@ class _PluginState:
         self._vue_components: dict[str, dict[str, Any]] = {}
         self._event_handlers_registered = False  # 框架自身的事件处理器是否已登记
         self._dependency_resolution: DependencyResolution = DependencyResolution()  # 插件依赖解析结果
-        self._permission_manager = PermissionManager()  # 插件权限管理器
         # 被禁用的插件名集合，持久化到 plugin_state.json
         self._disabled_plugins: set[str] = set()
         # 启动阶段是否自动加载并启用插件；--disable-plugins 安全模式下为 False
@@ -220,7 +214,6 @@ class _PluginState:
             tool_spawner=self._spawn_worker_tool,
             tool_stopper=self._stop_worker_tool,
             auth_sink=self._on_worker_auth,
-            ui_injection_allowed=self._ui_injection_allowed,
             development_changed=lambda: self.events.emit(
                 "plugin:status_changed", {"plugin": "", "status": "development"}
             ),
@@ -229,7 +222,6 @@ class _PluginState:
             ),
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
-        self.events.subscribe("config:updated", self._on_plugins_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
         self._plugin_dir = self._data_path / "plugins"
         self._plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -327,7 +319,7 @@ class _PluginState:
         )
 
     def _on_worker_auth(
-        self, name: str, provider_id: str | None, definition: object | None, lease: GrantLease | None
+        self, name: str, provider_id: str | None, definition: object | None, lease: PluginLease | None
     ) -> None:
         """
         登记或撤销第三方登录提供方，凭据由账户服务按提供方分区保存。
@@ -462,7 +454,7 @@ class _PluginState:
             if self.worker_service is None:
                 return None
             reference = self.worker_service.instance_ref(context.game_path, context.version_id)
-            if reference is None or reference not in self.worker_service.granted_instance_refs(name):
+            if reference is None or reference not in self.worker_service.available_instance_refs(name):
                 return None
             try:
                 instance_rel = context.instance_path.relative_to(context.game_path).as_posix()
@@ -546,35 +538,11 @@ class _PluginState:
 
         return call
 
-    def _on_plugins_config_changed(self, section: str, value: object) -> None:
-        """
-        界面注入总开关变化时立即生效：关闭撤销全部插槽内容，重新打开则重载插件。
-
-        插槽内容只在插件加载时登记，因此重新打开后必须让已获准注入的插件重跑一次
-        加载，界面才会重新出现，不需要重启启动器。
-
-        :param section: 变更的配置分区
-        :param value: 该分区的新值
-        """
-        if section != "plugins":
-            return
-        allowed = self._ui_injection_allowed()
-        was_allowed = self._ui_injection_was_allowed
-        self._ui_injection_was_allowed = allowed
-        if self.worker_service is None:
-            return
-        if not allowed:
-            self.worker_service.clear_all_slots()
-            return
-        if not was_allowed:
-            self.worker_service.reload_ui_injection_plugins()
-
     def _on_worker_slot(self, name: str, payload: dict[str, object]) -> None:
         """
         接收第三方已获准的插槽内容，与系统插件走同一收集与渲染路径。
 
-        内容在 Broker 处已按 `ui.inject` 授权校验；这里只负责转发与清理，
-        不重新判断权限，也不把内容写入磁盘。
+        这里只负责转发与清理，不把内容写入磁盘。
 
         :param name: 安装名称
         :param payload: 插槽内容或清理指令

@@ -4,7 +4,7 @@ import json
 from time import monotonic
 
 import pytest
-from test_plugin_worker_manager import make_plugin, review
+from test_plugin_worker_manager import make_plugin
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
@@ -18,7 +18,6 @@ def development(tmp_path):
     make_plugin(source, tmp_path / "marker")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
-    review(manager)
     assert manager.enable("example").success
     service = manager.worker_service
     service.development._interval = 3600
@@ -52,13 +51,10 @@ def test_development_default_off_and_real_worker_reload_preserves_settings(devel
     assert service.runtime_info("example")["run_id"] != old_run
     assert manager.call_command("example:echo", {"value": "input"}) == {"value": "updated"}
     assert manager.get_settings("example")["values"] == {"greeting": "kept"}
-    # 开发代码没有获得永久的摘要授权。
-    runtime_digest = service.permissions("example")["content_digest"]
-    identity = service.permissions("example")["installation_id"]
-    assert not (service.data_path / "plugin_grants" / identity / f"{runtime_digest}.json").exists()
+    # 授权存储已随权限系统移除，不再写入任何授权记录。
+    assert not (service.data_path / "plugin_grants").exists()
     service.development.set_enabled(False)
     assert service.runtime_info("example")["run_state"] != "enabled"
-    assert service.permissions("example")["revision"] == 0
 
 
 def test_opt_out_and_byte_identical_saves_do_not_restart(development):
@@ -121,16 +117,18 @@ def test_manual_disable_is_not_undone_by_late_changes(development):
     assert service.development.view()["items"][0]["status"] == "disabled"
 
 
-def test_new_permission_stops_development_and_requires_review(development):
+def test_ignored_manifest_fields_do_not_block_development(development):
     _manager, service, source = development
     service.development.set_enabled(True)
+    run = service.runtime_info("example")["run_id"]
     manifest = json.loads((source / "plugin.json").read_bytes())
+    # 权限声明不再是清单字段；改动属于普通内容变化，按热重载处理。
     manifest["permissions"] = [{"capability": "ui.inject", "required": True}]
     (source / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
     flush(service)
-    assert service.development.view()["items"][0]["status"] == "review_required"
-    assert service.runtime_info("example")["run_state"] == "disabled"
-    assert service.permissions("example")["revision"] == 0
+    assert service.runtime_info("example")["run_id"] != run
+    assert service.runtime_info("example")["run_state"] == "enabled"
+    assert service.development.view()["items"][0]["status"] == "watching"
 
 
 @pytest.mark.parametrize("value", ["false", 0, 1, None])

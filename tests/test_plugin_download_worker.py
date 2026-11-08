@@ -14,7 +14,6 @@ from plugin_network_helpers import MappedDialer, server, trusted_ssl_context
 from ECL.foundation import EventBus
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.plugins.worker_service import PluginWorkerService
@@ -57,25 +56,6 @@ def test_real_worker_download_publish_cancel_revoke_and_stop(tmp_path, is_frozen
             resolver=lambda *_: ("1.1.1.1",), dialer=MappedDialer(), ssl_context=trusted_ssl_context()
         )
 
-        def review(deny=None):
-            view = service.permissions(metadata["name"])
-            service.update_permissions(
-                metadata["name"],
-                view["content_digest"],
-                view["revision"],
-                tuple(
-                    PermissionDecision(
-                        capability=i["capability"],
-                        decision="deny" if i["capability"] == deny else "allow",
-                        resource_refs=tuple(i["requested_resource_refs"])
-                        if i["capability"] == "network.read" and deny != "network.read"
-                        else (),
-                    )
-                    for i in view["items"]
-                ),
-                PermissionManagementCaller.main_webview,
-            )
-
         def start(name, route="/"):
             return broker.call_command(
                 "submit", {"url": f"https://p10.example.test:{port}{route}", "name": name, "mutation_key": uuid4().hex}
@@ -92,7 +72,6 @@ def test_real_worker_download_publish_cancel_revoke_and_stop(tmp_path, is_frozen
 
         try:
             service.register(metadata, code, "directory")
-            review()
             service.enable(metadata["name"])
             broker = service.broker(metadata["name"])
             assert not requests
@@ -117,15 +96,6 @@ def test_real_worker_download_publish_cancel_revoke_and_stop(tmp_path, is_frozen
             assert wait(slow)["state"] == "cancelled"
             assert not (files / "cancel.bin").exists()
             release.set()
-            entered.clear()
-            release.clear()
-            slow = start("revoked.bin", "/slow")
-            assert entered.wait(2)
-            review("plugin.base")
-            assert wait(slow)["state"] in {"failed", "cancelled"}
-            assert not (files / "revoked.bin").exists()
-            release.set()
-            review()
             entered.clear()
             release.clear()
             slow = start("stop.bin", "/slow")

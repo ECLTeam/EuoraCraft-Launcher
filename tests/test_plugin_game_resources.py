@@ -99,7 +99,7 @@ def test_stale_resource_reference_cannot_delete_replacement(assets):
     receipt = call(broker, "mods.install", {"instance_ref": state.ref, "source": source, "filename": "changed.jar"})
     assert finish(broker, state.manager, receipt)["state"] == "completed"
     item = call(broker, "mods.list", {"instance_ref": state.ref})["items"][0]
-    target, _ = state.broker._resources.game_target(state.ref, "instances.manage", monotonic() + 5)
+    target, _ = state.broker._resources.game_target(state.ref, monotonic() + 5)
     destination = state.game.plugin_resource_path(target, "mods") / "changed.jar"
     destination.write_bytes(b"new user contents")
     result = finish(broker, state.manager, call(broker, "mods.delete", {"resource_ref": item["resource_ref"]}))
@@ -109,7 +109,7 @@ def test_stale_resource_reference_cannot_delete_replacement(assets):
 
 def test_resource_directory_junction_cannot_read_or_publish_outside_instance(assets):
     state, broker, source = assets
-    target, _ = state.broker._resources.game_target(state.ref, "instances.manage", monotonic() + 5)
+    target, _ = state.broker._resources.game_target(state.ref, monotonic() + 5)
     directory = state.game.plugin_resource_path(target, "mods")
     outside = state.root.parent / "outside-resources"
     outside.mkdir()

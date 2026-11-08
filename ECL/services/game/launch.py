@@ -45,8 +45,8 @@ from anyio import to_thread
 
 from ECL.game import CoreError, LaunchConfig
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.launch_hooks import LaunchContext
+from ECL.plugins.run_store import PluginRunError
 from ECL.services.account.authlib import AuthlibError
 from ECL.utils.errors import AccountError
 from ECL.utils.files import atomic_write_text
@@ -1412,7 +1412,7 @@ class LaunchCoordinator(_GameState):
             error = GameServiceError(str(exc), error_code)
             self._emit_launch_progress("error", str(error), 0, error.error_code)
             raise error from exc
-        except (ProtocolError, PluginGrantError) as exc:
+        except (ProtocolError, PluginRunError) as exc:
             raise GameServiceError("插件启动准入已失效", exc.error_code) from exc
         except CoreError as exc:
             error = GameServiceError(str(exc), getattr(exc, "error_code", "GAME_LAUNCH_FAILED"))

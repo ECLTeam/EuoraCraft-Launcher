@@ -6,11 +6,9 @@
 # 文件作用：验证界面注入权限门禁、插槽内容边界与可信接收方转发。
 #
 # 公开接口：
-#   - test_html_slot_requires_permission(tmp_path) -> None
 #   - test_html_slot_forwards_valid_content(tmp_path) -> None
 #   - test_vue_slot_rejects_oversized_template(tmp_path) -> None
 #   - test_slot_registration_requires_host_sink(tmp_path) -> None
-#   - test_master_switch_change_clears_then_reloads_injection_plugins() -> None
 # ============================================================
 
 from __future__ import annotations
@@ -23,31 +21,18 @@ import pytest
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import (
-    PermissionDecision,
-    PermissionDeclaration,
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 
 
-def _broker(tmp_path: Path, *, allow: bool, with_sink: bool = True):
+def _broker(tmp_path: Path, *, with_sink: bool = True):
     root = tmp_path / "code"
     root.mkdir()
     (root / "main.py").write_text("value = 1", encoding="utf-8")
-    declarations = (PermissionDeclaration(capability="ui.inject"),)
-    binding = PluginContentBinding.capture(root, declarations, "windows-x86_64-cp311")
-    store = PluginGrantStore(tmp_path, implemented_capabilities=PluginHostBroker.implemented_capabilities)
+    binding = PluginContentBinding.capture(root, "windows-x86_64-cp311")
+    store = PluginRunStore()
     session = store.open_session(store.new_installation_id(), binding)
-    store.update(
-        session,
-        (PermissionDecision(capability="ui.inject", decision="allow" if allow else "deny"),),
-        expected_revision=0,
-        content_digest=binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
     received: list[dict] = []
     broker = PluginHostBroker(
         session,
@@ -63,24 +48,8 @@ def _request(broker: PluginHostBroker, method: str, params: dict) -> dict:
     return broker.handle(RpcRequest(method, params, monotonic() + 5, uuid4().hex))
 
 
-def test_html_slot_requires_permission(tmp_path: Path) -> None:
-    broker, session, received = _broker(tmp_path, allow=False)
-    try:
-        with pytest.raises(ProtocolError) as error:
-            _request(
-                broker,
-                "ui.register_html",
-                {"slot_id": "plugin-slot-content-bottom", "html": "<p>hi</p>"},
-            )
-        assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
-        assert received == []
-    finally:
-        broker.close()
-        session.close()
-
-
 def test_html_slot_forwards_valid_content(tmp_path: Path) -> None:
-    broker, session, received = _broker(tmp_path, allow=True)
+    broker, session, received = _broker(tmp_path)
     try:
         result = _request(
             broker,
@@ -103,7 +72,7 @@ def test_html_slot_forwards_valid_content(tmp_path: Path) -> None:
 
 
 def test_vue_slot_rejects_oversized_template(tmp_path: Path) -> None:
-    broker, session, received = _broker(tmp_path, allow=True)
+    broker, session, received = _broker(tmp_path)
     try:
         with pytest.raises(ProtocolError) as error:
             _request(
@@ -122,24 +91,8 @@ def test_vue_slot_rejects_oversized_template(tmp_path: Path) -> None:
         session.close()
 
 
-def test_master_switch_blocks_slot_and_allows_clear(tmp_path: Path) -> None:
-    from ECL.plugins.worker_service import PluginWorkerService
-
-    received: list[tuple[str, dict]] = []
-    service = PluginWorkerService(
-        tmp_path,
-        slot_sink=lambda name, payload: received.append((name, payload)),
-        ui_injection_allowed=lambda: False,
-    )
-    with pytest.raises(ProtocolError) as error:
-        service._publish_slot("demo", {"kind": "html", "slot_id": "plugin-slot-content-bottom"})
-    assert error.value.error_code == "PLUGIN_UI_INJECTION_DISABLED"
-    service._publish_slot("demo", {"kind": "clear"})
-    assert received == [("demo", {"kind": "clear"})]
-
-
 def test_slot_registration_requires_host_sink(tmp_path: Path) -> None:
-    broker, session, _received = _broker(tmp_path, allow=True, with_sink=False)
+    broker, session, _received = _broker(tmp_path, with_sink=False)
     try:
         with pytest.raises(ProtocolError) as error:
             _request(
@@ -151,41 +104,3 @@ def test_slot_registration_requires_host_sink(tmp_path: Path) -> None:
     finally:
         broker.close()
         session.close()
-
-
-def test_master_switch_change_clears_then_reloads_injection_plugins() -> None:
-    """
-    关闭总开关立即撤销插槽内容，重新打开时重载插件让界面恢复，重复变更不重复重载。
-    """
-    from ECL.plugins.manager import PluginManager
-
-    calls: list[str] = []
-
-    class _Service:
-        def clear_all_slots(self) -> None:
-            calls.append("clear")
-
-        def reload_ui_injection_plugins(self) -> None:
-            calls.append("reload")
-
-    manager = PluginManager.__new__(PluginManager)
-    manager.worker_service = _Service()
-    allowed = {"value": True}
-    manager._ui_injection_allowed = lambda: allowed["value"]
-    manager._ui_injection_was_allowed = True
-
-    # 无关分区不触发任何动作
-    manager._on_plugins_config_changed("ui", {"allow_ui_injection": False})
-    assert calls == []
-
-    allowed["value"] = False
-    manager._on_plugins_config_changed("plugins", {"allow_ui_injection": False})
-    assert calls == ["clear"]
-
-    allowed["value"] = True
-    manager._on_plugins_config_changed("plugins", {"allow_ui_injection": True})
-    assert calls == ["clear", "reload"]
-
-    # 保持打开时再次收到配置变更不应重复重载插件
-    manager._on_plugins_config_changed("plugins", {"allow_ui_injection": True})
-    assert calls == ["clear", "reload"]

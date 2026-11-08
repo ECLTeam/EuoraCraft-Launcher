@@ -19,8 +19,8 @@ from typing import Literal
 from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.models import OperationGetRequest, OperationListRequest
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.services.operations import OperationAdmission, OperationManager, OperationOrigin, OperationWorker
@@ -30,9 +30,9 @@ from ECL.utils.errors import GameServiceError
 @dataclass(frozen=True, slots=True)
 class _OperationReference:
     operation_id: str
-    leases: tuple[GrantLease, ...]
+    leases: tuple[PluginLease, ...]
     project_result: Callable[[object], JsonValue] | None
-    result_lease: GrantLease | None
+    result_lease: PluginLease | None
 
 
 class RuntimeOperations:
@@ -40,7 +40,7 @@ class RuntimeOperations:
     仅保存本 run 的引用和投影契约，执行状态始终由应用任务服务维护。
     """
 
-    def __init__(self, session: PluginGrantSession, manager: OperationManager) -> None:
+    def __init__(self, session: PluginRunSession, manager: OperationManager) -> None:
         """
         绑定宿主来源，不接受 Worker 自报身份。
 
@@ -59,13 +59,13 @@ class RuntimeOperations:
         self,
         kind: str,
         worker: OperationWorker,
-        lease: GrantLease,
+        lease: PluginLease,
         *,
         project_result: Callable[[object], JsonValue] | None = None,
-        result_lease: GrantLease | None = None,
+        result_lease: PluginLease | None = None,
         cleanup: Callable[[], bool] | None = None,
         initial_effect: Literal["none", "staged"] = "none",
-        additional_leases: tuple[GrantLease, ...] = (),
+        additional_leases: tuple[PluginLease, ...] = (),
         deadline: float | None = None,
         submission_deadline: float | None = None,
     ) -> str:
@@ -83,7 +83,7 @@ class RuntimeOperations:
         :param deadline: 执行及最终提交接受的总截止
         :param submission_deadline: 仅控制新任务入队的 RPC 截止
         :return: 本次运行的随机引用
-        :raises PluginGrantError: 准入已经失效时抛出
+        :raises PluginRunError: 准入已经失效时抛出
         :raises ProtocolError: 运行已关闭或引用容量耗尽时抛出
         """
         leases = (lease, *additional_leases)
@@ -107,8 +107,6 @@ class RuntimeOperations:
         admission = OperationAdmission(
             check,
             accept,
-            lease.capability,
-            lease.resource_refs,
             cleanup,
             initial_effect,
         )
@@ -163,7 +161,7 @@ class RuntimeOperations:
                 self._session.check(item.result_lease)
                 result = _json_value(item.project_result(snapshot.result))
                 self._session.check(item.result_lease)
-            except (PluginGrantError, ProtocolError):
+            except (PluginRunError, ProtocolError):
                 result = None
         return {
             "operation_ref": reference,
@@ -226,7 +224,7 @@ class RuntimeOperations:
             raise ProtocolError("任务已接受提交", "PLUGIN_COMMIT_STARTED")
         return {"requested": requested, "state": view["state"], "effect": view["effect"]}
 
-    def refresh_permissions(self) -> None:
+    def refresh_leases(self) -> None:
         """
         只对原 lease 已失效的自身未提交任务请求取消，不为旧任务换租约。
         """
@@ -237,7 +235,7 @@ class RuntimeOperations:
         for item in items:
             try:
                 self._session.check_all(item.leases)
-            except PluginGrantError:
+            except PluginRunError:
                 with self._lock:
                     if not self._closed:
                         self._manager.cancel_owned(item.operation_id, self._origin, reason="permission_changed")

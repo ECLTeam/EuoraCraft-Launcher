@@ -25,7 +25,7 @@ from ECL.plugin_api._transport import LocalChannel, LocalServer, create_local_se
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, WireMessage
 from ECL.plugin_api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
+from ECL.plugins.run_store import PluginRunError, PluginRunSession
 
 from .executable import ExecutableLaunchSpec
 from .process_scope import PreparedProcess, ProcessReference, ProcessScope, create_process_scope
@@ -124,31 +124,27 @@ class WorkerSupervisor:
 
     def authorize_load(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         entry_file: str = "main.py",
         dependency: PluginDependencyDirectory | None = None,
         *,
         entry_class: str = "Plugin",
     ) -> None:
         """
-        只为本运行已经审阅且必要权限满足的内容发出加载许可。
+        只为本运行内容身份有效的 Worker 发出加载许可。
 
         :param session: 宿主持有的授权会话，不能由 Worker 自报
         :param entry_file: 快照内的 Python 入口
         :param dependency: 现有共享依赖池中已就绪的目录
         :param entry_class: v2 Plugin 的实际类名
-        :raises PluginGrantError: 未审阅、缺少必要许可或运行身份不匹配时抛出
+        :raises PluginRunError: 内容失效或运行身份不匹配时抛出
         """
         if session.run_id != self.run_id:
-            raise PluginGrantError("授权不属于当前插件运行", "PLUGIN_SESSION_EXPIRED")
+            raise PluginRunError("授权不属于当前插件运行", "PLUGIN_SESSION_EXPIRED")
         session.binding.verify()
         view = session.view()
         if view.error_code:
-            raise PluginGrantError("插件授权记录不可用", view.error_code)
-        if view.revision == 0:
-            raise PluginGrantError("插件内容尚未完成用户审阅", "PLUGIN_GRANT_REVIEW_REQUIRED")
-        if not view.required_satisfied:
-            raise PluginGrantError("插件缺少必要授权", "PLUGIN_REQUIRED_PERMISSION_DENIED")
+            raise PluginRunError("插件授权记录不可用", view.error_code)
         self._authorize_snapshot(session.binding.snapshot, entry_file, dependency, entry_class=entry_class)
 
     def _authorize_snapshot(

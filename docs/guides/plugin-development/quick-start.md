@@ -20,7 +20,6 @@ hello_plugin/
     "title": "Hello Plugin",
     "description": "命令、设置与面板示例",
     "entry_point": "main:Plugin",
-    "permissions": []
 }
 ```
 
@@ -55,7 +54,7 @@ class Plugin(BasePlugin):
         return {"message": f"{values['prefix']}, {name}!"}
 ```
 
-没有业务权限的插件也要确认当前内容后才能执行。`permissions: []` 不表示跳过首次启用审阅。
+启用即确认当前内容，无需审阅或授权。
 
 ## 2. 安装并查看
 
@@ -69,11 +68,11 @@ class Plugin(BasePlugin):
 
 ## 3. 开启开发模式
 
-使用 `python main.py --plugin-dev` 启动，或手动加入可选配置 `plugins.development_mode: true` 后重启。按普通流程审阅并启用插件，等待监听状态，再编辑实际安装目录的 `main.py`。保存后宿主等待文件稳定、准备副本、停止旧 Worker 并启动新版。
+使用 `python main.py --plugin-dev` 启动，或手动加入可选配置 `plugins.development_mode: true` 后重启。启用插件并等待监听状态，再编辑实际安装目录的 `main.py`。保存后宿主等待文件稳定、准备副本、停止旧 Worker 并启动新版。
 
 修改 `greet` 的文字可以观察新版效果；重载后 `prefix` 的用户值应保留。语法错误会使新版本准备失败，已有效的旧副本可继续运行；修正后再次保存恢复。
 
-添加权限、改变入口或依赖等敏感声明需要重新审阅，不能靠反复保存自动批准。退出后使用 `--no-plugin-dev` 重启可恢复普通模式，变化后的源码须重新审阅；命令行参数不会写回配置。
+改变入口或依赖等受保护声明需要停止并重新启用。退出后使用 `--no-plugin-dev` 重启可恢复普通模式；命令行参数不会写回配置。
 
 ## 4. 制作归档
 
@@ -83,4 +82,4 @@ class Plugin(BasePlugin):
 python packaging/build-eclplugin.py <hello_plugin目录> <输出目录>/hello_plugin.eclplugin
 ```
 
-输出不能位于插件源目录内。无第三方库依赖时不需要锁文件；有依赖时先阅读[依赖与打包](packaging.md)。归档安装有独立的预检、来源确认、重启及内容审阅流程。
+输出不能位于插件源目录内。无第三方库依赖时不需要锁文件；有依赖时先阅读[依赖与打包](packaging.md)。归档安装有独立的预检、来源确认与重启流程。

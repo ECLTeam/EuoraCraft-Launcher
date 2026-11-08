@@ -9,7 +9,6 @@ from uuid import uuid4
 import pytest
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.utils.config import default_config
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_game_resources import assets  # noqa: F401 - pytest fixture
@@ -24,16 +23,7 @@ def test_actual_worker_resources_pack_import_export_public_query_and_ownership(r
     worker = state.worker
     worker._public_config = lambda: default_config
     worker.register(metadata, example, "directory")
-    view = worker.permissions(metadata["name"])
-    page = worker.permission_resources(metadata["name"], view["content_digest"], None, "", None, 50, "instances.manage")
-    worker.update_permissions(
-        metadata["name"],
-        view["content_digest"],
-        view["revision"],
-        (PermissionDecision(capability="instances.manage", decision="allow", resource_refs=(state.root_id,)),),
-        PermissionManagementCaller.main_webview,
-        page["catalog_revision"],
-    )
+    worker.refresh_resources()
     worker.enable(metadata["name"])
     broker = worker.broker(metadata["name"])
 

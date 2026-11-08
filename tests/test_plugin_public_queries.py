@@ -7,8 +7,6 @@ from dataclasses import replace
 import pytest
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
-from ECL.plugins.grant_store import PluginGrantError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.public_queries import RuntimePublicQueries
 from ECL.plugins.worker_service import PluginWorkerService
@@ -31,11 +29,7 @@ def public(tmp_path):
     )
     source = tmp_path / "plugin"
     source.mkdir()
-    metadata = {
-        "name": "public-test",
-        "api_version": 2,
-        "permissions": [{"capability": "accounts.read", "required": False}],
-    }
+    metadata = {"name": "public-test", "api_version": 2}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("from ECL.plugin_api import Plugin\n", encoding="utf-8")
     service.register(metadata, source, "directory")
@@ -53,30 +47,17 @@ def public(tmp_path):
         service.close()
 
 
-def approve(service, references, revision=None):
-    view = service.permissions("public-test")
-    return service.update_permissions(
-        "public-test",
-        view["content_digest"],
-        view["revision"],
-        (PermissionDecision(capability="accounts.read", decision="allow", resource_refs=tuple(references)),),
-        PermissionManagementCaller.main_webview,
-        account_resource_revision=revision,
-    )
-
-
 def reviewed(service):
-    view = service.permissions("public-test")
-    return service.permission_resources("public-test", view["content_digest"], None, "", None, 100, "accounts.read")
+    """返回目录全部活动账户资源身份；权限决定流程已移除。"""
+    service.refresh_account_resources()
+    return {"items": [{"resource_id": ref} for ref in sorted(service._account_catalog.active_refs())]}
 
 
 def test_skin_chunks_are_bound_to_selected_account_and_revision(public):
     import base64
 
     service, _, broker = public
-    page = reviewed(service)
-    selected = page["items"][0]["resource_id"]
-    approve(service, [selected], page["catalog_revision"])
+    reviewed(service)
     reference = call(broker, "accounts.list")["items"][0]["account_ref"]
     observed = []
     broker.public_queries._skin = lambda account_id: observed.append(account_id) or b"x" * 9000
@@ -95,32 +76,22 @@ def test_skin_chunks_are_bound_to_selected_account_and_revision(public):
     assert len(observed) == 1
 
 
-def test_account_query_requires_explicit_selection_and_never_returns_persistent_identity(public):
+def test_account_query_returns_all_valid_refs_and_never_persistent_identity(public):
     service, _, broker = public
-    page = reviewed(service)
-    with pytest.raises(ProtocolError):
-        call(broker, "accounts.list")
-    selected = page["items"][0]["resource_id"]
-    approve(service, [selected], page["catalog_revision"])
+    reviewed(service)
     result = call(broker, "accounts.list")
-    assert len(result["items"]) == 1
+    assert len(result["items"]) == 2
     item = result["items"][0]
     assert set(item) == {"account_ref", "alias", "uuid", "type", "is_current"}
     assert call(broker, "accounts.get", {"account_ref": item["account_ref"]}) == item
-    encoded = json.dumps([result, call(broker, "permissions.list")])
-    assert selected not in encoded and "private-id" not in encoded and "private-account-id" not in encoded
+    encoded = json.dumps(result)
+    assert "private-id" not in encoded and "private-account-id" not in encoded
     assert call(broker, "resources.list", {"capability": "accounts.read"})["items"] == result["items"]
 
 
-def test_foreign_reference_empty_choice_and_stale_revision_are_rejected(public):
+def test_foreign_reference_is_rejected(public):
     service, _, broker = public
-    page = reviewed(service)
-    selected = page["items"][0]["resource_id"]
-    with pytest.raises(ProtocolError, match="变化"):
-        approve(service, [selected], page["catalog_revision"] + 1)
-    with pytest.raises(PluginGrantError):
-        approve(service, [], page["catalog_revision"])
-    approve(service, [selected], page["catalog_revision"])
+    reviewed(service)
     with pytest.raises(ProtocolError):
         call(broker, "accounts.get", {"account_ref": "f" * 32})
     with pytest.raises(ProtocolError):
@@ -129,21 +100,16 @@ def test_foreign_reference_empty_choice_and_stale_revision_are_rejected(public):
 
 def test_account_changes_invalidate_old_selection_and_do_not_auto_grant_new_identity(public):
     service, accounts, broker = public
-    page = reviewed(service)
-    approve(service, [item["resource_id"] for item in page["items"]], page["catalog_revision"])
+    reviewed(service)
     old = call(broker, "accounts.list")["items"]
     accounts[:] = [replace(account, alias=account.alias + " changed") for account in accounts]
     with pytest.raises(ProtocolError):
         call(broker, "accounts.get", {"account_ref": old[0]["account_ref"]})
-    fresh = reviewed(service)
-    assert all(not item["selected"] for item in fresh["items"] if item["available"])
-    assert len([item for item in fresh["items"] if not item["available"]]) == 2
 
 
 def test_current_selection_updates_without_granting_any_other_account(public):
     service, accounts, broker = public
-    page = reviewed(service)
-    approve(service, [item["resource_id"] for item in page["items"]], page["catalog_revision"])
+    reviewed(service)
     original = call(broker, "accounts.list")["items"]
     accounts[:] = [replace(account, is_current=not account.is_current) for account in accounts]
     updated = call(broker, "accounts.list")["items"]
@@ -152,11 +118,7 @@ def test_current_selection_updates_without_granting_any_other_account(public):
 
 
 def test_public_config_is_an_explicit_read_only_mapping(public):
-    service, _, broker = public
-    view = service.permissions("public-test")
-    service.update_permissions(
-        "public-test", view["content_digest"], view["revision"], (), PermissionManagementCaller.main_webview
-    )
+    _service, _, broker = public
     result = call(broker, "config.public")
     assert result == {
         "locale": "zh-CN",
@@ -173,15 +135,13 @@ def test_public_config_is_an_explicit_read_only_mapping(public):
 
 def test_corrupt_account_index_fails_closed_and_preserves_file(public):
     service, _, broker = public
-    page = reviewed(service)
-    approve(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
+    reviewed(service)
     assert call(broker, "accounts.list")["items"]
     index = service.data_path / "plugin_account_resources.json"
     index.write_text('{"credentials":"private"}', encoding="utf-8")
     with pytest.raises(ProtocolError):
         call(broker, "accounts.list")
     assert index.read_text(encoding="utf-8") == '{"credentials":"private"}'
-    assert service.permissions("public-test")["items"][0]["decision"] == "deny"
 
 
 def test_real_account_summary_omits_email_tokens_and_never_refreshes_authentication(tmp_path, monkeypatch):

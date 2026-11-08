@@ -57,8 +57,7 @@ from typing import TYPE_CHECKING, Any
 
 from ECL.plugins.auth_providers import AuthField
 from ECL.plugins.launch_hooks import LaunchContext
-from ECL.plugins.network import PluginHttpError, PluginHttpResponse, PluginNetworkPolicy, _action_for_method
-from ECL.plugins.permissions import Permission, PermissionAction, PermissionScope
+from ECL.plugins.network import PluginHttpError, PluginHttpResponse, PluginNetworkPolicy
 from ECL.utils import get_logger
 
 if TYPE_CHECKING:
@@ -206,12 +205,6 @@ class Plugin:
         self._settings: dict[str, dict[str, Any]] = {}
         # 消费装饰器注册表，绑定到实例
         self._apply_decorators()
-
-    def _check_permission(self, scope: PermissionScope, action: PermissionAction, resource: str = "*") -> None:
-        # 系统插件跳过权限校验，普通插件必须声明对应权限。
-        if self.is_system:
-            return
-        self.framework._permission_manager.check_permission(self.name, Permission(scope, action, resource))
 
     def _apply_decorators(self) -> None:
         # 将类级别的装饰器注册表绑定到当前实例。
@@ -402,7 +395,6 @@ class Plugin:
         :param title: 显示名称
         :param icon: 图标名
         """
-        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework._register_route(self, path, title, icon)
 
     def register_command(self, name: str, handler: Callable, description: str = "") -> None:
@@ -412,7 +404,6 @@ class Plugin:
         :param handler: 命令处理函数
         :param description: 命令描述
         """
-        self._check_permission(PermissionScope.COMMANDS, PermissionAction.EXECUTE, name)
         self._commands[name] = handler
 
     def register_setting(self, key: str, default: Any, description: str = "", type_: str = "string") -> None:
@@ -423,7 +414,6 @@ class Plugin:
         :param description: 设置描述
         :param type_: 设置类型 bool | string | number | select
         """
-        self._check_permission(PermissionScope.SETTINGS, PermissionAction.WRITE, key)
         self._settings[key] = {
             "key": key,
             "default": default,
@@ -438,7 +428,6 @@ class Plugin:
         :param key: 已注册的设置键
         :return: 当前设置值
         """
-        self._check_permission(PermissionScope.SETTINGS, PermissionAction.READ, key)
         definition = self._settings.get(key)
         if definition is None:
             raise KeyError(f"插件设置未声明: {key}")
@@ -463,7 +452,6 @@ class Plugin:
         :param reader: 单实例元数据读取器
         :param watch_paths: 可选的外部监听路径解析器
         """
-        self._check_permission(PermissionScope.INSTANCES, PermissionAction.READ, source)
         self.framework.instance_compatibility.register(
             owner=self.name,
             source=source,
@@ -494,7 +482,6 @@ class Plugin:
         :param post_launch: 进程创建后回调
         :param on_exit: 游戏进程退出回调
         """
-        self._check_permission(PermissionScope.LAUNCH, PermissionAction.WRITE, name)
         registry = self.framework.launch_hooks
         if registry is None:
             raise RuntimeError("当前环境未提供启动钩子能力")
@@ -521,9 +508,7 @@ class Plugin:
         """
         发起受控的 HTTP 请求。
 
-        只允许 ``http`` / ``https`` URL，并按主机名校验权限：只读方法
-        （GET/HEAD/OPTIONS）要求 ``network/read/<host>``，其余方法要求
-        ``network/write/<host>``。响应体上限 8 MiB，超出部分被截断标记。
+        只允许 ``http`` / ``https`` URL。响应体上限 8 MiB，超出部分被截断标记。
 
         :param method: HTTP 方法
         :param url: 完整请求地址
@@ -533,16 +518,13 @@ class Plugin:
         :param data: 原始请求体
         :param timeout: 请求超时秒数
         :return: 受限的响应视图
-        :raises PluginHttpError: URL 非法、权限不足、网络失败或环境未提供客户端
+        :raises PluginHttpError: URL 非法、网络失败或环境未提供客户端
         """
         from urllib.parse import urlparse
 
         parsed = urlparse(str(url))
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise PluginHttpError(f"仅支持 http/https URL: {url}")
-        host = parsed.hostname or parsed.netloc
-        action = _action_for_method(str(method))
-        self._check_permission(PermissionScope.NETWORK, PermissionAction(action), host)
 
         client = self.framework.http_client
         if client is None:
@@ -618,7 +600,6 @@ class Plugin:
         :param resolve_credentials: 启动凭据解析回调
         :param description: 可选描述
         """
-        self._check_permission(PermissionScope.ACCOUNTS, PermissionAction.WRITE, provider_id)
         registry = self.framework.auth_providers
         if registry is None:
             raise RuntimeError("当前环境未提供账户扩展能力")
@@ -647,7 +628,6 @@ class Plugin:
         :param name: 稳定的回调标识
         :param enrich: 接收崩溃报告信息和当前分析结果的回调
         """
-        self._check_permission(PermissionScope.CRASH, PermissionAction.WRITE, name)
         registry = self.framework.crash_extensions
         if registry is None:
             raise RuntimeError("当前环境未提供崩溃分析扩展能力")
@@ -659,7 +639,6 @@ class Plugin:
         :param css: CSS 样式字符串
         :param key: 更新已有样式时使用的稳定标识；不传则追加
         """
-        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework.events.emit("plugin:css_injected", self.name, css, key)
 
     def inject_html(self, slot_id: str, html: str, key: str | None = None, context_key: str | None = None) -> None:
@@ -670,7 +649,6 @@ class Plugin:
         :param key: 更新已有条目时使用的稳定标识；不传则追加
         :param context_key: 只向匹配的重复插槽添加内容；省略时添加到全部插槽
         """
-        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework.events.emit("plugin:html_injected", self.name, slot_id, html, key, context_key)
 
     def inject_script(self, script: str) -> None:
@@ -678,7 +656,6 @@ class Plugin:
         向宿主前端注入 JavaScript 脚本。
         :param script: JS 代码字符串
         """
-        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework.events.emit("plugin:script_injected", self.name, script)
 
     def inject_typescript(self, script: str) -> None:
@@ -686,7 +663,6 @@ class Plugin:
         向宿主前端注入 TypeScript 脚本（由前端经 sucrase 转译）。
         :param script: TS 代码字符串
         """
-        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework.events.emit("plugin:typescript_injected", self.name, script)
 
     def register_html_file(self, slot_id: str, file_path: str) -> None:
@@ -789,7 +765,6 @@ class Plugin:
         :param style: 组件 scoped CSS
         :param icon: 图标名
         """
-        self._check_permission(PermissionScope.UI, PermissionAction.WRITE)
         self.framework._register_vue_route(self, path, title, icon, component_name, template, script, style)
 
     def emit(self, event: str, payload: Any = None) -> None:
@@ -798,7 +773,6 @@ class Plugin:
         :param event: 事件名称，格式建议 "模块:动作"，如 "crash:detected"
         :param payload: 事件负载数据
         """
-        self._check_permission(PermissionScope.EVENTS, PermissionAction.EMIT, event)
         self.framework.events.emit(event, payload)
 
     def subscribe(self, event: str, handler: Callable) -> None:
@@ -807,7 +781,6 @@ class Plugin:
         :param event: 事件名称
         :param handler: 回调函数
         """
-        self._check_permission(PermissionScope.EVENTS, PermissionAction.SUBSCRIBE, event)
         self.framework.subscribe_event(self, event, handler)
 
     def load_file(self, relative_path: str, encoding: str = "utf-8") -> str | None:
@@ -817,7 +790,6 @@ class Plugin:
         :param encoding: 文件编码
         :return: 文件内容，读取失败返回 None
         """
-        self._check_permission(PermissionScope.FILESYSTEM, PermissionAction.READ, relative_path)
         path = self._resolve_inside_plugin_dir(self.plugin_dir, relative_path)
         if not path.is_file():
             return None
@@ -839,7 +811,6 @@ class Plugin:
         :param encoding: 文件编码
         :return: 文件内容，读取失败返回 None
         """
-        self._check_permission(PermissionScope.FILESYSTEM, PermissionAction.READ, relative_path)
         path = self._resolve_inside_plugin_dir(self.plugin_dir / "resources", relative_path)
         if not path.is_file():
             return None

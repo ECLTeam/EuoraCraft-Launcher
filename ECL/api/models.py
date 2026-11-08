@@ -153,11 +153,7 @@ from pydantic import (
     model_validator,
 )
 
-from ECL.api.plugin_models import (
-    PluginPermissionQuery,
-    PluginPermissionResources,
-    PluginPermissionUpdate,
-)
+from ECL.api.plugin_models import PluginInstallationQuery
 from ECL.game import GameDataError, WorldSeedStore
 from ECL.services.account.skin_avatar import SkinAvatarExporter
 from ECL.services.custom_downloads import CustomDownloadRequest
@@ -1141,10 +1137,7 @@ class RequestModelRegistry:
         "game_modpack_preparation_get": ModpackPreparationRequest,
         "game_modpack_preparation_release": ModpackPreparationRequest,
         "game_modpack_install": ModpackInstallRequest,
-        "plugin_permissions_get": PluginPermissionQuery,
-        "plugin_permission_resources": PluginPermissionResources,
-        "plugin_permissions_update": PluginPermissionUpdate,
-        "plugin_runtime_info": PluginPermissionQuery,
+        "plugin_runtime_info": PluginInstallationQuery,
         "search_mods": OnlineResourceSearchRequest,
         "custom_download_start": CustomDownloadRequest,
         "select_directory": DirectorySelectionRequest,

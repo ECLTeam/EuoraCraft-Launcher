@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantSession
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameLaunchRequest, GameRunningRequest, GameStopRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -45,7 +45,7 @@ class RuntimeGameLaunch:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         game: PluginGameCoordinator,
         resources: RuntimeResources,
         operations: RuntimeOperations,
@@ -91,7 +91,7 @@ class RuntimeGameLaunch:
             "exit_code": run.exit_code,
         }
 
-    def _project(self, value: object, instance_ref: str, target: GameResourceTarget, read: GrantLease) -> JsonValue:
+    def _project(self, value: object, instance_ref: str, target: GameResourceTarget, read: PluginLease) -> JsonValue:
         """
         结果交付仍需原始管理准入，任务完成不能恢复已撤销权限。
         """
@@ -112,7 +112,7 @@ class RuntimeGameLaunch:
         :raises ProtocolError: 请求、权限、全局占位或宿主不满足
         """
         query = GameLaunchRequest.model_validate(params)
-        target, launch = self._resources.game_target(query.instance_ref, "instances.manage", submission_deadline)
+        target, launch = self._resources.game_target(query.instance_ref, submission_deadline)
         if target.version_id is None:
             raise ProtocolError("启动需要具体实例", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
         deadline = monotonic() + 180
@@ -171,7 +171,7 @@ class RuntimeGameLaunch:
         :raises ProtocolError: 当前引用或读取权限失效
         """
         query = GameRunningRequest.model_validate(params)
-        target, read = self._resources.game_target(query.instance_ref, "instances.read", deadline)
+        target, read = self._resources.game_target(query.instance_ref, deadline)
         items: list[JsonValue] = [
             self._view(run, query.instance_ref, target) for run in self._game.plugin_running(self._origin, target)
         ]
@@ -192,7 +192,7 @@ class RuntimeGameLaunch:
             owned = self._references.get(query.game_run_ref)
         if owned is None:
             raise ProtocolError("游戏进程不属于当前运行", "PLUGIN_OWNER_MISMATCH")
-        target, stop = self._resources.game_target(owned.instance_ref, "instances.manage", submission_deadline)
+        target, stop = self._resources.game_target(owned.instance_ref, submission_deadline)
         if target != owned.target:
             raise ProtocolError("游戏实例身份已经变化", "PLUGIN_RESOURCE_UNAVAILABLE")
         deadline = monotonic() + 30

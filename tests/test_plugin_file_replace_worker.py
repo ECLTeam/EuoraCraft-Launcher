@@ -9,7 +9,6 @@ from time import monotonic, sleep
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -48,14 +47,6 @@ def test_actual_worker_replace_and_cancel_without_automatic_rewrite(tmp_path, is
 
     try:
         service.register(metadata, code, "directory")
-        review = service.permissions(metadata["name"])
-        service.update_permissions(
-            metadata["name"],
-            review["content_digest"],
-            review["revision"],
-            tuple(PermissionDecision(capability=item["capability"], decision="allow") for item in review["items"]),
-            PermissionManagementCaller.main_webview,
-        )
         service.enable(metadata["name"])
         broker = service.broker(metadata["name"])
         target, version = published(broker, manager)

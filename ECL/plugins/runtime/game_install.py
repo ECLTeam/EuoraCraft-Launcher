@@ -16,7 +16,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_store import PluginGrantSession
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -34,7 +34,7 @@ class RuntimeGameInstall:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         game: PluginGameCoordinator,
         resources: RuntimeResources,
         operations: RuntimeOperations,
@@ -68,7 +68,7 @@ class RuntimeGameInstall:
         if self._closed.is_set():
             raise ProtocolError("游戏安装运行已关闭", "PLUGIN_SESSION_EXPIRED")
         query = GameInstallRequest.model_validate(params)
-        target, write = self._resources.game_target(query.root_ref, "instances.manage", submission_deadline)
+        target, write = self._resources.game_target(query.root_ref, submission_deadline)
         if target.version_id is not None:
             raise ProtocolError("安装需要游戏根目录", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
         try:

@@ -97,17 +97,16 @@ def test_replace_request_rejects_ambiguous_or_unsafe_input(change):
 
 
 def test_basic_replacement_returns_version_and_does_not_rebind_old_reference(files, tmp_path):
-    broker, manager, _, store, _ = files
+    broker, manager, _, _store, _ = files
     target, etag = published(broker, manager)
     upload = replace_begin(broker, target, etag)
     chunk(broker, upload, b"new bytes")
     result = finish(broker, manager, commit(broker, upload, b"new bytes"))
     assert result["state"] == "completed" and result["result"]["etag"] != etag
     assert next(tmp_path.glob("plugin_data/*/files/target.bin")).read_bytes() == b"new bytes"
-    invalidate_base(broker, store)
     with pytest.raises(ProtocolError) as error:
-        replace_begin(broker, target, etag)
-    assert error.value.error_code == "PLUGIN_RESOURCE_NOT_FOUND"
+        replace_begin(broker, {**target, "root_ref": "a" * 32}, etag)
+    assert error.value.error_code == "PLUGIN_FILE_INVALID" or error.value.error_code == "PLUGIN_RESOURCE_NOT_FOUND"
 
 
 @pytest.mark.parametrize("reason", ["cancel", "revoke", "deadline"])

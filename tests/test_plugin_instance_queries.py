@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import pytest
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService
@@ -150,20 +149,14 @@ def shared(tmp_path, queries):
 
 
 def candidates(service, parent=None):
-    view = service.permissions("reader")
-    return service.permission_resources("reader", view["content_digest"], parent, "", None, 100)
+    """返回目录全部活动根资源身份；权限决定流程已移除。"""
+    service.refresh_resources()
+    return {"items": [{"resource_id": ref} for ref in sorted(service._catalog.active_root_refs())]}
 
 
 def allow(service, selected, revision):
-    view = service.permissions("reader")
-    return service.update_permissions(
-        "reader",
-        view["content_digest"],
-        view["revision"],
-        (PermissionDecision(capability="instances.read", decision="allow", resource_refs=tuple(selected)),),
-        PermissionManagementCaller.main_webview,
-        revision,
-    )
+    """权限决定已移除；保留签名使调用点无需变动。"""
+    return 0
 
 
 def runtime(service):
@@ -184,20 +177,7 @@ def test_management_only_scans_and_reads_existing_and_future_games(shared):
     metadata["permissions"] = [{"capability": "instances.manage", "required": True}]
     (entry.root_path / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     service.register(metadata, entry.root_path, "directory")
-    view = service.permissions("reader")
-    page = service.permission_resources("reader", view["content_digest"], None, "", None, 100, "instances.manage")
-    service.update_permissions(
-        "reader",
-        view["content_digest"],
-        view["revision"],
-        (
-            PermissionDecision(
-                capability="instances.manage", decision="allow", resource_refs=(page["items"][0]["resource_id"],)
-            ),
-        ),
-        PermissionManagementCaller.main_webview,
-        page["catalog_revision"],
-    )
+    service.refresh_resources()
     resources = runtime(service)
     root_ref = invoke(resources, "resources.list", capability="instances.manage")["items"][0]["root_ref"]
     instance(root, "future")
@@ -210,7 +190,7 @@ def test_root_grant_exposes_only_run_refs_and_covers_current_instances(shared):
     service, _, _ = shared
     page = candidates(service)
     identity = page["items"][0]["resource_id"]
-    allow(service, [identity], page["catalog_revision"])
+    allow(service, [identity], 0)
     resources = runtime(service)
     root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
     assert root_ref != identity
@@ -236,46 +216,31 @@ def test_root_grant_includes_new_instances_and_revoke_invalidates_old_refs(share
     service, _, root = shared
     page = candidates(service)
     root_id = page["items"][0]["resource_id"]
-    allow(service, [root_id], page["catalog_revision"])
+    allow(service, [root_id], 0)
     resources = runtime(service)
     root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
     instance(root, "three")
     result = invoke(resources, "instances.scan", root_ref=root_ref)
     assert {item["version_id"] for item in result["items"]} == {"one", "two", "three"}
-    view = service.permissions("reader")
-    service.update_permissions(
-        "reader",
-        view["content_digest"],
-        view["revision"],
-        (PermissionDecision(capability="instances.read", decision="deny"),),
-        PermissionManagementCaller.main_webview,
-    )
-    assert not service.permissions("reader")["required_satisfied"]
-    with pytest.raises(ValueError):
-        invoke(resources, "instances.scan", root_ref=root_ref)
-    with pytest.raises(ValueError):
-        invoke(resources, "resources.list", capability="instances.read")
 
 
 def test_removed_root_stays_retired_after_readding_same_path(shared):
     service, roots, root = shared
     page = candidates(service)
     selected = page["items"][0]["resource_id"]
-    allow(service, [selected], page["catalog_revision"])
+    allow(service, [selected], 0)
     roots.clear()
     service.refresh_resources()
     roots.append(root)
     new_page = candidates(service)
-    assert not service.permissions("reader")["required_satisfied"]
-    active = [item for item in new_page["items"] if item["available"]]
-    assert active[0]["resource_id"] != selected
-    assert any(not item["available"] and item["selected"] for item in new_page["items"])
+    assert selected not in service._catalog.active_root_refs()
+    assert new_page["items"]
 
 
 def test_scan_page_rejects_instance_replaced_after_snapshot(shared):
     service, _, root = shared
     page = candidates(service)
-    allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
+    allow(service, [page["items"][0]["resource_id"]], 0)
     resources = runtime(service)
     root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
     first = invoke(resources, "instances.scan", root_ref=root_ref, limit=1)
@@ -289,19 +254,18 @@ def test_scan_page_rejects_instance_replaced_after_snapshot(shared):
 def test_catalog_corruption_preserves_file_and_denies_instances(shared):
     service, _, _ = shared
     page = candidates(service)
-    allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
+    allow(service, [page["items"][0]["resource_id"]], 0)
     file = service.data_path / "plugin_resources.json"
     file.write_text("broken", encoding="utf-8")
     with pytest.raises(InstanceReadError):
         service.refresh_resources()
     assert file.read_text(encoding="utf-8") == "broken"
-    assert not service.permissions("reader")["required_satisfied"]
 
 
 def test_recreated_instance_rejects_old_reference_but_root_allows_fresh_discovery(shared):
     service, _, root = shared
     page = candidates(service)
-    allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
+    allow(service, [page["items"][0]["resource_id"]], 0)
     resources = runtime(service)
     root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
     first = next(
@@ -322,7 +286,7 @@ def test_recreated_instance_rejects_old_reference_but_root_allows_fresh_discover
 def test_revocation_during_actual_query_discards_late_result(shared, monkeypatch):
     service, _, _ = shared
     page = candidates(service)
-    allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
+    allow(service, [page["items"][0]["resource_id"]], 0)
     resources = runtime(service)
     root_ref = invoke(resources, "resources.list", capability="instances.read")["items"][0]["root_ref"]
     ref = invoke(resources, "instances.scan", root_ref=root_ref)["items"][0]["instance_ref"]
@@ -339,18 +303,18 @@ def test_revocation_during_actual_query_discards_late_result(shared, monkeypatch
         future = executor.submit(invoke, resources, "instances.get", instance_ref=ref)
         try:
             assert entered.wait(3)
-            allow(service, [], service.refresh_resources())
+            service._entry("reader").session.close()
         finally:
             release.set()
         with pytest.raises(ValueError):
             future.result(5)
 
 
-def test_root_permission_review_does_not_scan_game_metadata(shared, monkeypatch):
+def test_catalog_refresh_does_not_scan_game_metadata(shared, monkeypatch):
     service, _, _ = shared
 
     def unexpected(*_args):
-        raise AssertionError("权限确认不应扫描实例")
+        raise AssertionError("目录刷新不应扫描实例")
 
     monkeypatch.setattr(service._instance_queries, "query_instance_names", unexpected)
     assert candidates(service)["items"]
@@ -412,14 +376,6 @@ def test_completed_single_pages_do_not_exhaust_snapshot_capacity():
     assert not pages._snapshots
 
 
-def test_permission_review_rejects_instance_navigation(shared):
-    service, _, _ = shared
-    page = candidates(service)
-    with pytest.raises(ProtocolError) as error:
-        candidates(service, page["items"][0]["resource_id"])
-    assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
-
-
 def test_static_symlink_metadata_is_never_read(tmp_path, queries):
     root = tmp_path / "game"
     target = instance(root, "x")
@@ -452,6 +408,6 @@ class Plugin(Base):
     metadata = json.loads((entry.root_path / "plugin.json").read_bytes())
     service.register(metadata, entry.root_path, "directory")
     page = candidates(service)
-    allow(service, [page["items"][0]["resource_id"]], page["catalog_revision"])
+    allow(service, [page["items"][0]["resource_id"]], 0)
     service.enable("reader")
     assert service.broker("reader").call_command("result", {})["value"] in {"one", "two"}

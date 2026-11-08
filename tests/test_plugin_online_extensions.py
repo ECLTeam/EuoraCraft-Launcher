@@ -33,7 +33,7 @@ def send(broker, method: str, params: dict) -> dict:
     return broker.handle(RpcRequest(method, params, monotonic() + 5, uuid4().hex))
 
 
-def test_auth_registration_requires_own_capability(request) -> None:
+def test_auth_registration_requires_host_channel(request) -> None:
     broker, _payload = request.getfixturevalue("panel_setup")
     with pytest.raises(ProtocolError) as error:
         send(
@@ -47,7 +47,7 @@ def test_auth_registration_requires_own_capability(request) -> None:
                 "resolve_ref": "b" * 32,
             },
         )
-    assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
+    assert error.value.error_code == "PLUGIN_API_METHOD_NOT_FOUND"
 
 
 def test_account_payload_is_validated() -> None:
@@ -96,9 +96,7 @@ def test_auth_registration_is_scoped_to_installation(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(
         service,
         "_entry",
-        lambda _name: SimpleNamespace(
-            installation_id=installation_id, session=SimpleNamespace(authorize=lambda _: None)
-        ),
+        lambda _name: SimpleNamespace(installation_id=installation_id, session=SimpleNamespace(lease=lambda: None)),
     )
     definition = AuthProviderDefinition(
         provider_id="demo",

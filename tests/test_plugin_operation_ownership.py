@@ -11,13 +11,8 @@ import pytest
 from ECL.foundation import EventBus
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import (
-    PermissionDecision,
-    PermissionDeclaration,
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.services.operations import OperationManager, OperationOrigin
 from ECL.utils.errors import GameServiceError
@@ -28,24 +23,14 @@ def runtime(tmp_path):
     code = tmp_path / "code"
     code.mkdir()
     (code / "main.py").write_text("value = 1", encoding="utf-8")
-    capabilities = frozenset(set())
-    binding = PluginContentBinding.capture(
-        code, tuple(PermissionDeclaration(capability=item) for item in capabilities), "windows-x86_64-cp311"
-    )
-    store = PluginGrantStore(tmp_path, implemented_capabilities=capabilities)
+    binding = PluginContentBinding.capture(code, "windows-x86_64-cp311")
+    store = PluginRunStore()
     manager = OperationManager(tmp_path, EventBus(), max_workers=2)
     brokers = []
 
     def create(installation_id=None, content=None):
         session = store.open_session(installation_id or uuid4().hex, content or binding)
-        view = session.view()
-        store.update(
-            session,
-            tuple(PermissionDecision(capability=item, decision="allow") for item in capabilities),
-            expected_revision=view.revision,
-            content_digest=session.binding.content_digest,
-            caller=PermissionManagementCaller.main_webview,
-        )
+        session.view()
         broker = PluginHostBroker(session, tmp_path, lambda *args: {}, run_state=lambda: "enabled", operations=manager)
         brokers.append(broker)
         return broker
@@ -70,9 +55,9 @@ def submit(broker, worker, *, result=False):
     return broker.operations.submit(
         "host_fixture",
         worker,
-        broker.session.authorize("plugin.base"),
+        broker.session.lease(),
         project_result=(lambda value: {"value": value}) if result else None,
-        result_lease=broker.session.authorize("plugin.base") if result else None,
+        result_lease=broker.session.lease() if result else None,
     )
 
 
@@ -83,13 +68,7 @@ def finish(broker, manager, reference):
 
 
 def revoke(broker, store):
-    store.update(
-        broker.session,
-        (),
-        expected_revision=broker.session.view().revision,
-        content_digest=broker.session.binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
+    broker.session.close()
 
 
 def test_task_views_filter_results_and_do_not_expose_raw_details(runtime, tmp_path):
@@ -127,9 +106,7 @@ def test_ownership_rejects_other_sources_and_global_ids(runtime, other_kind):
         content = None
         if other_kind == "other_content":
             binding = broker.session.binding
-            content = PluginContentBinding.capture(
-                binding.snapshot.root_path, binding.declarations, "linux-x86_64-cp311"
-            )
+            content = PluginContentBinding.capture(binding.snapshot.root_path, "linux-x86_64-cp311")
         target = create(installation, content)
         other_reference = reference
     for method in ("operations.get", "operations.cancel"):
@@ -155,8 +132,8 @@ def test_control_models_reject_untrusted_identity(runtime, params):
     assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
 
 
-def test_cancel_waits_for_actual_worker_and_deduplicates_across_revoke(runtime):
-    broker, manager, store, _ = runtime
+def test_cancel_waits_for_actual_worker_and_deduplicates(runtime):
+    broker, manager, _store, _ = runtime
     entered, release = Event(), Event()
 
     def worker(context):
@@ -171,12 +148,10 @@ def test_cancel_waits_for_actual_worker_and_deduplicates_across_revoke(runtime):
         assert result["requested"] is True
         assert result["state"] == "running"
         assert not broker.wait_idle()
-        revoke(broker, store)
         assert call(broker, "operations.cancel", {"operation_ref": reference}, "same") == result
         assert call(broker, "mutations.get", {"mutation_key": "same"})["state"] == "succeeded"
     finally:
         release.set()
-    # 失权检查可能先报告明确授权失败，不能把其错误伪装成取消。
     assert finish(broker, manager, reference)["state"] in {"failed", "cancelled"}
     operation_id = broker.operations._references[reference].operation_id
     journal = json.loads((manager._data_path / "plugin" / f"{operation_id}.json").read_bytes())
@@ -378,9 +353,7 @@ def test_running_task_does_not_block_other_terminal_cleanup_and_supervision_retr
     first = submit(broker, active)
     try:
         assert started.wait(3)
-        second = broker.operations.submit(
-            "host_fixture", lambda context: None, broker.session.authorize("plugin.base"), cleanup=cleanup
-        )
+        second = broker.operations.submit("host_fixture", lambda context: None, broker.session.lease(), cleanup=cleanup)
         view = finish(broker, manager, second)
         assert view["cleanup_pending"]
         may_clean.set()
@@ -403,56 +376,21 @@ def test_running_task_does_not_block_other_terminal_cleanup_and_supervision_retr
     ],
 )
 def test_current_short_writes_recheck_at_acceptance(runtime, monkeypatch, method, params):
-    broker, _, store, _ = runtime
+    broker, _, _, _ = runtime
     call(broker, "settings.define", {"definitions": [{"key": "key", "type": "bool", "default": False}]})
     original_accept = broker.session.accept
 
     def accept(lease, register):
-        store.update(
-            broker.session,
-            (),
-            expected_revision=broker.session.view().revision,
-            content_digest=broker.session.binding.content_digest,
-            caller=PermissionManagementCaller.main_webview,
-        )
+        broker.session.close()
         return original_accept(lease, register)
 
     monkeypatch.setattr(broker.session, "accept", accept)
     with pytest.raises(ProtocolError) as error:
         call(broker, method, params)
-    assert error.value.error_code == "PLUGIN_GRANT_EXPIRED"
+    assert error.value.error_code == "PLUGIN_RUN_EXPIRED"
     assert broker._commands == {}
     assert broker._subscriptions == {}
     assert not broker.settings._file_path(broker.session.view().installation_id).exists()
-
-
-def test_grant_disk_write_does_not_hold_global_authorization_lock(runtime, monkeypatch):
-    import ECL.plugins.grant_store as module
-
-    broker, _, store, create = runtime
-    other = create()
-    entered, release = Event(), Event()
-    original_write = module.atomic_write_text
-
-    installation_id = broker.session.view().installation_id
-
-    def delayed_write(target, payload):
-        if installation_id in str(target):
-            entered.set()
-            assert release.wait(5)
-        return original_write(target, payload)
-
-    monkeypatch.setattr(module, "atomic_write_text", delayed_write)
-    with ThreadPoolExecutor(2) as callers:
-        pending = callers.submit(revoke, broker, store)
-        try:
-            assert entered.wait(3)
-            callers.submit(revoke, other, store).result(1)
-            broker.session.close()
-        finally:
-            release.set()
-        pending.result(3)
-    assert broker.session.view().error_code == "PLUGIN_SESSION_EXPIRED"
 
 
 def test_host_capacity_keeps_other_owners_tasks_tracked(runtime, monkeypatch):

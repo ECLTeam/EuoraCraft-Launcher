@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.resource_catalog import PluginResource, PluginResourceCatalog
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.models import InstanceGetRequest, InstanceScanRequest, ResourceListRequest
 from ECL.utils.instance_reading import InstanceReadBoundary, InstanceReadError
 
@@ -188,7 +188,7 @@ class RuntimeResources:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         catalog: PluginResourceCatalog,
         queries: InstanceQueries,
         refresh: Callable[[], int],
@@ -207,34 +207,35 @@ class RuntimeResources:
         self._refresh = refresh
         self._references: dict[str, _Reference] = {}
         self._pages = ResourcePages()
-        self._epoch = session.view().grant_epoch
+        self._epoch = session.view().run_epoch
         self._lock = RLock()
 
-    def _prepare(self, capability: str = "instances.read") -> tuple[GrantLease, str]:
+    def _prepare(self) -> tuple[PluginLease, str]:
         """
-        先刷新目录身份和授权代次，再取得该能力自身范围，不从读取推导写入。
+        先刷新目录身份和运行代次，再取得本运行准入。
         """
         revision = self._refresh()
         view = self._session.view()
         with self._lock:
-            if self._epoch != view.grant_epoch:
+            if self._epoch != view.run_epoch:
                 self.clear()
-                self._epoch = view.grant_epoch
-        permission = next((item for item in view.items if item.capability == capability), None)
-        if permission is None and capability == "instances.read":
-            permission = next((item for item in view.items if item.capability == "instances.manage"), None)
-        lease = self._session.authorize(capability, permission.resource_refs if permission else ())
-        return lease, f"{lease.grant_epoch}:{revision}"
+                self._epoch = view.run_epoch
+        lease = self._session.lease()
+        return lease, f"{lease.run_epoch}:{revision}"
 
-    def permission_refs(self, capability: str = "instances.read") -> list[str]:
+    def _active_root_for_path(self, root_path: str) -> PluginResource:
         """
-        将获准游戏根转换为当前运行引用，不交付持久资源标识。
+        在宿主目录中定位与目标同一路径的活动根资源，不信任运行时自报范围。
 
-        :param capability: 查看或管理游戏
-        :return: 获准根目录的运行引用
+        :param root_path: 目标的物理根目录
+        :return: 活动根资源
+        :raises PluginRunError: 目录中没有匹配的活动根时抛出
         """
-        lease, _ = self._prepare(capability)
-        return [self._reference(self._catalog.resolve(ref), ref) for ref in lease.resource_refs]
+        for ref in sorted(self._catalog.active_root_refs()):
+            resource = self._catalog.resolve(ref)
+            if resource.root_path == root_path:
+                return resource
+        raise PluginRunError("游戏目录未获准", "PLUGIN_RESOURCE_DENIED")
 
     def _reference(self, resource: PluginResource, grant_ref: str) -> str:
         target = (resource.root_path, resource.root_identity, resource.version_id, resource.identity)
@@ -253,26 +254,16 @@ class RuntimeResources:
         """
         复用物理引用，但独立解析当前读取范围，管理能力可用于查看，引用本身不扩大目录范围。
         """
-        from ECL.services.game.plugin_games import GameResourceTarget
 
         with self._lock:
             reference = self._references.get(key)
         if reference is None or (reference.resource.version_id is None) != is_root:
             raise ProtocolError("资源引用不属于当前运行或类别", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
         resource = reference.resource
-        read = self.read_game_target(
-            GameResourceTarget(
-                Path(resource.root_path),
-                resource.root_identity,
-                resource.version_id,
-                resource.identity if resource.version_id is not None else None,
-            ),
-            monotonic() + 5,
-        )
-        return _Reference(resource, read.resource_refs[0])
+        return _Reference(resource, resource.resource_id)
 
     def _check(
-        self, lease: GrantLease, resource: PluginResource | None = None, *, deadline: float | None = None
+        self, lease: PluginLease, resource: PluginResource | None = None, *, deadline: float | None = None
     ) -> None:
         self._refresh()
         self._session.check(lease)
@@ -308,8 +299,7 @@ class RuntimeResources:
             query = InstanceScanRequest.model_validate(params)
         else:
             raise ProtocolError("此实例方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
-        capability = query.capability if isinstance(query, ResourceListRequest) else "instances.read"
-        lease, generation = self._prepare(capability)
+        lease, generation = self._prepare()
         if isinstance(query, ResourceListRequest):
             signature = query.model_dump_json(exclude={"cursor"})
             result = self._pages.page(signature, generation, query.cursor, query.limit, lambda: self._list(lease))
@@ -334,19 +324,18 @@ class RuntimeResources:
         self._check(lease, reference.resource, deadline=deadline)
         return result
 
-    def game_target(self, key: str, capability: str, deadline: float) -> tuple[GameResourceTarget, GrantLease]:
+    def game_target(self, key: str, deadline: float) -> tuple[GameResourceTarget, PluginLease]:
         """
-        将当前运行引用约束到获准游戏根，并核对具体目标物理身份。
+        将当前运行引用约束到活动游戏根，并核对具体目标物理身份。
 
         :param key: 当前运行的根或实例引用
-        :param capability: 查看或管理游戏
         :param deadline: 本次准入截止
-        :return: 物理目标及原始准入
-        :raises ProtocolError: 引用、权限、目录或截止失效
+        :return: 物理目标及本运行准入
+        :raises ProtocolError: 引用、目录或截止失效
         """
         from ECL.services.game.plugin_games import GameResourceTarget
 
-        self._prepare(capability)
+        self._prepare()
         with self._lock:
             reference = self._references.get(key)
         if reference is None:
@@ -358,49 +347,29 @@ class RuntimeResources:
             resource.version_id,
             resource.identity if resource.version_id is not None else None,
         )
-        lease = self._target_lease(target, capability, deadline)
+        lease = self._target_lease(target, deadline)
         return target, lease
 
-    def _target_lease(self, target: GameResourceTarget, capability: str, deadline: float) -> GrantLease:
+    def _target_lease(self, target: GameResourceTarget, deadline: float) -> PluginLease:
         """
-        按同一根的物理身份选择当前业务准入，管理能力包含查看。
+        按同一根的物理身份取得当前运行准入。
         """
-        view = self._session.view()
-        permissions = [
-            item
-            for item in view.items
-            if item.decision == "allow"
-            and (
-                item.capability == capability
-                or (capability == "instances.read" and item.capability == "instances.manage")
-            )
-        ]
-        permissions.sort(key=lambda item: item.capability != "instances.manage")
-        for permission in permissions:
-            for key in permission.resource_refs:
-                resource = self._catalog.resolve(key)
-                if (
-                    resource.version_id is None
-                    and resource.root_path == str(target.root_path)
-                    and resource.root_identity == target.root_identity
-                ):
-                    lease = self._session.authorize(permission.capability, (key,))
-                    self.verify_game_target(target, lease, deadline)
-                    return lease
-        raise PluginGrantError("游戏目录未获准", "PLUGIN_RESOURCE_DENIED")
+        lease = self._session.lease()
+        self.verify_game_target(target, lease, deadline)
+        return lease
 
-    def read_game_target(self, target: GameResourceTarget, deadline: float) -> GrantLease:
+    def read_game_target(self, target: GameResourceTarget, deadline: float) -> PluginLease:
         """
         返回覆盖目标的原始查看或管理准入，不扩大根目录范围。
 
         :param target: 已绑定物理身份的目标
         :param deadline: 本次检查截止
         :return: 原始业务准入
-        :raises PluginGrantError: 没有覆盖目标的有效许可
+        :raises PluginRunError: 没有覆盖目标的有效许可
         """
         return self._target_lease(target, "instances.read", deadline)
 
-    def verify_game_target(self, target: GameResourceTarget, lease: GrantLease, deadline: float) -> None:
+    def verify_game_target(self, target: GameResourceTarget, lease: PluginLease, deadline: float) -> None:
         """
         执行和提交前复核原准入与同一物理对象，不为旧任务重新授予许可。
 
@@ -411,9 +380,7 @@ class RuntimeResources:
         """
         self._refresh()
         self._session.check(lease)
-        resource = self._catalog.resolve(lease.resource_refs[0])
-        if resource.version_id is not None or resource.root_path != str(target.root_path):
-            raise ProtocolError("游戏目标不匹配", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
+        self._active_root_for_path(str(target.root_path))
         reader = InstanceReadBoundary(target.root_path, deadline)
         if reader.identity != target.root_identity or (
             target.version_id is not None
@@ -422,7 +389,7 @@ class RuntimeResources:
             raise InstanceReadError("游戏资源物理身份已变化")
         reader.check()
 
-    def installed_instance(self, result: InstalledGame, read: GrantLease, deadline: float) -> dict[str, JsonValue]:
+    def installed_instance(self, result: InstalledGame, read: PluginLease, deadline: float) -> dict[str, JsonValue]:
         """
         为已安装结果复核原始管理根准入，只投影该新实例，不扫描其他实例。
 
@@ -434,9 +401,7 @@ class RuntimeResources:
         """
         self._refresh()
         self._session.check(read)
-        root = self._catalog.resolve(read.resource_refs[0])
-        if root.version_id is not None or root.root_path != str(result.root_path):
-            raise ProtocolError("安装结果不在原读取范围", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
+        root = self._active_root_for_path(str(result.root_path))
         reader = InstanceReadBoundary(result.root_path, deadline)
         if reader.identity != root.root_identity or (
             reader.directory(Path("versions") / result.version_name) != result.identity
@@ -456,7 +421,7 @@ class RuntimeResources:
         reader.check()
         return value
 
-    def profile_target(self, instance_ref: str, deadline: float) -> tuple[InstanceProfileTarget, GrantLease]:
+    def profile_target(self, instance_ref: str, deadline: float) -> tuple[InstanceProfileTarget, PluginLease]:
         """
         通过管理根准入解析具体实例，不再叠加独立读写许可。
 
@@ -467,14 +432,14 @@ class RuntimeResources:
         """
         from ECL.services.game.instance_profile_transactions import InstanceProfileTarget
 
-        target, lease = self.game_target(instance_ref, "instances.manage", deadline)
+        target, lease = self.game_target(instance_ref, deadline)
         if target.version_id is None or target.instance_identity is None:
             raise ProtocolError("资料修改需要具体实例", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
         return InstanceProfileTarget(
             target.root_path, target.version_id, target.root_identity, target.instance_identity
         ), lease
 
-    def verify_profile_read(self, target: InstanceProfileTarget, read: GrantLease, deadline: float) -> None:
+    def verify_profile_read(self, target: InstanceProfileTarget, read: PluginLease, deadline: float) -> None:
         """
         为已提交视图复核原始管理准入及物理实例，不为旧结果重新授权。
 
@@ -516,9 +481,9 @@ class RuntimeResources:
                 raise InstanceReadError("分页实例身份发生变化，请重新扫描")
         reader.check()
 
-    def _list(self, lease: GrantLease) -> tuple[dict[str, JsonValue], ...]:
+    def _list(self, lease: PluginLease) -> tuple[dict[str, JsonValue], ...]:
         items: list[dict[str, JsonValue]] = []
-        for ref in lease.resource_refs:
+        for ref in sorted(self._catalog.active_root_refs() | self._catalog.active_instance_refs()):
             resource = self._catalog.resolve(ref)
             runtime_ref = self._reference(resource, ref)
             if resource.version_id is None:

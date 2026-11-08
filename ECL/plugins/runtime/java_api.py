@@ -21,9 +21,9 @@ from uuid import uuid4
 from ECL.java.models import JavaError, JavaInstallPlan, RuntimeRecord
 from ECL.java.queries import JavaQueries
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantSession
 from ECL.plugins.java_resources import PluginJavaResourceCatalog
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import (
     JavaCatalogRequest,
     JavaInstallPlanRequest,
@@ -54,7 +54,7 @@ class RuntimeJava:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         queries: JavaQueries,
         catalog: PluginJavaResourceCatalog,
         refresh: Callable[[], int],
@@ -74,8 +74,8 @@ class RuntimeJava:
         self._catalog = catalog
         self._refresh = refresh
         self._manager = manager
-        self._plans: dict[str, tuple[JavaInstallPlan, GrantLease]] = {}
-        self._installed: dict[str, tuple[str, GrantLease]] = {}
+        self._plans: dict[str, tuple[JavaInstallPlan, PluginLease]] = {}
+        self._installed: dict[str, tuple[str, PluginLease]] = {}
         self._lock = RLock()
         self._probe_lock = Lock()
         self._catalog_lock = Lock()
@@ -86,7 +86,7 @@ class RuntimeJava:
         self._packages: dict[str, _Packages] = {}
         self._pages = ResourcePages()
 
-    def _check(self, leases: tuple[GrantLease, ...], deadline: float) -> None:
+    def _check(self, leases: tuple[PluginLease, ...], deadline: float) -> None:
         self._session.check_all(leases)
         if self._closed.is_set():
             raise ProtocolError("Java 查询所属运行已经结束", "PLUGIN_SESSION_EXPIRED")
@@ -99,7 +99,7 @@ class RuntimeJava:
         """
         with self._lock:
             if epoch < self._epoch:
-                raise ProtocolError("Java 引用所属授权代次已经失效", "PLUGIN_GRANT_EXPIRED")
+                raise ProtocolError("Java 引用所属运行代次已经失效", "PLUGIN_RUN_EXPIRED")
             if self._epoch != epoch:
                 self._refs.clear()
                 self._package_refs.clear()
@@ -109,13 +109,12 @@ class RuntimeJava:
                 self._pages.clear()
                 self._epoch = epoch
 
-    def _prepare(self, capability: str) -> tuple[GrantLease, str]:
+    def _prepare(self, capability: str) -> tuple[PluginLease, str]:
         revision = self._refresh() if capability != "java.catalog.read" else 0
         view = self._session.view()
-        self._reset_references(view.grant_epoch)
-        grant = next((item for item in view.items if item.capability == capability), None)
-        lease = self._session.authorize(capability, grant.resource_refs if grant else ())
-        return lease, f"{lease.grant_epoch}:{revision}"
+        self._reset_references(view.run_epoch)
+        lease = self._session.lease()
+        return lease, f"{lease.run_epoch}:{revision}"
 
     def _reference(self, resource_id: str, epoch: int) -> str:
         self._reset_references(epoch)
@@ -130,13 +129,13 @@ class RuntimeJava:
 
     def permission_refs(self, capability: str) -> list[str]:
         """
-        将原始持久选择转换为本 run 引用，不扩大读或校验范围。
+        将宿主目录活动选择转换为本 run 引用，不扩大读或校验范围。
 
         :param capability: java.read 或 java.use
-        :return: 当前获准资源的运行引用
+        :return: 当前活动资源的运行引用
         """
         lease, _ = self._prepare(capability)
-        result = [self._reference(key, lease.grant_epoch) for key in lease.resource_refs]
+        result = [self._reference(key, lease.run_epoch) for key in sorted(self._catalog.active_refs())]
         self._session.check(lease)
         return result
 
@@ -189,7 +188,7 @@ class RuntimeJava:
             def project(item: dict[str, JsonValue]) -> dict[str, JsonValue]:
                 resource_id = str(item["resource_id"])
                 record = self._catalog.resolve(resource_id)
-                reference = self._reference(resource_id, lease.grant_epoch)
+                reference = self._reference(resource_id, lease.run_epoch)
                 if method == "resources.list":
                     return {
                         "kind": "java_runtime",
@@ -203,7 +202,7 @@ class RuntimeJava:
                 generation,
                 query.cursor,
                 query.limit,
-                lambda: tuple({"resource_id": key} for key in lease.resource_refs),
+                lambda: tuple({"resource_id": key} for key in sorted(self._catalog.active_refs())),
                 project=project,
             )
             self._check((lease,), deadline)
@@ -232,7 +231,7 @@ class RuntimeJava:
         从本运行官方目录引用生成短期计划，不接受下载地址或目标目录。
         """
         request = JavaInstallPlanRequest.model_validate(params)
-        lease = self._session.authorize("java.install")
+        lease = self._session.lease()
         catalog, _ = self._prepare("java.catalog.read")
         self._check((lease, catalog), deadline)
         with self._lock:
@@ -263,7 +262,7 @@ class RuntimeJava:
             "package_ref": request.package_ref,
         }
 
-    def _installed_view(self, value: object, lease: GrantLease) -> JsonValue:
+    def _installed_view(self, value: object, lease: PluginLease) -> JsonValue:
         """
         只把自身已完成安装登记为可选用引用，原始安装准入仍须有效。
         """
@@ -280,7 +279,7 @@ class RuntimeJava:
         result: dict[str, JsonValue] = {}
 
         def register() -> None:
-            reference = self._reference(resource.resource_id, lease.grant_epoch)
+            reference = self._reference(resource.resource_id, lease.run_epoch)
             with self._lock:
                 self._installed[reference] = (resource.resource_id, lease)
             result.update(self._view(record, reference))
@@ -303,7 +302,7 @@ class RuntimeJava:
         from ECL.services.operations import OperationOrigin
 
         request = JavaInstallRequest.model_validate(params)
-        self._session.authorize("java.install")
+        self._session.lease()
         with self._lock:
             prepared = self._plans.get(request.plan_ref)
         if prepared is None or prepared[0].expires_at <= time():
@@ -349,15 +348,12 @@ class RuntimeJava:
             resource_id, lease = installed
             leases = (lease,)
         else:
-            read, _ = self._prepare("java.read")
+            self._prepare("java.read")
             with self._lock:
                 resource_id = self._refs.get(reference)
-            if resource_id is None or resource_id not in read.resource_refs:
+            if resource_id is None:
                 raise ProtocolError("Java 引用不属于当前获准范围", "PLUGIN_RESOURCE_DENIED")
-            leases = (
-                self._session.authorize("java.read", (resource_id,)),
-                self._session.authorize("java.use", (resource_id,)),
-            )
+            leases = (self._session.lease(),)
 
         def check() -> None:
             self._check(leases, deadline)

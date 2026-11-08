@@ -9,45 +9,20 @@ from threading import Thread
 
 import httpcore
 
-from ECL.plugins.grant_models import (
-    PermissionDecision,
-    PermissionDeclaration,
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
 
 
-def make_runtime(tmp_path, references, **kwargs):
+def make_runtime(tmp_path, references=None, **kwargs):
     code_path = tmp_path / "code"
     code_path.mkdir(parents=True)
     (code_path / "main.py").write_text("value = 1", encoding="utf-8")
-    binding = PluginContentBinding.capture(
-        code_path,
-        (PermissionDeclaration(capability="network.read", resource_refs=tuple(references)),),
-        "windows-x86_64-cp311",
-    )
-    store = PluginGrantStore(tmp_path, implemented_capabilities=frozenset({"network.read"}))
+    binding = PluginContentBinding.capture(code_path, "windows-x86_64-cp311")
+    store = PluginRunStore()
     session = store.open_session(store.new_installation_id(), binding)
-    decide(store, session, references)
     service = PluginNetworkService(**kwargs)
     return RuntimeNetwork(session, service), store
-
-
-def decide(store, session, references, *, is_allowed=True):
-    view = session.view()
-    return store.update(
-        session,
-        (
-            PermissionDecision(
-                capability="network.read", resource_refs=tuple(references), decision="allow" if is_allowed else "deny"
-            ),
-        ),
-        expected_revision=view.revision,
-        content_digest=view.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
 
 
 def trusted_ssl_context():

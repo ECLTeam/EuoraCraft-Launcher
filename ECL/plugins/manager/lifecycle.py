@@ -101,7 +101,7 @@ class PluginLifecycle(_PluginState):
                 return True, ""
             except (OSError, ValueError, PluginRuntimeError) as exc:
                 code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
-                self._status[name] = "review_required" if code == "PLUGIN_GRANT_REVIEW_REQUIRED" else "error"
+                self._status[name] = "error"
                 self._plugin_errors[name] = code
                 return False, code
         plugin = self._plugins.get(name)
@@ -337,7 +337,6 @@ class PluginLifecycle(_PluginState):
         self._status.pop(name, None)
         self._plugin_errors.pop(name, None)
         self._config_paths.pop(name, None)
-        self._permission_manager.unregister_plugin(name)
         if name in self._disabled_plugins:
             self._disabled_plugins.discard(name)
             self._save_plugin_state()
@@ -481,9 +480,6 @@ class PluginLifecycle(_PluginState):
             metadata.get("entry_point", "main:Plugin"), str
         ):
             return "插件版本或入口无效"
-        permissions = metadata.get("permissions", [])
-        if not isinstance(permissions, list) or any(not isinstance(item, dict) for item in permissions):
-            return "插件权限声明必须是对象数组"
         dependencies = metadata.get("dependencies", {})
         if not isinstance(dependencies, dict) or any(
             not isinstance(dep_name, str)
@@ -535,13 +531,13 @@ class PluginLifecycle(_PluginState):
             "metadata_path": transaction.target_path / "plugin.json",
             "is_system": False,
         }
-        self._status[name] = "review_required"
+        self._status[name] = "disabled"
         self._plugin_errors.pop(name, None)
         self._disabled_plugins.add(name)
         self._save_plugin_state()
         self._dependency_resolution = self._resolve_candidate_dependencies(list(self._candidate_map.values()))
         self.events.emit("plugin:installed", name)
-        return PluginActionResult(name, PluginAction.INSTALL, "installed", "插件已安装，请审阅权限后启用")
+        return PluginActionResult(name, PluginAction.INSTALL, "installed", "插件已安装，重启后可在插件页启用")
 
     def _are_dependencies_satisfied(self, metadata: dict[str, Any]) -> bool:
         # 检查插件元数据中的依赖是否已被当前加载的插件满足。
@@ -632,7 +628,6 @@ class PluginLifecycle(_PluginState):
                 self.logger.exception("退出时卸载插件失败: %s", name)
 
         if self._event_handlers_registered:
-            self.events.unsubscribe("config:updated", self._on_plugins_config_changed)
             self.events.unsubscribe("plugin:html_injected", self._on_html_injected)
             self.events.unsubscribe("plugin:vue_slot_registered", self._on_vue_slot_registered)
             self._event_handlers_registered = False
@@ -644,7 +639,6 @@ class PluginLifecycle(_PluginState):
         self._vue_components.clear()
         self._config_values.clear()
         self._config_paths.clear()
-        self._permission_manager.clear()
         self._disabled_plugins.clear()
         self._sidebar_collapsed = None
         self._command_executor.shutdown(wait=False)

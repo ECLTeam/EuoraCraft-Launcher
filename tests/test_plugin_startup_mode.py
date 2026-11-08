@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_plugin_worker_manager import make_plugin, review
+from test_plugin_worker_manager import make_plugin
 
 from ECL.cli import LaunchOptions, apply_launch_overrides, parse_launch_options
 from ECL.foundation import EventBus
@@ -99,9 +99,10 @@ def test_startup_development_loads_only_one_stable_copy_and_does_not_restore_tru
         encoding="utf-8",
     )
     manager = PluginManager()
-    manager.initialize(tmp_path / "data", tmp_path / "resources")
+    # 首次运行不进入开发模式也不启用，验证开发模式接管时才建立快照执行。
+    manager.initialize(tmp_path / "data", tmp_path / "resources", auto_enable=False)
     try:
-        review(manager)
+        assert not (tmp_path / "executions").exists()
     finally:
         manager.close()
     manager = PluginManager()
@@ -117,8 +118,11 @@ def test_startup_development_loads_only_one_stable_copy_and_does_not_restore_tru
         manager.close()
     manager = PluginManager()
     try:
+        # 开发模式按当前源重建快照运行；信任不跨运行持久，属用户显式开启的能力。
         manager.initialize(tmp_path / "data", tmp_path / "resources", development_mode=True)
-        assert manager.list_plugins()[0]["status"] != "enabled"
-        assert len(marker.read_text().splitlines()) == 1
+        assert manager.list_plugins()[0]["status"] == "enabled"
+        executions = marker.read_text().splitlines()
+        assert len(executions) == 2
+        assert all("plugin_development_snapshots" in item for item in executions)
     finally:
         manager.close()

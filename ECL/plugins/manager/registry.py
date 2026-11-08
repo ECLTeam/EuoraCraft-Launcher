@@ -43,7 +43,6 @@ def _plugin_entry(
     status: str,
     error: Any = None,
     *,
-    permissions: list[dict[str, Any]] | None = None,
     services: list[str] | None = None,
     settings: list[str] | None = None,
     is_system: bool = False,
@@ -84,7 +83,6 @@ def _plugin_entry(
         "error": error,
         "dependencies": dependencies,
         "contributes": contributes if isinstance(contributes, dict) else {},
-        "permissions": permissions or [],
         "services": services or [],
         "settings": settings or [],
         "is_system": is_system,
@@ -185,26 +183,23 @@ class PluginRegistry(_PluginState):
                 try:
                     self._apply_worker_details(name, entry)
                 except ValueError:
-                    entry["review_required"] = True
+                    entry["status"] = "unsupported"
             result.append(entry)
         return result
 
     def _apply_worker_details(self, name: str, entry: dict[str, Any]) -> None:
         """
-        以运行服务的实际授权和清理状态补充展示条目，消除已恢复的准入错误。
+        以运行服务的实际身份和清理状态补充展示条目。
 
         归档等待重启时保留安装状态；运行故障优先使用监管服务记录的稳定错误码。
         """
         assert self.worker_service is not None
-        permissions = self.worker_service.permissions(name)
+        identity = self.worker_service.run_identity(name)
         runtime = self.worker_service.runtime_info(name)
         entry.update(
-            installation_id=permissions["installation_id"],
-            content_digest=permissions["content_digest"],
-            review_required=permissions["revision"] == 0,
-            required_satisfied=permissions["required_satisfied"],
+            installation_id=identity["installation_id"],
+            content_digest=identity["content_digest"],
             cleanup_state=runtime["cleanup_state"],
-            requested_permissions=[item["capability"] for item in permissions["items"]],
         )
         source = next((item for item in self.worker_service.directory_sources() if item.name == name), None)
         entry["source"] = "directory" if source is not None else "package"
@@ -217,14 +212,8 @@ class PluginRegistry(_PluginState):
         if not entry["pending_restart"]:
             if runtime["run_state"] in {"enabled", "failed", "stopping", "disabled"}:
                 entry["status"] = runtime["run_state"]
-            elif permissions["revision"] == 0 and name not in self._disabled_plugins:
-                entry["status"] = "review_required"
-            elif permissions["revision"] > 0:
-                entry["status"] = "disabled" if permissions["required_satisfied"] else "permission_denied"
-        if entry["error"] == "PLUGIN_GRANT_REVIEW_REQUIRED" and permissions["revision"] > 0:
-            entry["error"] = None
-        if entry["error"] == "PLUGIN_REQUIRED_PERMISSION_DENIED" and permissions["required_satisfied"]:
-            entry["error"] = None
+            else:
+                entry["status"] = "disabled"
         if runtime["last_error"] is not None:
             entry["error"] = runtime["last_error"]["code"]
         if runtime["run_state"] == "enabled":

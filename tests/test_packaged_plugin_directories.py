@@ -15,7 +15,6 @@ from urllib.parse import urlsplit
 import httpx
 import psutil
 import pytest
-from plugin_network_ui_helpers import check_network_permission_layout
 from plugin_wheel_helpers import make_package, make_wheel
 from websockets.asyncio.client import connect
 
@@ -465,65 +464,13 @@ class Plugin(BasePlugin):
                 else:
                     entries = await _request(websocket, 20, "plugin.list")
                     identity = entries[0]["installationId"]
-                    assert entries[0]["reviewRequired"]
-                    denied = await _request(
-                        websocket,
-                        21,
-                        "frontend.invoke",
-                        {"command": "plugin_permissions_get", "payload": {"installation_id": identity}},
-                    )
-                    assert denied["result"]["errorCode"] == "PLUGIN_MANAGEMENT_CALLER_DENIED"
                     await _native_invoke(native, 100, "frontend_ready", {})
-                    view = await _native_invoke(native, 1, "plugin_permissions_get", {"installation_id": identity})
-                    assert view["success"], view
-                    await check_network_permission_layout(native, process)
-                    view = view["data"]
                     game = await _native_invoke(native, 101, "settings_get", {"section": "game"})
                     game_config = {**game["data"], "minecraft_paths": [{"name": "Test", "path": str(game_path)}]}
                     configured = await _native_invoke(
                         native, 102, "settings_set", {"section": "game", "data": game_config}
                     )
                     assert configured["success"], configured
-                    candidate_query = {
-                        "installation_id": identity,
-                        "content_digest": view["content_digest"],
-                        "capability": "instances.read",
-                    }
-                    roots = await _native_invoke(native, 103, "plugin_permission_resources", candidate_query)
-                    assert roots["success"], roots
-                    children = await _native_invoke(
-                        native,
-                        104,
-                        "plugin_permission_resources",
-                        {
-                            **candidate_query,
-                            "parent_ref": roots["data"]["items"][0]["resource_id"],
-                        },
-                    )
-                    assert not children["success"] and children["errorCode"] == "PLUGIN_SCHEMA_INVALID", children
-                    selected = roots["data"]["items"][0]["resource_id"]
-                    result = await _native_invoke(
-                        native,
-                        2,
-                        "plugin_permissions_update",
-                        {
-                            "installation_id": identity,
-                            "content_digest": view["content_digest"],
-                            "expected_revision": view["revision"],
-                            "decisions": [
-                                {
-                                    "capability": item["capability"],
-                                    "decision": "allow",
-                                    "resource_refs": [selected]
-                                    if item["capability"] in {"instances.read", "instances.manage"}
-                                    else item["requested_resource_refs"],
-                                }
-                                for item in view["items"]
-                            ],
-                            "resource_revision": roots["data"]["catalog_revision"],
-                        },
-                    )
-                    assert result["success"] and result["data"]["persisted"], result
                     result = await _native_invoke(native, 3, "plugin_enable", {"plugin_name": "demo"})
                     assert result["success"], result
                     result = await _native_invoke(native, 4, "plugin_call_command", {"command": "demo:probe"})
@@ -572,24 +519,6 @@ class Plugin(BasePlugin):
                     settings = await _native_invoke(native, 109, "plugin_get_settings", {"plugin_name": "demo"})
                     assert settings["success"] and settings["data"]["values"]["label"] == "saved", settings
                     await _check_user_task_cancel(native, data_path)
-                    reviewed = await _native_invoke(
-                        native, 105, "plugin_permissions_get", {"installation_id": identity}
-                    )
-                    revoked = await _native_invoke(
-                        native,
-                        106,
-                        "plugin_permissions_update",
-                        {
-                            "installation_id": identity,
-                            "content_digest": reviewed["data"]["content_digest"],
-                            "expected_revision": reviewed["data"]["revision"],
-                            "decisions": [
-                                {"capability": item["capability"], "decision": "deny", "resource_refs": []}
-                                for item in reviewed["data"]["items"]
-                            ],
-                        },
-                    )
-                    assert revoked["success"] and not revoked["data"]["required_satisfied"], revoked
                     await _wait_cleanup(native, identity)
                     result = await _native_invoke(native, 5, "plugin_disable", {"plugin_name": "demo"})
                     assert result["success"], result

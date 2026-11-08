@@ -9,7 +9,6 @@ from time import monotonic, sleep
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -49,14 +48,6 @@ def test_real_worker_delete_version_cancel_and_no_automatic_cleanup(tmp_path, is
 
     try:
         service.register(metadata, code_path, "directory")
-        view = service.permissions(metadata["name"])
-        service.update_permissions(
-            metadata["name"],
-            view["content_digest"],
-            view["revision"],
-            tuple(PermissionDecision(capability=item["capability"], decision="allow") for item in view["items"]),
-            PermissionManagementCaller.main_webview,
-        )
         service.enable(metadata["name"])
         broker = service.broker(metadata["name"])
         target, etag = published(broker, manager)

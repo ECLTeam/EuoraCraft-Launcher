@@ -12,7 +12,6 @@ from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
 from ECL.java.queries import JavaQueries
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.java_api import RuntimeJava
@@ -48,28 +47,8 @@ def selected_java(request):
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("value=1", encoding="utf-8")
     worker.register(metadata, source, "directory")
-    view = worker.permissions(metadata["name"])
-    games = worker.permission_resources(
-        metadata["name"], view["content_digest"], None, "", None, 50, "instances.manage"
-    )
-    runtimes = worker.permission_resources(metadata["name"], view["content_digest"], None, "", None, 50, "java.read")
-    java_id = runtimes["items"][0]["resource_id"]
-    worker.update_permissions(
-        metadata["name"],
-        view["content_digest"],
-        view["revision"],
-        tuple(
-            PermissionDecision(
-                capability=name,
-                decision="allow",
-                resource_refs=(state.root_id if name == "instances.manage" else java_id,),
-            )
-            for name in ("instances.manage", "java.read", "java.use")
-        ),
-        PermissionManagementCaller.main_webview,
-        games["catalog_revision"],
-        runtimes["catalog_revision"],
-    )
+    worker.refresh_resources()
+    worker.refresh_java_resources()
     session = worker._entry(metadata["name"]).session
     broker = PluginHostBroker(
         session,

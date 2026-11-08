@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import ClassVar, Literal, Self
+from typing import ClassVar, Literal
 from uuid import uuid4
 
 from pydantic import (
@@ -26,12 +26,10 @@ from pydantic import (
     StrictInt,
     ValidationError,
     field_validator,
-    model_validator,
 )
 
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.environment_pool import _exclusive_lock
-from ECL.plugins.grant_models import PermissionDeclaration, expanded_capabilities
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.utils import atomic_write_text
 
@@ -46,7 +44,7 @@ class PluginInstallationError(ValueError):
 
 class WorkerManifest(BaseModel):
     """
-    校验入口和权限声明，其他展示字段由既有元数据界面消费，不赋予执行能力。
+    校验插件清单入口，其他展示字段由既有元数据界面消费。
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -56,36 +54,11 @@ class WorkerManifest(BaseModel):
     version: str = Field(default="0.0.0", max_length=64)
     python_dependencies: list[str] = Field(default_factory=list, alias="pythonDependencies", max_length=128)
     dependencies: dict[str, str | dict[str, str | bool]] = Field(default_factory=dict, max_length=128)
-    permissions: tuple[PermissionDeclaration, ...] = Field(default=(), max_length=128)
     custom_ui: CustomUiDeclaration | None = None
     supports_hot_reload: StrictBool = True
     reserved_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
     )
-
-    @model_validator(mode="after")
-    def expand_permissions(self) -> Self:
-        """
-        把 game、java 两项合并权限展开为内部细项。
-
-        清单只写一项时用户审阅面与插件作者面都更短；展开保持声明顺序并去重，
-        细项名称继续有效，需要精确范围时可直接声明。
-
-        :return: 展开后的清单
-        """
-        if self.custom_ui is not None and not any(item.capability == "ui.custom.execute" for item in self.permissions):
-            raise ValueError("独立前端必须声明独立执行许可")
-        expanded: list[PermissionDeclaration] = []
-        seen: set[tuple[str, tuple[str, ...]]] = set()
-        for declaration in self.permissions:
-            for capability in expanded_capabilities.get(declaration.capability, (declaration.capability,)):
-                item = declaration.model_copy(update={"capability": capability})
-                key = (capability, tuple(item.resource_refs))
-                if key in seen:
-                    continue
-                seen.add(key)
-                expanded.append(item)
-        return self.model_copy(update={"permissions": tuple(expanded)})
 
     @field_validator("name")
     @classmethod

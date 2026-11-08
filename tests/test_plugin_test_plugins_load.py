@@ -5,7 +5,6 @@ from time import monotonic, sleep
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugins import PluginManager
-from ECL.plugins.grant_models import PermissionManagementCaller
 
 
 def test_tracked_worker_example_is_discoverable_but_never_auto_executes(tmp_path: Path) -> None:
@@ -17,7 +16,7 @@ def test_tracked_worker_example_is_discoverable_but_never_auto_executes(tmp_path
         assert result.success
         entry = framework.list_plugins()[0]
         assert entry["name"] == "worker_echo"
-        assert entry["review_required"] is True
+        assert entry["status"] == "disabled"
         assert framework.get_plugin("worker_echo") is None
         assert framework.worker_service.runtime_info("worker_echo")["pid"] is None
     finally:
@@ -31,15 +30,6 @@ def test_tracked_panel_example_enables_and_runs_its_declared_action(tmp_path: Pa
         source = Path(__file__).resolve().parents[1] / "examples/plugins/worker_panel"
         assert framework.install(str(source)).success
         service = framework.worker_service
-        view = service.permissions("worker_panel")
-        assert view["items"] == []
-        service.update_permissions(
-            "worker_panel",
-            view["content_digest"],
-            view["revision"],
-            (),
-            PermissionManagementCaller.main_webview,
-        )
         assert framework.enable("worker_panel").success
         broker = service.broker("worker_panel")
         panel = broker.panels_view()[0]

@@ -129,7 +129,7 @@ def test_imported_custom_instance_preserves_minecraft_version_in_exported_pack(p
 
 def test_export_preview_is_stable_when_polled_and_exports_only_to_private_file(packs):
     state, broker, source = packs
-    target, _ = broker._resources.game_target(state.ref, "instances.read", monotonic() + 5)
+    target, _ = broker._resources.game_target(state.ref, monotonic() + 5)
     data = state.game.plugin_resource_path(target, "mods").parent
     (data / "config").mkdir(exist_ok=True)
     (data / "config" / "example.json").write_text("{}", encoding="utf-8")
@@ -243,7 +243,7 @@ def test_pack_manifest_download_cannot_bypass_plugin_network_authorization(packs
         ),
     )
     assert result["state"] == "failed", result
-    assert result["error_code"] == "PLUGIN_PERMISSION_DENIED", result
+    assert result["error_code"] == "PLUGIN_NETWORK_TARGET_DENIED", result
     assert not (state.root / "versions" / "unapproved-pack").exists()
 
 

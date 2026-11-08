@@ -26,9 +26,8 @@ import httpcore
 from pydantic import Field, field_validator
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantSession
-from ECL.plugins.network_targets import NetworkOrigin
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, NetworkRequest, RequestModel
 from ECL.plugins.runtime.resources import ResourcePages
@@ -86,14 +85,14 @@ class _ExportFiles(RequestModel):
 @dataclass(frozen=True, slots=True)
 class _Prepared:
     preparation_id: str
-    lease: GrantLease
+    lease: PluginLease
 
 
 @dataclass(frozen=True, slots=True)
 class _ExportPreview:
     instance_ref: str
     revision: str
-    lease: GrantLease
+    lease: PluginLease
     files: tuple[dict[str, JsonValue], ...]
 
 
@@ -104,7 +103,7 @@ class RuntimeModpacks:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         game: GameService,
         resources: RuntimeResources,
         files: RuntimeFiles,
@@ -139,7 +138,7 @@ class RuntimeModpacks:
         self._session.check(record.lease)
         return record
 
-    def _record_prepared(self, value: object, lease: GrantLease) -> JsonValue:
+    def _record_prepared(self, value: object, lease: PluginLease) -> JsonValue:
         if not isinstance(value, dict) or not isinstance(value.get("preparationId"), str):
             raise ProtocolError("整合包准备结果无效", "PLUGIN_SCHEMA_INVALID")
         self._session.check(lease)
@@ -157,7 +156,7 @@ class RuntimeModpacks:
         return {"preparation_ref": reference}
 
     def _prepare(self, request: _Prepare, deadline: float) -> dict[str, JsonValue]:
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         task_deadline = monotonic() + 120
 
         def worker(context: OperationContext) -> object:
@@ -200,7 +199,7 @@ class RuntimeModpacks:
             raise ProtocolError("整合包文件预览无效", "PLUGIN_SCHEMA_INVALID")
         page = self._pages.page(
             "pack:" + request.preparation_ref + str(request.limit),
-            str(record.lease.grant_epoch),
+            str(record.lease.run_epoch),
             request.cursor,
             request.limit,
             lambda: tuple(files),
@@ -222,14 +221,14 @@ class RuntimeModpacks:
         entry: PackFileEntry,
         output: Path,
         context: OperationContext,
-        leases: tuple[GrantLease, ...],
+        leases: tuple[PluginLease, ...],
         deadline: float,
     ) -> None:
         """
         清单 URL 必须逐跳通过站点、DNS 和连接检查，不进入普通共享下载器。
         """
-        origin, url = NetworkOrigin.from_url(str(entry.url))
-        lease = self._session.authorize("network.read", (origin.reference,))
+        url = str(entry.url)
+        lease = self._session.lease()
         maximum = 128 * 1024 * 1024
         if entry.size is not None and entry.size > maximum:
             raise ProtocolError("整合包单个下载文件超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
@@ -271,7 +270,7 @@ class RuntimeModpacks:
 
     def _install(self, request: _Install, deadline: float) -> dict[str, JsonValue]:
         prepared = self._prepared_record(request.preparation_ref)
-        target, lease = self._resources.game_target(request.root_ref, "instances.manage", deadline)
+        target, lease = self._resources.game_target(request.root_ref, deadline)
         if target.version_id is not None:
             raise ProtocolError("整合包安装需要游戏根目录", "PLUGIN_RESOURCE_OUT_OF_SCOPE")
         name = request.version_name
@@ -311,7 +310,7 @@ class RuntimeModpacks:
         return {"operation_ref": reference, "state": "queued"}
 
     def _export_preview(self, request: InstanceGetRequest, deadline: float) -> dict[str, JsonValue]:
-        target, lease = self._resources.game_target(request.instance_ref, "instances.read", deadline)
+        target, lease = self._resources.game_target(request.instance_ref, deadline)
 
         def project(value: object) -> JsonValue:
             result = _json_value(value)
@@ -364,7 +363,7 @@ class RuntimeModpacks:
         self._session.check(preview.lease)
         return self._pages.page(
             "export:" + request.preview_ref + str(request.limit),
-            str(preview.lease.grant_epoch),
+            str(preview.lease.run_epoch),
             request.cursor,
             request.limit,
             lambda: preview.files,
@@ -376,8 +375,8 @@ class RuntimeModpacks:
         if preview is None:
             raise ProtocolError("导出预览不属于当前运行", "PLUGIN_RESOURCE_NOT_FOUND")
         self._session.check(preview.lease)
-        target, read = self._resources.game_target(preview.instance_ref, "instances.read", deadline)
-        write = self._session.authorize("plugin.base")
+        target, read = self._resources.game_target(preview.instance_ref, deadline)
+        write = self._session.lease()
         if not request.destination.relative_path.endswith(".mrpack"):
             raise ProtocolError("整合包输出必须为 mrpack", "PLUGIN_SCHEMA_INVALID")
         task_deadline = monotonic() + 300

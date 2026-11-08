@@ -16,7 +16,7 @@ from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 
 @pytest.mark.skipif(sys.platform != "win32", reason="正式 Worker 仅支持 Windows x64")
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
-def test_actual_java_worker_query_validate_catalog_and_revoke(tmp_path, monkeypatch, is_frozen):
+def test_actual_java_worker_query_validate_catalog_and_restart(tmp_path, monkeypatch, is_frozen):
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     if is_frozen and not artifact:
         pytest.skip("需要实际冻结发行物")
@@ -57,8 +57,9 @@ def test_actual_java_worker_query_validate_catalog_and_revoke(tmp_path, monkeypa
         service.enable("java-test")
         broker = service.broker("java-test")
         value = json.loads(broker.call_command("inventory", {}, 30)["json"])
+        # 资源范围授权已移除；目录中的全部活动 Java 运行时对插件可见。
+        assert len(value["items"]) == 2
         reference = value["items"][0]["runtime_ref"]
-        assert len(value["items"]) == 1
         assert records[0].runtime_id not in json.dumps(value)
         if real_java:
             checked = json.loads(broker.call_command("validate", {"runtime_ref": reference}, 30)["json"])

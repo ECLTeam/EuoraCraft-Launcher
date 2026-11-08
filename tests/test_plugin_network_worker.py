@@ -11,8 +11,7 @@ import pytest
 from plugin_network_helpers import MappedDialer, server, trusted_ssl_context
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
-from ECL.plugins.grant_store import PluginGrantError
+from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.plugins.worker_service import PluginWorkerService
@@ -45,13 +44,11 @@ def test_real_worker_network_tls_get_head_limits_revoke_and_restart(tmp_path, is
         else:
             yield b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
 
-    with server(respond, is_tls=True) as (port, requests, sni):
+    with server(respond, is_tls=True) as (port, _requests, sni):
         example_path = Path(__file__).resolve().parents[1] / "examples/plugins/worker_network_read"
         code_path = tmp_path / "code"
         code_path.mkdir()
         metadata = json.loads((example_path / "plugin.json").read_bytes())
-        references = [f"https:p10.example.test:{port}"]
-        metadata["permissions"][-1]["resource_refs"] = references
         code = (
             (example_path / "main.py").read_text(encoding="utf-8")
             + """
@@ -81,31 +78,8 @@ class Plugin(BasePlugin):
             resolver=lambda *_: ("1.1.1.1",), dialer=MappedDialer(), ssl_context=trusted_ssl_context()
         )
 
-        def review(is_allowed):
-            view = service.permissions(metadata["name"])
-            return service.update_permissions(
-                metadata["name"],
-                view["content_digest"],
-                view["revision"],
-                tuple(
-                    PermissionDecision(
-                        capability=item["capability"],
-                        decision="deny" if item["capability"] == "network.read" and not is_allowed else "allow",
-                        resource_refs=tuple(item["requested_resource_refs"])
-                        if item["capability"] == "network.read" and is_allowed
-                        else (),
-                    )
-                    for item in view["items"]
-                ),
-                PermissionManagementCaller.main_webview,
-            )
-
         try:
             service.register(metadata, code_path, "directory")
-            denied_view = service.permissions(metadata["name"])
-            network = next(item for item in denied_view["items"] if item["capability"] == "network.read")
-            assert network["requested_resource_refs"] == references and network["resource_refs"] == []
-            review(False)
             service.enable(metadata["name"])
             broker = service.broker(metadata["name"])
 
@@ -114,9 +88,6 @@ class Plugin(BasePlugin):
                     "read", {"url": f"https://p10.example.test:{port}{target}", "method": method}, timeout=10
                 )
 
-            assert command()["error_code"] == "PLUGIN_PERMISSION_DENIED"
-            assert not requests
-            review(True)
             assert command() == {"status_code": 200, "body_bytes": 5, "error_code": ""}
             assert command(method="HEAD") == {"status_code": 200, "body_bytes": 0, "error_code": ""}
             prefix = f"https://p10.example.test:{port}/max?pad="
@@ -125,17 +96,17 @@ class Plugin(BasePlugin):
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(command, "/slow")
                 assert entered.wait(2)
-                review(False)
-                with pytest.raises((ProtocolError, PluginGrantError)):
+                service._entry(metadata["name"]).session.close()
+                with pytest.raises((ProtocolError, PluginRunError)):
                     future.result(3)
-            assert command()["error_code"] == "PLUGIN_PERMISSION_DENIED"
-            assert not broker.is_closed
+            with pytest.raises((ProtocolError, PluginRunError)) as error:
+                command()
+            assert error.value.error_code in {"PLUGIN_RUN_EXPIRED", "PLUGIN_SESSION_EXPIRED"}
             release.set()
             service.stop(metadata["name"])
             assert broker.wait_idle(1)
             service.enable(metadata["name"])
             broker = service.broker(metadata["name"])
-            review(True)
             assert command()["body_bytes"] == 5
             assert sni and set(sni) == {"p10.example.test"}
         finally:

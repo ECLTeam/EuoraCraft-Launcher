@@ -25,7 +25,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ECL.plugins.grant_models import GrantLease
+from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.models import FileRef
 from ECL.utils import get_logger
 from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity
@@ -59,7 +59,7 @@ class StagedFile:
     """
 
     target: FileRef
-    lease: GrantLease
+    lease: PluginLease
     directory: FileDirectory
     reserved_bytes: int
     expected_bytes: int | None
@@ -82,7 +82,7 @@ class FileDeletion:
     """
 
     target: FileRef
-    lease: GrantLease
+    lease: PluginLease
     directory: FileDirectory
     root_identity: FileIdentity
     deletion_ref: str = field(default_factory=lambda: uuid4().hex)

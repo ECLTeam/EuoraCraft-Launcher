@@ -12,7 +12,6 @@ import pytest
 from ECL.foundation import EventBus
 from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -59,14 +58,6 @@ def worker(tmp_path, request):
     manager = OperationManager(tmp_path, EventBus())
     service = PluginWorkerService(tmp_path, executable, operations=manager)
     service.register(metadata, root, "directory")
-    view = service.permissions("task_control")
-    service.update_permissions(
-        "task_control",
-        view["content_digest"],
-        view["revision"],
-        tuple(PermissionDecision(capability=item["capability"], decision="allow") for item in view["items"]),
-        PermissionManagementCaller.main_webview,
-    )
     service.enable("task_control")
     yield service, manager
     service.close()
@@ -90,7 +81,7 @@ def test_real_worker_queries_and_cancels_only_owned_task(worker):
         assert release.wait(8)
         context.check_cancelled()
 
-    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.authorize("plugin.base"))
+    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.lease())
     operation_id = adapter._references[reference].operation_id
     try:
         assert entered.wait(3)
@@ -123,19 +114,11 @@ def test_real_worker_stop_waits_for_host_commit_and_rejects_early_enable(worker)
 
         return context.finalize(commit)
 
-    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.authorize("plugin.base"))
+    reference = adapter.submit("host_fixture", work, service._entry("task_control").session.lease())
     operation_id = adapter._references[reference].operation_id
     try:
         assert entered.wait(3)
         assert control(service, "cancel", reference)["state"] == "PLUGIN_COMMIT_STARTED"
-        view = service.permissions("task_control")
-        service.update_permissions(
-            "task_control",
-            view["content_digest"],
-            view["revision"],
-            (),
-            PermissionManagementCaller.main_webview,
-        )
         assert control(service, "get", reference)["state"] == "committing"
         with pytest.raises(PluginRuntimeError) as error:
             service.stop("task_control")

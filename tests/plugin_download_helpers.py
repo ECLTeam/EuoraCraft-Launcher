@@ -9,13 +9,8 @@ from plugin_network_helpers import MappedDialer, trusted_ssl_context
 
 from ECL.foundation import EventBus
 from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugins.grant_models import (
-    PermissionDecision,
-    PermissionDeclaration,
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.network_api import PluginNetworkService
@@ -44,51 +39,21 @@ def finish(broker, manager, receipt):
     return call(broker, "operations.get", {"operation_ref": reference})
 
 
-def decide(broker, store, capability, decision="deny"):
-    return store.update(
-        broker.session,
-        (PermissionDecision(capability=capability, decision=decision),) if capability != "plugin.base" else (),
-        expected_revision=broker.session.view().revision,
-        content_digest=broker.session.binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
-
-
 @pytest.fixture
 def downloads(tmp_path):
     if sys.platform != "win32":
         pytest.skip("真实 Windows NTFS 下载事务")
     manager = OperationManager(tmp_path, EventBus(), max_workers=1)
     storage = PluginFileStorage(tmp_path)
-    capabilities = frozenset({"network.read"})
-    store = PluginGrantStore(tmp_path, implemented_capabilities=capabilities)
+    store = PluginRunStore()
     brokers, services = [], []
 
-    def create(references, *, allowed=None, resolver=None, dialer=None):
+    def create(references=None, *, allowed=None, resolver=None, dialer=None):
         code = tmp_path / f"code-{len(brokers)}"
         code.mkdir()
         (code / "main.py").write_text("value = 1", encoding="utf-8")
-        binding = PluginContentBinding.capture(
-            code,
-            tuple(
-                PermissionDeclaration(capability=c, resource_refs=tuple(references) if c == "network.read" else ())
-                for c in sorted(capabilities)
-            ),
-            "windows-x86_64-cp311",
-        )
+        binding = PluginContentBinding.capture(code, "windows-x86_64-cp311")
         session = store.open_session(uuid4().hex, binding)
-        store.update(
-            session,
-            tuple(
-                PermissionDecision(
-                    capability=c, decision="allow", resource_refs=tuple(references) if c == "network.read" else ()
-                )
-                for c in (capabilities if allowed is None else allowed)
-            ),
-            expected_revision=session.view().revision,
-            content_digest=binding.content_digest,
-            caller=PermissionManagementCaller.main_webview,
-        )
         service = PluginNetworkService(
             resolver=resolver or (lambda *_: ("1.1.1.1",)),
             dialer=dialer or MappedDialer(),

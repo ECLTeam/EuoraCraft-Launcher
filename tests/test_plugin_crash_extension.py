@@ -54,8 +54,8 @@ def test_sanitize_rejects_non_dict(payload: object) -> None:
     assert sanitize_extension_result(payload) == {}
 
 
-def test_crash_registration_requires_game_grant(request) -> None:
+def test_crash_registration_requires_host_channel(request) -> None:
     broker, _payload = request.getfixturevalue("panel_setup")
     with pytest.raises(ProtocolError) as error:
         broker.handle(RpcRequest("crash.register", {"callback_ref": "a" * 32}, monotonic() + 5, uuid4().hex))
-    assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
+    assert error.value.error_code == "PLUGIN_API_METHOD_NOT_FOUND"

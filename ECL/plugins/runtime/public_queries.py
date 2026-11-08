@@ -23,7 +23,7 @@ from pydantic import Field, StrictInt, ValidationError
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
-from ECL.plugins.grant_store import PluginGrantSession
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import RequestModel, ResourceListRequest
 from ECL.plugins.runtime.resources import ResourcePages
 
@@ -61,7 +61,7 @@ class RuntimePublicQueries:
 
     def __init__(
         self,
-        session: PluginGrantSession,
+        session: PluginRunSession,
         catalog: PluginAccountResourceCatalog | None,
         refresh: Callable[[], int],
         config: Callable[[], JsonValue] | None,
@@ -86,27 +86,29 @@ class RuntimePublicQueries:
         self._refs: dict[str, str] = {}
         self._pages = ResourcePages()
 
-    def permission_refs(self) -> list[str]:
+    def account_refs(self) -> list[str]:
         """
-        将当前选择转为本运行引用，不暴露宿主持久身份。
+        为当前全部有效账户生成本运行引用，不暴露宿主持久身份。
 
-        :return: 当前允许访问的账户引用
+        :return: 当前有效账户的运行引用
         """
         self._refresh()
-        lease = self._session.authorize("accounts.read", self._session.selected_resources("accounts.read"))
+        lease = self._session.lease()
         with self._lock:
-            if lease.grant_epoch != self._epoch:
+            if lease.run_epoch != self._epoch:
                 self._refs.clear()
                 self._skins.clear()
-                self._epoch = lease.grant_epoch
-            for resource_id in lease.resource_refs:
+                self._epoch = lease.run_epoch
+            for resource_id, account in self._catalog.candidates():
+                if account is None:
+                    continue
                 if resource_id not in self._refs.values():
                     self._refs[uuid4().hex] = resource_id
-            return [ref for ref, resource_id in self._refs.items() if resource_id in lease.resource_refs]
+            return list(self._refs)
 
     def _configuration(self, params: dict[str, JsonValue], deadline: float) -> dict[str, JsonValue]:
         RequestModel.model_validate(params)
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         if self._config is None:
             raise ProtocolError("当前宿主未提供公开配置", "PLUGIN_API_METHOD_NOT_FOUND")
         config = self._config()
@@ -163,14 +165,14 @@ class RuntimePublicQueries:
             if isinstance(query, ResourceListRequest) and query.capability != "accounts.read":
                 raise ProtocolError("账户资源能力无效", "PLUGIN_SCHEMA_INVALID")
             requested = None
-        references = self.permission_refs()
-        lease = self._session.authorize("accounts.read", self._session.selected_resources("accounts.read"))
+        references = self.account_refs()
+        lease = self._session.lease()
 
         def project(item: dict[str, JsonValue]) -> dict[str, JsonValue]:
             reference = str(item["account_ref"])
             with self._lock:
                 resource_id = self._refs.get(reference)
-            if resource_id is None or resource_id not in lease.resource_refs:
+            if resource_id is None:
                 raise ProtocolError("账户引用不属于当前运行", "PLUGIN_RESOURCE_UNAVAILABLE")
             account = self._catalog.resolve(resource_id)
             return {
@@ -189,7 +191,7 @@ class RuntimePublicQueries:
             assert query is not None
             result = self._pages.page(
                 f"{method}:{query.limit}",
-                str(lease.grant_epoch),
+                str(lease.run_epoch),
                 query.cursor,
                 query.limit,
                 lambda: tuple({"account_ref": ref} for ref in references),

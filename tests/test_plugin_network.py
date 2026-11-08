@@ -6,11 +6,8 @@
 # 文件作用：针对 plugin_network 模块的自动化测试。
 #
 # 公开接口：
-#   - test_plugin_can_make_controlled_http_get_with_host_permission(tmp_path) -> None
-#   - test_plugin_http_requires_matching_host_permission(tmp_path) -> None
-#   - test_plugin_http_write_method_requires_write_permission(tmp_path) -> None
+#   - test_plugin_can_make_controlled_http_get(tmp_path) -> None
 #   - test_plugin_http_rejects_non_http_scheme(tmp_path) -> None
-#   - test_plugin_without_network_permission_cannot_call_http(tmp_path) -> None
 #   - test_plugin_http_truncates_oversized_body(tmp_path) -> None
 # ============================================================
 
@@ -44,23 +41,12 @@ class _FakeHttpClient:
         return self.response
 
 
-def _build_framework(tmp_path, permission: str | None, client) -> PluginManager:
+def _build_framework(tmp_path, client) -> PluginManager:
     data_path = tmp_path / "data"
     plugin_dir = data_path / "plugins" / "net-demo"
     plugin_dir.mkdir(parents=True)
-    permissions = (
-        [{"scope": "network", "action": permission.split(":")[0], "resource": permission.split(":", 1)[1]}]
-        if permission
-        else []
-    )
     (plugin_dir / "plugin.json").write_text(
-        json.dumps(
-            {
-                "name": "net-demo",
-                "entry_point": "main:NetPlugin",
-                "permissions": permissions,
-            }
-        ),
+        json.dumps({"name": "net-demo", "entry_point": "main:NetPlugin"}),
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
@@ -72,16 +58,15 @@ def _build_framework(tmp_path, permission: str | None, client) -> PluginManager:
     )
     framework = PluginManager(http_client=client)
     framework.initialize(data_path, tmp_path / "resources")
-    # 直接验证宿主 SDK 的网络权限单元，不通过正式第三方加载路径执行旧入口。
+    # 直接验证宿主 SDK 的网络单元，不通过正式第三方加载路径执行旧入口。
     metadata = json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))
-    framework._permission_manager.register_plugin_permissions("net-demo", permissions)
     framework._plugins["net-demo"] = Plugin(framework, plugin_dir, metadata)
     return framework
 
 
-def test_plugin_can_make_controlled_http_get_with_host_permission(tmp_path) -> None:
+def test_plugin_can_make_controlled_http_get(tmp_path) -> None:
     fake = _FakeHttpClient(_FakeResponse())
-    framework = _build_framework(tmp_path, "read:example.com", fake)
+    framework = _build_framework(tmp_path, fake)
     plugin = framework.get_plugin("net-demo")
 
     response = plugin.http_get("https://example.com/x")
@@ -92,29 +77,20 @@ def test_plugin_can_make_controlled_http_get_with_host_permission(tmp_path) -> N
     assert fake.calls[0][1] == "https://example.com/x"
 
 
-def test_plugin_http_requires_matching_host_permission(tmp_path) -> None:
+def test_plugin_http_allows_cross_site_requests(tmp_path) -> None:
     fake = _FakeHttpClient(_FakeResponse())
-    framework = _build_framework(tmp_path, "read:example.com", fake)
+    framework = _build_framework(tmp_path, fake)
     plugin = framework.get_plugin("net-demo")
 
-    with pytest.raises(PermissionError):
-        plugin.http_get("https://other.example.org/x")
-    assert fake.calls == []
-
-
-def test_plugin_http_write_method_requires_write_permission(tmp_path) -> None:
-    fake = _FakeHttpClient(_FakeResponse())
-    framework = _build_framework(tmp_path, "read:example.com", fake)
-    plugin = framework.get_plugin("net-demo")
-
-    with pytest.raises(PermissionError):
-        plugin.http_post("https://example.com/x")
-    assert fake.calls == []
+    # 站点权限已随权限系统移除；跨站请求照常执行。
+    response = plugin.http_get("https://other.example.org/x")
+    assert response.status_code == 200
+    assert fake.calls[0][1] == "https://other.example.org/x"
 
 
 def test_plugin_http_rejects_non_http_scheme(tmp_path) -> None:
     fake = _FakeHttpClient(_FakeResponse())
-    framework = _build_framework(tmp_path, "read:example.com", fake)
+    framework = _build_framework(tmp_path, fake)
     plugin = framework.get_plugin("net-demo")
 
     with pytest.raises(PluginHttpError):
@@ -122,20 +98,10 @@ def test_plugin_http_rejects_non_http_scheme(tmp_path) -> None:
     assert fake.calls == []
 
 
-def test_plugin_without_network_permission_cannot_call_http(tmp_path) -> None:
-    fake = _FakeHttpClient(_FakeResponse())
-    framework = _build_framework(tmp_path, None, fake)
-    plugin = framework.get_plugin("net-demo")
-
-    with pytest.raises(PermissionError):
-        plugin.http_get("https://example.com/x")
-    assert fake.calls == []
-
-
 def test_plugin_http_truncates_oversized_body(tmp_path) -> None:
     huge = b"a" * (8 * 1024 * 1024 + 10)
     fake = _FakeHttpClient(_FakeResponse(content=huge))
-    framework = _build_framework(tmp_path, "read:example.com", fake)
+    framework = _build_framework(tmp_path, fake)
     plugin = framework.get_plugin("net-demo")
 
     response = plugin.http_get("https://example.com/x")

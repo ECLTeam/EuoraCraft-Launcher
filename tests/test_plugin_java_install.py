@@ -14,8 +14,7 @@ from test_java_manager import _archive_bytes, _plan
 from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.models import JavaError
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
-from ECL.plugins.grant_store import PluginGrantError
+from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.services.operations import OperationOrigin
 from tests.test_plugin_host_files import call, finish
@@ -94,38 +93,18 @@ def test_install_mutation_is_not_replayed_and_installed_selection_expires_on_rev
     assert result["state"] == "completed", result
     assert call(broker, "java.install", request, key="install-once") == receipt
     record, check = api.selection(result["result"]["runtime_ref"], monotonic() + 5)
-    view = service.permissions("java-test")
-    service.update_permissions(
-        "java-test",
-        view["content_digest"],
-        view["revision"],
-        (PermissionDecision(capability="java.install", decision="deny"),),
-        PermissionManagementCaller.main_webview,
-    )
-    with pytest.raises(PluginGrantError):
+    service._entry("java-test").session.close()
+    with pytest.raises(PluginRunError):
         check()
-    with pytest.raises(PluginGrantError):
+    with pytest.raises(PluginRunError):
         api.selection(result["result"]["runtime_ref"], monotonic() + 5)
     assert record.executable_path.is_file()
 
 
-def test_regrant_cannot_revive_an_old_plan_or_catalog_reference(installation):
-    broker, _, manager, _, package, service = installation
-    prepared = call(broker, "java.install_plan", {"package_ref": package})
-    view = service.permissions("java-test")
-    service.update_permissions(
-        "java-test",
-        view["content_digest"],
-        view["revision"],
-        (PermissionDecision(capability="java.install", decision="deny"),),
-        PermissionManagementCaller.main_webview,
-    )
-    selected = candidates(service)["items"][0]["resource_id"]
-    allow(service, [selected], use=False, install=True)
+def test_unknown_plan_reference_is_rejected(installation):
+    broker, _, manager, _, _, _ = installation
     with pytest.raises(ProtocolError):
-        call(broker, "java.install", {"plan_ref": prepared["plan_ref"]})
-    with pytest.raises(ProtocolError):
-        call(broker, "java.install_plan", {"package_ref": package})
+        call(broker, "java.install", {"plan_ref": "f" * 32})
     assert not manager._plugin_install_owners
 
 

@@ -23,7 +23,7 @@ from uuid import uuid4
 from pydantic import Field, StrictBool, field_validator
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_models import GrantLease
+from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, RequestModel
 from ECL.plugins.runtime.resources import ResourcePages
@@ -98,7 +98,7 @@ class RuntimeGameResources:
         self._pages = ResourcePages()
 
     def _verify(
-        self, target: GameResourceTarget, lease: GrantLease, kind: str, directory_path: Path, deadline: float
+        self, target: GameResourceTarget, lease: PluginLease, kind: str, directory_path: Path, deadline: float
     ) -> None:
         self._resources.verify_game_target(target, lease, deadline)
         if self._game.plugin_resource_path(target, kind) != directory_path:
@@ -106,7 +106,7 @@ class RuntimeGameResources:
 
     @contextmanager
     def _directory(
-        self, target: GameResourceTarget, lease: GrantLease, kind: str, deadline: float, *, create: bool = False
+        self, target: GameResourceTarget, lease: PluginLease, kind: str, deadline: float, *, create: bool = False
     ) -> Iterator[FileDirectory]:
         """
         从已固定游戏根逐层打开真实数据目录，拒绝链接及途中换绑。
@@ -145,7 +145,7 @@ class RuntimeGameResources:
             return reference
 
     def _list(self, kind: str, query: _List, deadline: float) -> dict[str, JsonValue]:
-        target, lease = self._resources.game_target(query.instance_ref, "instances.read", deadline)
+        target, lease = self._resources.game_target(query.instance_ref, deadline)
         directory_path = self._game.plugin_resource_path(target, kind)
 
         def load() -> tuple[dict[str, JsonValue], ...]:
@@ -176,7 +176,7 @@ class RuntimeGameResources:
             return tuple(entries)
 
         result = self._pages.page(
-            f"{kind}:{query.instance_ref}:{query.limit}", str(lease.grant_epoch), query.cursor, query.limit, load
+            f"{kind}:{query.instance_ref}:{query.limit}", str(lease.run_epoch), query.cursor, query.limit, load
         )
         self._resources.verify_game_target(target, lease, deadline)
         return result
@@ -184,7 +184,7 @@ class RuntimeGameResources:
     def _install(self, kind: str, query: _Install, submission_deadline: float) -> dict[str, JsonValue]:
         if not self._accepted_name(kind, query.filename) or query.filename.endswith(".disabled"):
             raise ProtocolError("安装文件类型不符合资源种类", "PLUGIN_SCHEMA_INVALID")
-        target, lease = self._resources.game_target(query.instance_ref, "instances.manage", submission_deadline)
+        target, lease = self._resources.game_target(query.instance_ref, submission_deadline)
         directory_path = self._game.plugin_resource_path(target, kind)
         deadline = monotonic() + 300
 
@@ -261,7 +261,7 @@ class RuntimeGameResources:
             item = self._references.get(query.resource_ref)
         if item is None or item.kind != kind:
             raise ProtocolError("资源引用不属于当前运行或种类", "PLUGIN_RESOURCE_NOT_FOUND")
-        target, lease = self._resources.game_target(item.instance_ref, "instances.manage", submission_deadline)
+        target, lease = self._resources.game_target(item.instance_ref, submission_deadline)
         directory_path = self._game.plugin_resource_path(target, kind)
         deadline = monotonic() + 60
 

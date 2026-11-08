@@ -60,7 +60,7 @@ def test_sanitize_rejects_missing_fields(payload: object) -> None:
     assert sanitize_external_metadata(payload, "demo") is None
 
 
-def test_compat_registration_requires_game_grant(request) -> None:
+def test_compat_registration_requires_host_channel(request) -> None:
     broker, _payload = request.getfixturevalue("panel_setup")
     with pytest.raises(ProtocolError) as error:
         broker.handle(
@@ -71,4 +71,4 @@ def test_compat_registration_requires_game_grant(request) -> None:
                 uuid4().hex,
             )
         )
-    assert error.value.error_code == "PLUGIN_PERMISSION_DENIED"
+    assert error.value.error_code == "PLUGIN_API_METHOD_NOT_FOUND"

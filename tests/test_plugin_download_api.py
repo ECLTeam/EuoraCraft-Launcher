@@ -6,13 +6,13 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
 import pytest
-from plugin_download_helpers import call, decide, finish, submit, target
+from plugin_download_helpers import call, finish, submit, target
 from plugin_download_helpers import downloads as downloads
 from plugin_network_helpers import MappedDialer, server
 from pydantic import ValidationError
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_store import PluginGrantError
+from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.download_api import RuntimeDownloads
 from ECL.plugins.runtime.models import DownloadSubmitRequest
 from ECL.utils.windows_file_handles import FileBoundaryError, FileHandle
@@ -114,10 +114,6 @@ def test_full_bounded_stream_publishes_only_complete_file(downloads, tmp_path, s
             (f"HTTP/1.1 {status} No\r\nContent-Length: 1\r\n\r\nx".encode(), "PLUGIN_DOWNLOAD_FAILED")
             for status in (204, 206, 304, 400, 404, 500)
         ],
-        (
-            b"HTTP/1.1 302 Found\r\nLocation: http://unapproved.test/x\r\nContent-Length: 0\r\n\r\n",
-            "PLUGIN_RESOURCE_DENIED",
-        ),
     ],
 )
 def test_invalid_response_never_publishes_and_does_not_retry(downloads, tmp_path, raw, code):
@@ -148,22 +144,6 @@ def test_unknown_length_over_limit_cleans_all_staging(downloads, tmp_path):
         assert not list(directory(tmp_path, broker).iterdir())
 
 
-@pytest.mark.parametrize("permission", ["network.read"])
-def test_missing_either_permission_rejects_before_network_or_staging(downloads, tmp_path, permission):
-    create, _, storage, _ = downloads
-    dialer = MappedDialer()
-    broker = create(["https:example.com:443"], allowed={"network.read"} - {permission}, dialer=dialer)
-    params = {
-        "url": "https://example.com/x",
-        "target": {"root_ref": "a" * 32, "relative_path": "x"},
-        "overwrite": False,
-    }
-    with pytest.raises(ProtocolError):
-        call(broker, "downloads.submit", params)
-    assert not dialer.connects and not storage.uploads(broker.session.run_id)
-    assert not directory(tmp_path, broker).exists()
-
-
 def test_same_mutation_key_concurrently_returns_one_task(downloads, tmp_path):
     create, manager, _, _ = downloads
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") as (port, requests, _):
@@ -175,13 +155,12 @@ def test_same_mutation_key_concurrently_returns_one_task(downloads, tmp_path):
         assert finish(broker, manager, receipts[0])["state"] == "completed"
         assert len(requests) == 1
         assert call(broker, "mutations.get", {"mutation_key": "same-download"})["result"] == receipts[0]
-        decide(broker, downloads[3], "network.read")
         assert call(broker, "mutations.get", {"mutation_key": "same-download"})["result"] == receipts[0]
 
 
-@pytest.mark.parametrize("action", ["cancel", "network.read", "plugin.base", "close"])
+@pytest.mark.parametrize("action", ["cancel", "session", "close"])
 def test_blocked_read_is_woken_without_false_idle(downloads, tmp_path, action):
-    create, manager, storage, store = downloads
+    create, manager, storage, _ = downloads
     entered, release = Event(), Event()
 
     def respond(*_):
@@ -196,11 +175,11 @@ def test_blocked_read_is_woken_without_false_idle(downloads, tmp_path, action):
             assert entered.wait(2)
             if action == "cancel":
                 assert call(broker, "operations.cancel", {"operation_ref": receipt["operation_ref"]})["requested"]
-            elif action == "close":
-                broker.close()
+            elif action == "session":
+                broker.session.close()
             else:
-                decide(broker, store, action)
-            broker.network.refresh_permissions()
+                broker.close()
+            broker.network.refresh_leases()
             operation = manager._operations[broker.operations._references[receipt["operation_ref"]].operation_id]
             operation.future.result(2)
             assert operation.status in {"cancelled", "failed"}
@@ -283,8 +262,7 @@ def test_hash_mismatch_and_basic_result_remains_bound_to_original_epoch(download
         assert failed["error_code"] == "PLUGIN_HASH_MISMATCH" and failed["effect"] == "none"
         view = finish(broker, manager, submit(broker, url))
         assert view["state"] == "completed" and view["result"] is not None
-        decide(broker, downloads[3], "plugin.base", "allow")
-        assert call(broker, "operations.get", {"operation_ref": view["operation_ref"]})["result"] is None
+        assert call(broker, "operations.get", {"operation_ref": view["operation_ref"]})["result"] is not None
 
 
 def test_late_target_collision_never_overwrites_existing_file(downloads, tmp_path, monkeypatch):
@@ -305,23 +283,21 @@ def test_late_target_collision_never_overwrites_existing_file(downloads, tmp_pat
 
 
 def test_dual_lease_acceptance_rechecks_under_one_lock(downloads, monkeypatch):
-    from ECL.plugins.grant_store import PluginGrantSession
+    from ECL.plugins.run_store import PluginRunSession
 
-    create, _, _, store = downloads
+    create, _, _, _ = downloads
     broker = create(["https:example.com:443"])
-    leases = (
-        broker.session.authorize("plugin.base"),
-        broker.session.authorize("network.read", ("https:example.com:443",)),
-    )
+    leases = (broker.session.lease(), broker.session.lease())
     accepted = Event()
-    original = PluginGrantSession.check_all
+    original = PluginRunSession.check_all
 
     def check(self, current):
         original(self, current)
-        decide(broker, store, "network.read")
+        # 锁内核验前关闭会话，使代次在临界区内失效
+        self.close()
 
-    monkeypatch.setattr(PluginGrantSession, "check_all", check)
-    with pytest.raises(PluginGrantError):
+    monkeypatch.setattr(PluginRunSession, "check_all", check)
+    with pytest.raises(PluginRunError):
         broker.session.accept_all(leases, accepted.set)
     assert not accepted.is_set()
 
@@ -425,11 +401,11 @@ def test_audit_failure_does_not_publish_early_or_replay_completed_download(downl
 
 @pytest.mark.parametrize("stage", ["before_connect", "after_connect", "before_tls", "after_tls"])
 def test_connection_and_tls_revoke_never_send_http(downloads, stage):
-    create, manager, _, store = downloads
+    create, manager, _, _ = downloads
     dialer = MappedDialer()
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", is_tls=True) as (port, requests, _):
         broker = create([f"https:p10.example.test:{port}"], dialer=dialer)
-        setattr(dialer, stage, lambda: decide(broker, store, "plugin.base"))
+        setattr(dialer, stage, lambda: broker.session.close())
         view = finish(broker, manager, submit(broker, f"https://p10.example.test:{port}/"))
         assert view["state"] == "failed" and view["effect"] == "none"
         assert not requests

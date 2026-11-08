@@ -9,32 +9,17 @@ import pytest
 from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import (
-    PermissionDeclaration,
-    PermissionManagementCaller,
-    PluginContentBinding,
-)
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantStore
+from ECL.plugins.run_models import PluginContentBinding
+from ECL.plugins.run_store import PluginRunError, PluginRunStore
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 
 
-def _prepare_session(supervisor, tmp_path, code_path, declarations=()):
-    binding = PluginContentBinding.capture(code_path, declarations, "windows-x86_64-cp311")
-    store = PluginGrantStore(tmp_path / "data", implemented_capabilities=frozenset(set()))
+def _prepare_session(supervisor, tmp_path, code_path):
+    binding = PluginContentBinding.capture(code_path, "windows-x86_64-cp311")
+    store = PluginRunStore()
     session = store.open_session(store.new_installation_id(), binding, supervisor.run_id)
     return store, session
-
-
-def _review(store, session, decisions=()):
-    view = session.view()
-    store.update(
-        session,
-        decisions,
-        expected_revision=view.revision,
-        content_digest=view.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
 
 
 def _phase(supervisor, phase, previous):
@@ -43,50 +28,13 @@ def _phase(supervisor, phase, previous):
     return reply["data"]["run_state"]
 
 
-def test_production_loader_requires_explicit_review_even_with_no_business_capabilities(tmp_path: Path) -> None:
-    code_path = tmp_path / "code"
-    code_path.mkdir()
-    marker = tmp_path / "executed.txt"
-    (code_path / "main.py").write_text(
-        f"from pathlib import Path\nPath({str(marker)!r}).write_text('entered')\n", encoding="utf-8"
-    )
-    with WorkerSupervisor() as supervisor:
-        store, session = _prepare_session(supervisor, tmp_path, code_path)
-        with pytest.raises(PluginGrantError) as error:
-            supervisor.authorize_load(session)
-        assert error.value.error_code == "PLUGIN_GRANT_REVIEW_REQUIRED"
-        assert not marker.exists()
-        _review(store, session)
-        supervisor.authorize_load(session)
-        assert marker.read_text() == "entered"
-
-
-def test_missing_required_permission_prevents_first_plugin_statement(tmp_path: Path) -> None:
-    code_path = tmp_path / "code"
-    code_path.mkdir()
-    marker = tmp_path / "executed.txt"
-    (code_path / "main.py").write_text(
-        f"from pathlib import Path\nPath({str(marker)!r}).write_text('entered')\n", encoding="utf-8"
-    )
-    with WorkerSupervisor() as supervisor:
-        store, session = _prepare_session(
-            supervisor, tmp_path, code_path, (PermissionDeclaration(capability="instances.read", required=True),)
-        )
-        _review(store, session)
-        with pytest.raises(PluginGrantError) as error:
-            supervisor.authorize_load(session)
-        assert error.value.error_code == "PLUGIN_REQUIRED_PERMISSION_DENIED"
-        assert not marker.exists()
-
-
-def test_different_run_cannot_reuse_reviewed_grants(tmp_path: Path) -> None:
+def test_session_from_another_store_cannot_load(tmp_path: Path) -> None:
     code_path = tmp_path / "code"
     code_path.mkdir()
     (code_path / "main.py").write_text("value = 1", encoding="utf-8")
     with WorkerSupervisor() as supervisor:
-        store, session = _prepare_session(WorkerSupervisor(), tmp_path, code_path)
-        _review(store, session)
-        with pytest.raises(PluginGrantError) as error:
+        _, session = _prepare_session(WorkerSupervisor(), tmp_path, code_path)
+        with pytest.raises(PluginRunError) as error:
             supervisor.authorize_load(session)
         assert error.value.error_code == "PLUGIN_SESSION_EXPIRED"
 
@@ -130,8 +78,8 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
 
     def host_handler(request: RpcRequest):
         try:
-            session.authorize("plugin.base")
-        except PluginGrantError as exc:
+            session.lease()
+        except PluginRunError as exc:
             raise ProtocolError("宿主授权拒绝", exc.error_code) from exc
         if request.method == "test.echo":
             return {"value": request.params["value"]}
@@ -143,8 +91,7 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
     supervisor = WorkerSupervisor(executable, host_handler=host_handler)
     try:
         supervisor.start()
-        store, session = _prepare_session(supervisor, tmp_path, code_path, ())
-        _review(store, session, ())
+        _store, session = _prepare_session(supervisor, tmp_path, code_path)
         supervisor.authorize_load(session)
         assert _phase(supervisor, "load", "loaded") == "loaded"
         report = json.loads(report_path.read_bytes())
@@ -167,8 +114,7 @@ def test_invalid_lifecycle_order_and_legacy_class_do_not_get_adapted(tmp_path: P
     code_path.mkdir()
     (code_path / "main.py").write_text("class Plugin:\n    pass\n", encoding="utf-8")
     with WorkerSupervisor() as supervisor:
-        store, session = _prepare_session(supervisor, tmp_path, code_path)
-        _review(store, session)
+        _store, session = _prepare_session(supervisor, tmp_path, code_path)
         supervisor.authorize_load(session)
         assert (
             supervisor.request("lifecycle.invoke", {"phase": "enable", "run_state": "loaded"})["error"]["code"]

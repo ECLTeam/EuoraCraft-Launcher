@@ -40,7 +40,7 @@ self.define_html_slot(
 
 用户关闭主窗口注入总开关后撤销第三方内容；重新开启按当前宿主流程重载获准插件以重新登记。禁用、卸载和运行结束也会清理。
 
-同页注入可访问主窗口 DOM 和通用桥，当前尚无完整通用桥隔离。`frontend/src/plugin-sdk` 的主题、DOM、控件、状态、路由和业务封装是主窗口工具，不能当作 Worker 或独立窗口的权限受控接口。详见[注入决策](../../designs/plugin-main-window-injection-decision.md)。
+同页注入可访问主窗口 DOM 和通用桥，当前尚无完整通用桥隔离。`frontend/src/plugin-sdk` 的主题、DOM、控件、状态、路由和业务封装是主窗口工具，不属于 Worker 或独立窗口的契约接口。详见[注入决策](../../designs/plugin-main-window-injection-decision.md)。
 
 ## 独立原生前端
 
@@ -52,7 +52,6 @@ self.define_html_slot(
     "api_version": 2,
     "version": "1.0.0",
     "entry_point": "main:Plugin",
-    "permissions": [{ "capability": "ui.custom.execute", "required": true }],
     "custom_ui": {
         "entry_file": "index.html",
         "title": "My UI",
@@ -62,7 +61,7 @@ self.define_html_slot(
 }
 ```
 
-作者预先构建并内联 JS、CSS 和其他资源到 HTML，入口最多 512 KiB。不能用远程 URL、绝对路径、父目录或动态 HTML 替换被批准入口。宿主固定运行副本字节，修改源 HTML 后需经过热重载或普通重新审阅。
+作者预先构建并内联 JS、CSS 和其他资源到 HTML，入口最多 512 KiB。不能用远程 URL、绝对路径、父目录或动态 HTML 替换入口。宿主固定运行副本字节，修改源 HTML 后需经过热重载或重新启用。
 
 Worker 调用 `ui.windows.open({})` 返回本运行 `window_ref`，再使用 `get/focus/close`。当前最多两个活动窗口、十六个累计引用；撤权和重载关闭旧窗口，引用不能跨运行恢复。
 
@@ -70,14 +69,14 @@ Worker 调用 `ui.windows.open({})` 返回本运行 `window_ref`，再使用 `ge
 
 | 方法                               | 用途                                     |
 | ---------------------------------- | ---------------------------------------- |
-| `runtime.info`、`permissions.list` | 本运行最小摘要                           |
+| `runtime.info` | 本运行最小摘要                           |
 | `commands.call`                    | 自身命令；参数为 `command_ref` 和 `args` |
 | `settings.get/set`                 | 本插件配置，写入带 expected_revision     |
 | `operations.get/list/cancel`       | 当前运行自己的任务                       |
 
-窗口桥不直接提供账户、配置分区、网络、文件路径或全部 IPC。业务操作由页面调用自己的命令，再由 Worker 通过已有许可访问 Host API。
+窗口桥不直接提供账户、配置分区、网络、文件路径或全部 IPC。业务操作由页面调用自己的命令，再由 Worker 通过运行准入访问 Host API。
 
-维护版原生运行时在执行插件代码前安装导航、来源、权限、文件选择、通用桥和网络控制。引擎及平台不满足条件时明确拒绝，不能换成普通 iframe 来绕过。完整例子见 [worker_custom_ui](../../../examples/plugins/worker_custom_ui/README.md)。
+维护版原生运行时在执行插件代码前安装导航、来源、文件选择、通用桥和网络控制。引擎及平台不满足条件时明确拒绝，不能换成普通 iframe 来绕过。完整例子见 [worker_custom_ui](../../../examples/plugins/worker_custom_ui/README.md)。
 
 ## 主题与可访问性
 

@@ -22,8 +22,8 @@ from time import monotonic, sleep
 from uuid import uuid4
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantSession
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.file_storage import FileDeletion, PluginFileStorage, StagedFile
 from ECL.plugins.runtime.models import (
     FileDeleteRequest,
@@ -57,7 +57,7 @@ class RuntimeFiles:
     一个运行持有一组代次引用；上传字节由共享存储负责，执行状态由任务服务负责。
     """
 
-    def __init__(self, session: PluginGrantSession, storage: PluginFileStorage, operations: RuntimeOperations) -> None:
+    def __init__(self, session: PluginRunSession, storage: PluginFileStorage, operations: RuntimeOperations) -> None:
         """
         绑定宿主持有的来源和存储，不从请求中接受安装身份。
 
@@ -84,13 +84,13 @@ class RuntimeFiles:
             if self._closed:
                 raise ProtocolError("插件文件会话已关闭", "PLUGIN_SESSION_EXPIRED")
 
-    def _accept(self, lease: GrantLease) -> None:
+    def _accept(self, lease: PluginLease) -> None:
         """
         将仍有效的原始权限与未关闭状态排序，实际 I/O 在接受返回后执行。
         """
         self._session.accept(lease, self._ensure_open)
 
-    def _check(self, lease: GrantLease, deadline: float) -> None:
+    def _check(self, lease: PluginLease, deadline: float) -> None:
         """
         每个实际动作和结果交付检查原始权限与预算，不能通过重新授权延续旧上传。
         """
@@ -99,12 +99,12 @@ class RuntimeFiles:
         if monotonic() >= deadline:
             raise FileBoundaryError("插件文件操作超时", "PLUGIN_DEADLINE_EXCEEDED")
 
-    def _resolve(self, target: FileRef, lease: GrantLease, identity: FileIdentity | None) -> None:
+    def _resolve(self, target: FileRef, lease: PluginLease, identity: FileIdentity | None) -> None:
         """
         旧代次或根对象变化统一失效，不接受重新绑定旧引用。
         """
         with self._lock:
-            if target.root_ref != self._root_ref or lease.grant_epoch != self._epoch:
+            if target.root_ref != self._root_ref or lease.run_epoch != self._epoch:
                 raise FileBoundaryError("未找到自身文件引用", "PLUGIN_RESOURCE_NOT_FOUND")
             if identity != self._root_identity:
                 raise FileBoundaryError("私有根对象已变化", "PLUGIN_FILE_CHANGED")
@@ -127,18 +127,18 @@ class RuntimeFiles:
         query = ResourceListRequest.model_validate(params)
         if query.capability != "plugin.base":
             raise ProtocolError("此资源类别不属于私有文件", "PLUGIN_SCHEMA_INVALID")
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         with self._storage.access(self._installation_id) as space:
             self._check(lease, deadline)
             with self._lock:
-                if self._epoch != lease.grant_epoch or self._root_identity != space.identity:
+                if self._epoch != lease.run_epoch or self._root_identity != space.identity:
                     self._root_ref = uuid4().hex
                     self._root_identity = space.identity
-                    self._epoch = lease.grant_epoch
+                    self._epoch = lease.run_epoch
                 reference = self._root_ref
             result = self._pages.page(
                 query.model_dump_json(exclude={"cursor"}),
-                str(lease.grant_epoch),
+                str(lease.run_epoch),
                 query.cursor,
                 query.limit,
                 lambda: ({"kind": "private_directory", "root_ref": reference, "label": "plugin_data"},),
@@ -153,7 +153,7 @@ class RuntimeFiles:
         query = (
             FileReadRequest.model_validate(params) if method == "files.read" else FileStatRequest.model_validate(params)
         )
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         target = query.target
         with self._storage.access(self._installation_id) as space:
             self._resolve(target, lease, space.identity)
@@ -204,7 +204,7 @@ class RuntimeFiles:
         :return: 禁止并发改写及删除的源文件句柄，由本服务负责关闭
         :raises ProtocolError: 来源、权限、对象或预算无效时抛出
         """
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         with self._storage.access(self._installation_id) as space:
             self._resolve(target, lease, space.identity)
             self._check(lease, deadline)
@@ -226,7 +226,7 @@ class RuntimeFiles:
         query = FileListRequest.model_validate(params)
         if query.directory.relative_path:
             raise FileBoundaryError("只能枚举私有根", "PLUGIN_SCHEMA_INVALID")
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         with self._storage.access(self._installation_id) as space:
             self._resolve(query.directory, lease, space.identity)
             self._check(lease, deadline)
@@ -246,7 +246,7 @@ class RuntimeFiles:
 
             result = self._pages.page(
                 query.model_dump_json(exclude={"cursor"}),
-                str(lease.grant_epoch),
+                str(lease.run_epoch),
                 query.cursor,
                 query.limit,
                 load,
@@ -274,7 +274,7 @@ class RuntimeFiles:
         先验证根和精确目标，再登记预留并独占创建暂存；清理失败保留资源归属。
         """
         query = FileWriteBeginRequest.model_validate(params)
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         upload = self.prepare(query.target, lease, query.total_bytes, query.total_bytes, deadline)
         return {"write_ref": upload.write_ref, "max_chunk_bytes": 32768}
 
@@ -283,7 +283,7 @@ class RuntimeFiles:
         只准备已有空间的替换上传，原文件完整版本由提交工作线程核对。
         """
         query = FileReplaceBeginRequest.model_validate(params)
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         upload = self.prepare(
             query.target, lease, query.total_bytes, query.total_bytes, deadline, expected_etag=query.expected_etag
         )
@@ -292,12 +292,12 @@ class RuntimeFiles:
     def prepare(
         self,
         target: FileRef,
-        lease: GrantLease,
+        lease: PluginLease,
         reserved_bytes: int,
         expected_bytes: int | None,
         deadline: float,
         *,
-        additional_leases: tuple[GrantLease, ...] = (),
+        additional_leases: tuple[PluginLease, ...] = (),
         expected_etag: str | None = None,
     ) -> StagedFile:
         """
@@ -578,7 +578,7 @@ class RuntimeFiles:
         """
         deadline = monotonic() + 30
         query = FileDeleteRequest.model_validate(params)
-        lease = self._session.authorize("plugin.base")
+        lease = self._session.lease()
         with self._storage.access(self._installation_id) as space:
             self._resolve(query.target, lease, space.identity)
             self._check(lease, submission_deadline)
@@ -704,11 +704,11 @@ class RuntimeFiles:
             return self._delete(params, deadline)
         raise ProtocolError("此文件方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
 
-    def refresh_permissions(self) -> None:
+    def refresh_leases(self) -> None:
         """
         只清理已失效、过期或待重试的上传；活动 I/O 不阻塞监控线程。
         """
-        epoch = self._session.view().grant_epoch
+        epoch = self._session.view().run_epoch
         with self._lock:
             is_closed = self._closed
         for upload in self._storage.uploads(self._session.run_id):
@@ -720,7 +720,7 @@ class RuntimeFiles:
                 if (
                     is_closed
                     or upload.owner == "cleanup"
-                    or upload.lease.grant_epoch != epoch
+                    or upload.lease.run_epoch != epoch
                     or (monotonic() - upload.touched_at >= 60)
                 ):
                     self._storage.cleanup(upload)
@@ -734,7 +734,7 @@ class RuntimeFiles:
         with self._lock:
             self._closed = True
         self._pages.clear()
-        self.refresh_permissions()
+        self.refresh_leases()
 
     def is_idle(self) -> bool:
         """
@@ -742,5 +742,5 @@ class RuntimeFiles:
 
         :return: 当前运行已无上传、暂存或待关闭的已发布句柄
         """
-        self.refresh_permissions()
+        self.refresh_leases()
         return not self._storage.uploads(self._session.run_id) and not self._storage.deletions(self._session.run_id)

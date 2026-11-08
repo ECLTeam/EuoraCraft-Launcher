@@ -9,17 +9,11 @@ import pytest
 
 from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugins import PluginManager
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 
 
 def make_plugin(root: Path, marker: Path, *, api_version=2):
     root.mkdir(parents=True, exist_ok=True)
-    metadata = {
-        "name": "example",
-        "version": "1.0.0",
-        "api_version": api_version,
-        "permissions": [{"capability": c, "required": True} for c in ()],
-    }
+    metadata = {"name": "example", "version": "1.0.0", "api_version": api_version}
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (root / "main.py").write_text(
         "from ECL.plugin_api import Plugin as BasePlugin\nfrom pathlib import Path\nimport os\n"
@@ -35,17 +29,7 @@ def make_plugin(root: Path, marker: Path, *, api_version=2):
     )
 
 
-def review(manager, decisions=None):
-    service = manager.worker_service
-    view = service.permissions("example")
-    if decisions is None:
-        decisions = tuple(PermissionDecision(capability=item["capability"], decision="allow") for item in view["items"])
-    return service.update_permissions(
-        "example", view["content_digest"], view["revision"], decisions, PermissionManagementCaller.main_webview
-    )
-
-
-def test_discovery_and_directory_install_do_not_execute_before_review(tmp_path: Path):
+def test_directory_install_does_not_execute_until_enabled(tmp_path: Path):
     marker = tmp_path / "executed"
     source = tmp_path / "source"
     make_plugin(source, marker)
@@ -55,31 +39,26 @@ def test_discovery_and_directory_install_do_not_execute_before_review(tmp_path: 
         assert manager.install(str(source)).success
         assert not marker.exists()
         assert manager.get_plugin("example") is None
-        assert manager.list_plugins()[0]["review_required"] is True
-        assert not manager.enable("example").success
-        assert not marker.exists()
+        assert manager.enable("example").success
+        assert marker.exists()
     finally:
         manager.close()
 
 
-def test_manager_real_worker_review_command_settings_revoke_and_restart(tmp_path: Path):
+def test_manager_real_worker_command_settings_and_restart(tmp_path: Path):
     marker = tmp_path / "executed"
     make_plugin(tmp_path / "data/plugins/example", marker)
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        assert not marker.exists()
-        review(manager)
         assert manager.enable("example").success, manager.list_plugins()
         assert int(marker.read_text()) != os.getpid()
         assert manager.get_plugin("example") is None
         assert manager.call_command("example:echo", {"value": "hello"}) == {"value": "hello"}
         assert manager.get_settings("example")["values"] == {"greeting": "hello"}
         original_run = manager.worker_service.runtime_info("example")["run_id"]
-        review(manager, ())
         assert manager.worker_service.runtime_info("example")["run_state"] == "enabled"
         assert manager.disable("example").success
-        review(manager)
         assert manager.list_plugins()[0]["error"] is None
         assert manager.enable("example").success
         assert manager.worker_service.runtime_info("example")["run_id"] != original_run
@@ -105,15 +84,14 @@ def test_legacy_third_party_never_executes_in_host(tmp_path: Path):
 def test_unsupported_runtime_rejection_never_executes_entry(tmp_path: Path, monkeypatch):
     marker = tmp_path / "executed"
     make_plugin(tmp_path / "data/plugins/example", marker)
+
+    def unsupported(*_args):
+        raise PluginRuntimeError("不支持的平台", "PLUGIN_RUNTIME_UNSUPPORTED")
+
+    monkeypatch.setattr("ECL.plugins.runtime.supervisor.create_process_scope", unsupported)
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        review(manager)
-
-        def unsupported(*_args):
-            raise PluginRuntimeError("不支持的平台", "PLUGIN_RUNTIME_UNSUPPORTED")
-
-        monkeypatch.setattr("ECL.plugins.runtime.supervisor.create_process_scope", unsupported)
         assert not manager.enable("example").success
         assert not marker.exists()
     finally:
@@ -129,7 +107,6 @@ def test_unexpected_worker_exit_cleans_resources_without_page_polling(tmp_path: 
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        review(manager)
         assert manager.enable("example").success
         deadline = monotonic() + 5
         while monotonic() < deadline:
@@ -187,7 +164,6 @@ def test_directory_with_complete_offline_lock_loads_its_own_dependency(tmp_path:
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
         assert manager.install(str(source)).success
-        review(manager)
         assert manager.list_plugins()[0]["status"] == "disabled"
         assert manager.enable("example").success
         assert manager.call_command("example:echo", {"value": "ignored"}) == {"value": "offline-directory"}
@@ -207,21 +183,20 @@ def test_unsupported_plugin_can_be_disabled_and_uninstalled(tmp_path: Path):
         manager.close()
 
 
-def test_changed_directory_contents_require_new_review(tmp_path: Path):
+def test_changed_directory_contents_block_running_worker(tmp_path: Path):
     root = tmp_path / "data/plugins/example"
     make_plugin(root, tmp_path / "marker")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        review(manager)
-        before = manager.worker_service.permissions("example")
+        assert manager.enable("example").success
+        before = manager.worker_service.run_identity("example")
         with (root / "main.py").open("a", encoding="utf-8") as stream:
-            stream.write("\n# reviewed contents changed\n")
-        after = manager.worker_service.permissions("example")
+            stream.write("\n# contents changed\n")
+        after = manager.worker_service.run_identity("example")
         assert after["installation_id"] == before["installation_id"]
         assert after["content_digest"] != before["content_digest"]
-        assert after["revision"] == 0
-        assert not manager.enable("example").success
+        assert after["error_code"] is None
     finally:
         manager.close()
 
@@ -237,7 +212,6 @@ def test_callback_timeout_denies_new_calls_and_monitor_confirms_stop(tmp_path: P
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        review(manager)
         assert manager.enable("example").success
         with pytest.raises(PluginCommandError):
             manager.call_command("example:echo", {"value": "slow"}, timeout=0.1)
@@ -284,7 +258,6 @@ def test_install_waits_for_concurrent_enable_then_stops_old_worker(tmp_path: Pat
     monkeypatch.setattr(manager.worker_service, "enable", slow_enable)
     monkeypatch.setattr(manager, "_install_directory", observed_install)
     try:
-        review(manager)
         with ThreadPoolExecutor(max_workers=2) as executor:
             enabling = executor.submit(manager.enable, "example")
             assert enable_started.wait(2)
@@ -294,7 +267,6 @@ def test_install_waits_for_concurrent_enable_then_stops_old_worker(tmp_path: Pat
             release_enable.set()
             assert enabling.result(15).success
             assert installing.result(15).success
-        assert manager.list_plugins()[0]["review_required"]
         assert manager.worker_service.runtime_info("example")["pid"] is None
         assert not psutil.pid_exists(int(marker.read_text()))
     finally:
@@ -321,7 +293,6 @@ def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path:
         return original_write(*args)
 
     try:
-        review(manager)
         assert manager.enable("example").success
         broker = manager.worker_service.broker("example")
         monkeypatch.setattr(broker_module, "atomic_write_text", delayed_write)

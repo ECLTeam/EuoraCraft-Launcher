@@ -14,7 +14,6 @@ from anyio.from_thread import start_blocking_portal
 
 from ECL.foundation import EventBus
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.resources import RuntimeResources
@@ -66,30 +65,11 @@ def game_launch(tmp_path, monkeypatch):
         name = f"launcher{len(entries)}"
         source = tmp_path / name
         source.mkdir()
-        metadata = {
-            "name": name,
-            "api_version": 2,
-            "permissions": [{"capability": cap} for cap in ["instances.read", "instances.manage"]],
-        }
+        metadata = {"name": name, "api_version": 2}
         (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
         (source / "main.py").write_text("value=1", encoding="utf-8")
         worker.register(metadata, source, "directory")
-        view = worker.permissions(name)
-        roots = worker.permission_resources(name, view["content_digest"], None, "", None, 100, "instances.read")
-        root_id = roots["items"][0]["resource_id"]
-        children = roots
-        instance_id = root_id
-        worker.update_permissions(
-            name,
-            view["content_digest"],
-            view["revision"],
-            (
-                PermissionDecision(capability="instances.read", decision="allow", resource_refs=(root_id,)),
-                PermissionDecision(capability="instances.manage", decision="allow", resource_refs=(instance_id,)),
-            ),
-            PermissionManagementCaller.main_webview,
-            children["catalog_revision"],
-        )
+        worker.refresh_resources()
         entry = worker._entry(name)
         resources = RuntimeResources(entry.session, worker._catalog, game, worker.refresh_resources)
         broker = PluginHostBroker(
@@ -101,10 +81,10 @@ def game_launch(tmp_path, monkeypatch):
             resources=resources,
             game_operations=game,
         )
-        root_ref = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
+        root_id = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
         ref = next(
             item["instance_ref"]
-            for item in call(broker, "instances.scan", {"root_ref": root_ref})["items"]
+            for item in call(broker, "instances.scan", {"root_ref": root_id})["items"]
             if item["version_id"] == "one"
         )
         state = SimpleNamespace(
@@ -115,7 +95,7 @@ def game_launch(tmp_path, monkeypatch):
             ref=ref,
             root=root,
             root_id=root_id,
-            instance_id=instance_id,
+            instance_id=root_id,
             name=name,
             entry=entry,
         )
@@ -164,29 +144,6 @@ def test_actual_worker_launch_query_stop_and_close_preserves_process(game_launch
     example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_game_launch"
     metadata = json.loads((example / "plugin.json").read_bytes())
     state.worker.register(metadata, example, "directory")
-    view = state.worker.permissions(metadata["name"])
-    page = state.worker.permission_resources(
-        metadata["name"], view["content_digest"], None, "", None, 50, "instances.manage"
-    )
-    state.worker.update_permissions(
-        metadata["name"],
-        view["content_digest"],
-        view["revision"],
-        tuple(
-            PermissionDecision(
-                capability=item["capability"],
-                decision="allow",
-                resource_refs=(state.root_id,)
-                if item["capability"] == "instances.read"
-                else (state.instance_id,)
-                if item["capability"] in {"instances.manage"}
-                else (),
-            )
-            for item in view["items"]
-        ),
-        PermissionManagementCaller.main_webview,
-        page["catalog_revision"],
-    )
     state.worker.enable(metadata["name"])
     broker = state.worker.broker(metadata["name"])
 
@@ -222,14 +179,7 @@ def test_actual_worker_launch_query_stop_and_close_preserves_process(game_launch
 
 
 def revoke_launch(state):
-    session = state.broker.session
-    state.worker.grants.update(
-        session,
-        (PermissionDecision(capability="instances.manage", decision="deny"),),
-        expected_revision=session.view().revision,
-        content_digest=session.binding.content_digest,
-        caller=PermissionManagementCaller.main_webview,
-    )
+    state.broker.session.close()
     state.broker.refresh_pending_work()
 
 

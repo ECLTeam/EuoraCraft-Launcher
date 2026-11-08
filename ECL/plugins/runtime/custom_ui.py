@@ -30,8 +30,8 @@ from pydantic import Field, ValidationError
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantError
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration, CustomUiRequest
 from ECL.plugins.runtime.custom_ui_shell import build_custom_ui_shell
 from ECL.plugins.runtime.models import RequestModel
@@ -50,7 +50,7 @@ class _WindowQuery(RequestModel):
 
 @dataclass(slots=True)
 class _Window:
-    lease: GrantLease
+    lease: PluginLease
     secret: str = field(default_factory=lambda: secrets.token_hex(32))
     webview: WebviewWindow | None = None
     ready: Event = field(default_factory=Event)
@@ -70,7 +70,6 @@ class RuntimeCustomUi:
     bridge_methods: ClassVar[frozenset[str]] = frozenset(
         {
             "runtime.info",
-            "permissions.list",
             "commands.call",
             "settings.get",
             "settings.set",
@@ -129,7 +128,7 @@ class RuntimeCustomUi:
         if window is None:
             raise ProtocolError("未找到自身窗口", "PLUGIN_RESOURCE_NOT_FOUND")
         if method == "ui.windows.get":
-            self._broker.session.authorize("plugin.base")
+            self._broker.session.lease()
         else:
             self._check(window)
         if method == "ui.windows.close":
@@ -177,7 +176,7 @@ class RuntimeCustomUi:
         """
         空白原生窗口先安装拒绝策略，再加载受信壳；初始化失败不执行插件代码。
         """
-        lease = self._broker.session.authorize("ui.custom.execute")
+        lease = self._broker.session.lease()
         try:
             if version("pytauri-wheel") != "0.8.0+ecl.2":
                 raise ProtocolError("当前运行时不提供插件隔离", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
@@ -203,7 +202,7 @@ class RuntimeCustomUi:
             if window.error_code:
                 raise ProtocolError("原生插件窗口初始化失败", window.error_code)
             self._check(window)
-        except (ProtocolError, PluginGrantError):
+        except (ProtocolError, PluginRunError):
             self._close_window(window)
             raise
         except Exception:
@@ -253,7 +252,7 @@ class RuntimeCustomUi:
                 if not success:
                     raise ProtocolError("原生策略未能安装", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
                 webview.navigate(shell_url)
-            except (ProtocolError, PluginGrantError):
+            except (ProtocolError, PluginRunError):
                 window.error_code = "PLUGIN_UI_ISOLATION_UNAVAILABLE"
                 window.ready.set()
                 self._close_window(window)
@@ -294,7 +293,7 @@ class RuntimeCustomUi:
             except RuntimeError:
                 self._slots.release()
                 raise
-        except (ProtocolError, PluginGrantError, ValidationError, ValueError, RuntimeError):
+        except (ProtocolError, PluginRunError, ValidationError, ValueError, RuntimeError):
             window.error_code = "PLUGIN_UI_MESSAGE_REJECTED"
             self._close_window(window)
 
@@ -328,16 +327,16 @@ class RuntimeCustomUi:
                         RpcRequest(query.method, query.params, monotonic() + 20, query.mutation_key)
                     )
                     response = {"id": query.id, "ok": True, "data": value}
-                except (ProtocolError, PluginGrantError) as exc:
+                except (ProtocolError, PluginRunError) as exc:
                     response = {"id": query.id, "ok": False, "error_code": exc.error_code}
                 self._check(window)
                 with self._lock:
                     window.requests[query.id] = (fingerprint, response)
             self._reply(window, response)
-        except (ProtocolError, PluginGrantError, ValidationError) as exc:
-            code = exc.error_code if isinstance(exc, ProtocolError | PluginGrantError) else "PLUGIN_SCHEMA_INVALID"
+        except (ProtocolError, PluginRunError, ValidationError) as exc:
+            code = exc.error_code if isinstance(exc, ProtocolError | PluginRunError) else "PLUGIN_SCHEMA_INVALID"
             # 关闭屏障后不再向已经销毁的页面交付结果。
-            with suppress(ProtocolError, PluginGrantError, RuntimeError):
+            with suppress(ProtocolError, PluginRunError, RuntimeError):
                 self._reply(window, {"id": query.id, "ok": False, "error_code": code})
         except (OSError, RuntimeError):
             get_logger("RuntimeCustomUi").exception("插件独立窗口消息交付失败")
@@ -367,7 +366,7 @@ class RuntimeCustomUi:
         except (OSError, RuntimeError):
             get_logger("RuntimeCustomUi").warning("插件原生窗口尚未确认关闭，保留引用等待重试")
 
-    def refresh_permissions(self) -> None:
+    def refresh_leases(self) -> None:
         """
         原始授权失效后关闭对应窗口，不为旧页面更换准入；未销毁窗口继续重试关闭。
         """
@@ -376,7 +375,7 @@ class RuntimeCustomUi:
         for window in windows:
             try:
                 self._check(window)
-            except (ProtocolError, PluginGrantError):
+            except (ProtocolError, PluginRunError):
                 if not window.destroyed.is_set():
                     self._close_window(window)
 
@@ -387,7 +386,7 @@ class RuntimeCustomUi:
         with self._lock:
             self._closed = True
             executor = self._executor
-        self.refresh_permissions()
+        self.refresh_leases()
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
@@ -397,6 +396,6 @@ class RuntimeCustomUi:
 
         :return: 不再持有未销毁原生窗口
         """
-        self.refresh_permissions()
+        self.refresh_leases()
         with self._lock:
             return all(window.destroyed.is_set() for window in self._windows.values())

@@ -51,15 +51,15 @@ def settings_changed(self, values, revision, sequence):
 
 开关和选择项修改后保存，文本在提交/失焦时保存；保存结果、失败和冲突明确显示。切换插件不会把迟到值或提示写入另一插件。保存与 Worker、面板和独立前端共用一个配置服务及 revision。
 
-禁用插件后仍可管理已经发布且匹配当前内容的定义。不曾登记或内容已变化时，界面要求先审阅并启用；宿主不会为了查看配置而暗中执行插件。
+禁用插件后仍可管理已经发布且匹配当前内容的定义。不曾登记或内容已变化时，界面要求先启用；宿主不会为了查看配置而暗中执行插件。
 
-主窗口前端 SDK 的 `getPluginSettings(name)` 返回统一视图。写入使用 `updatePluginSetting(name, key, value, settingsView)`，必须保留读取时的视图，不能只传一个 revision 或自行拼内容摘要。独立窗口的 `ECL.call('settings.get/set', ...)` 使用 Worker 自身契约，不取得跨插件配置权限。
+主窗口前端 SDK 的 `getPluginSettings(name)` 返回统一视图。写入使用 `updatePluginSetting(name, key, value, settingsView)`，必须保留读取时的视图，不能只传一个 revision 或自行拼内容摘要。独立窗口的 `ECL.call('settings.get/set', ...)` 使用 Worker 自身契约，只能访问本插件配置。
 
 ## 持久化与定义变化
 
 值继续保存在 `plugin_settings_v2/<installation_id>.json`，保留既有 `schema_version/revision/values` 格式。schema 元数据单独存储，只有新版成功加载后发布。
 
-重载和更新不生成新安装身份，不清空用户值；卸载重装是另一安装身份，不自动继承许可。新增键投影默认值；移除键保留在原值文件中，但不展示。类型不兼容时明确失败，保留原文件，不用默认值静默覆盖。
+重载和更新不生成新安装身份，不清空用户值；卸载重装是另一安装身份，不继承运行状态。新增键投影默认值；移除键保留在原值文件中，但不展示。类型不兼容时明确失败，保留原文件，不用默认值静默覆盖。
 
 不要直接读写宿主配置文件、把配置放进代码目录或维护另一份 JSON 作为同一设置的权威来源。跨运行持久数据如与用户可编辑设置无关，应使用私有文件 API。
 

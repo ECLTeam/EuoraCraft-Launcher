@@ -9,7 +9,6 @@ import pytest
 
 from ECL.foundation import EventBus
 from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -31,14 +30,6 @@ def test_snapshot_example_uses_real_worker_upload_commit_read_and_restart(tmp_pa
     service = PluginWorkerService(tmp_path, executable, operations=manager)
     try:
         service.register(metadata, code_path, "directory")
-        permissions = service.permissions("worker_snapshot")
-        service.update_permissions(
-            "worker_snapshot",
-            permissions["content_digest"],
-            permissions["revision"],
-            tuple(PermissionDecision(capability=item["capability"], decision="allow") for item in permissions["items"]),
-            PermissionManagementCaller.main_webview,
-        )
         service.enable("worker_snapshot")
         broker = service.broker("worker_snapshot")
         receipt = broker.call_command("export", {})

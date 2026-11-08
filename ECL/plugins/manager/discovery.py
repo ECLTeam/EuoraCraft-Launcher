@@ -109,10 +109,7 @@ class PluginDiscovery(_PluginState):
             candidate = candidate_map.get(name)
             if candidate is None:
                 continue
-            if candidate["is_system"]:
-                self._permission_manager.register_plugin_permissions(name, candidate["metadata"].get("permissions", []))
-            else:
-                self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
+            self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
             if self._status.get(name) != "unsupported":
                 self._status[name] = "disabled"
         for name in load_order:
@@ -125,7 +122,7 @@ class PluginDiscovery(_PluginState):
             self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
 
     def _load_plugin(self, plugin_dir: Path, metadata_path: Path, is_system: bool) -> None:
-        # 加载单个插件：先注册权限声明、读取配置，再实例化并调用 on_load 钩子。
+        # 加载单个插件：读取配置，再实例化并调用 on_load 钩子。
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -140,8 +137,7 @@ class PluginDiscovery(_PluginState):
                 active = self._package_entries.get(name, {}).get("active")
                 dependency = active.dependency_directory if active else None
                 self.worker_service.register(metadata, plugin_dir, "package" if active else "directory", dependency)
-                view = self.worker_service.permissions(name)
-                self._status[name] = "review_required" if view["revision"] == 0 else "unloaded"
+                self._status[name] = "unloaded"
             except (OSError, ValueError) as exc:
                 self._status[name] = "unsupported"
                 self._plugin_errors[name] = getattr(exc, "error_code", "PLUGIN_API_VERSION_UNSUPPORTED")
@@ -157,9 +153,6 @@ class PluginDiscovery(_PluginState):
             ("是" if is_system else "否"),
             plugin_dir,
         )
-        # 在实例化之前注册权限声明，使 __init__ 中的装饰器注册能立即生效
-        permissions_meta = metadata.get("permissions", [])
-        self._permission_manager.register_plugin_permissions(name, permissions_meta)
         self._load_plugin_config(name, metadata)
 
         self._status[name] = "loading"
@@ -167,10 +160,9 @@ class PluginDiscovery(_PluginState):
             self._prepare_package_load(name)
             plugin = self._create_instance(name, plugin_dir, metadata, entry_point, is_system)
         except PermissionError as exc:
-            detail = str(exc)
-            self.logger.error("插件 %s 权限声明不足，无法实例化: %s", name, detail)
-            self._status[name] = "permission_denied"
-            self._plugin_errors[name] = detail
+            self.logger.error("插件 %s 实例化遇到系统级访问限制: %s", name, exc)
+            self._status[name] = "error"
+            self._plugin_errors[name] = str(exc)
             return
         except Exception as exc:
             self.logger.exception("插件 %s 实例化失败", name)
@@ -227,10 +219,9 @@ class PluginDiscovery(_PluginState):
             succeeded = True
             return True
         except PermissionError as exc:
-            detail = str(exc)
-            self.logger.error("插件 %s %s 权限不足: %s", plugin.name, method_name, detail)
-            self._status[plugin.name] = "permission_denied"
-            self._plugin_errors[plugin.name] = detail
+            self.logger.error("插件 %s %s 遇到系统级访问限制: %s", plugin.name, method_name, exc)
+            self._status[plugin.name] = "error"
+            self._plugin_errors[plugin.name] = str(exc)
             return False
         except Exception as exc:
             self.logger.exception("插件 %s %s 失败", plugin.name, method_name)

@@ -9,7 +9,6 @@ from time import monotonic, sleep
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService
@@ -56,30 +55,7 @@ def test_actual_profile_worker_updates_and_cancels_without_automatic_writes(tmp_
     gate = Event()
     try:
         service.register(metadata, source, "directory")
-        review = service.permissions(metadata["name"])
-        roots = service.permission_resources(metadata["name"], review["content_digest"], None, "", None, 50)
-        root_id = roots["items"][0]["resource_id"]
-        children = roots
-        selected = root_id
-        service.update_permissions(
-            metadata["name"],
-            review["content_digest"],
-            review["revision"],
-            tuple(
-                PermissionDecision(
-                    capability=item["capability"],
-                    decision="allow",
-                    resource_refs=(root_id,)
-                    if item["capability"] == "instances.read"
-                    else (selected,)
-                    if item["capability"] == "instances.manage"
-                    else (),
-                )
-                for item in review["items"]
-            ),
-            PermissionManagementCaller.main_webview,
-            children["catalog_revision"],
-        )
+        service.refresh_resources()
         service.enable(metadata["name"])
         broker = service.broker(metadata["name"])
         resources = json.loads(broker.call_command("discover", {})["json"])

@@ -5,7 +5,6 @@ from ipaddress import ip_address
 import pytest
 from pydantic import ValidationError
 
-from ECL.plugins.grant_models import PermissionDecision, PermissionDeclaration
 from ECL.plugins.network_targets import NetworkOrigin, NetworkTargetPolicy
 from ECL.plugins.runtime.models import NetworkRequest
 
@@ -89,23 +88,6 @@ def test_url_normalization_does_not_expand_scope():
     assert url == "https://xn--bcher-kva.example/a?q=1"
     assert origin != NetworkOrigin.parse("http:xn--bcher-kva.example:443")
     assert origin != NetworkOrigin.parse("https:x.xn--bcher-kva.example:443")
-
-
-@pytest.mark.parametrize(
-    "values", [None, (), ("https:a.example:443",) * 2, tuple(f"https:a{i}.example:443" for i in range(17))]
-)
-def test_network_declaration_requires_nonempty_unique_bounded_scopes(values):
-    kwargs = {} if values is None else {"resource_refs": values}
-    with pytest.raises(ValidationError):
-        PermissionDeclaration(capability="network.read", **kwargs)
-
-
-def test_network_decision_cannot_allow_empty_or_noncanonical_scopes():
-    assert PermissionDecision(capability="network.read", decision="deny").resource_refs == ()
-    with pytest.raises(ValidationError):
-        PermissionDecision(capability="network.read", decision="allow")
-    with pytest.raises(ValidationError):
-        PermissionDecision(capability="network.read", decision="deny", resource_refs=("https:a.example:0443",))
 
 
 @pytest.mark.parametrize(

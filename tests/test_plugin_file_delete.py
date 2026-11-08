@@ -78,16 +78,11 @@ def test_changed_version_and_same_bytes_replacement_are_preserved(files, tmp_pat
     assert target_path.read_bytes() == b"hello"
 
 
-def test_basic_deletion_returns_confirmation_and_old_epoch_hides_it(files):
-    broker, manager, _, store, _ = files
+def test_basic_deletion_returns_confirmation(files):
+    broker, manager, _, _, _ = files
     target, etag = published(broker, manager)
     view = finish(broker, manager, delete(broker, target, etag))
     assert view["result"] == {"deleted": True}
-    invalidate_base(broker, store)
-    assert call(broker, "operations.get", {"operation_ref": view["operation_ref"]})["result"] is None
-    with pytest.raises(ProtocolError) as error:
-        delete(broker, target, etag)
-    assert error.value.error_code == "PLUGIN_RESOURCE_NOT_FOUND"
 
 
 def test_queued_delete_reserves_name_but_does_not_open_target_and_cancels(files, tmp_path):

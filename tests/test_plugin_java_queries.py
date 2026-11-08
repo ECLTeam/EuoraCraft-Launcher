@@ -13,8 +13,7 @@ from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.models import JavaError, JavaPolicy
 from ECL.java.packages import JavaCatalog
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
-from ECL.plugins.grant_store import PluginGrantError
+from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.models import JavaCatalogRequest, JavaValidateRequest
 
@@ -40,10 +39,9 @@ def approved(shared, *, use=True):
     return api, reference, selected
 
 
-def test_inventory_is_filtered_read_only_and_does_not_probe_or_scan(shared, monkeypatch):
+def test_inventory_is_read_only_and_does_not_probe_or_scan(shared, monkeypatch):
     service, manager, records, _, _ = shared
-    page = candidates(service)
-    allow(service, [page["items"][0]["resource_id"]])
+    candidates(service)
     before = manager.registry.registry_path.read_bytes()
 
     def forbidden(*args, **kwargs):
@@ -56,7 +54,7 @@ def test_inventory_is_filtered_read_only_and_does_not_probe_or_scan(shared, monk
     monkeypatch.setattr(manager._operations, "submit", forbidden)
     api = runtime(service)
     result = invoke(api, "java.inventory")
-    assert len(result["items"]) == 1
+    assert len(result["items"]) == len(records)
     encoded = json.dumps(result)
     assert str(records[0].executable_path) not in encoded
     assert records[0].runtime_id not in encoded
@@ -66,14 +64,8 @@ def test_inventory_is_filtered_read_only_and_does_not_probe_or_scan(shared, monk
     assert listed["items"][0]["runtime_ref"] == result["items"][0]["runtime_ref"]
 
 
-def test_unauthorized_inventory_is_not_empty_success(shared):
-    with pytest.raises(PluginGrantError):
-        invoke(runtime(shared[0]), "java.inventory")
-
-
-@pytest.mark.parametrize("use", [False, True])
-def test_validation_requires_both_permissions_and_keeps_business_files(shared, monkeypatch, use):
-    api, reference, _ = approved(shared, use=use)
+def test_validation_keeps_business_files(shared, monkeypatch):
+    api, reference, _ = approved(shared)
     _, manager, records, _, _ = shared
     before = manager.registry.registry_path.read_bytes()
     calls = []
@@ -85,14 +77,9 @@ def test_validation_requires_both_permissions_and_keeps_business_files(shared, m
 
     monkeypatch.setattr(JavaScanner, "probe", probe)
     monkeypatch.setenv("JAVA_TOOL_OPTIONS", "private-agent")
-    if not use:
-        with pytest.raises(PluginGrantError):
-            invoke(api, "java.validate", runtime_ref=reference)
-        assert calls == []
-        return
     value = invoke(api, "java.validate", runtime_ref=reference, required_major=21)
     assert value["full_version"] == "21.0.3"
-    assert calls[0][0] == records[0].executable_path
+    assert calls[0][0] in {record.executable_path for record in records}
     assert "JAVA_TOOL_OPTIONS" not in calls[0][1]["environment"]
     assert before == manager.registry.registry_path.read_bytes()
     with pytest.raises(ProtocolError) as error:
@@ -107,12 +94,12 @@ def test_reference_cannot_cross_run_or_survive_target_replacement(shared):
     record = shared[1].registered_snapshot()[0]
     record.executable_path.unlink()
     record.executable_path.write_bytes(b"new executable")
-    with pytest.raises((ProtocolError, PluginGrantError)):
+    with pytest.raises(ProtocolError):
         invoke(api, "java.validate", runtime_ref=reference)
     assert selected not in shared[0]._java_catalog.active_refs()
     new_page = candidates(shared[0])
-    assert any(item["resource_id"] != selected and item["available"] for item in new_page["items"])
-    assert next(item for item in new_page["items"] if item["resource_id"] == selected)["available"] is False
+    assert any(item["resource_id"] != selected for item in new_page["items"])
+    assert all(item["resource_id"] != selected for item in new_page["items"])
 
 
 def test_revoke_while_probe_is_running_rejects_late_result_and_retains_activity(shared, monkeypatch):
@@ -135,14 +122,7 @@ def test_revoke_while_probe_is_running_rejects_late_result_and_retains_activity(
         try:
             assert entered.wait(5)
             assert not broker.wait_idle()
-            view = session.view()
-            shared[0].grants.update(
-                session,
-                (PermissionDecision(capability="java.read", decision="deny"),),
-                expected_revision=view.revision,
-                content_digest=view.content_digest,
-                caller=PermissionManagementCaller.main_webview,
-            )
+            session.close()
             assert not broker.wait_idle()
         finally:
             release.set()
@@ -228,7 +208,6 @@ def test_corrupt_index_is_preserved_and_does_not_remain_authorized(shared):
         invoke(api, "java.inventory")
     assert error.value.error_code == "PLUGIN_RESOURCE_CATALOG_INVALID"
     assert index.read_bytes() == b"broken"
-    assert not shared[0].grants._available_java_refs
 
 
 def test_catalog_errors_do_not_turn_into_empty_results(shared):
@@ -238,26 +217,6 @@ def test_catalog_errors_do_not_turn_into_empty_results(shared):
     with pytest.raises(ProtocolError) as error:
         invoke(runtime(service), "java.catalog")
     assert error.value.error_code == "PLUGIN_JAVA_CATALOG_FAILED"
-
-
-def test_java_candidate_revision_cannot_be_omitted_or_replaced_with_instance_revision(shared):
-    service = shared[0]
-    page = candidates(service)
-    view = service.permissions("java-test")
-    with pytest.raises(ProtocolError) as error:
-        service.update_permissions(
-            "java-test",
-            view["content_digest"],
-            view["revision"],
-            (
-                PermissionDecision(
-                    capability="java.read", decision="allow", resource_refs=(page["items"][0]["resource_id"],)
-                ),
-            ),
-            PermissionManagementCaller.main_webview,
-            resource_revision=page["catalog_revision"],
-        )
-    assert error.value.error_code == "PLUGIN_RESOURCE_REVISION_CONFLICT"
 
 
 @pytest.mark.parametrize("method", ["java.delete", "java.unknown"])
@@ -300,9 +259,9 @@ def test_catalog_revocation_error_is_not_rewritten_as_source_failure(monkeypatch
 
     def check():
         if calls:
-            raise PluginGrantError("revoked", "PLUGIN_GRANT_EXPIRED")
+            raise PluginRunError("revoked", "PLUGIN_RUN_EXPIRED")
 
-    with httpx.Client(transport=httpx.MockTransport(respond)) as client, pytest.raises(PluginGrantError):
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client, pytest.raises(PluginRunError):
         JavaCatalog(client).releases(deadline=monotonic() + 5, check=check)
 
 

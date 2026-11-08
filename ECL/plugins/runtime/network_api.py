@@ -33,9 +33,9 @@ import httpcore
 import httpx
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugins.grant_models import GrantLease
-from ECL.plugins.grant_store import PluginGrantError, PluginGrantSession
 from ECL.plugins.network_targets import NetworkOrigin, NetworkTargetPolicy
+from ECL.plugins.run_models import PluginLease
+from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.models import NetworkRequest
 from ECL.plugins.runtime.network_transport import PinnedNetworkBackend
 from ECL.utils import get_logger
@@ -58,10 +58,10 @@ class NetworkCall:
     def __init__(
         self,
         owner: RuntimeNetwork,
-        lease: GrantLease,
+        lease: PluginLease,
         deadline: float,
         *,
-        additional_leases: tuple[GrantLease, ...] = (),
+        additional_leases: tuple[PluginLease, ...] = (),
         cancel_event: Event | None = None,
         wire_limit: int = 262144,
     ) -> None:
@@ -76,8 +76,8 @@ class NetworkCall:
         :param wire_limit: 宿主确定的单跳原始收包上限
         """
         self.owner: RuntimeNetwork = owner
-        self.lease: GrantLease = lease
-        self.leases: tuple[GrantLease, ...] = (lease, *additional_leases)
+        self.lease: PluginLease = lease
+        self.leases: tuple[PluginLease, ...] = (lease, *additional_leases)
         self.cancel_event: Event | None = cancel_event
         self.wire_limit: int = wire_limit
         self.deadline: float = deadline
@@ -149,7 +149,7 @@ class NetworkCall:
             self._streams.add(stream)
         try:
             self.check()
-        except (ProtocolError, PluginGrantError, GameServiceError):
+        except (ProtocolError, PluginRunError, GameServiceError):
             self.cancel()
             raise
 
@@ -244,10 +244,10 @@ class PluginNetworkService:
     def begin(
         self,
         owner: RuntimeNetwork,
-        lease: GrantLease,
+        lease: PluginLease,
         deadline: float,
         *,
-        additional_leases: tuple[GrantLease, ...] = (),
+        additional_leases: tuple[PluginLease, ...] = (),
         cancel_event: Event | None = None,
         wire_limit: int = 262144,
     ) -> NetworkCall:
@@ -312,7 +312,7 @@ class PluginNetworkService:
             if len(addresses) != len(set(results)) or any(not NetworkTargetPolicy.allows(item) for item in addresses):
                 raise ProtocolError("插件网络目标不允许访问", "PLUGIN_NETWORK_TARGET_DENIED")
             return addresses[0]
-        except (ProtocolError, PluginGrantError, GameServiceError):
+        except (ProtocolError, PluginRunError, GameServiceError):
             raise
         except (socket.gaierror, OSError, ValueError):
             raise ProtocolError("插件网络域名解析失败", "PLUGIN_NETWORK_RESOLUTION_FAILED") from None
@@ -436,14 +436,14 @@ class RuntimeNetwork:
     )
     redirects: ClassVar[frozenset[int]] = frozenset({301, 302, 303, 307, 308})
 
-    def __init__(self, session: PluginGrantSession, service: PluginNetworkService) -> None:
+    def __init__(self, session: PluginRunSession, service: PluginNetworkService) -> None:
         """
         绑定唯一授权会话与应用服务，不允许插件选择网络后端。
 
         :param session: 当前 run 的授权会话
         :param service: 应用唯一请求和 DNS 归属
         """
-        self.session: PluginGrantSession = session
+        self.session: PluginRunSession = session
         self.service: PluginNetworkService = service
         self._closed = Event()
 
@@ -467,9 +467,7 @@ class RuntimeNetwork:
         """
         deadline = min(deadline, monotonic() + 30)
         request = NetworkRequest.model_validate(params)
-        view = self.session.view()
-        permission = next((item for item in view.items if item.capability == "network.read"), None)
-        lease = self.session.authorize("network.read", permission.resource_refs if permission is not None else ())
+        lease = self.session.lease()
         call = self.service.begin(self, lease, deadline)
         logger = get_logger("PluginNetwork")
         with private_transport_scope(), operation_scope("插件网络读取", timed=True) as trace:
@@ -482,7 +480,7 @@ class RuntimeNetwork:
                 call.check()
                 trace.log(logger, "插件网络读取成功", logging.DEBUG)
                 return result
-            except (ProtocolError, PluginGrantError) as exc:
+            except (ProtocolError, PluginRunError) as exc:
                 trace.log(logger, f"插件网络读取未完成；原因：{exc.error_code}", logging.DEBUG)
                 raise
             except (httpcore.NetworkError, httpcore.ProtocolError, httpcore.TimeoutException, OSError):
@@ -517,8 +515,6 @@ class RuntimeNetwork:
         visited: set[str] = set()
         for hop in range(6):
             call.check()
-            if origin.reference not in call.lease.resource_refs:
-                raise ProtocolError("插件网络站点未获准", "PLUGIN_RESOURCE_DENIED")
             if url in visited:
                 raise ProtocolError("插件网络重定向循环", "PLUGIN_REDIRECT_DENIED")
             visited.add(url)
@@ -611,14 +607,14 @@ class RuntimeNetwork:
             "body_b64": base64.b64encode(body).decode("ascii"),
         }
 
-    def refresh_permissions(self) -> None:
+    def refresh_leases(self) -> None:
         """
         只取消本 run 的旧租约，不为既有调用换租约或影响其他插件。
         """
         for call in self.service.calls(self):
             try:
                 call.check()
-            except (ProtocolError, PluginGrantError, GameServiceError):
+            except (ProtocolError, PluginRunError, GameServiceError):
                 call.cancel()
             call.retry_cleanup()
             self.service.reap(call)

@@ -17,7 +17,6 @@ from pytauri.ffi.webview import WebviewWindowBuilder
 from pytauri_wheel.lib import builder_factory, context_factory
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 
@@ -55,18 +54,6 @@ def main() -> None:
     service = PluginWorkerService(root / "data", executable)
     name = metadata["name"]
     service.register(metadata, source, "directory")
-
-    def decide(decision: str) -> None:
-        view = service.permissions(name)
-        service.update_permissions(
-            name,
-            view["content_digest"],
-            view["revision"],
-            (PermissionDecision(capability="ui.custom.execute", decision=decision),),
-            PermissionManagementCaller.main_webview,
-        )
-
-    decide("allow")
     service.enable(name)
     broker = service.broker(name)
 
@@ -79,7 +66,7 @@ def main() -> None:
         raise AssertionError("native custom UI did not reach expected state")
 
     def setup(handle: AppHandle) -> None:
-        main_window = WebviewWindowBuilder.build(
+        _main_window = WebviewWindowBuilder.build(
             handle, "main", WebviewUrl.External("about:blank"), visible=False, data_directory=root / "main-profile"
         )
         service.bind_window_app(handle)
@@ -93,11 +80,6 @@ def main() -> None:
                 wait(lambda: broker.settings_view()["values"]["message"].startswith("{"))
                 result = json.loads(broker.settings_view()["values"]["message"])
                 assert result == {"text": "Hello, actual native UI", "parentDenied": True, "refused": True}, result
-                stage = "revoke"
-                decide("deny")
-                wait(broker.custom_ui.is_idle)
-                assert service._entry(name).supervisor.is_alive() and main_window.label() == "main"
-                decide("allow")
                 stage = "reopen"
                 second = broker.call_command("open", {}, 20)
                 assert second["window_ref"] != opened["window_ref"]
@@ -109,7 +91,6 @@ def main() -> None:
                         {
                             "ok": True,
                             "round_trip": result,
-                            "revocation_closed": True,
                             "reopened_and_closed": True,
                             "wheel": version("pytauri-wheel"),
                             "engine": webview_version(),

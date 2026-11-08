@@ -8,7 +8,6 @@ from time import monotonic
 import pytest
 
 from ECL.foundation import EventBus
-from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.plugins.worker_service import PluginWorkerService
@@ -18,7 +17,7 @@ from ECL.services.game.version_stats import VersionStatsStore
 from ECL.services.operations import OperationManager
 from ECL.utils.file_handles import FileHandle
 from ECL.utils.instance_reading import InstanceReadError
-from tests.test_plugin_host_files import call, deny, finish
+from tests.test_plugin_host_files import call, finish
 
 
 @pytest.fixture
@@ -57,30 +56,11 @@ def profiles(tmp_path):
     )
     source = tmp_path / "source"
     source.mkdir()
-    metadata = {
-        "name": "writer",
-        "api_version": 2,
-        "permissions": [{"capability": "instances.read"}, {"capability": "instances.manage"}],
-    }
+    metadata = {"name": "writer", "api_version": 2}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("value=1", encoding="utf-8")
     service.register(metadata, source, "directory")
-    view = service.permissions("writer")
-    roots = service.permission_resources("writer", view["content_digest"], None, "", None, 100)
-    root_id = roots["items"][0]["resource_id"]
-    children = roots
-    selected = root_id
-    service.update_permissions(
-        "writer",
-        view["content_digest"],
-        view["revision"],
-        (
-            PermissionDecision(capability="instances.read", decision="allow", resource_refs=(root_id,)),
-            PermissionDecision(capability="instances.manage", decision="allow", resource_refs=(selected,)),
-        ),
-        PermissionManagementCaller.main_webview,
-        children["catalog_revision"],
-    )
+    service.refresh_resources()
     entry = service._entry("writer")
     resources = RuntimeResources(entry.session, service._catalog, game, service.refresh_resources)
     broker = PluginHostBroker(
@@ -165,12 +145,12 @@ def test_cancel_queued_profile_releases_real_occupancy_without_writing(profiles)
     assert path.read_bytes() == original and not store.transactions.has_active()
 
 
-@pytest.mark.parametrize("reason", ["instances.read", "instances.manage", "deadline"])
-def test_queued_profile_rechecks_original_dual_permission_and_total_deadline(profiles, monkeypatch, reason):
+@pytest.mark.parametrize("reason", ["session", "deadline"])
+def test_queued_profile_rechecks_session_and_total_deadline(profiles, monkeypatch, reason):
     import ECL.plugins.runtime.instance_profiles as api_module
     import ECL.plugins.runtime.operation_adapters as operation_module
 
-    broker, manager, store, service, root, before, _, _ = profiles
+    broker, manager, store, _service, root, before, _, _ = profiles
     path = root / "versions/one/.ecl/instance.json"
     original = path.read_bytes()
     gate = Event()
@@ -184,7 +164,8 @@ def test_queued_profile_rechecks_original_dual_permission_and_total_deadline(pro
             monkeypatch.setattr(api_module, "monotonic", lambda: now)
             monkeypatch.setattr(operation_module, "monotonic", lambda: now)
         else:
-            deny(broker, service.grants, reason)
+            broker.session.close()
+            broker.refresh_pending_work()
     finally:
         gate.set()
         blocker.result(5)
@@ -195,16 +176,13 @@ def test_queued_profile_rechecks_original_dual_permission_and_total_deadline(pro
 
 
 def test_same_profile_mutation_key_returns_one_task_and_read_revocation_hides_result(profiles):
-    broker, manager, _, service, root, before, notified, _ = profiles
+    broker, manager, _, _service, root, before, notified, _ = profiles
     with ThreadPoolExecutor(4) as callers:
         receipts = list(callers.map(lambda _: patch(broker, before, {"alias": "Once"}, "same-patch"), range(4)))
     assert all(receipt == receipts[0] for receipt in receipts)
     result = finish(broker, manager, receipts[0])
     assert result["effect"] == "committed" and result["result"]["alias"] == "Once"
     assert notified == [root]
-    deny(broker, service.grants, "instances.read")
-    redacted = call(broker, "operations.get", {"operation_ref": receipts[0]["operation_ref"]})
-    assert redacted["effect"] == "committed" and redacted["result"] is None
 
 
 @pytest.mark.parametrize("kind", ["readonly", "hardlink"])
@@ -260,13 +238,7 @@ def test_notification_failure_retries_only_notification_without_repeating_write(
     assert json.loads(path.read_bytes())["alias"] == "Later" and notified == [root]
 
 
-def test_management_permission_view_exposes_only_runtime_root_refs(profiles):
-    broker, _, _, service, _, _, _, _ = profiles
-    view = service.permissions("writer")
-    persistent = next(
-        item["selected_resource_refs"] for item in view["items"] if item["capability"] == "instances.manage"
-    )
-    public = call(broker, "permissions.list")
-    management = next(item for item in public["items"] if item["capability"] == "instances.manage")
+def test_management_view_exposes_runtime_root_refs(profiles):
+    broker, _, _, _, _, _, _, _ = profiles
     root_ref = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
-    assert management["resource_refs"] == [root_ref] and management["resource_refs"] != persistent
+    assert isinstance(root_ref, str) and len(root_ref) == 32

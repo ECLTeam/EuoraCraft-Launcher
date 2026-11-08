@@ -23,7 +23,6 @@ import pytest
 
 from ECL.plugin_api._rpc import RpcRequest
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.grant_models import PermissionManagementCaller
 from ECL.plugins.runtime.broker import CrossPluginChannel
 from ECL.plugins.worker_service import PluginWorkerService
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
@@ -82,14 +81,6 @@ def _prepare(tmp_path: Path) -> PluginWorkerService:
         (code / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
         (code / "main.py").write_text((example / "main.py").read_text(encoding="utf-8"), encoding="utf-8")
         service.register(metadata, code, "directory")
-        view = service.permissions(name)
-        service.update_permissions(
-            name,
-            view["content_digest"],
-            view["revision"],
-            (),
-            PermissionManagementCaller.main_webview,
-        )
     return service
 
 

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from test_plugin_worker_manager import make_plugin, review
+from test_plugin_worker_manager import make_plugin
 
 from ECL.plugins import PluginManager
 
@@ -22,7 +22,7 @@ def test_safe_mode_discovers_metadata_without_executing(framework, tmp_path):
     entry = framework.list_plugins()[0]
     assert entry["name"] == "example"
     assert entry["version"] == "1.0.0"
-    assert entry["review_required"]
+    assert entry["status"] == "disabled"
     assert not (tmp_path / "marker").exists()
 
 
@@ -61,10 +61,8 @@ def test_close_does_not_mark_installed_plugins_disabled(framework, tmp_path):
     assert not state_file.exists() or "example" not in json.loads(state_file.read_text())["disabled"]
 
 
-def test_enable_clears_disabled_choice_only_after_review(framework, tmp_path):
+def test_enable_clears_disabled_choice(framework, tmp_path):
     framework.disable("example")
-    assert not framework.enable("example").success
-    review(framework)
     assert framework.enable("example").success
     assert "example" not in json.loads((tmp_path / "data/plugin_state.json").read_text())["disabled"]
 

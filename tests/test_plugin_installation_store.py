@@ -8,25 +8,6 @@ import pytest
 from ECL.plugins.installation_store import PluginInstallationError, PluginInstallationStore, WorkerManifest
 
 
-def test_manifest_expands_merged_permissions() -> None:
-    """清单写 game、java 两项时展开为内部细项，细项名称继续有效。"""
-    manifest = WorkerManifest.model_validate(
-        {
-            "api_version": 2,
-            "name": "demo",
-            "permissions": [{"capability": "game"}, {"capability": "java"}],
-        }
-    )
-    assert [item.capability for item in manifest.permissions] == [
-        "instances.read",
-        "instances.manage",
-        "java.read",
-        "java.use",
-        "java.catalog.read",
-        "java.install",
-    ]
-
-
 def test_installation_survives_restart_and_reinstall_never_inherits_identity(tmp_path: Path) -> None:
     store = PluginInstallationStore(tmp_path)
     first = store.ensure("example", "directory")
@@ -51,12 +32,16 @@ def test_installation_names_cannot_escape_or_alias_windows_files(tmp_path: Path,
         PluginInstallationStore(tmp_path).ensure(name, "directory")
 
 
-def test_manifest_requires_explicit_v2_and_does_not_adapt_legacy_permissions() -> None:
+def test_manifest_requires_explicit_v2_and_ignores_legacy_permissions() -> None:
     assert WorkerManifest.model_validate({"name": "example", "api_version": 2}).entry_file == "main.py"
+    # 权限声明不再是清单字段；旧清单中的 permissions 被忽略而非报错。
+    ignored = WorkerManifest.model_validate(
+        {"name": "example", "api_version": 2, "permissions": [{"capability": "game"}]}
+    )
+    assert not hasattr(ignored, "permissions")
     for metadata in (
         {"name": "example"},
         {"name": "example", "api_version": True},
-        {"name": "example", "api_version": 2, "permissions": [{"scope": "commands"}]},
         {"name": "../escape", "api_version": 2},
     ):
         with pytest.raises(ValueError):

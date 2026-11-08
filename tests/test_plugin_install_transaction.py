@@ -35,7 +35,7 @@ def test_install_does_not_execute_new_enable_hook(tmp_path: Path) -> None:
     _plugin(source_path, "2.0.0", fail_enable=True)
     assert framework.install(str(source_path)).success
     assert framework.get_plugin("demo") is None
-    assert framework.list_plugins()[0]["review_required"]
+    assert framework.list_plugins()[0]["status"] == "disabled"
 
 
 def test_failed_update_preserves_disabled_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,11 +79,11 @@ def test_install_preserves_disabled_state_and_updates_candidate(tmp_path: Path) 
 
     assert framework.install(str(source_path)).success
     assert framework.get_plugin("demo") is None
-    assert framework._status["demo"] == "review_required"
+    assert framework._status["demo"] == "disabled"
     assert framework._candidate_map["demo"]["metadata"]["version"] == "2.0.0"
     assert {item["name"]: item for item in framework.list_plugins()}["demo"]["version"] == "2.0.0"
-    assert not framework.enable("demo").success
-    assert framework.get_plugin("demo") is None
+    assert framework.worker_service.runtime_info("demo")["run_state"] != "enabled"
+    assert framework.enable("demo").success
 
 
 def test_new_install_can_be_uninstalled_without_restart(tmp_path: Path) -> None:
