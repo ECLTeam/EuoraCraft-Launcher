@@ -112,3 +112,6 @@ docs/junsi-dev-docs
 /output/
 
 /.screenshots
+
+# 本地工作区记忆与临时任务产物
+/.workbuddy/
