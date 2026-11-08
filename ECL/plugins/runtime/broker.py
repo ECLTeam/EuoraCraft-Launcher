@@ -71,7 +71,7 @@ from ECL.utils import get_logger
 from ECL.utils.instance_reading import InstanceReadError
 
 if TYPE_CHECKING:
-    from pytaruix import AppHandle
+    from pytaurix import AppHandle
 
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator

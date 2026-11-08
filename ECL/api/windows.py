@@ -24,9 +24,9 @@ from typing import Any
 from uuid import uuid4
 
 try:
-    from pytaruix import AppHandle, WebviewUrl
-    from pytaruix.ffi.image import Image as TauriImage
-    from pytaruix.webview import WebviewWindowBuilder
+    from pytaurix import AppHandle, WebviewUrl
+    from pytaurix.ffi.image import Image as TauriImage
+    from pytaurix.webview import WebviewWindowBuilder
 except ImportError:  # pragma: no cover - lightweight unit-test stubs omit window bindings
     AppHandle = Any  # type: ignore[misc,assignment]
     TauriImage = None  # type: ignore[misc,assignment]

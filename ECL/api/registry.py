@@ -16,8 +16,8 @@ from collections.abc import Callable
 from typing import Any
 
 try:
-    from pytaruix import AppHandle
-    from pytaruix.ipc import WebviewWindow
+    from pytaurix import AppHandle
+    from pytaurix.ipc import WebviewWindow
 except ImportError:  # pragma: no cover - lightweight test doubles omit injected types
     AppHandle = Any  # type: ignore[misc,assignment]
     WebviewWindow = Any  # type: ignore[misc,assignment]

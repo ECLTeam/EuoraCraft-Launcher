@@ -34,7 +34,7 @@ class RuntimeCheckPolicy:
         "ECL.api",
         "ECL.services",
         "ECL.plugins",
-        "pytaruix",
+        "pytaurix",
     )
 
     @classmethod

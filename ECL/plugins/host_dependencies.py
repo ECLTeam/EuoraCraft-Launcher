@@ -152,7 +152,7 @@ class HostDependencyPolicy:
                     owners[import_name] = package.name
                     if import_name in sys.stdlib_module_names or import_name in {
                         "ECL",
-                        "pytaruix",
+                        "pytaurix",
                     }:
                         return f"依赖不能提供受保护的宿主或标准库模块: {import_name}"
                     host_owner = self.imports.get(import_name)

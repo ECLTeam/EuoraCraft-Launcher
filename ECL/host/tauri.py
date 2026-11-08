@@ -19,8 +19,8 @@ from typing import Any
 
 from anyio.from_thread import start_blocking_portal
 from pydantic import JsonValue, TypeAdapter
-from pytaruix import AppHandle, Commands, Manager, RunEvent, RunEventType, builder_factory, context_factory
-from pytaruix.plugins.dialog import init as dialog_init
+from pytaurix import AppHandle, Commands, Manager, RunEvent, RunEventType, builder_factory, context_factory
+from pytaurix.plugins.dialog import init as dialog_init
 
 from ECL.api import FrontendApi
 from ECL.api.registry import command_handlers

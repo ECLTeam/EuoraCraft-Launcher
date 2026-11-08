@@ -47,7 +47,7 @@ from urllib.parse import unquote, urlsplit
 import httpx
 from anyio import to_thread
 from PIL import Image
-from pytaruix.plugins.dialog import DialogExt
+from pytaurix.plugins.dialog import DialogExt
 
 from ECL.api.models import (
     DirectorySelectionRequest,
