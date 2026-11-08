@@ -30,9 +30,9 @@ from uuid import uuid4
 import httpx
 from anyio import to_thread
 from pydantic import ValidationError
-from pytauri import EventTarget
-from pytauri.ffi import Emitter as _Emitter
-from pytauri.ipc import WebviewWindow
+from pytaruix import EventTarget
+from pytaruix.ffi import Emitter as _Emitter
+from pytaruix.ipc import WebviewWindow
 
 from ECL.api.contracts import ApiResponse, failure
 from ECL.api.models import (

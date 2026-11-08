@@ -24,9 +24,9 @@ from typing import Any
 from uuid import uuid4
 
 try:
-    from pytauri import AppHandle, WebviewUrl
-    from pytauri.ffi.image import Image as TauriImage
-    from pytauri.webview import WebviewWindowBuilder
+    from pytaruix import AppHandle, WebviewUrl
+    from pytaruix.ffi.image import Image as TauriImage
+    from pytaruix.webview import WebviewWindowBuilder
 except ImportError:  # pragma: no cover - lightweight unit-test stubs omit window bindings
     AppHandle = Any  # type: ignore[misc,assignment]
     TauriImage = None  # type: ignore[misc,assignment]
@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover - lightweight unit-test stubs omit windo
     class WebviewWindowBuilder:  # type: ignore[no-redef]
         @staticmethod
         def build(*args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("PyTauri 窗口 API 不可用")
+            raise RuntimeError("PytaruiX 窗口 API 不可用")
 
 
 from ECL.api.bridge import _FrontendState, _validate_body
@@ -87,15 +87,17 @@ class WindowHandlers(_FrontendState):
         if not descriptor_id.startswith("plugin."):
             return None
         _, plugin_name, window_id = [*descriptor_id.split(".", 2), "", ""][:3]
-        plugin = self.plugins.get_plugin(plugin_name)
-        if plugin is None:
+        # Worker API 下第三方插件不在宿主进程实例化，元数据从发现与安装记录读取；
+        # 贡献窗口属插件自身界面，随启用提供，宿主继续以 allowedCommands/Events/Settings 限制窗口能力。
+        metadata = self.plugins.get_plugin_metadata(plugin_name)
+        if metadata is None:
             return None
         status = next(
             (item.get("status") for item in self.plugins.list_plugins() if item.get("name") == plugin_name), None
         )
         if status != "enabled":
             return None
-        contributes = plugin.metadata.get("contributes") or {}
+        contributes = metadata.get("contributes") or {}
         windows = contributes.get("windows") if isinstance(contributes, dict) else None
         if not isinstance(windows, list):
             return None
@@ -110,7 +112,7 @@ class WindowHandlers(_FrontendState):
                 "type": "plugin",
                 "plugin": plugin_name,
                 "route": route,
-                "title": str(raw.get("title") or plugin.title),
+                "title": str(raw.get("title") or metadata.get("title") or plugin_name),
                 "width": min(max(int(raw.get("width", 720)), 320), 1920),
                 "height": min(max(int(raw.get("height", 560)), 240), 1080),
                 "minWidth": min(max(int(raw.get("minWidth", 360)), 320), 1920),
@@ -149,8 +151,11 @@ class WindowHandlers(_FrontendState):
             if existing and self._focus_registered_window(existing["label"]):
                 return success(existing)
 
-        suffix = request.instance_key or uuid4().hex[:10]
-        label = request.descriptor_id if descriptor["singleton"] else f"{request.descriptor_id}:{suffix}"
+        # Tauri 窗口 label 不允许点号：descriptor_id 与实例键中的点号统一转冒号，
+        # capabilities 的 plugin:* 模式按冒号匹配。
+        suffix = (request.instance_key or uuid4().hex[:10]).replace(".", ":")
+        label_base = request.descriptor_id.replace(".", ":")
+        label = label_base if descriptor["singleton"] else f"{label_base}:{suffix}"
         query = {
             "window": descriptor["type"],
             "label": label,

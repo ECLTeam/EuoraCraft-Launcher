@@ -47,9 +47,7 @@ class LockedImports(MetaPathFinder):
     只负责当前 Worker 的导入，不赋予磁盘只读权限或禁止任意 Python OS API。
     """
 
-    protected_imports: ClassVar[frozenset[str]] = frozenset(
-        {"ECL", "pytauri", "pytauri_wheel", "pytauri_plugins", "pytauri_utils"}
-    )
+    protected_imports: ClassVar[frozenset[str]] = frozenset({"ECL", "pytaruix"})
 
     def __init__(self, roots: Mapping[str, Path], site_path: Path | None, packages: frozenset[str]) -> None:
         """

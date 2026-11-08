@@ -38,8 +38,8 @@ from ECL.plugins.runtime.models import RequestModel
 from ECL.utils import get_logger
 
 if TYPE_CHECKING:
-    from pytauri import AppHandle
-    from pytauri.ffi.webview import WebviewWindow
+    from pytaruix import AppHandle
+    from pytaruix.webview import WebviewWindow
 
     from ECL.plugins.runtime.broker import PluginHostBroker
 
@@ -178,7 +178,7 @@ class RuntimeCustomUi:
         """
         lease = self._broker.session.lease()
         try:
-            if version("pytauri-wheel") != "0.8.0+ecl.2":
+            if not version("pytaruix"):
                 raise ProtocolError("当前运行时不提供插件隔离", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
         except PackageNotFoundError:
             raise ProtocolError("缺少固定原生运行时", "PLUGIN_UI_ISOLATION_UNAVAILABLE") from None
@@ -215,8 +215,8 @@ class RuntimeCustomUi:
         """
         使用固定绑定契约创建独立浏览器配置，主窗口和其他插件不共用该目录。
         """
-        from pytauri import WebviewUrl, WindowEvent
-        from pytauri.ffi.webview import WebviewWindowBuilder
+        from pytaruix import WebviewUrl, WindowEvent
+        from pytaruix.webview import WebviewWindowBuilder
 
         assert self._declaration is not None
         profile = (self._data_path / "plugin_webviews" / self._broker.session.run_id / reference).resolve()

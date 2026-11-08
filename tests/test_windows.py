@@ -71,12 +71,12 @@ def test_host_created_windows_are_in_tauri_capability():
     capability = tomllib.loads(capability_path.read_text(encoding="utf-8"))
 
     assert "main" in capability["windows"]
-    assert "plugin.*" in capability["windows"]
+    assert "plugin:*" in capability["windows"]
 
 
 def test_child_window_uses_a_valid_raw_rgba_icon():
     icon = _create_child_window_icon()
 
     if icon is not None:
-        assert icon.width() == 32
-        assert icon.height() == 32
+        assert icon.width == 32
+        assert icon.height == 32

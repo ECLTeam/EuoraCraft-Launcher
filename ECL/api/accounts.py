@@ -64,7 +64,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from anyio import to_thread
-from pytauri_plugins.dialog import DialogExt
+from pytaruix.plugins.dialog import DialogExt
 
 from ECL.api.models import (
     AccountTextureRequest,

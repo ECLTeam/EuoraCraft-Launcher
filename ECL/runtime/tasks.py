@@ -34,10 +34,7 @@ class RuntimeCheckPolicy:
         "ECL.api",
         "ECL.services",
         "ECL.plugins",
-        "pytauri",
-        "pytauri_plugins",
-        "pytauri_utils",
-        "pytauri_wheel",
+        "pytaruix",
     )
 
     @classmethod
