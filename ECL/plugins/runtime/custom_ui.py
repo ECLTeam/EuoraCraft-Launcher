@@ -18,13 +18,11 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from threading import BoundedSemaphore, Event, RLock
 from time import monotonic
 from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
 
 from pydantic import Field, ValidationError
 
@@ -33,7 +31,6 @@ from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration, CustomUiRequest
-from ECL.plugins.runtime.custom_ui_shell import build_custom_ui_shell
 from ECL.plugins.runtime.models import RequestModel
 from ECL.utils import get_logger
 
@@ -174,91 +171,14 @@ class RuntimeCustomUi:
 
     def _open(self) -> dict[str, JsonValue]:
         """
-        空白原生窗口先安装拒绝策略，再加载受信壳；初始化失败不执行插件代码。
+        请求创建原生隔离窗口；隔离原语不可用时按契约显式拒绝。
+
+        pytaurix 0.1.0a1 尚未提供顶层导航锁定与消息 URI 拦截等隔离原语，
+        旧自维护 wheel 的 install_plugin_isolation 已随运行时退役。
+        在等价策略能力落地并重新验收前，不退回无隔离的窗口实现。
         """
-        lease = self._broker.session.lease()
-        try:
-            if not version("pytaurix"):
-                raise ProtocolError("当前运行时不提供插件隔离", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
-        except PackageNotFoundError:
-            raise ProtocolError("缺少固定原生运行时", "PLUGIN_UI_ISOLATION_UNAVAILABLE") from None
-        app = self._app_handle()
-        if app is None:
-            raise ProtocolError("原生应用尚未就绪", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
-        html = self._html()
-        reference, window = uuid4().hex, _Window(lease)
-        shell_url = build_custom_ui_shell(html, window.secret)
-        with self._lock:
-            self._check(window)
-            if len(self._windows) >= 16 or sum(not item.destroyed.is_set() for item in self._windows.values()) >= 2:
-                raise ProtocolError("当前运行窗口已达上限", "PLUGIN_RATE_LIMITED")
-            self._windows[reference] = window
-            if self._executor is None:
-                self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="plugin_ui")
-        try:
-            self._create(window, reference, app, shell_url)
-            if not window.ready.wait(10):
-                raise ProtocolError("原生插件窗口初始化超时", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
-            if window.error_code:
-                raise ProtocolError("原生插件窗口初始化失败", window.error_code)
-            self._check(window)
-        except (ProtocolError, PluginRunError):
-            self._close_window(window)
-            raise
-        except Exception:
-            self._close_window(window)
-            get_logger("RuntimeCustomUi").exception("插件原生窗口初始化失败")
-            raise ProtocolError("原生隔离不可用", "PLUGIN_UI_ISOLATION_UNAVAILABLE") from None
-        return self._view(reference, window)
-
-    def _create(self, window: _Window, reference: str, app: AppHandle, shell_url: str) -> None:
-        """
-        使用固定绑定契约创建独立浏览器配置，主窗口和其他插件不共用该目录。
-        """
-        from pytaurix import WebviewUrl, WindowEvent
-        from pytaurix.webview import WebviewWindowBuilder
-
-        assert self._declaration is not None
-        profile = (self._data_path / "plugin_webviews" / self._broker.session.run_id / reference).resolve()
-        profile.mkdir(parents=True, exist_ok=False)
-        webview = WebviewWindowBuilder.build(
-            app,
-            "plugin-v2-" + reference,
-            WebviewUrl.External("about:blank"),
-            plugin_isolation=True,
-            visible=False,
-            data_directory=profile,
-            decorations=True,
-            title=self._declaration.title,
-            inner_size=(self._declaration.width, self._declaration.height),
-            min_inner_size=(480, 360),
-            devtools=False,
-        )
-        window.webview = webview
-
-        def event(value: object) -> None:
-            if isinstance(value, WindowEvent.CloseRequested):
-                window.is_closed = True
-            elif isinstance(value, WindowEvent.Destroyed):
-                window.is_closed = True
-                window.webview = None
-                window.requests.clear()
-                window.destroyed.set()
-                window.ready.set()
-
-        def ready(success: bool) -> None:
-            try:
-                self._check(window)
-                if not success:
-                    raise ProtocolError("原生策略未能安装", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
-                webview.navigate(shell_url)
-            except (ProtocolError, PluginRunError):
-                window.error_code = "PLUGIN_UI_ISOLATION_UNAVAILABLE"
-                window.ready.set()
-                self._close_window(window)
-
-        webview.on_window_event(event)
-        webview.install_plugin_isolation(shell_url, lambda uri: self._message(window, uri), ready)
+        self._broker.session.lease()
+        raise ProtocolError("原生隔离策略在当前运行时不可用", "PLUGIN_UI_ISOLATION_UNAVAILABLE")
 
     def _message(self, window: _Window, uri: str) -> None:
         """

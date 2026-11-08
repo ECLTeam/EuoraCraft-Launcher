@@ -90,7 +90,7 @@ class ImportGuard(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname.startswith('ECL.') and fullname != 'ECL.bootstrap':
             raise AssertionError('Unexpected host import: ' + fullname)
-        if fullname.split('.')[0] in {'pytauri', 'pytauri_wheel', 'httpx', 'pydantic'}:
+        if fullname.split('.')[0] in {'pytaurix', 'pytauri', 'httpx', 'pydantic'}:
             raise AssertionError('Unexpected dependency import: ' + fullname)
 sys.meta_path.insert(0, ImportGuard())
 """
@@ -109,7 +109,7 @@ def test_importing_main_does_not_preload_any_process_executor() -> None:
     result = _run_isolated(
         "import main,sys,json\n"
         "print(json.dumps({'loaded':[name for name in sys.modules "
-        "if (name.startswith('ECL.') and name != 'ECL.bootstrap') or name.startswith('pytauri')]}))\n"
+        "if (name.startswith('ECL.') and name != 'ECL.bootstrap') or name.startswith(('pytauri', 'pytaurix'))]}))\n"
     )
     assert result == {"loaded": []}
 
@@ -136,7 +136,7 @@ def test_rejected_role_never_imports_host_or_plugin_executor(arguments) -> None:
         "except SystemExit as error:\n"
         " code=error.code\n"
         "print(json.dumps({'code':code,'loaded':[n for n in sys.modules "
-        "if (n.startswith('ECL.') and n != 'ECL.bootstrap') or n.startswith('pytauri')]}))\n"
+        "if (n.startswith('ECL.') and n != 'ECL.bootstrap') or n.startswith(('pytauri', 'pytaurix'))]}))\n"
     )
     assert result == {"code": 2, "loaded": []}
 

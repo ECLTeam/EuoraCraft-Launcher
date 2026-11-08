@@ -62,7 +62,6 @@ def _start_launcher(root, output, data, launcher, development_flag="--plugin-dev
     environment = dict(
         os.environ,
         PYTHONUTF8="1",
-        _PYTAURI_DIST="pytauri-wheel",
         PYTHONPATH=str(root),
         ECL_TEST_HOME=str(data / "home"),
     )
@@ -107,7 +106,7 @@ async def _wait_connection(port, process):
 
 async def _call(page, command, body=None):
     reply = await page.evaluate(
-        "([command,body])=>window.__TAURI__.pytauri.pyInvoke(command,body)", [command, body or {}]
+        "([command,body])=>window.__TAURI__.pytaurix.pyInvoke(command,body)", [command, body or {}]
     )
     assert reply["success"], (command, reply)
     return reply.get("data")
@@ -126,7 +125,7 @@ async def _wait_for(action, predicate, seconds=20):
 
 async def _command_result(page, command):
     return await page.evaluate(
-        "command=>window.__TAURI__.pytauri.pyInvoke('plugin_call_command',{command,params:{}})", command
+        "command=>window.__TAURI__.pytaurix.pyInvoke('plugin_call_command',{command,params:{}})", command
     )
 
 
@@ -434,11 +433,11 @@ async def main():
                 for p in c.pages
                 if p.url.startswith(f"http://127.0.0.1:{server.server_port}/")
             )
-            await page.wait_for_function("window.__TAURI__?.pytauri && document.body.innerText.length > 10")
+            await page.wait_for_function("window.__TAURI__?.pytaurix && document.body.innerText.length > 10")
             await page.evaluate("location.hash='#/more/plugins'")
             await page.locator(".plugin-row").first.wait_for()
             development = await _wait_for(
-                lambda: page.evaluate("window.__TAURI__.pytauri.pyInvoke('plugin_development_get',{})"),
+                lambda: page.evaluate("window.__TAURI__.pytaurix.pyInvoke('plugin_development_get',{})"),
                 lambda reply: reply["success"],
             )
             assert development["data"] == {"enabled": False, "items": []}

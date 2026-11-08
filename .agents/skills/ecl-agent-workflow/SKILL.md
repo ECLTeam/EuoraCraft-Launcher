@@ -120,7 +120,7 @@ description: Enforce a rigorous inspect → plan → code → test → commit �
 
 | 后端核心 | `ECL/` | Python 3 | pytest |
 
-| 后端 API | `ECL/api/` | pytauri IPC | pytest |
+| 后端 API | `ECL/api/` | pytaurix IPC | pytest |
 
 | 游戏核心 | `ECL/game/` (子模块) | Python | pytest |
 

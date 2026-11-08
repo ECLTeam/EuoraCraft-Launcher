@@ -48,8 +48,7 @@ def _collect_all_safe(package: str) -> tuple[list, list, list]:
         return [], [], []
 
 
-_wheel_datas, _wheel_binaries, _wheel_hiddenimports = _collect_all_safe("pytauri_wheel")
-_plugin_datas, _plugin_binaries, _plugin_hiddenimports = _collect_all_safe("pytauri_plugins")
+_wheel_datas, _wheel_binaries, _wheel_hiddenimports = _collect_all_safe("pytaurix")
 def _resolve_icon() -> str | None:
     if IS_MACOS:
         # 缺少 .icns 时 PyInstaller 会静默回退到自带的 Python 图标，导致应用包和 Dock 图标都显示为 Python，
@@ -113,16 +112,13 @@ datas = [
     (str(SPEC_DIR / "resources"), "resources"),
     (str(SPEC_DIR / "capabilities"), "capabilities"),
     (str(SPEC_DIR / "Tauri.toml"), "."),
-] + _wheel_datas + _plugin_datas + copy_metadata("pytauri-wheel")
+] + _wheel_datas + copy_metadata("pytaurix")
 
-binaries = _wheel_binaries + _plugin_binaries + _collect_msvc_runtime()
+binaries = _wheel_binaries + _collect_msvc_runtime()
 hiddenimports = [
     "importlib_metadata",
-    "pytauri",
-    "pytauri.ffi",
-    "pytauri.ffi._ext_mod",
-    "pytauri_wheel",
-    "pytauri_wheel.ext_mod",
+    "pytaurix",
+    "pytaurix._native",
     "anyio",
     "colorama",
     "dotenv",
@@ -134,7 +130,7 @@ hiddenimports = [
     "pyperclip",
     "ECL.game",
     "ECL.game.auth",
-] + _wheel_hiddenimports + _plugin_hiddenimports + collect_submodules("ECL")
+] + _wheel_hiddenimports + collect_submodules("ECL")
 excludes = [
     "scipy",
     "pandas",

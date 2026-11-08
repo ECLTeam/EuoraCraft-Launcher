@@ -100,7 +100,7 @@ class ImportGuard(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname.startswith('ECL.') and fullname != 'ECL.plugin_api' and not fullname.startswith('ECL.plugin_api.'):
             raise AssertionError('Unexpected host import: ' + fullname)
-        if fullname.split('.')[0] in {'pytauri', 'pytauri_wheel', 'httpx', 'pydantic'}:
+        if fullname.split('.')[0] in {'pytaurix', 'pytauri', 'httpx', 'pydantic'}:
             raise AssertionError('Unexpected dependency import: ' + fullname)
 sys.meta_path.insert(0, ImportGuard())
 import ECL.plugin_api
@@ -108,7 +108,7 @@ assert 'ECL.plugin_api._process' not in sys.modules
 assert 'ECL.plugin_api._windows' not in sys.modules
 print(json.dumps([n for n in sys.modules if
     (n.startswith('ECL.') and n != 'ECL.plugin_api' and not n.startswith('ECL.plugin_api.'))
-    or n.startswith(('pytauri', 'httpx', 'pydantic'))]))
+    or n.startswith(('pytaurix', 'pytauri', 'httpx', 'pydantic'))]))
 """,
         ],
         cwd=root_path,

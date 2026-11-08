@@ -152,33 +152,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Build fixed plugin window runtime
-        if: ${{ runner.os != 'Windows' || runner.arch == 'X64' }}
-        shell: pwsh
-        env:
-          RUSTUP_TOOLCHAIN: "1.99.0"
-        run: |
-          rustup toolchain install 1.99.0 --profile minimal
-          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed' }
-          python native/pytauri-runtime/build-wheel.py
-          if ($LASTEXITCODE -ne 0) { throw 'Fixed plugin runtime build failed' }
-          python -m pip install --no-index --no-deps --require-hashes --find-links build/native-runtime/wheels -r build/native-runtime/install.txt
-          if ($LASTEXITCODE -ne 0) { throw 'Fixed plugin runtime installation failed' }
-
-      - name: Preserve plugin runtime build manifest
-        if: ${{ runner.os != 'Windows' || runner.arch == 'X64' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: plugin-native-runtime-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            build/native-runtime/build-manifest.json
-            build/native-runtime/install.txt
-            build/native-runtime/wheels/*.whl
-            native/pytauri-runtime/source.json
-            native/pytauri-runtime/runtime.patch
-            native/pytauri-runtime/plugin_isolation*.rs
-          if-no-files-found: error
-
       - name: Install UPX
         if: ${{ runner.os != 'macOS' && matrix.os != 'windows-11-arm' }}
         uses: crazy-max/ghaction-upx@v4
@@ -281,12 +254,9 @@ jobs:
           fi
           python -m nuitka "${ARGS[@]}" \
             --include-package=ECL \
-            --include-package=pytauri \
-            --include-package=pytauri_plugins \
-            --include-package=pytauri_utils \
-            --include-package=pytauri_wheel \
-            --include-module=pytauri_wheel.ext_mod \
-            --include-distribution-metadata=pytauri-wheel \
+            --include-package=pytaurix \
+            --include-module=pytaurix._native \
+            --include-distribution-metadata=pytaurix \
             --include-raw-dir=resources=resources \
             --include-data-dir=frontend/dist=frontend/dist \
             --include-data-dir=capabilities=capabilities \
@@ -451,12 +421,9 @@ jobs:
             --mode=onefile --onefile-no-compression --enable-plugin=upx \
             --assume-yes-for-downloads --output-dir=build-nuitka \
             --include-package=ECL \
-            --include-package=pytauri \
-            --include-package=pytauri_plugins \
-            --include-package=pytauri_utils \
-            --include-package=pytauri_wheel \
-            --include-module=pytauri_wheel.ext_mod \
-            --include-distribution-metadata=pytauri-wheel \
+            --include-package=pytaurix \
+            --include-module=pytaurix._native \
+            --include-distribution-metadata=pytaurix \
             --include-raw-dir=resources=resources \
             --include-data-dir=frontend/dist=frontend/dist \
             --include-data-dir=capabilities=capabilities \

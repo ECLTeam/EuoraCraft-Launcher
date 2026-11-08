@@ -17,7 +17,7 @@ from ECL.plugins.runtime.supervisor import WorkerSupervisor
 
 
 def test_locked_imports_cannot_shadow_standard_library_or_sdk(tmp_path: Path) -> None:
-    for name in ("sys", "pathlib", "ECL", "pytauri"):
+    for name in ("sys", "pathlib", "ECL", "pytaurix"):
         with pytest.raises(ProtocolError) as error:
             LockedImports({name: tmp_path}, None, frozenset())
         assert error.value.error_code == "PLUGIN_DEPENDENCY_CONFLICT"

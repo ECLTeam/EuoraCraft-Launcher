@@ -111,7 +111,7 @@ async def _native_channel(
 
 async def _native_invoke(channel, sequence: int, command: str, params: dict):
     expression = (
-        "(async()=>{const end=Date.now()+30000;while(typeof window.__TAURI__?.pytauri?.pyInvoke!=='function'){if(Date.now()>end)throw new Error('native bridge not ready');await new Promise(r=>setTimeout(r,25));}return window.__TAURI__.pytauri.pyInvoke("
+        "(async()=>{const end=Date.now()+30000;while(typeof window.__TAURI__?.pytaurix?.pyInvoke!=='function'){if(Date.now()>end)throw new Error('native bridge not ready');await new Promise(r=>setTimeout(r,25));}return window.__TAURI__.pytaurix.pyInvoke("
         + json.dumps(command)
         + ","
         + json.dumps(params)

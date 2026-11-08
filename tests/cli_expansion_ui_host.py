@@ -46,7 +46,6 @@ async def main() -> None:
     environment = dict(
         os.environ,
         PYTHONUTF8="1",
-        _PYTAURI_DIST="pytauri-wheel",
         PYTHONPATH=str(root),
         ECL_TEST_HOME=str(data_path / "home"),
     )

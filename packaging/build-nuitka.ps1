@@ -83,12 +83,9 @@ try {
         --windows-icon-from-ico=resources/img/logo.ico `
         @upxArgs `
         --include-package=ECL `
-        --include-package=pytauri `
-        --include-package=pytauri_plugins `
-        --include-package=pytauri_utils `
-        --include-package=pytauri_wheel `
-        --include-module=pytauri_wheel.ext_mod `
-        --include-distribution-metadata=pytauri-wheel `
+        --include-package=pytaurix `
+        --include-module=pytaurix._native `
+        --include-distribution-metadata=pytaurix `
         --include-raw-dir=resources=resources `
         --include-data-dir=frontend/dist=frontend/dist `
         --include-data-dir=capabilities=capabilities `

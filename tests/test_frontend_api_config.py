@@ -388,6 +388,13 @@ class FakeWebviewWindow:
         self.main_thread_calls += 1
         handler()
 
+    def emit_target_json(self, target_json, event, payload) -> None:
+        # pytaurix 的 Emitter.emit_str_to 会把发送委托给 manager.emit_target_json；
+        # 记录调用以便需要时断言，未断言的用例保持安静。
+        if not hasattr(self, "emitted"):
+            self.emitted = []
+        self.emitted.append((target_json, event, payload))
+
 
 def _build_api(tmp_path) -> FrontendApi:
     launcher = SimpleNamespace(

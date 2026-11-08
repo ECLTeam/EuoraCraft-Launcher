@@ -26,7 +26,7 @@ import sys
 class Guard(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         prefixes = ('ECL.launcher', 'ECL.application', 'ECL.host', 'ECL.api', 'ECL.services', 'ECL.plugins',
-                    'pytauri', 'pytauri_plugins', 'pytauri_utils', 'pytauri_wheel', 'ECL.utils')
+                    'pytaurix', 'ECL.utils')
         if any(fullname == name or fullname.startswith(name + '.') for name in prefixes):
             raise AssertionError('禁止载入模块：' + fullname)
 sys.meta_path.insert(0, Guard())

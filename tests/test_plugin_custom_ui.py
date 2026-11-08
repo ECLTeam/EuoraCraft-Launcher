@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -98,35 +93,13 @@ def test_custom_ui_replay_returns_same_result_and_changed_identity_cannot_write_
     assert call(broker, "settings.get", {"keys": ["text"]}) == {"values": {"text": "first"}, "revision": 1}
 
 
-@pytest.mark.skipif(
-    not os.environ.get("ECL_NATIVE_UI_GATE"),
-    reason="需要固定原生 Wheel 的真实系统 WebView 验收",
-)
-def test_real_native_custom_ui_worker_round_trip_revocation_and_reopen(tmp_path):
-    root = Path(__file__).resolve().parents[1]
-    environment = dict(os.environ, PYTHONUTF8="1", _PYTAURI_DIST="pytauri-wheel")
-    environment.pop("WEBVIEW2_USER_DATA_FOLDER", None)
-    environment.pop("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", None)
-    runtime = os.environ.get("ECL_NATIVE_RUNTIME_PATH")
-    environment["PYTHONPATH"] = os.pathsep.join([str(root), *([runtime] if runtime else [])])
-    output = tmp_path / "native-ui"
-    result = subprocess.run(
-        [sys.executable, str(root / "tests/plugin_custom_ui_gate_host.py"), str(output)],
-        cwd=root,
-        env=environment,
-        capture_output=True,
-        timeout=60,
-        creationflags=0x08000000 if sys.platform == "win32" else 0,
-    )
-    report = output / "result.json"
-    diagnostics = (
-        result.stdout.decode("utf-8", errors="replace")[-6000:]
-        + result.stderr.decode("utf-8", errors="replace")[-6000:]
-    )
-    assert report.exists(), diagnostics
-    data = json.loads(report.read_text(encoding="utf-8"))
-    destination = os.environ.get("ECL_NATIVE_UI_REPORT")
-    if destination:
-        Path(destination).write_text(json.dumps(data, indent=2), encoding="utf-8")
-    assert result.returncode == 0 and data["ok"] is True, json.dumps(data, ensure_ascii=False) + "\n" + diagnostics
-    assert data["reopened_and_closed"]
+def test_custom_ui_open_fails_closed_without_native_isolation(ui):
+    """
+    pytaurix 尚未提供顶层导航锁定与消息 URI 拦截原语；创建请求必须显式拒绝，
+    不退回无隔离的窗口实现，也不允许失败后残留窗口引用。
+    """
+    broker, _ = ui
+    with pytest.raises(ProtocolError) as exc:
+        broker.custom_ui.handle("ui.windows.open", {})
+    assert exc.value.error_code == "PLUGIN_UI_ISOLATION_UNAVAILABLE"
+    assert broker.custom_ui._windows == {}

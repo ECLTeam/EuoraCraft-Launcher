@@ -355,7 +355,9 @@ Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`�
 
 页面通过可信壳提供的 `ECL.call(method, params)` 异步调用自身命令和设置。窗口不提供账户、通用 IPC、任意路径或主窗口对象；主窗口注入继续遵循其单独契约。专用桥内部使用窗口凭据、运行代次、请求 ID 和变更去重，不接受页面自报安装身份。窗口请求白名单以 `RuntimeCustomUi` 为准。
 
-当前需要维护版 `pytauri-wheel 0.8.0+ecl.2`。真实原生验收覆盖 Windows x64 / WebView2 `156.0.4314.58`、Linux x86_64 / WebKitGTK `2.52.6`、macOS ARM64 / WKWebView build `21624.5.1.11.3`；Windows/macOS 的精确引擎版本由来源清单固定，缺少必需原生控制时在执行插件语句前拒绝。普通主窗口不受插件专用版本门禁影响。构建、许可、网络与来源边界见[原生运行时](../../native/pytauri-runtime/README.md)。示例见 [worker_custom_ui](../../examples/plugins/worker_custom_ui/README.md)。
+隔离原语在当前 `pytaurix` 发行中尚未提供（顶层导航锁定与消息 URI 拦截随旧自维护运行时退役）；
+`ui.windows.open` 现返回 `PLUGIN_UI_ISOLATION_UNAVAILABLE`，窗口不创建。上述窗口形态与消息协议
+为隔离原语落地后重新实现与验收的目标契约。示例见 [worker_custom_ui](../../examples/plugins/worker_custom_ui/README.md)。
 
 ### 认证与联机
 
