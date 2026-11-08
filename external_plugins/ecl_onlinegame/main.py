@@ -57,7 +57,7 @@ class Plugin(BasePlugin):
                     },
                     {
                         "key": "nodes",
-                        "type": "string",
+                        "type": "text",
                         "default": "",
                         "description": "自定义节点，每行一个带协议和端口的地址",
                     },
@@ -81,8 +81,6 @@ class Plugin(BasePlugin):
             "nat_type": self.nat_type,
             "detect_ports": self.detect_ports,
             "search_mc_port": self.search_mc_port,
-            "nodes_get": self.nodes_get,
-            "nodes_set": self.nodes_set,
             "operation": self.operation,
             "instances": self.instances,
             "player_icon": self.player_icon,
@@ -94,7 +92,7 @@ class Plugin(BasePlugin):
                 input_fields=({"name": "payload", "type": "json", "max_length": 16384, "required": False},),
                 output_fields=({"name": "result", "type": "json", "max_length": 16384},),
                 exported=True,
-                is_query=name in {"status", "operation", "nodes_get", "instances", "player_icon"},
+                is_query=name in {"status", "operation", "instances", "player_icon"},
             )
         try:
             ui = Path(__file__).parent / "ui"
@@ -285,27 +283,6 @@ class Plugin(BasePlugin):
         ):
             raise ValueError("候选端口列表无效")
         return self._submit(lambda: self._connector.search_mc_port(ports))
-
-    def nodes_get(self, payload=None) -> dict[str, JsonValue]:
-        """
-        读取本插件节点设置。
-        """
-        return {"result": self._node_settings().model_dump()}
-
-    def nodes_set(self, payload: dict) -> dict[str, JsonValue]:
-        """
-        只更新自身节点策略，不迁移已存在的房间。
-        """
-        settings = ConnectorNodeConfig.model_validate(payload)
-        view = self.host.call("settings.get", {"keys": ["node_mode", "nodes"]})
-        self.host.call(
-            "settings.set",
-            {
-                "expected_revision": view["revision"],
-                "values": {"node_mode": settings.mode, "nodes": "\n".join(settings.nodes)},
-            },
-        )
-        return {"result": settings.model_dump()}
 
     def operation(self, payload: dict) -> dict[str, JsonValue]:
         """

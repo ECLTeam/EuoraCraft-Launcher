@@ -1,3 +1,4 @@
+const pluginSdk = SDK;
 const { t, renderSkinAvatar, ...components } = Controls;
 
 const ConnectorPlayerAvatar = {
@@ -97,47 +98,6 @@ const NatDetectModal = {
     methods: { t },
 };
 
-const NodeSettingsModal = {
-    components,
-    props: { visible: Boolean, busy: Boolean, mode: String, text: String },
-    emits: ["update:visible", "save"],
-    data() {
-        return { draftMode: this.mode, draftText: this.text };
-    },
-    watch: {
-        visible(value) {
-            if (value) {
-                this.draftMode = this.mode;
-                this.draftText = this.text;
-            }
-        },
-    },
-    computed: {
-        modes() {
-            return ["automatic", "append", "custom"].map((value) => ({
-                value,
-                label: t(`advanced.nodesMode.${value}`),
-            }));
-        },
-    },
-    methods: { t },
-    template: `<Modal :visible="visible" :title="t('advanced.nodesEntry')" width="560px" maskClosable @update:visible="$emit('update:visible', $event)">
-    <div data-plugin="ECL-OnlineGame" class="node-settings-form">
-      <SettingRow :label="t('advanced.nodesPolicy')">
-        <NSelect v-model:value="draftMode" class="node-settings-select" :options="modes" :disabled="busy" :inputProps="{ 'aria-label': t('advanced.nodesPolicy') }" />
-      </SettingRow>
-      <div v-if="draftMode !== 'automatic'" class="node-settings-addresses">
-        <label for="onlinegame-node-addresses">{{ t('advanced.nodesAddresses') }}</label>
-        <NInput v-model:value="draftText" type="textarea" :autosize="{ minRows: 3, maxRows: 8 }" placeholder="tcp://relay.example.com:11010" :disabled="busy" :inputProps="{ id: 'onlinegame-node-addresses', 'aria-label': t('advanced.nodesAddresses') }" />
-      </div>
-    </div>
-    <template #footer>
-      <NButton @click="$emit('update:visible', false)">{{ t('common.cancel') }}</NButton>
-      <NButton type="primary" :disabled="busy" @click="$emit('save', { mode: draftMode, text: draftText })">{{ t('common.save') }}</NButton>
-    </template>
-  </Modal>`,
-};
-
 module.exports = {
     name: "OnlineGamePage",
     components: {
@@ -145,7 +105,6 @@ module.exports = {
         ConnectorPlayerAvatar,
         PlayerList,
         NatDetectModal,
-        NodeSettingsModal,
     },
     data() {
         return {
@@ -168,16 +127,9 @@ module.exports = {
             scanning: false,
             scanPhase: "",
             natVisible: false,
-            nodesVisible: false,
-            nodeMode: "automatic",
-            nodeText: "",
+
             nat: null,
             natError: "",
-            nodeOptions: [
-                { label: "公共节点", value: "automatic" },
-                { label: "公共与自定义节点", value: "append" },
-                { label: "仅自定义节点", value: "custom" },
-            ],
         };
     },
     computed: {
@@ -254,13 +206,12 @@ module.exports = {
             const method = [
                 "status",
                 "operation",
-                "nodes_get",
                 "instances",
                 "player_icon",
             ].includes(name)
                 ? "queryPluginCommand"
                 : "callPluginCommand";
-            const response = await window.__plugin_sdk__.api[method](
+            const response = await pluginSdk.api[method](
                 `ECL-OnlineGame:${name}`,
                 payload === undefined ? {} : { payload },
             );
@@ -323,7 +274,8 @@ module.exports = {
                         if (operation.state === "failed") {
                             this.error = operation.error;
                             this.scanning = false;
-                            if (name === "nat_type") this.natError = operation.error;
+                            if (name === "nat_type")
+                                this.natError = operation.error;
                         } else if (done) done(operation.value);
                         await this.refresh();
                     } catch (error) {
@@ -331,7 +283,8 @@ module.exports = {
                             this.busy = false;
                             this.scanning = false;
                             this.error = error.message;
-                            if (name === "nat_type") this.natError = error.message;
+                            if (name === "nat_type")
+                                this.natError = error.message;
                         }
                     }
                 };
@@ -444,23 +397,31 @@ module.exports = {
             this.detectedPort = null;
             this.scanPhase = "detecting";
             return this.run(
-                    "detect_ports",
-                    undefined,
-                    "正在检测端口",
-                    (value) => {
-                        const ports = (value && value.ports) || [];
-                        this.portOptions = ports.map((port) => ({
-                            label: String(port),
-                            value: port,
-                        }));
-                        if (!ports.length) { this.scanning = false; return; }
-                        this.scanPhase = "searching";
-                        void this.run("search_mc_port", { ports }, "正在确认 Minecraft 端口", result => {
+                "detect_ports",
+                undefined,
+                "正在检测端口",
+                (value) => {
+                    const ports = (value && value.ports) || [];
+                    this.portOptions = ports.map((port) => ({
+                        label: String(port),
+                        value: port,
+                    }));
+                    if (!ports.length) {
+                        this.scanning = false;
+                        return;
+                    }
+                    this.scanPhase = "searching";
+                    void this.run(
+                        "search_mc_port",
+                        { ports },
+                        "正在确认 Minecraft 端口",
+                        (result) => {
                             this.detectedPort = result.port || null;
                             this.scanning = false;
-                        });
-                    },
-                );
+                        },
+                    );
+                },
+            );
         },
         detectPorts() {
             return this.startPortScan();
@@ -489,41 +450,11 @@ module.exports = {
                 this.nat = result;
             });
         },
-        async toggleNodes() {
-            if (this.nodesVisible) {
-                this.nodesVisible = false;
-                return;
-            }
+        async openConnectorSettings() {
             try {
-                const result = await this.call("nodes_get");
-                this.nodeMode = result.mode;
-                this.nodeText = (result.nodes || []).join("\n");
-                this.nodesVisible = true;
-            } catch (error) {
-                this.error = error.message;
-            }
-        },
-        openConnectorSettings() {
-            return this.toggleNodes();
-        },
-        async saveNodes(values) {
-            if (this.busy) return;
-            if (values) {
-                this.nodeMode = values.mode;
-                this.nodeText = values.text;
-            }
-            this.busy = true;
-            this.error = "";
-            try {
-                await this.call("nodes_set", {
-                    mode: this.nodeMode,
-                    nodes: this.nodeText.split(/\r?\n/),
-                });
-                this.nodesVisible = false;
-            } catch (error) {
-                this.error = error.message;
-            } finally {
-                this.busy = false;
+                await pluginSdk.ui.openSettings();
+            } catch {
+                this.error = t("plugins.settingLoadFailed");
             }
         },
         clearRoomCode() {

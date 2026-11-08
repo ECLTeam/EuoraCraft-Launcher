@@ -160,7 +160,7 @@ class SettingDefinition(RequestModel):
     """
 
     key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
-    type: Literal["bool", "string", "number", "select", "readonly_file"]
+    type: Literal["bool", "string", "text", "number", "select", "readonly_file"]
     default: str | int | float | bool
     description: str = Field(default="", max_length=1000)
     options: list[str] = Field(default_factory=list, max_length=64)

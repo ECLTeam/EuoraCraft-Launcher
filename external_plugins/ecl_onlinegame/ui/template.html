@@ -563,11 +563,4 @@
         :error="natError"
         @detect="detectNat"
     />
-    <NodeSettingsModal
-        v-model:visible="nodesVisible"
-        :busy="busy"
-        :mode="nodeMode"
-        :text="nodeText"
-        @save="saveNodes"
-    />
 </div>

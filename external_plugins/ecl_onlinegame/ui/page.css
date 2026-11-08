@@ -1262,30 +1262,3 @@
     font-size: 12px;
     line-height: 1.6;
 }
-
-.node-settings-select {
-    width: 220px;
-}
-.node-settings-addresses {
-    padding: 12px 16px;
-}
-.node-settings-addresses label {
-    display: block;
-    margin-bottom: 8px;
-    color: var(--ecl-text);
-    font-size: 13px;
-    font-weight: 600;
-}
-@media (max-width: 840px) {
-    .node-settings-form .setting-item {
-        align-items: stretch;
-        flex-direction: column;
-        gap: 8px;
-    }
-    .node-settings-form .setting-control {
-        justify-content: flex-start;
-    }
-    .node-settings-select {
-        width: 100%;
-    }
-}

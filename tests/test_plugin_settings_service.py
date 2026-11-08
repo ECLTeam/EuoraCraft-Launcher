@@ -38,6 +38,19 @@ def test_worker_and_disabled_management_share_values_and_events(tmp_path):
     )
 
 
+def test_multiline_setting_roundtrip_and_invalid_write_preserves_storage(tmp_path):
+    service = PluginSettingsService(tmp_path)
+    schema = define(service, kind="text", default="")
+    service.publish("a" * 32, "c" * 32)
+    content = "tcp://first.example:11010\nquic://second.example:11010"
+    service.update("a" * 32, "b" * 64, {"greeting": content}, 0, lambda: None, schema_revision=schema)
+    before = (tmp_path / "plugin_settings_v2" / f"{'a' * 32}.json").read_bytes()
+    assert service.view("a" * 32, "b" * 64, "c" * 32)["values"]["greeting"] == content
+    with pytest.raises(ProtocolError):
+        service.update("a" * 32, "b" * 64, {"greeting": 7}, 1, lambda: None, schema_revision=schema)
+    assert (tmp_path / "plugin_settings_v2" / f"{'a' * 32}.json").read_bytes() == before
+
+
 def test_stale_content_or_schema_cannot_overwrite_after_reload(tmp_path):
     service = PluginSettingsService(tmp_path)
     old = define(service)
