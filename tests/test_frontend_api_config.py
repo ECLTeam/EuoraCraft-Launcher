@@ -391,6 +391,7 @@ class FakeWebviewWindow:
 
 def _build_api(tmp_path) -> FrontendApi:
     launcher = SimpleNamespace(
+        launch_options=LaunchOptions(),
         app_path=tmp_path,
         data_path=tmp_path / "ECL_data",
         config={"launcher": {"debug": True}},

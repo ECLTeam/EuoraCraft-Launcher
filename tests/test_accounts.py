@@ -84,6 +84,26 @@ from ECL.services import AccountManager
 from ECL.services.account.accounts import LauncherMicrosoftAccountManager
 
 
+@pytest.mark.asyncio
+async def test_explicit_launch_account_keeps_default_and_persistent_state(tmp_path) -> None:
+    manager = AccountManager(tmp_path, microsoft_manager=FakeMicrosoftManager())
+    first = manager.add_offline("FirstPlayer")
+    second = manager.add_offline("SecondPlayer")
+    files_before = {file: file.read_bytes() for file in tmp_path.rglob("*.json")}
+    events = []
+    manager.events.subscribe("account:changed", events.append)
+    credentials = await manager.get_launch_credentials(first["id"])
+    assert credentials["player_name"] == "FirstPlayer"
+    assert manager.current_account()["id"] == second["id"]
+    assert {file: file.read_bytes() for file in tmp_path.rglob("*.json")} == files_before
+    assert not events
+    manager.remove_account(first["id"])
+    with pytest.raises(accounts_service.AccountError) as error:
+        await manager.get_launch_credentials(first["id"])
+    assert error.value.error_code == "ACCOUNT_NOT_FOUND"
+    assert manager.current_account()["id"] == second["id"]
+
+
 class FakeMicrosoftManager:
     def __init__(self):
         self.on_device_code = None

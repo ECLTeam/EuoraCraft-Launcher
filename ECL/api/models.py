@@ -555,6 +555,7 @@ class ServerQuickTarget(RequestModel):
 
 class LaunchRequest(RequestModel):
     version_id: str = Field(min_length=1)
+    account_id: str | None = Field(default=None, min_length=1, max_length=256)
     game_path: SafePath
     java_path: SafePath | None = None
     source: DownloadSource | None = None

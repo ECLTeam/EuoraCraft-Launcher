@@ -553,6 +553,7 @@ class GameHandlers(_FrontendState):
             source=self._download_source(source.value if source else None),
             java_path=str(java_path) if java_path else None,
             launcher_locale=launcher_locale,
+            account_id=request.account_id,
             **values,
         )
         return success(result)

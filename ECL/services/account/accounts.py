@@ -836,17 +836,31 @@ class AccountManager:
         """
         return self.list_accounts()["current"]
 
-    async def get_launch_credentials(self) -> dict[str, str]:
+    def launch_account(self, account_id: str | None = None) -> dict[str, object]:
         """
-        返回启动游戏所需的当前账户凭据。
+        读取本次启动绑定的账户快照，不改变当前选择或保存账户偏好。
+
+        :param account_id: 显式账户标识；省略时读取当前选中账户
+        :return: 所选账户的独立快照
+        :raises AccountError: 所选账户不存在或尚未选择账户
         """
         with self._lock:
-            current = next(
-                (account for account in self._all_accounts() if account["id"] == self._current_account_id),
-                None,
-            )
-        if current is None:
-            raise AccountError("请先选择一个游戏账户", "ACCOUNT_REQUIRED")
+            selected_id = self._current_account_id if account_id is None else account_id
+            account = next((item for item in self._all_accounts() if item["id"] == selected_id), None)
+            if account is None:
+                code = "ACCOUNT_REQUIRED" if account_id is None else "ACCOUNT_NOT_FOUND"
+                raise AccountError("请选择一个可用的游戏账户", code)
+            return deepcopy(account)
+
+    async def get_launch_credentials(self, account_id: str | None = None) -> dict[str, str]:
+        """
+        返回指定账户的启动凭据，沿用提供方刷新契约，不改变默认账户。
+
+        :param account_id: 本次账户标识，省略时使用当前账户
+        :return: 仅供启动服务消费的认证材料
+        :raises AccountError: 账户不可用或认证提供方失效
+        """
+        current = self.launch_account(account_id)
 
         account_uuid = str(current.get("uuid") or "").replace("-", "")
         player_name = str(current.get("alias") or "").strip()
@@ -880,10 +894,10 @@ class AccountManager:
                 "auth_server": token["YggdrasilAPI"],
             }
         if current.get("type") == "plugin":
-            return self._plugin_launch_credentials(current)
+            return self._plugin_launch_credentials(current, require_current=account_id is None)
         raise AccountError("当前账户类型暂不支持启动游戏", "ACCOUNT_TYPE_UNSUPPORTED")
 
-    def _plugin_launch_credentials(self, current: dict[str, Any]) -> dict[str, str]:
+    def _plugin_launch_credentials(self, current: dict[str, Any], *, require_current: bool = True) -> dict[str, str]:
         """
         将当前插件账户自己的持久数据交给原提供方解析，并复核交付资格。
 
@@ -906,7 +920,9 @@ class AccountManager:
         with self._lock:
             if self.plugin_auth_providers.get(provider.id) is not provider:
                 raise AccountError("认证提供方已失效，无法启动游戏", "AUTH_PROVIDER_UNAVAILABLE")
-            if self._current_account_id != account_id or self._plugin_accounts.get(account_id) != stored:
+            if (require_current and self._current_account_id != account_id) or self._plugin_accounts.get(
+                account_id
+            ) != stored:
                 raise AccountError("插件账户已发生变化，请重新选择", "ACCOUNT_CHANGED")
         if not isinstance(credentials, dict):
             raise AccountError("认证提供方返回的凭据无效", "AUTH_PROVIDER_CREDENTIAL_FAILED")
