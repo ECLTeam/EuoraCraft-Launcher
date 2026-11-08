@@ -34,6 +34,8 @@ class PluginDependencyError(ValueError):
     失败不允许写入就绪标记或修改宿主依赖。
     """
 
+    error_code: str = "PLUGIN_DEPENDENCY_PREPARATION_FAILED"
+
 
 @dataclass(frozen=True, slots=True)
 class LockedPackage:

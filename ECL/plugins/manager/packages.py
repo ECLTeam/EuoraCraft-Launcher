@@ -16,10 +16,12 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.environment_pool import PluginDependencyDirectory, _exclusive_lock
 from ECL.plugins.host_dependencies import HostDependencyPolicy
-from ECL.plugins.installation_store import WorkerManifest
+from ECL.plugins.installation_store import WorkerManifest, manifest_validation_error_code
 from ECL.plugins.package_activation import PluginPackageActivation, PluginPackageActivationStore, plugin_name_pattern
 from ECL.plugins.package_archive import PluginPackageError
 from ECL.plugins.package_preparation import PluginPackagePreflight, PluginPackagePreparer
@@ -52,8 +54,12 @@ class PluginPackages(_PluginState):
         try:
             with zipfile.ZipFile(archive_path) as archive:
                 WorkerManifest.model_validate_json(archive.read("plugin.json"))
+        except ValidationError as exc:
+            if manifest_validation_error_code(exc) == "PLUGIN_API_VERSION_UNSUPPORTED":
+                raise PluginDependencyError("插件清单需要声明受支持的 API v2") from exc
+            raise PluginDependencyError("插件清单字段无效，请检查 name、version 与 entry_point") from exc
         except ValueError as exc:
-            raise PluginDependencyError("插件必须声明 API v2 和有效权限") from exc
+            raise PluginDependencyError("插件清单无法解析") from exc
         return preflight
 
     def _dependency_policy(self) -> HostDependencyPolicy:

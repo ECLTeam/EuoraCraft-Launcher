@@ -9,6 +9,7 @@
 #   - class WorkerManifest — 第三方插件的受控运行声明。
 #   - class PluginInstallationError — 安装身份损坏或来源冲突。
 #   - class PluginInstallationStore — 安装登记、更新和卸载资格管理。
+#   - manifest_validation_error_code(exc) — 把清单校验异常归入具体错误码。
 # ============================================================
 
 from __future__ import annotations
@@ -40,6 +41,17 @@ class PluginInstallationError(ValueError):
     """
 
     error_code: str = "PLUGIN_INSTALLATION_INVALID"
+
+
+def manifest_validation_error_code(exc: ValidationError) -> str:
+    """
+    按校验失败的字段区分错误码，避免依赖或清单问题被误报为 API 版本不满足。
+
+    :param exc: WorkerManifest 校验抛出的异常
+    :return: 仅 api_version 字段失败时返回 PLUGIN_API_VERSION_UNSUPPORTED，否则返回 PLUGIN_MANIFEST_INVALID
+    """
+    fields = {error["loc"][0] for error in exc.errors() if error.get("loc")}
+    return "PLUGIN_API_VERSION_UNSUPPORTED" if fields == {"api_version"} else "PLUGIN_MANIFEST_INVALID"
 
 
 class WorkerManifest(BaseModel):

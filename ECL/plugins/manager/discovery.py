@@ -19,12 +19,15 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from pydantic import ValidationError
+
 from ECL.plugins.dependencies import (
     DependencyResolution,
     PluginDependencyInfo,
     parse_dependency,
     resolve_dependencies,
 )
+from ECL.plugins.installation_store import manifest_validation_error_code
 from ECL.plugins.plugin import Plugin
 
 from .base import _PluginState
@@ -145,7 +148,10 @@ class PluginDiscovery(_PluginState):
                 self._status[name] = "unloaded"
             except (OSError, ValueError) as exc:
                 self._status[name] = "unsupported"
-                self._plugin_errors[name] = getattr(exc, "error_code", "PLUGIN_API_VERSION_UNSUPPORTED")
+                if isinstance(exc, ValidationError):
+                    self._plugin_errors[name] = manifest_validation_error_code(exc)
+                else:
+                    self._plugin_errors[name] = getattr(exc, "error_code", "PLUGIN_API_VERSION_UNSUPPORTED")
             return
         if name in self._plugins:
             self.logger.warning("插件 %s 重复，跳过", name)

@@ -26,6 +26,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.environment_pool import _exclusive_lock
@@ -450,12 +452,12 @@ class PluginLifecycle(_PluginState):
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单不是有效的 UTF-8 JSON")
         if not isinstance(metadata, dict):
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单必须是对象")
-        from ECL.plugins.installation_store import WorkerManifest
+        from ECL.plugins.installation_store import WorkerManifest, manifest_validation_error_code
 
         try:
             WorkerManifest.model_validate(metadata)
-        except ValueError:
-            return PluginActionResult("", PluginAction.INSTALL, "invalid", "PLUGIN_API_VERSION_UNSUPPORTED")
+        except ValidationError as exc:
+            return PluginActionResult("", PluginAction.INSTALL, "invalid", manifest_validation_error_code(exc))
         target_name = metadata.get("name")
         if not isinstance(target_name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", target_name):
             return PluginActionResult(str(target_name), PluginAction.INSTALL, "invalid", "插件名包含非法字符")

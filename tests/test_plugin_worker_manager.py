@@ -137,6 +137,49 @@ def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
         manager.close()
 
 
+def test_dependency_failure_reports_dependency_error_instead_of_api_version(tmp_path: Path):
+    from ECL.plugins.package_preparation import current_plugin_target
+
+    root = tmp_path / "data/plugins/example"
+    make_plugin(root, tmp_path / "marker")
+    metadata_path = root / "plugin.json"
+    metadata = json.loads(metadata_path.read_bytes())
+    metadata["pythonDependencies"] = ["samplelib==1.0"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    locks = root / "locks"
+    locks.mkdir()
+    (locks / f"{current_plugin_target()}.txt").write_bytes(b"samplelib==1.0 --hash=sha256:" + b"a" * 64 + b"\n")
+    manager = PluginManager()
+    manager.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        items = manager.list_plugins()
+        assert items[0]["status"] == "unsupported"
+        assert items[0]["error"] == "PLUGIN_DEPENDENCY_PREPARATION_FAILED"
+        assert not (tmp_path / "marker").exists()
+    finally:
+        manager.close()
+
+
+def test_install_reports_specific_manifest_error_codes(tmp_path: Path):
+    source = tmp_path / "source"
+    make_plugin(source, tmp_path / "marker")
+    metadata_path = source / "plugin.json"
+    metadata = json.loads(metadata_path.read_bytes())
+    metadata["api_version"] = 1
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    manager = PluginManager()
+    manager.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        assert manager.install(str(source)).message == "PLUGIN_API_VERSION_UNSUPPORTED"
+        metadata["api_version"] = 2
+        metadata["version"] = "not-a-version"
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        assert manager.install(str(source)).message == "PLUGIN_MANIFEST_INVALID"
+        assert not (tmp_path / "data" / "plugins" / "example").exists()
+    finally:
+        manager.close()
+
+
 def test_directory_with_complete_offline_lock_loads_its_own_dependency(tmp_path: Path):
     from plugin_wheel_helpers import make_wheel, wheel_lock
 
