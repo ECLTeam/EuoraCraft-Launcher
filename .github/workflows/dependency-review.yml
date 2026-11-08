@@ -1,0 +1,121 @@
+name: Dependency Review
+
+# 依赖清单变化时单独执行审计；不重复治理工作流在 PR 上的可访问性扫描，
+# 避免依赖升级的分支因为与改动无关的页面检查而变红。
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  changes:
+    name: Detect dependency changes
+    runs-on: ubuntu-latest
+    outputs:
+      dependencies: ${{ steps.filter.outputs.dependencies }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            dependencies:
+              - "pyproject.toml"
+              - "frontend/package.json"
+              - "frontend/pnpm-lock.yaml"
+              - "external_plugins/**/locks/**"
+              - ".github/workflows/dependency-review.yml"
+
+  python-audit:
+    name: Python dependency audit
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.dependencies == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Prepare isolated tools and targets
+        shell: python
+        run: |
+          import pathlib, subprocess, sys
+          subprocess.check_call([sys.executable, "-m", "pip", "install", "pip-audit==2.10.1"])
+          for environment in ("runtime", "all"):
+              # venv 自带的 pip 落后于当前安全版本，先升级工具链再安装依赖。
+              subprocess.check_call(
+                  [sys.executable, "-m", "venv", "--upgrade-deps", f"build/governance/target-{environment}"]
+              )
+              requirement = ".[dev]" if environment == "all" else "."
+              target = pathlib.Path(f"build/governance/target-{environment}/bin/python")
+              subprocess.check_call([str(target), "-m", "pip", "install", requirement])
+      - name: Audit and enforce
+        shell: python
+        run: |
+          import pathlib, subprocess, sys
+          tool = [sys.executable, "ECL/tooling/governance.py"]
+          for environment in ("runtime", "all"):
+              scope = f"python-linux-{environment}"
+              report = f"build/governance/{scope}.json"
+              target = pathlib.Path(f"build/governance/target-{environment}/bin/python")
+              subprocess.check_call(tool + ["audit", "--kind", "pip-audit", "--scope", scope,
+                  "--target-python", str(target), "--output", report])
+              subprocess.check_call(tool + ["check", "--scope", scope, "--report", report,
+                  "--exceptions", "docs/governance/exceptions.json"])
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dependency-review-python
+          path: build/governance/*.json
+          retention-days: 14
+
+  frontend-audit:
+    name: Frontend dependency audit
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.dependencies == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Audit and enforce
+        shell: python
+        run: |
+          import subprocess, sys
+          tool = [sys.executable, "ECL/tooling/governance.py"]
+          for scope, extra in (("frontend-production", ["--production"]), ("frontend-all", [])):
+              report = f"build/governance/{scope}.json"
+              subprocess.check_call(tool + ["audit", "--kind", "pnpm-audit", "--scope", scope, *extra,
+                  "--output", report])
+              subprocess.check_call(tool + ["check", "--scope", scope, "--report", report,
+                  "--exceptions", "docs/governance/exceptions.json"])
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dependency-review-frontend
+          path: build/governance/*.json
+          retention-days: 14

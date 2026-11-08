@@ -12,14 +12,40 @@ on:
 permissions:
   contents: read
 
+# 同一分支的新推送取消旧运行，避免 PR 连续更新时堆积审计任务。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # Windows runner 默认 cp1252，审计工具的中文结论会在打印时抛 UnicodeEncodeError，
   # 让通过的检查表现为非零退出。统一用 UTF-8 模式运行。
   PYTHONUTF8: "1"
 
 jobs:
+  # PR 只在治理配置、扫描工具与例外表变动时运行；主分支推送与每周定时保持全量。
+  changes:
+    name: Detect governance changes
+    runs-on: ubuntu-latest
+    outputs:
+      governance: ${{ steps.filter.outputs.governance }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            governance:
+              - "docs/governance/**"
+              - "ECL/tooling/governance.py"
+              - "tests/test_governance.py"
+              - "frontend/tests/browser/**"
+              - ".github/workflows/governance.yml"
+
   python-audit:
     name: Python audit (${{ matrix.os }}, ${{ matrix.environment }})
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.governance == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -65,6 +91,8 @@ jobs:
 
   frontend-audit:
     name: Frontend audit and accessibility
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.governance == 'true'
     # ubuntu-latest 已滚动到 26.04，而当前锁定的 Playwright 只发布到 24.04 的
     # Chromium 构建；审计环境需要可复现，故固定到仍受支持的 LTS 标签。
     runs-on: ubuntu-24.04

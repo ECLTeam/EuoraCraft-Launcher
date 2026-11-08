@@ -7,10 +7,42 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # PR 按改动范围选择检查；主分支推送与手动运行保持全量，发布门禁依赖 main 推送的成功记录。
+  changes:
+    name: Detect backend changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - "ECL/**"
+              - "native/**"
+              - "packaging/**"
+              - "tests/**"
+              - "tools/**"
+              - "main.py"
+              - "pyproject.toml"
+              - ".github/workflows/backend-tests.yml"
+
   pytest:
     name: Run pytest
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repo
         uses: actions/checkout@v7

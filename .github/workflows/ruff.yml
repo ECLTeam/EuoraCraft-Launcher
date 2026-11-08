@@ -3,11 +3,25 @@ name: Ruff Lint
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    # 只跟随 Python 相关改动触发；纯文档、模板与前端改动不进入本工作流。
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - ".github/workflows/ruff.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ruff:
     name: Run ruff
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -15,12 +29,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.x'
+          python-version: '3.12'
 
       - name: Install ruff
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          # 与 pyproject.toml 的 dev 依赖保持同一版本：ruff 升级可能引入新规则，
+          # 浮动版本会让无关 PR 突然变红。升级时两处同步修改。
+          pip install "ruff==0.16.10"
 
       - name: Run ruff
         run: |

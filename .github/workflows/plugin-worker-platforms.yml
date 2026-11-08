@@ -2,7 +2,7 @@ name: Plugin Worker Platforms
 
 on:
   push:
-    branches: [main, codex/plugin-posix-worker]
+    branches: [main]
     paths:
       - "ECL/bootstrap.py"
       - "ECL/plugin_api/**"
@@ -15,10 +15,24 @@ on:
       - ".github/workflows/plugin-worker-platforms.yml"
   pull_request:
     branches: [main]
+    paths:
+      - "ECL/bootstrap.py"
+      - "ECL/plugin_api/**"
+      - "ECL/plugins/**"
+      - "ECL/utils/*file*"
+      - "ECL/services/game/**"
+      - "tests/test_posix_file_handles.py"
+      - "tests/test_plugin*"
+      - "tests/test_process_bootstrap.py"
+      - ".github/workflows/plugin-worker-platforms.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   source-worker:

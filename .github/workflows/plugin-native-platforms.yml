@@ -2,7 +2,7 @@ name: Plugin Native WebViews
 
 on:
   push:
-    branches: [codex/plugin-posix-worker]
+    branches: [main]
     paths:
       - "native/pytauri-runtime/**"
       - "ECL/plugins/runtime/**"
@@ -25,6 +25,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   native-webview:
