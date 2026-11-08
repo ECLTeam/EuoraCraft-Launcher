@@ -23,7 +23,6 @@ dependencies = [
     "psutil>=7.2.0",
     "packaging>=23.0",
     "installer>=0.7.0",
-    "easytier-pyo3>=0.1.2",
     "websockets>=13.0"
 ]
 requires-python = ">=3.11"
@@ -135,7 +134,7 @@ exclude = [
     "EuoraCraftLauncher-UI",
     "frontend",
     "ECL/game",
-    "ECL/services/florolding",
+    "external_plugins/ecl_onlinegame/onlinegame/florolding",
     "ECL_Libs",
     "resources",
     ".git",

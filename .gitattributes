@@ -4,3 +4,5 @@ native/pytauri-runtime/** text eol=lf
 # A unified patch uses a single space for empty context lines.
 native/pytauri-runtime/**/*.patch whitespace=-blank-at-eol
 native/pytauri-runtime/*.patch whitespace=-blank-at-eol
+# Preserve Florolding 4df4a8b verbatim, including its trailing empty line.
+external_plugins/ecl_onlinegame/onlinegame/florolding/Florolding/Scaffolding.py whitespace=-blank-at-eof

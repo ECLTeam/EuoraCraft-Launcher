@@ -130,7 +130,6 @@ class PluginLifecycle(_PluginState):
         self._status[name] = "enabling"
         if not self._call_plugin_hook(plugin, "on_enable", fail_status="loaded"):
             self.instance_compatibility.unregister_owner(name)
-            self.connector_extensions.unregister_owner(name)
             self.launch_hooks.unregister_owner(name)
             self.auth_providers.unregister_owner(name)
             self.crash_extensions.unregister_owner(name)
@@ -189,7 +188,6 @@ class PluginLifecycle(_PluginState):
             }
             self.events.remove_handlers_by_owner(name)
             self.instance_compatibility.unregister_owner(name)
-            self.connector_extensions.unregister_owner(name)
             self.launch_hooks.unregister_owner(name)
             self.auth_providers.unregister_owner(name)
             self.crash_extensions.unregister_owner(name)
@@ -271,7 +269,6 @@ class PluginLifecycle(_PluginState):
             # 清理事件处理器
             self.events.remove_handlers_by_owner(name)
             self.instance_compatibility.unregister_owner(name)
-            self.connector_extensions.unregister_owner(name)
             self.launch_hooks.unregister_owner(name)
             self.auth_providers.unregister_owner(name)
             self.crash_extensions.unregister_owner(name)

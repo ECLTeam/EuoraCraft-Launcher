@@ -239,10 +239,6 @@ jobs:
           fi
           if [ "$RUNNER_OS" = "Windows" ]; then
             ARGS+=(--windows-icon-from-ico=resources/img/logo.ico)
-            # easytier 的 Packet.dll / wintun.dll 在运行时动态加载，需显式随包分发
-            ETP_DIR="$(python -c 'import easytier_pyo3, os; print(os.path.dirname(easytier_pyo3.__file__).replace("\\", "/"))')"
-            ARGS+=(--include-data-files="$ETP_DIR/Packet.dll=easytier_pyo3/Packet.dll")
-            ARGS+=(--include-data-files="$ETP_DIR/wintun.dll=easytier_pyo3/wintun.dll")
             # beta/release 面向普通用户隐藏控制台；alpha/dev 保留控制台便于排查启动问题
             CONSOLE_MODE="force"
             if [ "${ECL_CONSOLE:-}" = "1" ]; then
@@ -262,7 +258,6 @@ jobs:
             --include-package=pytauri_wheel \
             --include-module=pytauri_wheel.ext_mod \
             --include-distribution-metadata=pytauri-wheel \
-            --include-package-data=easytier_pyo3 \
             --include-raw-dir=resources=resources \
             --include-data-dir=frontend/dist=frontend/dist \
             --include-data-dir=capabilities=capabilities \
@@ -432,7 +427,6 @@ jobs:
             --include-package=pytauri_wheel \
             --include-module=pytauri_wheel.ext_mod \
             --include-distribution-metadata=pytauri-wheel \
-            --include-package-data=easytier_pyo3 \
             --include-raw-dir=resources=resources \
             --include-data-dir=frontend/dist=frontend/dist \
             --include-data-dir=capabilities=capabilities \

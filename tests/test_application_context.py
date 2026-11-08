@@ -34,7 +34,6 @@ from typing import Any
 import pytest
 
 import ECL.application as application_module
-import ECL.services.connector as connector_service_module
 from ECL.application import ApplicationContext, create_application
 from ECL.cli import LaunchOptions
 from ECL.foundation import EventBus
@@ -98,16 +97,6 @@ class _FakeGame:
         pass
 
 
-class _FakeConnector:
-    easytier_version = ""
-
-    def __init__(self, *_args, **_kwargs) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
-
-
 class _FakePluginManager:
     def __init__(self, *_args, **_kwargs) -> None:
         self.init_kwargs: dict[str, Any] = {}
@@ -164,7 +153,6 @@ def test_application_context_closes_resources_in_reverse_dependency_order() -> N
         wardrobe=SimpleNamespace(),
         announcements=SimpleNamespace(),
         game=Closable("game", order),
-        connector=SimpleNamespace(),
         plugins=Closable("plugins", order),
         processes=Closable("processes", order),
     )
@@ -242,7 +230,6 @@ def test_composition_failure_closes_resources_already_created(monkeypatch, tmp_p
 
 def test_startup_timings_cover_service_phases_without_reordering(monkeypatch, tmp_path: Path, caplog) -> None:
     order: list[str] = []
-    stages = ("配置与环境", "共享资源", "账户与衣柜", "游戏与 Java", "联机", "插件", "尾部装配")
     clock = iter(float(value) for value in range(9))
     monkeypatch.setattr(application_module, "perf_counter", lambda: next(clock), raising=False)
     monkeypatch.setenv("NO_PROXY", "")
@@ -260,7 +247,6 @@ def test_startup_timings_cover_service_phases_without_reordering(monkeypatch, tm
     monkeypatch.setattr(application_module, "StartupUpdateService", _FakeStartupUpdate)
     monkeypatch.setattr(application_module, "GameService", service("game", _FakeGame))
     monkeypatch.setattr(application_module, "PluginManager", service("plugins", _FakePluginManager))
-    monkeypatch.setattr(connector_service_module, "ConnectorService", service("connector", _FakeConnector))
     caplog.set_level(logging.DEBUG, logger=application_module.logger.name)
     context = create_application(
         {
@@ -271,12 +257,12 @@ def test_startup_timings_cover_service_phases_without_reordering(monkeypatch, tm
         }
     )
     try:
-        assert order == ["http", "accounts", "game", "connector", "plugins"]
         messages = [record.getMessage() for record in caplog.records if record.name == application_module.logger.name]
         summary = next(message for message in messages if message.startswith("后端初始化阶段耗时"))
+        stages = ("配置与环境", "共享资源", "账户与衣柜", "游戏与 Java", "插件", "尾部装配")
         assert all(f"{stage}：1000.0 毫秒" in summary for stage in stages)
         assert sum(message.startswith("后端服务初始化完成") for message in messages) == 1
-        assert "总耗时：8000.0 毫秒" in messages[-1]
+        assert "总耗时：7000.0 毫秒" in messages[-1]
     finally:
         context.close()
 
@@ -288,7 +274,6 @@ def test_startup_tail_failure_closes_services_and_does_not_report_success(monkey
     monkeypatch.setattr(application_module, "StartupUpdateService", _FakeStartupUpdate)
     monkeypatch.setattr(application_module, "GameService", _FakeGame)
     monkeypatch.setattr(application_module, "PluginManager", _FakePluginManager)
-    monkeypatch.setattr(connector_service_module, "ConnectorService", _FakeConnector)
     monkeypatch.setattr(_FakeAccounts, "close", lambda self: closed.append("accounts"))
     monkeypatch.setattr(_FakeHttp, "close", lambda self: closed.append("http"))
     monkeypatch.setenv("NO_PROXY", "")
@@ -510,7 +495,6 @@ def test_composition_applies_launch_options_sticky_overrides(
     monkeypatch.setattr(application_module, "GameService", _FakeGame)
     monkeypatch.setattr(application_module, "PluginManager", _FakePluginManager)
     monkeypatch.setattr(application_module, "DevChannelService", _FakeDevChannel)
-    monkeypatch.setattr(connector_service_module, "ConnectorService", _FakeConnector)
     # 环境变量声明 debug=false、日志级别 error，命令行参数应优先于二者
     monkeypatch.setenv("ECL_CONFIG_LAUNCHER_DEBUG", "false")
     monkeypatch.setenv("ECL_CONFIG_LAUNCHER_DEBUG_LOG_LEVEL", "error")

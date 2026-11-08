@@ -177,7 +177,12 @@ class PluginEnvironmentPool:
         :param data_path: 启动器可写的数据根目录
         :param repository: 可供测试注入的 wheel 来源
         """
-        self.data_path = Path(data_path)
+        self.data_path = Path(data_path).absolute()
+        if sys.platform == "win32":
+            path_text = str(self.data_path)
+            if not path_text.startswith("\\\\?\\"):
+                path_text = "\\\\?\\UNC\\" + path_text[2:] if path_text.startswith("\\\\") else "\\\\?\\" + path_text
+                self.data_path = Path(path_text)
         self.environments_path = self.data_path / "plugin_deps"
         self.cache_path = self.data_path / "plugin_cache" / "wheels"
         self.repository = repository or PluginWheelRepository(self.cache_path)

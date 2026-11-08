@@ -1209,10 +1209,6 @@ class RequestModelRegistry:
         "skin_avatar_export": SkinAvatarExportRequest,
         "select_file": FileSelectionRequest,
         "select_save_file": FileSaveRequest,
-        "connector_host_port": PortRequest,
-        "connector_join": RoomCodeRequest,
-        "connector_kick": KickRequest,
-        "connector_search_mc_port": PortsRequest,
     }
 
 

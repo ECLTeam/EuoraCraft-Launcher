@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 
 def test_binding_game_port_keeps_control_port_forward(monkeypatch):
-    module = importlib.import_module("ECL.services.florolding.Florolding.Florolding")
+    module = importlib.import_module("external_plugins.ecl_onlinegame.onlinegame.florolding.Florolding.Florolding")
     florolding = module.Florolding()
     host = {"hostname": "scaffolding-mc-server-3939", "ipv4_addr": {"address": {"addr": 0x0A010201}}}
     monkeypatch.setattr(florolding, "get_host_node_info", lambda *_: host)

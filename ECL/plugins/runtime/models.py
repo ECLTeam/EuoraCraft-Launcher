@@ -18,11 +18,13 @@
 #   - validate_fields — 校验命令输入输出的基础字段。
 #   - class DownloadSubmitRequest — 私有空间新文件下载任务请求。
 #   - class NetworkRequest — GET/HEAD 只读网络请求的严格边界。
+#   - class PluginPageNav / VuePageDefinition — 插件页面的宿主容器与导航声明。
 #   - class JavaInventoryRequest / JavaValidateRequest / JavaCatalogRequest — Java 查询与校验输入。
 # ============================================================
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Annotated, ClassVar, Literal
@@ -30,7 +32,7 @@ from typing import Annotated, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 from pydantic import JsonValue as PydanticJsonValue
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.network_targets import NetworkOrigin
 
 
@@ -85,7 +87,7 @@ class FieldSpec(RequestModel):
     """
 
     name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
-    type: Literal["string", "number", "integer", "bool"]
+    type: Literal["string", "number", "integer", "bool", "json"]
     required: StrictBool = True
     max_length: StrictInt = Field(default=4096, ge=1, le=16384)
     minimum: float | None = Field(default=None, allow_inf_nan=False)
@@ -99,6 +101,15 @@ class FieldSpec(RequestModel):
         :param value: 经 JSON 校验的字段值
         :return: 是否满足字段约束
         """
+        if self.type == "json":
+            try:
+                checked = _json_value(value)
+                return (
+                    len(json.dumps(checked, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+                    <= self.max_length
+                )
+            except (ProtocolError, RecursionError):
+                return False
         if self.enum and not any(type(item) is type(value) and item == value for item in self.enum):
             return False
         if self.type == "string":
@@ -126,6 +137,7 @@ class CommandDefinition(RequestModel):
     output_fields: list[FieldSpec] = Field(default_factory=list, max_length=32)
     callback_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
     exported: StrictBool = False
+    is_query: StrictBool = False
 
     @field_validator("input_fields", "output_fields")
     @classmethod
@@ -148,7 +160,7 @@ class SettingDefinition(RequestModel):
     """
 
     key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
-    type: Literal["bool", "string", "number", "select"]
+    type: Literal["bool", "string", "text", "number", "select", "readonly_file"]
     default: str | int | float | bool
     description: str = Field(default="", max_length=1000)
     options: list[str] = Field(default_factory=list, max_length=64)
@@ -176,6 +188,8 @@ class SettingDefinition(RequestModel):
         :return: 已校验设置定义
         :raises ValueError: 默认值或选项无效时抛出
         """
+        if self.type == "readonly_file" and self.default != "":
+            raise ValueError("只读文件必须由用户选择，不能由插件提供默认路径")
         if not self.accepts(self.default) or len(set(self.options)) != len(self.options):
             raise ValueError("设置默认值或选项无效")
         return self
@@ -397,14 +411,6 @@ class AuthProviderDefinition(RequestModel):
     resolve_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
-class ConnectorStatusDefinition(RequestModel):
-    """
-    联机状态补充登记：只允许补充展示字段，不参与房间控制。
-    """
-
-    callback_ref: str = Field(pattern=r"^[0-9a-f]{32}$")
-
-
 class ToolDefinition(RequestModel):
     """
     受管工具声明：可执行文件必须位于插件包内，参数模型固定且数量有界。
@@ -457,6 +463,59 @@ class HtmlSlotDefinition(RequestModel):
     html: str = Field(min_length=1, max_length=60000)
     key: str | None = Field(default=None, max_length=64)
     context_key: str | None = Field(default=None, max_length=64)
+
+
+class PluginPageNav(RequestModel):
+    """
+    声明插件页面在宿主既有容器内的导航入口，不开放任意绝对路由。
+
+    路径只能是容器内的一段相对标识，文案必须引用宿主已有的 more.nav.* 键，
+    图标沿用公共图标短名；宿主保留子页由宿主自己拥有，插件不得占位。
+    """
+
+    path: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")
+    label_key: str = Field(pattern=r"^more\.nav\.[a-z0-9-]{1,32}$")
+    icon: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
+    order: StrictInt = Field(default=0, ge=-100, le=100)
+
+    reserved_paths: ClassVar[frozenset[str]] = frozenset(
+        {"plugins", "tools", "settings", "download", "game", "versions"}
+    )
+
+    @field_validator("path")
+    @classmethod
+    def _reject_reserved_path(cls, value: str) -> str:
+        if value in cls.reserved_paths:
+            raise ValueError("导航路径与宿主保留子页冲突")
+        return value
+
+
+class VuePageDefinition(RequestModel):
+    """
+    定义本运行拥有的主窗口页面。
+
+    默认注册为插件命名空间内的顶层路由；声明 container="more" 时挂到宿主
+    「更多」页的有界子路由与导航入口，容器只能从枚举中选择，不覆盖宿主路由。
+    """
+
+    path: str = Field(pattern=r"^/(?:[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*)?$", max_length=128)
+    title: str = Field(min_length=1, max_length=64)
+    container: Literal["top", "more"] = "top"
+    nav: PluginPageNav | None = None
+    locales: list[str] = Field(default_factory=list, max_length=6)
+    icon: str = Field(default="puzzle", pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    component_name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+    template: str = Field(min_length=1, max_length=60000)
+    script: str = Field(default="", max_length=60000)
+    style: str = Field(default="", max_length=60000)
+
+    @model_validator(mode="after")
+    def _require_nav_for_host_container(self) -> VuePageDefinition:
+        if self.container == "more" and self.nav is None:
+            raise ValueError("宿主容器页面必须声明导航入口")
+        if self.container == "top" and self.nav is not None:
+            raise ValueError("顶层插件页面不能声明宿主导航入口")
+        return self
 
 
 class VueSlotDefinition(RequestModel):

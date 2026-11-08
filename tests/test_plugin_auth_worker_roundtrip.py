@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from test_accounts import FakeMicrosoftManager
+from test_accounts import FakeAuthlibManager, FakeMicrosoftManager
 
 from ECL.plugins import PluginManager
 from ECL.plugins.grant_models import PermissionDecision, PermissionManagementCaller
@@ -37,7 +37,9 @@ def test_real_auth_worker_persists_only_own_data_and_restarts(tmp_path: Path, fr
     data_path = tmp_path / "data"
     provider_id = ""
     for restart in (False, True):
-        accounts = AccountManager(data_path, microsoft_manager=FakeMicrosoftManager())
+        accounts = AccountManager(
+            data_path, microsoft_manager=FakeMicrosoftManager(), authlib_manager=FakeAuthlibManager()
+        )
         framework = PluginManager(auth_providers=accounts.plugin_auth_providers)
         service = PluginWorkerService(data_path, executable, auth_sink=framework._on_worker_auth)
         framework.worker_service = service

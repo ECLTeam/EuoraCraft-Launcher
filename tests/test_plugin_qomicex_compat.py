@@ -1,80 +1,77 @@
-# ============================================================
-# EuoraCraft Launcher
-# ECLTeam © 2026 GPL-3.0 License
-# https://github.com/ECLTeam/EuoraCraft-Launcher
-#
-# 文件作用：针对 plugin_qomicex_compat 模块的自动化测试。
-#
-# 公开接口：
-#   - test_qomicex_compat_registers_vue_settings_slot_on_frontend_ready(tmp_path) -> None
-#   - test_qomicex_resolve_command_returns_manual_path_when_valid(tmp_path) -> None
-#   - test_qomicex_resolve_command_reports_invalid_manual_path(tmp_path, monkeypatch) -> None
-#   - test_qomicex_resolve_command_returns_none_when_nothing_found(tmp_path, monkeypatch) -> None
-# ============================================================
+from __future__ import annotations
 
-"""验证 qomicex_compat 系统插件的设置卡片注入与索引解析命令。"""
-
-import shutil
+import base64
+import importlib.util
+import json
+import sys
 from pathlib import Path
 
-from ECL.plugins import PluginManager
+import pytest
 
 
-def _load_qomicex_plugin(tmp_path: Path) -> PluginManager:
-    """加载 resources/system_plugins 下的 qomicex_compat 系统插件。"""
-    source = Path(__file__).parent.parent / "resources" / "system_plugins" / "qomicex_compat"
-    target = tmp_path / "resources" / "resources" / "system_plugins" / "qomicex_compat"
-    shutil.copytree(source, target)
-    framework = PluginManager()
-    framework.initialize(tmp_path / "data", tmp_path / "resources")
-    assert framework.get_plugin("qomicex-compat") is not None
-    return framework
+def make_plugin(document: list[dict]):
+    source = Path(__file__).resolve().parents[1] / "external_plugins/qomicex_compatible/main.py"
+    spec = importlib.util.spec_from_file_location("qomicex_test_plugin", source)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(source.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+
+    class Host:
+        def call(self, method, params):
+            if method == "compat.read_index":
+                return {
+                    "revision": "a" * 64,
+                    "content": base64.b64encode(json.dumps(document).encode()).decode(),
+                    "next_offset": None,
+                }
+            return {"command_ref": "b" * 32}
+
+    plugin = module.Plugin(Host())
+    plugin.on_load()
+    return plugin
 
 
-def test_qomicex_compat_registers_vue_settings_slot_on_frontend_ready(tmp_path: Path) -> None:
-    framework = _load_qomicex_plugin(tmp_path)
-    framework.on_frontend_ready()
-
-    entries = framework.get_vue_slots().get("plugin-slot-settings-launcher-section-after", [])
-    assert len(entries) == 1
-    assert entries[0]["plugin"] == "qomicex-compat"
-    assert entries[0]["component_name"] == "QomicExInstanceCompatSettings"
-    assert "QomicEX" in entries[0]["template"]
-    assert "qomicex-compat:resolve" in entries[0]["script"]
-
-
-def test_qomicex_resolve_command_returns_manual_path_when_valid(tmp_path: Path) -> None:
-    framework = _load_qomicex_plugin(tmp_path)
-    index = tmp_path / "instances.json"
-    index.write_text("{}", encoding="utf-8")
-
-    result = framework.call_command("qomicex-compat:resolve", {"instances_path": str(index)})
-
-    assert result["path"] == str(index.resolve())
-    assert result["valid"] is True
-    assert result["manual"] == str(index)
-
-
-def test_qomicex_resolve_command_reports_invalid_manual_path(tmp_path: Path, monkeypatch) -> None:
-    framework = _load_qomicex_plugin(tmp_path)
-    monkeypatch.delenv("QOMICEX_HOME", raising=False)
-    monkeypatch.delenv("LOCALAPPDATA", raising=False)
-    missing = tmp_path / "nope" / "instances.json"
-
-    result = framework.call_command("qomicex-compat:resolve", {"instances_path": str(missing)})
-
-    assert result["manual"] == str(missing)
-    assert result["path"] is None
-    assert result["valid"] is False
+def test_external_qomicex_preserves_metadata_without_online_plugin(tmp_path: Path) -> None:
+    instance = tmp_path / "instance"
+    plugin = make_plugin(
+        [
+            {
+                "gameDir": str(instance),
+                "modpackSummary": "说明",
+                "isHidden": True,
+                "isDefault": False,
+                "icon": "fabric",
+                "playTime": 12,
+                "lastPlayed": "2026-11-07",
+            }
+        ]
+    )
+    result = plugin.read_instance(
+        {"instance_path": str(instance), "version_id": "instance", "vanilla_name": "1.21", "primary_loader": "fabric"}
+    )
+    assert result["fields"]["description"] == "说明"
+    assert result["fields"]["hidden"] is True
+    assert result["stats"]["totalRunDurationSeconds"] == 720
+    assert result["fields"]["icon"]["value"] == "fabric"
 
 
-def test_qomicex_resolve_command_returns_none_when_nothing_found(tmp_path: Path, monkeypatch) -> None:
-    framework = _load_qomicex_plugin(tmp_path)
-    monkeypatch.delenv("QOMICEX_HOME", raising=False)
-    monkeypatch.delenv("LOCALAPPDATA", raising=False)
-
-    result = framework.call_command("qomicex-compat:resolve", {"instances_path": ""})
-
-    assert result["path"] is None
-    assert result["valid"] is False
-    assert result["manual"] is None
+def test_qomicex_extension_rejects_old_run_and_foreign_player() -> None:
+    plugin = make_plugin([])
+    description = plugin.extension({"event": "describe"})["result"]
+    payload = {
+        "binding": description["binding"],
+        "session": "b" * 32,
+        "event": "protocol",
+        "protocol": "qml:player_leave",
+        "peer_machine_id": "actual",
+        "body": {"machineId": "victim"},
+    }
+    with pytest.raises(ValueError, match="连接不符"):
+        plugin.extension(payload)
+    payload["body"] = {"machineId": "actual"}
+    assert plugin.extension(payload)["result"]["remove_player"] == "actual"
+    with pytest.raises(ValueError, match="运行身份已失效"):
+        plugin.extension({**payload, "binding": "old"})

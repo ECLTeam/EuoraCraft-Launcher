@@ -150,7 +150,7 @@ def test_poll_failure_sampling_and_recovery(records) -> None:
     async def handler(body):
         return replies.pop(0)
 
-    guarded = guard_ipc_handler(state, "connector_status", handler)
+    guarded = guard_ipc_handler(state, "system_ping", handler)
     for _ in range(5):
         asyncio.run(guarded({}))
     assert len(logs) == 3
@@ -162,10 +162,10 @@ def test_poll_exception_has_one_stack_and_no_repeated_failure(records) -> None:
     state = SimpleNamespace(logger=logger, events=EventBus())
 
     @_ipc_handler()
-    async def connector_status(self, body):
+    async def system_ping(self, body):
         raise RuntimeError("boom")
 
-    guarded = guard_ipc_handler(state, "connector_status", lambda body: connector_status(state, body))
+    guarded = guard_ipc_handler(state, "system_ping", lambda body: system_ping(state, body))
     for _ in range(2):
         assert asyncio.run(guarded({}))["errorCode"] == "INTERNAL_ERROR"
     assert len(logs) == 1
@@ -350,48 +350,6 @@ def test_plugin_command_timeout_keeps_worker_context_and_reports_real_result(rec
     assert "never-log-params" not in str(messages)
 
 
-def test_daemon_thread_preserves_context_when_waiter_cancels(monkeypatch) -> None:
-    import threading
-
-    from ECL.api.connector import _run_in_daemon
-
-    entered, release = Event(), Event()
-    seen, errors, threads = [], [], []
-    original_thread = threading.Thread
-
-    def thread_factory(**kwargs):
-        thread = original_thread(**kwargs)
-        threads.append(thread)
-        return thread
-
-    monkeypatch.setattr("ECL.api.connector.threading.Thread", thread_factory)
-    monkeypatch.setattr(threading, "excepthook", errors.append)
-
-    def worker():
-        seen.append(current_operation().action)
-        entered.set()
-        assert release.wait(3)
-        return "result"
-
-    async def request():
-        with operation_scope("联机调用"):
-            future = _run_in_daemon(worker)
-            await asyncio.to_thread(entered.wait, 3)
-            future.cancel()
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await future
-
-    try:
-        asyncio.run(request())
-    finally:
-        release.set()
-        for thread in threads:
-            thread.join(timeout=3)
-    assert seen == ["联机调用"]
-    assert errors == []
-
-
 def test_queued_task_cancellation_is_logged_after_future_stops(tmp_path, records) -> None:
     logger, logs = records
     manager = OperationManager(tmp_path, EventBus(), max_workers=1)
@@ -417,7 +375,7 @@ def test_queued_task_cancellation_is_logged_after_future_stops(tmp_path, records
 
 
 def test_validation_exception_does_not_dump_request_into_logs(records) -> None:
-    from ECL.services.connector_nodes import ConnectorNodeConfig
+    from external_plugins.ecl_onlinegame.onlinegame.nodes import ConnectorNodeConfig
 
     logger, logs = records
     state = SimpleNamespace(logger=logger, events=EventBus())
@@ -621,26 +579,3 @@ def test_directory_config_reads_and_noop_writes_are_silent(tmp_path, records) ->
     state.write_ecl_config(tmp_path, value)
     assert ScanCoordinator.patch_ecl_config(state, tmp_path, value) == value
     assert logs == []
-
-
-def test_connector_wrapped_program_error_keeps_one_stack(records) -> None:
-    from ECL.api.connector import _connector_guard
-    from ECL.utils.errors import ConnectorError
-
-    logger, logs = records
-    state = SimpleNamespace(logger=logger, events=EventBus())
-
-    @_connector_guard("CONNECTOR_HOST_PORT_FAILED")
-    async def connector_host_port(self, body):
-        try:
-            raise RuntimeError("受控程序异常")
-        except RuntimeError as cause:
-            raise ConnectorError("创建房间失败") from cause
-
-    response = asyncio.run(
-        guard_ipc_handler(state, "connector_host_port", lambda body: connector_host_port(state, body))({})
-    )
-    assert response["errorCode"] == "CONNECTOR_HOST_PORT_FAILED"
-    assert len(logs) == 1
-    assert logs[0].levelno == logging.ERROR
-    assert logs[0].exc_info is not None

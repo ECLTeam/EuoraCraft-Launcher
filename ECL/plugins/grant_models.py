@@ -72,8 +72,6 @@ class _PermissionScope(BaseModel):
         "game",
         "java",
         "auth.provider",
-        "connector.extend",
-        "connector.manage",
     ]
     resource_refs: tuple[resource_reference, ...] = Field(default=(), max_length=128)
 
@@ -116,8 +114,6 @@ class PermissionDeclaration(_PermissionScope):
             "game",
             "java",
             "auth.provider",
-            "connector.extend",
-            "connector.manage",
         }:
             raise ValueError("插件权限声明不受支持，请更新插件权限清单")
         return value

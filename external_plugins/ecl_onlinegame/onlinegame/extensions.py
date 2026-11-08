@@ -3,27 +3,15 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：插件可注册的 Scaffolding 联机扩展协议。
+# 文件作用：管理联机插件内部的可选协议和会话钩子。
 #
 # 公开接口：
-#   - class ConnectorProtocolResponse — 一个 Scaffolding 扩展协议响应。
-#       - json(value, status) -> ConnectorProtocolResponse — 把 JSON 值编码为 UTF-8 协议响应。
-#   - class ConnectorProtocolRequest — 保存房主收到的扩展协议请求，供插件只读访问。
-#       - json(default=…) -> Any — 将请求体解析为 JSON；空请求体返回 ``default``。
-#       - remove_player(machine_id) -> None — 从房主玩家列表中移除指定机器，供优雅退出协议使用。
-#   - class ConnectorSessionContext — 向插件提供当前房间信息，以及有限的请求发送和头像读取方法。
-#       - request(protocol, body=…) -> tuple[int, bytes] — 向当前房主发送原始扩展协议请求。
-#       - request_json(protocol, payload=…) -> Any — 发送 JSON 扩展请求并解析成功响应。
-#       - local_player_icon() -> str | None — 返回本机玩家完整皮肤的 base64（PNG），供联机头像交换使用。
-#   - class ConnectorExtensionRegistry — 保存插件的联机扩展；单个扩展出错时，其他扩展仍可运行。
-#       - register(owner, name, protocols, on_guest_joined, enrich_status, before_leave, on_reset) -> None — 注册或原位更新一个插件拥有的联机扩展。
-#       - unregister_owner(owner) -> None — 移除指定插件拥有的全部联机扩展。
-#       - protocol_names() -> list[str] — 返回当前需要参与 Scaffolding 协商的扩展协议名。
-#       - dispatch(request) -> tuple[int, bytes] — 调用单个协议处理器并规范化响应。
-#       - guest_joined(context) -> None — 通知扩展房客已完成基础协议握手。
-#       - enrich_status(context, status) -> dict[str, Any] — 依次让扩展补充当前联机状态。
-#       - before_leave(context) -> None — 在连接关闭前通知扩展。
-#       - reset(context) -> None — 在会话状态清空后通知扩展释放缓存。
+#   - sanitize_status_fields() — 有界业务操作。
+#   - class ConnectorProtocolPolicy — 插件业务接口。
+#   - class ConnectorProtocolResponse — 插件业务接口。
+#   - class ConnectorProtocolRequest — 插件业务接口。
+#   - class ConnectorSessionContext — 插件业务接口。
+#   - class ConnectorExtensionRegistry — 插件业务接口。
 # ============================================================
 
 """
@@ -34,13 +22,12 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any
-
-from ECL.utils import get_logger
 
 # 第三方状态补充上限：只允许补充展示字段，不覆盖宿主结论。
 limit_status_fields = 8
@@ -200,7 +187,7 @@ class ConnectorExtensionRegistry:
         self._extensions: dict[str, _RegisteredExtension] = {}
         self._protocol_owners: dict[str, str] = {}
         self._lock = RLock()
-        self._logger = get_logger("ConnectorExtensionRegistry")
+        self._logger = logging.getLogger("ECL-OnlineGame.Extensions")
 
     def register(
         self,

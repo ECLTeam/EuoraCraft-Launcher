@@ -384,6 +384,19 @@ class PluginHandlers(_FrontendState):
             return {"success": False, "message": str(exc), "errorCode": "PLUGIN_COMMAND_FAILED"}
         return {"success": True, "data": result}
 
+    async def plugin_query_command(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        查询已登记为只读的 Worker 命令，成功不生成普通操作结果日志。
+
+        :param body: 插件命令与有界输入
+        :return: 已校验查询结果或明确失败
+        """
+        try:
+            result = await asyncio.to_thread(self.plugins.query_command, body.get("command"), body.get("params", {}))
+        except PluginCommandError:
+            return {"success": False, "message": "插件查询未完成", "errorCode": "PLUGIN_QUERY_FAILED"}
+        return {"success": True, "data": result}
+
     async def plugin_panels_get(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         获取插件声明式面板定义，供可信管理页渲染。

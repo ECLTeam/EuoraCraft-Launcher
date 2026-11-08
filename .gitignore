@@ -106,3 +106,7 @@ docs/junsi-dev-docs
 
 # 本地 AI 助手工作目录
 /.workbuddy-ai/
+
+# 外置插件的可重建依赖与本地验收产物
+/external_plugins/*/wheels/
+/output/

@@ -29,6 +29,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextvars import copy_context
 from typing import Any
 
+from ECL.plugin_api.contracts import JsonValue
 from ECL.plugins.plugin import Plugin
 from ECL.utils.operation_logging import current_operation
 
@@ -285,6 +286,8 @@ class PluginRegistry(_PluginState):
         for component_name, entry in list(self._vue_components.items()):
             if entry.get("plugin") == plugin_name:
                 del self._vue_components[component_name]
+        self._routes = [route for route in self._routes if route["plugin"] != plugin_name]
+        self._vue_routes = [route for route in self._vue_routes if route["plugin"] != plugin_name]
         self.events.emit("plugin:slots_cleared", plugin_name)
 
     def _on_html_injected(
@@ -453,6 +456,23 @@ class PluginRegistry(_PluginState):
         else:
             trace.log_result(self.logger, f"插件命令执行完成；插件：{plugin_name}；命令：{command_name}")
         return result
+
+    def query_command(self, command: str, params: dict[str, JsonValue] | None = None) -> JsonValue:
+        """
+        调用普通 Worker 明确登记的查询命令，沿用其权限和结果边界。
+
+        :param command: 插件名与查询名
+        :param params: 有界 JSON 输入
+        :return: 当前运行的查询结果
+        :raises PluginCommandError: 目标、查询声明或参数无效时抛出
+        """
+        if not isinstance(command, str) or ":" not in command or self.worker_service is None:
+            raise PluginCommandError("插件查询格式或目标无效")
+        plugin_name, name = command.split(":", 1)
+        try:
+            return self.worker_service.broker(plugin_name).call_query(name, params or {})
+        except ValueError as exc:
+            raise PluginCommandError("插件查询未完成") from exc
 
     def call_command(self, command: str, params: dict[str, Any] | None = None, timeout: float = 30.0) -> Any:
         """

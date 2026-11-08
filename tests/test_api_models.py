@@ -407,10 +407,6 @@ def test_request_schema_contains_every_consolidated_typed_command() -> None:
         "microsoft_reset_skin",
         "microsoft_set_cape",
         "microsoft_reset_cape",
-        "connector_host_port",
-        "connector_join",
-        "connector_kick",
-        "connector_search_mc_port",
     }
     assert all(schema["type"] == "object" for schema in schemas.values())
 

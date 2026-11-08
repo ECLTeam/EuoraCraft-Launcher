@@ -17,7 +17,6 @@ from ECL.api.bridge import (
     _guess_image_extension,
     _normalize_image_url,
 )
-from ECL.api.connector import ConnectorHandlers
 from ECL.api.files import FileHandlers
 from ECL.api.game import GameHandlers
 from ECL.api.java import JavaHandlers
@@ -30,7 +29,6 @@ from ECL.api.workspace import WorkspaceHandlers
 
 
 class FrontendApi(
-    ConnectorHandlers,
     WorkspaceHandlers,
     PluginHandlers,
     ModHandlers,

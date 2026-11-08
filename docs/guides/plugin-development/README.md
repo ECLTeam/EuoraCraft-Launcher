@@ -26,6 +26,8 @@ Worker 隔离不是恶意 Python 的操作系统沙箱。宿主接口的文件/�
 
 ## 能力与示例
 
+插件配置默认使用[专用设置中心](settings.md)，不自行实现配置弹窗或设置页；插件内按钮通过绑定的 `SDK.ui.openSettings()` 打开同一全屏弹窗。独立插件实现遵循[插件开发约束](../../../external_plugins/AGENTS.md)。
+
 全部可安装示例位于 [examples/plugins](../../../examples/plugins)。从 `worker_development` 开始观察代码保存及配置保留；需要独立前端时参考 `worker_custom_ui`，需要游戏资源和整合包时参考 `worker_game_tools`。
 
 不要复制带真实凭据的账户文件或用户存档作为开发数据。可以使用 `python main.py --data-dir <独立测试目录>` 启动源码版本；需要热重载时追加 `--plugin-dev`，也可设置可选的 `plugins.development_mode`；具体优先级见[开发模式](development-mode.md)。

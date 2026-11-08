@@ -23,9 +23,9 @@ result = await self.host.call_async("runtime.info", {}, timeout=5.0)
 
 `define_command(name, callback, input_fields=..., output_fields=..., exported=False)` 将 Python 函数保留在 Worker，只把回调引用与字段定义交给宿主。
 
-字段类型为 `string`、`number`、`integer`、`bool`，支持必填、长度、数值范围和枚举。每组最多 32 个字段，单运行最多 64 个命令，本地回调最多 128 个；命令返回符合 schema 的字典，不能返回宿主对象或任意嵌套模型。
+字段类型为 `string`、`number`、`integer`、`bool`、有界 `json`，支持必填、长度、数值范围和枚举。每组最多 32 个字段，单运行最多 64 个命令，本地回调最多 128 个；命令返回符合 schema 的字典，不能返回宿主对象或任意嵌套模型。
 
-常用登记方法包括 `define_panel`、`define_html_slot`、`define_vue_slot`、`register_launch_hook`、`register_crash_analyzer`、`register_instance_source`、`register_auth_provider`、`register_connector_status` 和 `define_tool`。登记并不代替对应业务权限或当前宿主服务可用性检查。
+常用登记方法包括 `define_panel`、`define_html_slot`、`define_vue_slot`、`register_launch_hook`、`register_crash_analyzer`、`register_instance_source`、`register_auth_provider`、`define_vue_page` 和 `define_tool`。登记并不代替对应业务权限或当前宿主服务可用性检查。
 
 ## 跨插件命令
 
@@ -33,7 +33,7 @@ result = await self.host.call_async("runtime.info", {}, timeout=5.0)
 
 发现只返回已启用提供方的公开命令说明与字段，输入输出在目标 Worker 校验。不能调用自身、未导出命令或已经失效的目标。调用链有深度和总等待预算；不要在插件间构造相互等待。
 
-目前没有通用跨插件事件发布/订阅。`events.subscribe` 只开放自身 `settings.changed` 和所属 `connector.changed`；不能订阅全部宿主事件。
+目前没有通用跨插件事件发布/订阅。`events.subscribe` 只开放自身 `settings.changed` ；不能订阅全部宿主事件。
 
 ## 任务与幂等性
 

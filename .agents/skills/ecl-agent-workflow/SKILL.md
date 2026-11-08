@@ -56,7 +56,7 @@ description: Enforce a rigorous inspect → plan → code → test → commit �
 
 - 对于跨前后端的变更，必须说明 IPC 接口变化和 DTO 对齐策略。
 
-- 对于涉及子模块的变更（`ECL/game`、`frontend`、`ECL/services/florolding`），必须评估子模块版本约束。
+- 对于涉及子模块的变更（`ECL/game`、`frontend`），必须评估子模块版本约束。
 
 输出：变更计划文档（可直接写入 `docs/` 或在 commentary 中输出）。
 
@@ -126,7 +126,7 @@ description: Enforce a rigorous inspect → plan → code → test → commit �
 
 | 前端 | `frontend/src/` (子模块) | Vue 3 + TS | vitest |
 
-| 联机模块 | `ECL/services/florolding/` (子模块) | Python | pytest |
+| 联机模块 | `external_plugins/ecl_onlinegame/` | Python | pytest |
 
 | 插件系统 | `ECL/plugins/` | Python | pytest |
 

@@ -51,23 +51,8 @@ def prepare(self, version_id, loader, version_isolation):
 
 [worker_auth](../../../examples/plugins/worker_auth/README.md) 使用合成令牌，只验证协议，不代表外部认证服务已实现。精确字段与限制见[认证/联机契约](../../designs/plugin-auth-and-connector-extension-design.md)。
 
-## 联机状态与所属会话
+## 外置联机与兼容协议
 
-`connector.extend` 只允许 `register_connector_status(callback)` 补充有限显示字段。回调接收玩家数量及协议名，不提供建房控制权。
+宿主不再维护联机网络或提供 `connector.*`。普通插件 ECL-OnlineGame 自己持有网络资源，Qomicex-Compatible 可选提供兼容协议，二者均可独立禁用和卸载。
 
-`connector.manage` 提供下列方法：
-
-| 方法                           | 输入                               | 结果                                    |
-| ------------------------------ | ---------------------------------- | --------------------------------------- |
-| `connector.open`               | port 或 code 二选一                | session_ref、operation_ref、queued 状态 |
-| `connector.get`                | session_ref                        | 自身模式、房间码、本地端口与清理状态    |
-| `connector.leave`              | session_ref                        | 请求结束所属会话，不表示已经实际停止    |
-| `connector.protocols.register` | name、callback_ref                 | 本运行 protocol_ref                     |
-| `connector.request`            | session_ref、protocol_ref、payload | 仅房客向房主请求，返回 JSON value       |
-| `connector.status.set`         | session_ref、text                  | 自身有限显示文字                        |
-
-应用只有一个联机服务，用户已有房间时拒绝冲突请求；迟到退出不能关闭后来创建的房间。会话归属安装、内容、运行和服务代次，不能控制别人的 session_ref。
-
-每运行最多八个私有协议，请求及响应各最多 16 KiB。协议按名称隔离并参与本来源房间协商；它不是任意 TCP 转发对象。通过 `events.subscribe` 订阅所属 `connector.changed`，回调处理宿主投递的事件载荷和 sequence；关闭事件仍不能代替任务实际终态。
-
-参考 [worker_connector](../../../examples/plugins/worker_connector/README.md)。本地中继和 JSON 往返不代表公共网络或真实 Minecraft 多人游戏已经验收。
+通过已导出的 `onlinegame.extension.v1` 普通跨插件命令接入，详见[联机协议](../../protocols/plugin-connector-extensions.md)及[外置插件说明](../../../external_plugins/README.md)。

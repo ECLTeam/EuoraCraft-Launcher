@@ -94,7 +94,6 @@ default_config: dict[str, JsonValue] = {
         "last_manage_path": "",
     },
     "download": {"mirror_source": "official", "mod_source": "official"},
-    "connector": {"mode": "automatic", "nodes": []},
     # 插件界面注入总开关：关闭后不渲染任何第三方插件注入的主窗口内容。
     "plugins": {"allow_ui_injection": True},
     "ui": {
@@ -318,10 +317,6 @@ class ConfigStore:
             raise ConfigValidationError(f"配置分区不受支持: {normalized_section}")
         if not isinstance(data, dict):
             raise ConfigValidationError("配置分区必须为对象")
-        if normalized_section == "connector":
-            from ECL.services.connector_nodes import ConnectorNodeConfig
-
-            data = ConnectorNodeConfig.model_validate(data).model_dump()
         with self._lock:
             config_data = self.get_config()
             if normalized_section == "plugins":
