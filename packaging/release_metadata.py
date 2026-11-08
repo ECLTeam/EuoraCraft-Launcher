@@ -3,11 +3,12 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：为 CI 的普通平台和 Arch 构建解析同一份版本信息，并在发布前校验标签和质量检查。
+# 文件作用：为 CI 的普通平台和 Arch 构建解析同一份版本信息，并在发布前校验标签、手动输入和质量检查。
 #
 # 公开接口：
 #   - class ReleaseValidationError — 版本或发布条件不满足时的明确失败。
 #   - class ReleaseMetadata — 不可变的构建版本信息。
+#   - class ManualBuildInput — 手动运行 Build 时填写的版本号、版本类型和发布选项。
 #   - parse_version_tag(tag_name) — 识别 Alpha、Beta、RC 和正式版标签。
 #   - latest_main_run_succeeded(payload, commit_sha) — 判断指定提交最近一次主分支检查是否成功。
 #   - resolve_build(environment, root_path) — 解析构建版本及是否允许发布。
@@ -24,8 +25,12 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+# 上海自 1991 年起不再使用夏令时，固定 +08:00 与 Asia/Shanghai 的当前日期一致，
+# 同时避免依赖 Windows 环境可能缺失的 tzdata。
+release_timezone = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
 class ReleaseValidationError(ValueError):
@@ -58,6 +63,31 @@ class ReleaseMetadata:
             "filename_version": self.filename_version,
             "prerelease": str(self.version_type != "release").lower(),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ManualBuildInput:
+    """
+    保存手动运行 Build 时填写的版本号、版本类型和发布选项。
+
+    ``version`` 为空表示沿用源码版本常量；``version_type`` 为 ``auto`` 时
+    由版本号推断，否则必须与解析结果一致。
+    """
+
+    version: str
+    version_type: str
+    publish: bool
+
+
+def _manual_build_input(environment: Mapping[str, str]) -> ManualBuildInput:
+    """
+    读取手动运行的版本与发布选项，拒绝未知版本类型。
+    """
+    version_type = environment.get("ECL_MANUAL_VERSION_TYPE", "").strip() or "auto"
+    if version_type not in {"auto", "alpha", "beta", "rc", "release"}:
+        raise ReleaseValidationError("版本类型无效")
+    publish = environment.get("ECL_MANUAL_PUBLISH", "").strip().lower() == "true"
+    return ManualBuildInput(environment.get("ECL_MANUAL_VERSION", "").strip(), version_type, publish)
 
 
 def parse_version_tag(tag_name: str) -> ReleaseMetadata:
@@ -105,6 +135,59 @@ def _source_metadata(root_path: Path) -> ReleaseMetadata:
     return metadata
 
 
+def _with_beta_release_date(metadata: ReleaseMetadata, release_date: date) -> ReleaseMetadata:
+    """
+    按 Asia/Shanghai 的实际发布日期补全 Beta 版本。
+
+    版本号未带 ``+YYYYMMDD`` 时补全当天日期；已带日期时必须等于当天，
+    避免手动输入沿用旧发布日期。
+
+    :param metadata: 已解析的版本信息
+    :param release_date: 本次发布日期
+    :return: 带发布日期的 Beta 版本信息，其他类型原样返回
+    :raises ReleaseValidationError: Beta 序号或日期不符合规则时抛出
+    """
+    if metadata.version_type != "beta":
+        return metadata
+    core_version = metadata.full_version.split("+", 1)[0]
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*", core_version):
+        raise ReleaseValidationError("Beta 版本必须为 MAJOR.MINOR.PATCH-beta.N，序号从 1 起")
+    expected_date = release_date.strftime("%Y%m%d")
+    if "+" in metadata.full_version:
+        if metadata.full_version.rsplit("+", 1)[1] != expected_date:
+            raise ReleaseValidationError("Beta 版本中的发布日期必须为当天")
+        return metadata
+    full_version = f"{core_version}+{expected_date}"
+    return ReleaseMetadata(metadata.version, full_version, metadata.version_type, f"v{full_version}")
+
+
+def _manual_metadata(
+    request: ManualBuildInput, environment: Mapping[str, str], root_path: Path, release_date: date
+) -> ReleaseMetadata:
+    """
+    解析手动输入的版本号，校验版本类型并补全 Beta 发布日期。
+
+    未填写版本号时，标签运行沿用标签版本，分支运行读取源码版本常量；
+    手动运行不把分支名当版本。
+
+    :param request: 手动运行的版本与发布选项
+    :param environment: 当前 GitHub Actions 事件与仓库环境
+    :param root_path: 当前检出的主仓库根目录
+    :param release_date: 本次发布日期
+    :return: 本次构建使用的版本信息
+    :raises ReleaseValidationError: 版本号无效或与版本类型不一致时抛出
+    """
+    if request.version:
+        metadata = parse_version_tag(f"v{request.version}")
+    elif environment.get("GITHUB_REF_TYPE") == "tag":
+        metadata = parse_version_tag(environment.get("GITHUB_REF_NAME", ""))
+    else:
+        metadata = _source_metadata(root_path)
+    if request.version_type != "auto" and request.version_type != metadata.version_type:
+        raise ReleaseValidationError("版本号与版本类型不一致")
+    return _with_beta_release_date(metadata, release_date)
+
+
 def latest_main_run_succeeded(payload: object, commit_sha: str) -> bool:
     """
     从 gh 分页响应中查找指定提交最近一次主分支推送检查，拒绝使用旧成功记录掩盖新失败。
@@ -148,12 +231,35 @@ def _run_command(arguments: list[str], root_path: Path) -> str:
     return completed.stdout.strip()
 
 
+def _validate_main_checks(commit_sha: str, repository: str, root_path: Path) -> None:
+    """
+    核对指定提交最近一次主分支推送的后端测试与前端质量检查。
+
+    :param commit_sha: 标签或手动发布实际指向的主仓库提交
+    :param repository: GitHub 仓库标识
+    :param root_path: 当前检出的主仓库根目录
+    :raises ReleaseValidationError: 检查记录缺失、未完成或失败时抛出
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ReleaseValidationError("GitHub 仓库标识无效")
+    for workflow_file in ("backend-tests.yml", "frontend-checks.yml"):
+        endpoint = (
+            f"repos/{repository}/actions/workflows/{workflow_file}/runs"
+            f"?head_sha={commit_sha}&branch=main&event=push&per_page=100"
+        )
+        response = _run_command(["gh", "api", endpoint, "--paginate", "--slurp"], root_path)
+        try:
+            payload = json.loads(response)
+        except json.JSONDecodeError as exc:
+            raise ReleaseValidationError("GitHub 检查记录不是有效 JSON") from exc
+        if not latest_main_run_succeeded(payload, commit_sha):
+            raise ReleaseValidationError(f"发布提交尚未通过主分支检查：{workflow_file}")
+
+
 def _validate_publication(metadata: ReleaseMetadata, repository: str, root_path: Path) -> None:
     """
     发布前核对实际标签提交及两项主分支质量检查，Beta 额外校验日期、序号和带注释标签。
     """
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-        raise ReleaseValidationError("GitHub 仓库标识无效")
     tag_ref = f"refs/tags/{metadata.filename_version}"
     if metadata.version_type == "beta":
         if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*\+[0-9]{8}", metadata.filename_version):
@@ -169,25 +275,39 @@ def _validate_publication(metadata: ReleaseMetadata, repository: str, root_path:
     main_sha = _run_command(["git", "rev-parse", "origin/main"], root_path)
     if not re.fullmatch(r"[0-9a-f]{40}", commit_sha) or commit_sha != main_sha:
         raise ReleaseValidationError("发布标签必须指向远端 main 当前提交")
-    for workflow_file in ("backend-tests.yml", "frontend-checks.yml"):
-        endpoint = (
-            f"repos/{repository}/actions/workflows/{workflow_file}/runs"
-            f"?head_sha={commit_sha}&branch=main&event=push&per_page=100"
-        )
-        response = _run_command(["gh", "api", endpoint, "--paginate", "--slurp"], root_path)
-        try:
-            payload = json.loads(response)
-        except json.JSONDecodeError as exc:
-            raise ReleaseValidationError("GitHub 检查记录不是有效 JSON") from exc
-        if not latest_main_run_succeeded(payload, commit_sha):
-            raise ReleaseValidationError(f"发布提交尚未通过主分支检查：{workflow_file}")
+    _validate_main_checks(commit_sha, repository, root_path)
+
+
+def _validate_manual_publication(metadata: ReleaseMetadata, repository: str, root_path: Path) -> None:
+    """
+    校验手动发布的目标提交、质量检查与标签占用情况。
+
+    标签由工作流在门禁通过后创建，因此这里只确认同名标签尚未使用，
+    不再要求标签已经存在。
+
+    :param metadata: 本次构建使用的版本信息
+    :param repository: GitHub 仓库标识
+    :param root_path: 当前检出的主仓库根目录
+    :raises ReleaseValidationError: 提交不是远端 main、检查未通过或标签已被使用时抛出
+    """
+    _run_command(["git", "fetch", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main"], root_path)
+    commit_sha = _run_command(["git", "rev-parse", "HEAD"], root_path)
+    main_sha = _run_command(["git", "rev-parse", "origin/main"], root_path)
+    if not re.fullmatch(r"[0-9a-f]{40}", commit_sha) or commit_sha != main_sha:
+        raise ReleaseValidationError("手动发布必须使用远端 main 当前提交")
+    _validate_main_checks(commit_sha, repository, root_path)
+    if _run_command(["git", "tag", "--list", metadata.filename_version], root_path):
+        raise ReleaseValidationError("本地已存在同名版本标签")
+    if _run_command(["git", "ls-remote", "--tags", "origin", f"refs/tags/{metadata.filename_version}"], root_path):
+        raise ReleaseValidationError("远端已存在同名版本标签")
 
 
 def resolve_build(environment: Mapping[str, str], root_path: Path) -> dict[str, str]:
     """
-    解析标签或源码版本，只允许版本标签推送执行发布操作。
+    解析标签或手动输入的版本，并判断本次构建是否允许发布。
 
-    手动运行可构建分支或标签，但不查询发布门禁，也不会授权上传 Release。
+    标签推送使用完整发布门禁；手动运行默认只构建 Actions 产物，显式选择
+    发布时必须从远端 main 当前提交发起，并通过同一套主分支质量检查。
 
     :param environment: 当前 GitHub Actions 事件与仓库环境
     :param root_path: 当前检出的主仓库根目录
@@ -196,18 +316,24 @@ def resolve_build(environment: Mapping[str, str], root_path: Path) -> dict[str, 
     """
     event_name = environment.get("GITHUB_EVENT_NAME", "")
     ref_type = environment.get("GITHUB_REF_TYPE", "")
-    if event_name not in {"push", "workflow_dispatch"} or ref_type not in {"branch", "tag"}:
-        raise ReleaseValidationError("完整构建只接受版本标签推送或手动运行")
-    if event_name == "push" and ref_type != "tag":
-        raise ReleaseValidationError("普通分支推送不执行完整构建")
-    if ref_type == "tag":
+    repository = environment.get("GITHUB_REPOSITORY", "")
+    if event_name == "push":
+        if ref_type != "tag":
+            raise ReleaseValidationError("普通分支推送不执行完整构建")
         metadata = parse_version_tag(environment.get("GITHUB_REF_NAME", ""))
-    else:
-        metadata = _source_metadata(root_path)
-    should_publish = event_name == "push" and ref_type == "tag"
-    if should_publish:
-        _validate_publication(metadata, environment.get("GITHUB_REPOSITORY", ""), root_path)
-    return {**metadata.as_outputs(), "publish": str(should_publish).lower()}
+        _validate_publication(metadata, repository, root_path)
+        return {**metadata.as_outputs(), "publish": "true"}
+    if event_name == "workflow_dispatch":
+        if ref_type not in {"branch", "tag"}:
+            raise ReleaseValidationError("完整构建只接受版本标签推送或手动运行")
+        request = _manual_build_input(environment)
+        metadata = _manual_metadata(request, environment, root_path, datetime.now(release_timezone).date())
+        if request.publish:
+            if ref_type != "branch" or environment.get("GITHUB_REF_NAME") != "main":
+                raise ReleaseValidationError("手动发布必须从 main 分支发起")
+            _validate_manual_publication(metadata, repository, root_path)
+        return {**metadata.as_outputs(), "publish": str(request.publish).lower()}
+    raise ReleaseValidationError("完整构建只接受版本标签推送或手动运行")
 
 
 def main() -> int:

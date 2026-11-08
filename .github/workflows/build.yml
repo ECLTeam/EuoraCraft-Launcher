@@ -5,9 +5,24 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      version:
+        description: '版本号（不含 v，例如 0.3.0 或 0.3.0-beta.1；留空使用源码版本）'
+        required: false
+        type: string
+      version_type:
+        description: '版本类型'
+        required: false
+        type: choice
+        options: [auto, alpha, beta, rc, release]
+        default: auto
+      publish:
+        description: '创建版本标签并发布 GitHub Release（仅 main 分支）'
+        required: false
+        type: boolean
+        default: false
       design_base:
-        description: '前端设计检查的主仓库基线提交 SHA'
-        required: true
+        description: '前端设计检查的主仓库基线提交 SHA（留空与上一提交比较）'
+        required: false
         type: string
 
 jobs:
@@ -16,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: read
-      contents: read
+      contents: write
     outputs:
       version: ${{ steps.release.outputs.version }}
       full_version: ${{ steps.release.outputs.full_version }}
@@ -38,8 +53,22 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          ECL_MANUAL_VERSION: ${{ inputs.version }}
+          ECL_MANUAL_VERSION_TYPE: ${{ inputs.version_type }}
+          ECL_MANUAL_PUBLISH: ${{ inputs.publish }}
         run: |
           python packaging/release_metadata.py >> "$GITHUB_OUTPUT"
+
+      - name: Create release tag
+        if: steps.release.outputs.publish == 'true' && github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.filename_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "refs/tags/$TAG"
 
   build-frontend:
     name: Build Frontend
@@ -303,6 +332,7 @@ jobs:
         if: needs.validate-release-tag.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ needs.validate-release-tag.outputs.filename_version }}
           files: |
             ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
           prerelease: ${{ needs.validate-release-tag.outputs.prerelease == 'true' }}
@@ -505,13 +535,13 @@ jobs:
       - name: Download Arch binary
         uses: actions/download-artifact@v8
         with:
-          name: EuoraCraft-Launcher-Arch-X64-${{ github.ref_name }}
+          name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}
           path: release-assets
 
       - name: Upload Arch artifacts to Release
         shell: bash
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.validate-release-tag.outputs.filename_version }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PKG_FILE="release-assets/${{ needs.build-arch-pkg.outputs.package_artifact }}"
