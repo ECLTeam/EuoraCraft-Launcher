@@ -1480,7 +1480,7 @@ def test_command_builder_lock_memory_pins_initial_heap_to_max(tmp_path) -> None:
 
 
 def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> None:
-    """Forge 忽略列表中的含空格版本名必须保持为单个参数。"""
+    """Forge 忽略列表中的含空格版本名必须保持为单个参数，主类必须独立成 token。"""
     game_path = tmp_path / ".minecraft"
     version_name = "Zombie Invade 100 Days"
     version_path = game_path / "versions" / version_name
@@ -1492,7 +1492,14 @@ def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> 
                 "id": parent_name,
                 "mainClass": "net.minecraft.client.main.Main",
                 "arguments": {
-                    "jvm": ["-cp", "${classpath}"],
+                    # 原版 1.20.1 的真实形态：-cp 与 classpath 是两个独立条目，
+                    # natives 相关参数内嵌含空格的实例目录
+                    "jvm": [
+                        "-Djava.library.path=${natives_directory}",
+                        "-Djna.tmpdir=${natives_directory}",
+                        "-cp",
+                        "${classpath}",
+                    ],
                     "game": ["--username", "${auth_player_name}", "--version", "${version_name}"],
                 },
                 "libraries": [],
@@ -1508,7 +1515,15 @@ def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> 
                 "mainClass": "cpw.mods.bootstraplauncher.BootstrapLauncher",
                 "inheritsFrom": parent_name,
                 "arguments": {
-                    "jvm": ["-DignoreList=bootstraplauncher,...,forge-,${version_name}.jar"],
+                    # Forge 的真实形态：模块路径中 ${classpath_separator} 紧跟下一个
+                    # 引号段，分隔符若被加引号会产生 `";""` 序列破坏引号解析
+                    "jvm": [
+                        "-DignoreList=bootstraplauncher,...,forge-,${version_name}.jar",
+                        "-p",
+                        "${library_directory}/cpw/a.jar${classpath_separator}"
+                        "${library_directory}/cpw/b.jar${classpath_separator}"
+                        "${library_directory}/cpw/c.jar",
+                    ],
                     "game": ["--launchTarget", "forgeclient"],
                 },
                 "libraries": [],
@@ -1532,6 +1547,14 @@ def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> 
     ignore_list_tokens = [token for token in argv if token.startswith("-DignoreList=")]
     assert len(ignore_list_tokens) == 1
     assert f"{version_name}.jar" in ignore_list_tokens[0]
+
+    main_class = "cpw.mods.bootstraplauncher.BootstrapLauncher"
+    assert argv.count(main_class) == 1
+
+    module_path_tokens = [token for token in argv if token.endswith("c.jar")]
+    assert len(module_path_tokens) == 1
+    expected_lib = str(game_path / "libraries")
+    assert module_path_tokens[0] == f"{expected_lib}/cpw/a.jar;{expected_lib}/cpw/b.jar;{expected_lib}/cpw/c.jar"
     assert "Invade" not in argv
     assert argv.count("cpw.mods.bootstraplauncher.BootstrapLauncher") == 1
 
