@@ -53,6 +53,8 @@ def _plugin_entry(
         version = metadata.version
         description = metadata.description
         author = metadata.author
+        homepage = metadata.homepage
+        license = metadata.license
         dependencies = metadata.metadata.get("dependencies", {})
         services = list(metadata._commands.keys())
         settings = list(metadata._settings.keys())
@@ -63,6 +65,8 @@ def _plugin_entry(
         version = metadata.get("version", "")
         description = metadata.get("description", "")
         author = metadata.get("author", "")
+        homepage = metadata.get("homepage", "")
+        license = metadata.get("license", "")
         dependencies = metadata.get("dependencies", {})
         contributes = metadata.get("contributes", {})
     else:
@@ -70,6 +74,8 @@ def _plugin_entry(
         version = ""
         description = ""
         author = ""
+        homepage = ""
+        license = ""
         dependencies = {}
         contributes = {}
     return {
@@ -78,6 +84,8 @@ def _plugin_entry(
         "version": version,
         "description": description,
         "author": author,
+        "homepage": homepage,
+        "license": license,
         "icon": "",
         "status": status,
         "error": error,

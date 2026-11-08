@@ -196,6 +196,8 @@ class Plugin:
         self.version: str = metadata.get("version", "0.0.0")  # 插件版本号
         self.description: str = metadata.get("description", "")  # 插件描述
         self.author: str = metadata.get("author", "")  # 插件作者
+        self.homepage: str = metadata.get("homepage", "")  # 插件主页，关于页外链展示
+        self.license: str = metadata.get("license", "")  # 插件许可证说明，关于页展示
         self.metadata: dict[str, Any] = metadata  # 插件清单元数据
         self.is_system = is_system  # 是否为系统内置插件
         self.logger = get_logger(f"Plugin.{self.name}")  # 插件日志记录器

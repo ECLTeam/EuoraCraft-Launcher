@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import ClassVar, Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from pydantic import (
@@ -68,6 +69,8 @@ class WorkerManifest(BaseModel):
     dependencies: dict[str, str | dict[str, str | bool]] = Field(default_factory=dict, max_length=128)
     custom_ui: CustomUiDeclaration | None = None
     supports_hot_reload: StrictBool = True
+    homepage: str = Field(default="", max_length=256)
+    license: str = Field(default="", max_length=128)
     reserved_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
     )
@@ -145,6 +148,34 @@ class WorkerManifest(BaseModel):
             if parse_dependency(name, requirement) is None:
                 raise ValueError("插件间依赖约束无效")
         return value
+
+    @field_validator("homepage")
+    @classmethod
+    def validate_homepage(cls, value: str) -> str:
+        """
+        主页仅接受 http/https 绝对地址，供关于页以外链形式打开。
+
+        :param value: 清单中的主页 URL
+        :return: 合法主页地址
+        :raises ValueError: 非 http/https 或缺少主机名时抛出
+        """
+        if not value:
+            return value
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError("插件主页必须是 http(s) 绝对地址")
+        return value
+
+    @field_validator("license")
+    @classmethod
+    def validate_license(cls, value: str) -> str:
+        """
+        许可证字段仅作为展示文本（SPDX 表达式或简短说明），限制长度并去除首尾空白。
+
+        :param value: 清单中的许可证说明
+        :return: 规范化后的许可证文本
+        """
+        return value.strip()
 
     @property
     def entry_class(self) -> str:

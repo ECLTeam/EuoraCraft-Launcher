@@ -46,3 +46,29 @@ def test_manifest_requires_explicit_v2_and_ignores_legacy_permissions() -> None:
     ):
         with pytest.raises(ValueError):
             WorkerManifest.model_validate(metadata)
+
+
+def test_manifest_homepage_and_license_defaults_and_validation() -> None:
+    manifest = WorkerManifest.model_validate(
+        {
+            "name": "example",
+            "api_version": 2,
+            "homepage": "https://github.com/ECLTeam/ECL-Plugin-OnlineGame",
+            "license": "GPL-3.0",
+        }
+    )
+    assert manifest.homepage == "https://github.com/ECLTeam/ECL-Plugin-OnlineGame"
+    assert manifest.license == "GPL-3.0"
+    # 空白被规范化；未声明时为空字符串。
+    assert WorkerManifest.model_validate({"name": "example", "api_version": 2, "license": "  MIT "}).license == "MIT"
+    empty = WorkerManifest.model_validate({"name": "example", "api_version": 2})
+    assert empty.homepage == ""
+    assert empty.license == ""
+    for metadata in (
+        {"name": "example", "api_version": 2, "homepage": "ftp://example.com/plugin"},
+        {"name": "example", "api_version": 2, "homepage": "not-a-url"},
+        {"name": "example", "api_version": 2, "homepage": "https://" + "a" * 300},
+        {"name": "example", "api_version": 2, "license": "L" * 129},
+    ):
+        with pytest.raises(ValueError):
+            WorkerManifest.model_validate(metadata)
