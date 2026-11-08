@@ -24,10 +24,14 @@
 
 axe 的 WCAG 2.0/2.1/2.2 A/AA 标签仅用于选择可自动执行的规则；标签存在不表示覆盖某成功准则的所有要求。扫描前等待目标页面与控件存在，断言主题和语言状态；报告不得缺少预期场景。`incomplete` 需要人工核对，不等同于通过。
 
+扫描上下文固定为 Windows UA，使 Linux CI 与 Windows 本机扫描同一份 DOM：页面存在按 UA 判断的平台分支，不固定时两端节点集合不同，例外基线无法共用。例外定位使用语义锚点（`data-testid`、`data-theme-component`、`aria-label`、`title`、`name` 与稳定类名，必要时以最近唯一祖先拼接相对路径），不包含 `data-v-*` 构建期哈希；结构改变仍须重新复核。
+
 键盘检查至少包括打开模态后的焦点、正反 Tab 范围、Esc 约束和关闭后焦点恢复。实际 Windows WebView2 另检窗口/原生焦点、透明背景及屏幕阅读器。没有实际验收的系统保持“未验证”，不能由 Chromium 通过外推。
 
 ## 当前证据
 
 首次调查：2026-10-30，在 Windows Edge、1200×800、Classic 亮色的实际设置页运行 axe-core 4.11.1，检出开关名称和标题栏标记对比度问题；同时存在工具要求人工复核的项。用户已授权修复首批界面和命中依赖，正式结果在实施记录中更新。本段不代表其他状态通过。
+
+定位重绑：2026-11-08 处理 [#100](https://github.com/ECLTeam/EuoraCraft-Launcher/issues/100)，把例外定位改为语义锚点并固定扫描 UA，747 个待复核位置中确认违规为 0。证据与未覆盖范围见[本轮复核](accessibility-review-2026-11-08.md)；Linux 扫描结果须在推送后核对。
 
 既有证据入口包括前端 `LauncherTab.test.ts`、`SettingRow.test.ts`、`UpdateResultModal.test.ts`、`PluginPermissionsModal.test.ts`、`useGlobalModalStack.test.ts` 及 `tests/browser/`。组件测试不计算真实布局，不作为颜色、尺寸或滚动可达性的完整证据。
