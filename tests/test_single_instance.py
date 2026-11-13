@@ -25,7 +25,7 @@ from ECL.host.single_instance import SingleInstanceService, probe_running_instan
 
 
 def _read_discovery(tmp_path) -> dict:
-    return json.loads((tmp_path / "single_instance.json").read_text(encoding="utf-8"))
+    return json.loads((tmp_path / "runtime" / "single_instance.json").read_text(encoding="utf-8"))
 
 
 def test_start_writes_discovery_and_serves_focus(tmp_path) -> None:
@@ -47,18 +47,19 @@ def test_start_writes_discovery_and_serves_focus(tmp_path) -> None:
     finally:
         service.close()
 
-    assert not (tmp_path / "single_instance.json").exists()
+    assert not (tmp_path / "runtime" / "single_instance.json").exists()
 
 
 def test_probe_without_primary_returns_false(tmp_path) -> None:
     """没有发现文件时应返回 False 且不创建任何文件。"""
     assert probe_running_instance(tmp_path, ["x"]) is False
-    assert not (tmp_path / "single_instance.json").exists()
+    assert not (tmp_path / "runtime" / "single_instance.json").exists()
 
 
 def test_probe_removes_stale_discovery(tmp_path, monkeypatch) -> None:
     """发现文件记录的 pid 已失效时应清理残留文件并返回 False。"""
-    discovery_path = tmp_path / "single_instance.json"
+    discovery_path = tmp_path / "runtime" / "single_instance.json"
+    discovery_path.parent.mkdir(parents=True, exist_ok=True)
     discovery_path.write_text(
         json.dumps({"port": 1, "token": "t", "pid": 123, "protocolVersion": 1}),
         encoding="utf-8",
@@ -77,7 +78,8 @@ def test_probe_connect_refused_cleans_up(tmp_path, monkeypatch) -> None:
     dead_port = probe_socket.getsockname()[1]
     probe_socket.close()
 
-    discovery_path = tmp_path / "single_instance.json"
+    discovery_path = tmp_path / "runtime" / "single_instance.json"
+    discovery_path.parent.mkdir(parents=True, exist_ok=True)
     discovery_path.write_text(
         json.dumps({"port": dead_port, "token": "t", "pid": os.getpid(), "protocolVersion": 1}),
         encoding="utf-8",
@@ -116,7 +118,7 @@ def test_close_is_idempotent(tmp_path) -> None:
 
     assert service._thread is None
     assert thread is not None and not thread.is_alive()
-    assert not (tmp_path / "single_instance.json").exists()
+    assert not (tmp_path / "runtime" / "single_instance.json").exists()
 
 
 def test_launch_equal_flags_are_queued_once_and_retained_until_ready(tmp_path) -> None:

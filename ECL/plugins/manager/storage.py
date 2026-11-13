@@ -23,7 +23,7 @@ class PluginStorage(_PluginState):
     """
 
     def _load_plugin_config(self, name: str, metadata: dict[str, Any]) -> None:
-        # 从 plugin_config/{name}.json 读取插件配置值回填到配置字典。
+        # 从 plugins/config/{name}.json 读取插件配置值回填到配置字典。
         config_path = self._plugin_config_dir / f"{name}.json"
         self._config_paths[name] = config_path
         if not config_path.is_file():
@@ -33,7 +33,7 @@ class PluginStorage(_PluginState):
             self._config_values[f"{name}.{key}"] = value
 
     def _save_plugin_config(self, name: str) -> None:
-        # 将该插件的配置值保存到 plugin_config/{name}.json。
+        # 将该插件的配置值保存到 plugins/config/{name}.json。
         prefix = f"{name}."
         data = {k[len(prefix) :]: v for k, v in self._config_values.items() if k.startswith(prefix)}
         config_path = self._config_paths.get(name)
@@ -42,7 +42,7 @@ class PluginStorage(_PluginState):
         atomic_write_text(config_path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def _load_plugin_state(self) -> None:
-        # 从 plugin_state.json 读取已禁用的插件列表。
+        # 从 plugins/state.json 读取已禁用的插件列表。
         if self._plugin_state_path is None or not self._plugin_state_path.is_file():
             self._disabled_plugins = set()
             return
@@ -55,7 +55,7 @@ class PluginStorage(_PluginState):
             self._disabled_plugins = set()
 
     def _save_plugin_state(self) -> None:
-        # 将已禁用的插件列表写入 plugin_state.json。
+        # 将已禁用的插件列表写入 plugins/state.json。
         if self._plugin_state_path is None:
             return
         state = {"disabled": sorted(self._disabled_plugins)}

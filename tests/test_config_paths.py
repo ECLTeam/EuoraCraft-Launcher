@@ -36,7 +36,7 @@ def test_new_config_uses_absolute_minecraft_path_and_creates_directory(tmp_path)
     assert minecraft_path.is_dir()
     assert minecraft_path.is_absolute()
 
-    saved_config = json.loads((data_path / "setting.json").read_text(encoding="utf-8"))
+    saved_config = json.loads((data_path / "config" / "setting.json").read_text(encoding="utf-8"))
     assert saved_config["game"]["minecraft_paths"] == [{"name": "默认路径", "path": str(minecraft_path)}]
     assert saved_config["ui"]["theme"]["window_chrome"] == "system_shadow"
 
@@ -47,7 +47,8 @@ def test_existing_config_preserves_saved_window_chrome(tmp_path, window_chrome: 
     data_path.mkdir()
     existing_config = deepcopy(default_config)
     existing_config["ui"]["theme"]["window_chrome"] = window_chrome
-    config_path = data_path / "setting.json"
+    config_path = data_path / "config" / "setting.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(existing_config), encoding="utf-8")
 
     loaded_config = ConfigStore(data_path).get_config()
@@ -60,7 +61,8 @@ def test_existing_config_preserves_saved_window_chrome(tmp_path, window_chrome: 
 def test_existing_empty_game_paths_are_initialized(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
     data_path.mkdir()
-    (data_path / "setting.json").write_text(
+    (data_path / "config").mkdir()
+    (data_path / "config" / "setting.json").write_text(
         json.dumps(default_config, ensure_ascii=False),
         encoding="utf-8",
     )

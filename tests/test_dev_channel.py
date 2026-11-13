@@ -84,7 +84,7 @@ def _make_service(
 
 
 def _read_discovery(service: DevChannelService) -> dict[str, Any]:
-    discovery_path = service._data_path / service.discovery_filename
+    discovery_path = service._data_path / "runtime" / service.discovery_filename
     return json.loads(discovery_path.read_text(encoding="utf-8"))
 
 
@@ -130,9 +130,9 @@ def test_start_writes_discovery_file(service) -> None:
 def test_close_removes_discovery_file(tmp_path) -> None:
     service = _make_service(tmp_path)
     service.start()
-    assert (service._data_path / service.discovery_filename).is_file()
+    assert (service._data_path / "runtime" / service.discovery_filename).is_file()
     service.close()
-    assert not (service._data_path / service.discovery_filename).exists()
+    assert not (service._data_path / "runtime" / service.discovery_filename).exists()
     service.close()
 
 
@@ -157,7 +157,7 @@ async def test_launcher_info_reports_runtime_state(service, tmp_path) -> None:
         assert data["debug"] is False
         assert data["devChannel"] is True
         assert data["dataPath"] == str(tmp_path / "ECL_data")
-        assert data["pluginDir"].endswith("plugins")
+        assert data["pluginDir"].endswith("plugins/sources") or data["pluginDir"].endswith("plugins\\sources")
     finally:
         await websocket.close()
 

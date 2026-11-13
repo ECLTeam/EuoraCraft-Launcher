@@ -140,7 +140,7 @@ class ConfigStore:
     def __init__(self, data_path: Path, event_bus: EventBus | None = None) -> None:
         self.logger: logging.Logger = get_logger("config")  # 配置读写日志器。
         self.data_path: Path = Path(data_path)  # 应用数据目录。
-        self.config_path: Path = self.data_path / "setting.json"  # 配置文件路径。
+        self.config_path: Path = self.data_path / "config" / "setting.json"  # 配置文件路径。
         self._lock = RLock()
         self.config_data: dict[str, JsonValue] | None = None  # 内存中的配置快照。
         self.events: EventBus = event_bus or EventBus()  # 配置变更事件总线。

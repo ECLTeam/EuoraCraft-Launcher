@@ -29,7 +29,7 @@ def test_reinstall_updates_code_without_enabling(tmp_path: Path) -> None:
 
 def test_reload_starts_previously_unloaded_plugin(tmp_path: Path) -> None:
     marker = tmp_path / "marker"
-    make_plugin(tmp_path / "data/plugins/example", marker)
+    make_plugin(tmp_path / "data/plugins/sources/example", marker)
     framework = PluginManager()
     framework.initialize(tmp_path / "data", tmp_path / "resources")
     try:

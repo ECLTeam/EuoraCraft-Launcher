@@ -22,7 +22,6 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from ECL.java.models import JavaError, RuntimeRecord
 from ECL.java.queries import JavaQueries
-from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.utils import atomic_write_text
 from ECL.utils.instance_reading import directory_identity
 
@@ -58,7 +57,7 @@ class PluginJavaResourceCatalog:
         :param data_path: 宿主数据目录
         :param queries: 应用唯一 Java 查询服务
         """
-        self._file = data_path / "plugin_java_resources.json"
+        self._file = data_path / "plugins" / "java_resources.json"
         self._queries = queries
         self._lock = RLock()
         self._record = _JavaResources()
@@ -150,7 +149,7 @@ class PluginJavaResourceCatalog:
             except JavaError:
                 # 不可验证的登记不是可授权资源；已有选择保留但标记不可用。
                 continue
-        with self._lock, _exclusive_lock(self._file.with_suffix(".lock")):
+        with self._lock:
             previous = self._read()
             resources = [
                 item

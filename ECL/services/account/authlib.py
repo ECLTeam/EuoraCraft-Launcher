@@ -67,7 +67,7 @@ class AuthlibInjector:
     metadata_url = "https://authlib-injector.yushi.moe/artifact/latest.json"
 
     def __init__(self, data_path: Path | str, http_client: httpx.Client | None = None) -> None:
-        self.path = Path(data_path) / "dependencies" / "authlib-injector"
+        self.path = Path(data_path) / "runtime" / "authlib-injector"
         self.path.mkdir(parents=True, exist_ok=True)
         self.jar_path = self.path / "authlib-injector.jar"
         self.checksum_path = self.path / "authlib-injector.sha256"

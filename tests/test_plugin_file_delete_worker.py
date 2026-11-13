@@ -33,7 +33,7 @@ def test_real_worker_delete_version_cancel_and_no_automatic_cleanup(tmp_path, is
     code_path.mkdir()
     (code_path / "main.py").write_bytes((example / "main.py").read_bytes())
     (code_path / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
-    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     service = PluginWorkerService(tmp_path, executable, operations=manager)
     gate = Event()
 

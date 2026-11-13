@@ -43,7 +43,7 @@ def finish(broker, manager, receipt):
 def downloads(tmp_path):
     if sys.platform != "win32":
         pytest.skip("真实 Windows NTFS 下载事务")
-    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     storage = PluginFileStorage(tmp_path)
     store = PluginRunStore()
     brokers, services = [], []

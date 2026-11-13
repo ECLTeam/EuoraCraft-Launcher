@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
@@ -125,8 +124,7 @@ def test_invalid_response_never_publishes_and_does_not_retry(downloads, tmp_path
         assert view["effect"] == "none" and view["result"] is None
         assert not list(directory(tmp_path, broker).iterdir())
         assert len(requests) == 1
-        audits = list((tmp_path / "operations/plugin").rglob("*.json"))
-        assert audits and all("private-value" not in path.read_text(encoding="utf-8") for path in audits)
+        assert not (tmp_path / "operations").exists()
 
 
 def test_unknown_length_over_limit_cleans_all_staging(downloads, tmp_path):
@@ -376,27 +374,17 @@ def test_failed_resource_close_retains_pending_and_retries_without_request_repla
         assert len(requests) == 1
 
 
-@pytest.mark.parametrize("phase", ["queued", "executing", "committing", "terminal"])
-def test_audit_failure_does_not_publish_early_or_replay_completed_download(downloads, tmp_path, monkeypatch, phase):
-    import ECL.services.operations as module
-
+def test_download_publishes_once_and_repeat_submit_is_not_duplicated(downloads, tmp_path):
     create, manager, _, _ = downloads
-    original = module.atomic_write_text
-
-    def write(path, content):
-        if json.loads(content)["phase"] == phase:
-            raise OSError("审计暂不可写")
-        return original(path, content)
 
     with server(lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") as (port, requests, _):
         broker = create([f"http:p10.example.test:{port}"])
-        monkeypatch.setattr(module, "atomic_write_text", write)
         view = finish(broker, manager, submit(broker, f"http://p10.example.test:{port}/"))
-        assert (directory(tmp_path, broker) / "download.bin").exists() == (phase == "terminal")
-        assert view["effect"] == ("committed" if phase == "terminal" else "none")
-        assert len(requests) == (0 if phase in {"queued", "executing"} else 1)
-        monkeypatch.setattr(module, "atomic_write_text", original)
+        assert (directory(tmp_path, broker) / "download.bin").read_bytes() == b"ok"
+        assert view["effect"] == "committed"
+        assert len(requests) == 1
         assert broker.wait_idle(1)
+        assert not (tmp_path / "operations").exists()
 
 
 @pytest.mark.parametrize("stage", ["before_connect", "after_connect", "before_tls", "after_tls"])

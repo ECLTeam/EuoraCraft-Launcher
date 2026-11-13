@@ -63,7 +63,7 @@ def files(tmp_path):
     (code / "main.py").write_text("value = 1", encoding="utf-8")
     binding = PluginContentBinding.capture(code, "windows-x86_64-cp311")
     store = PluginRunStore()
-    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     storage = PluginFileStorage(tmp_path)
     brokers = []
 
@@ -378,30 +378,18 @@ def test_publication_survives_close_failure_and_run_close(files, tmp_path, monke
     assert exported.read_bytes() == b"hello"
 
 
-@pytest.mark.parametrize("phase", ["queued", "executing", "committing", "terminal"])
-def test_file_task_journal_failure_never_republishes(files, tmp_path, monkeypatch, phase):
-    import ECL.services.operations as module
-
+def test_file_task_commits_once_without_operation_journal(files, tmp_path):
     broker, manager, storage, _, _ = files
     target, write_ref = begin(broker)
     chunk(broker, write_ref)
-    real = module.atomic_write_text
-
-    def fail(path, content):
-        if json.loads(content)["phase"] == phase:
-            raise OSError("journal failure")
-        return real(path, content)
-
-    monkeypatch.setattr(module, "atomic_write_text", fail)
     receipt = commit(broker, write_ref, key="commit-journal")
     view = finish(broker, manager, receipt)
     exported = tmp_path / "plugin_data" / broker.session.view().installation_id / "files" / target["relative_path"]
-    assert exported.exists() == (phase == "terminal")
-    assert view["effect"] == ("committed" if phase == "terminal" else "none")
+    assert exported.exists()
+    assert view["effect"] == "committed"
     assert not storage.uploads(broker.session.run_id)
-    monkeypatch.setattr(module, "atomic_write_text", real)
-    assert broker.wait_idle()
     assert commit(broker, write_ref, key="commit-journal") == receipt
+    assert not (tmp_path / "operations").exists()
 
 
 def test_run_close_before_publication_removes_only_own_staging(files, tmp_path, monkeypatch):

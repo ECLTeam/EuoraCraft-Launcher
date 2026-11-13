@@ -69,13 +69,13 @@ def test_plugin_framework_uses_data_path_for_user_plugins(tmp_path) -> None:
 
     framework.initialize(data_path, resource_path)
 
-    assert framework._plugin_dir == data_path / "plugins"
-    assert framework._plugin_config_dir == data_path / "plugin_config"
+    assert framework._plugin_dir == data_path / "plugins" / "sources"
+    assert framework._plugin_config_dir == data_path / "plugins" / "config"
     assert framework._plugin_dir.is_dir()
     assert framework._plugin_config_dir.is_dir()
     framework._collect_candidates.assert_has_calls(
         [
-            call(data_path / "plugins", is_system=False),
+            call(data_path / "plugins" / "sources", is_system=False),
             call(resource_path / "resources" / "system_plugins", is_system=True),
         ]
     )
@@ -97,7 +97,7 @@ def test_plugin_install_targets_data_path(tmp_path) -> None:
     )
 
     assert framework.install(str(source_path)).success is True
-    installed_path = data_path / "plugins" / "example"
+    installed_path = data_path / "plugins" / "sources" / "example"
     assert (installed_path / "plugin.json").is_file()
     assert "example" in framework._candidate_map
     assert "example" not in framework._plugins

@@ -55,7 +55,7 @@ def worker(tmp_path, request):
         "            return {'state':error.error_code,'requested':False}\n",
         encoding="utf-8",
     )
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
     service = PluginWorkerService(tmp_path, executable, operations=manager)
     service.register(metadata, root, "directory")
     service.enable("task_control")

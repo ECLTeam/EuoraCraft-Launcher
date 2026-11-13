@@ -33,8 +33,8 @@ class MaintenancePolicy:
 
     pending_marker_filename = ".pending_debug_maintenance.json"
     targets_by_action: dict[str, tuple[str, ...]] = {
-        "reset_launcher_data": ("setting.json", "info_card.json", "notice.json"),
-        "clear_plugins": ("plugins", "plugin_config"),
+        "reset_launcher_data": ("config/setting.json", "config/notice.json"),
+        "clear_plugins": ("plugins/sources", "plugins/config"),
     }
 
 
@@ -74,11 +74,11 @@ def _get_safe_target(root: Path, relative_path: str) -> Path:
 
 
 def _maintenance_backup_path(root: Path, task_id: str, action: str, relative_path: str) -> Path:
-    return root / "backups" / "debug-maintenance" / task_id / action / relative_path
+    return root / "userdata" / "backups" / "debug-maintenance" / task_id / action / relative_path
 
 
 def _maintenance_journal_path(root: Path) -> Path:
-    return root / "maintenance-history.jsonl"
+    return root / "logs" / "maintenance-history.jsonl"
 
 
 def _append_maintenance_record(root: Path, record: dict[str, object]) -> None:
@@ -122,7 +122,7 @@ def schedule_debug_maintenance(data_path: Path | str, action: str) -> ScheduledM
     if action not in MaintenancePolicy.targets_by_action:
         raise DebugMaintenanceError(f"不支持的维护操作: {action}")
     root = _get_data_root(data_path)
-    marker_path = root / MaintenancePolicy.pending_marker_filename
+    marker_path = root / "runtime" / MaintenancePolicy.pending_marker_filename
     actions = _read_pending_actions(marker_path)
     if action not in actions:
         actions.append(action)
@@ -142,7 +142,7 @@ def apply_pending_debug_maintenance(data_path: Path | str) -> list[MaintenanceRe
     待处理标记通过原子重命名领取，避免多个启动器进程重复执行同一任务。
     """
     root = _get_data_root(data_path)
-    marker_path = root / MaintenancePolicy.pending_marker_filename
+    marker_path = root / "runtime" / MaintenancePolicy.pending_marker_filename
     claimed = _claim_pending_marker(marker_path)
     if claimed is None:
         return []

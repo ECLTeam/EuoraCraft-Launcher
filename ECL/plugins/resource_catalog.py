@@ -20,7 +20,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.utils import atomic_write_text
 from ECL.utils.instance_reading import DirectoryIdentity, InstanceReadBoundary, InstanceReadError, directory_identity
 
@@ -73,7 +72,7 @@ class PluginResourceCatalog:
         :param roots: 当前有效配置的目录快照
         :param names: 无写入的实例名称查询
         """
-        self._file = data_path / "plugin_resources.json"
+        self._file = data_path / "plugins" / "resources.json"
         self._roots = roots
         self._names = names
         self._lock = RLock()
@@ -176,7 +175,7 @@ class PluginResourceCatalog:
             raise InstanceReadError("资源目录数量超过上限", "PLUGIN_MESSAGE_TOO_LARGE")
         if configured != self._configured():
             raise InstanceReadError("资源配置已变化，请刷新", "PLUGIN_RESOURCE_REVISION_CONFLICT")
-        with self._lock, _exclusive_lock(self._file.with_suffix(".lock")):
+        with self._lock:
             latest = self._read()
             if latest.revision != record.revision:
                 if resources != record.resources:

@@ -29,7 +29,7 @@ def test_download_filename_corpus_matches_frontend() -> None:
 def test_operation_revision_and_cancellation_are_executor_owned(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
 
     def worker(context) -> None:
         context.progress(50, "等待安全退出")
@@ -112,7 +112,7 @@ def test_real_downloader_downloads_atomic_file_and_reports_progress(tmp_path, mo
     events = EventBus()
     progress = []
     events.subscribe("game:operation_progress", progress.append)
-    manager = OperationManager(tmp_path / "data", events)
+    manager = OperationManager(events)
     service = CustomDownloadService(manager)
     target = tmp_path / "custom folder" / "文件.bin"
     try:
@@ -154,7 +154,7 @@ def test_cancel_stops_download_preserves_existing_file_and_retry_has_new_id(tmp_
         def stop(self):
             stopped.set()
 
-    manager = OperationManager(tmp_path / "data", EventBus())
+    manager = OperationManager(EventBus())
     service = CustomDownloadService(manager, ControlledDownloader)
     target = tmp_path / "original.bin"
     target.write_bytes(b"original")
@@ -180,7 +180,7 @@ def test_cancel_stops_download_preserves_existing_file_and_retry_has_new_id(tmp_
 
 
 def test_operation_lookup_cannot_escape_registry(tmp_path) -> None:
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
     try:
         with pytest.raises(GameServiceError):
             manager.get("../secret")
@@ -191,7 +191,7 @@ def test_operation_lookup_cannot_escape_registry(tmp_path) -> None:
 def test_cancellation_is_refused_after_atomic_finalization(tmp_path) -> None:
     committed = threading.Event()
     allow_return = threading.Event()
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
 
     def worker(context):
         context.finalize(lambda: committed.set())
@@ -269,14 +269,14 @@ def download_server():
 
 
 def test_defaults_use_injected_data_directory_without_creating_it(tmp_path):
-    manager = OperationManager(tmp_path / "state", EventBus())
+    manager = OperationManager(EventBus())
     service = CustomDownloadService(manager, data_path=tmp_path / "actual-data")
     try:
         assert service.defaults() == {
-            "downloadDirectory": str(tmp_path / "actual-data" / "downloads"),
+            "downloadDirectory": str(tmp_path / "actual-data" / "userdata" / "downloads"),
             "userAgent": "EuoraCraft-Launcher",
         }
-        assert not (tmp_path / "actual-data" / "downloads").exists()
+        assert not (tmp_path / "actual-data" / "userdata" / "downloads").exists()
     finally:
         manager.close()
 
@@ -288,7 +288,7 @@ def test_defaults_use_injected_data_directory_without_creating_it(tmp_path):
 def test_original_name_real_download_and_headers(tmp_path, download_server, monkeypatch, route, name):
     monkeypatch.delenv("ECL_DOWNLOAD_PROXY", raising=False)
     url, payload, requests = download_server
-    manager = OperationManager(tmp_path / "state", EventBus())
+    manager = OperationManager(EventBus())
     service = CustomDownloadService(manager, data_path=tmp_path / "app-data")
     try:
         operation = service.submit(
@@ -296,17 +296,13 @@ def test_original_name_real_download_and_headers(tmp_path, download_server, monk
         )
         result = wait_operation(manager, operation["operationId"])
         assert result["status"] == "completed", result
-        target_path = tmp_path / "app-data" / "downloads" / name
+        target_path = tmp_path / "app-data" / "userdata" / "downloads" / name
         assert target_path.read_bytes() == payload
         assert result["result"] == {"path": str(target_path), "name": name}
         assert {method for method, _, _ in requests} == {"HEAD", "GET"}
         assert all(headers["User-Agent"] == "Test-UA/1" and headers["X-Test"] == "secret" for _, _, headers in requests)
-        snapshot_file = tmp_path / "state" / "operations" / f"{operation['operationId']}.json"
-        deadline = time.monotonic() + 3
-        while not snapshot_file.exists() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        snapshot = snapshot_file.read_text(encoding="utf-8")
-        assert "secret" not in snapshot and "Test-UA" not in snapshot
+        # 任务快照不再落盘，请求头与 UA 不会写入数据目录。
+        assert not (tmp_path / "state" / "operations").exists()
     finally:
         manager.close()
 
@@ -314,7 +310,7 @@ def test_original_name_real_download_and_headers(tmp_path, download_server, monk
 def test_custom_name_exact_and_range_requests_use_headers(tmp_path, download_server, monkeypatch):
     monkeypatch.delenv("ECL_DOWNLOAD_PROXY", raising=False)
     url, payload, requests = download_server
-    manager = OperationManager(tmp_path / "state", EventBus())
+    manager = OperationManager(EventBus())
 
     def factory(*args, **kwargs):
         return Downloader(*args, **kwargs, skip_preflight=True, chunk_threshold_mb=0.1, min_chunk_mb=1, max_chunks=4)
@@ -395,7 +391,7 @@ def test_rejects_mixed_save_modes(tmp_path):
 def test_automatic_target_conflict_retry_freezes_name_and_headers(tmp_path, download_server, monkeypatch):
     monkeypatch.delenv("ECL_DOWNLOAD_PROXY", raising=False)
     url, payload, requests = download_server
-    manager = OperationManager(tmp_path / "state", EventBus())
+    manager = OperationManager(EventBus())
     service = CustomDownloadService(manager, data_path=tmp_path / "data")
     directory_path = tmp_path / "chosen"
     directory_path.mkdir()
@@ -430,7 +426,7 @@ def test_automatic_target_conflict_retry_freezes_name_and_headers(tmp_path, down
 def test_cancelled_queued_download_releases_target(tmp_path):
     started = threading.Event()
     release = threading.Event()
-    manager = OperationManager(tmp_path / "state", EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
 
     def blocker(context):
         started.set()
@@ -469,7 +465,7 @@ def test_atomic_new_target_on_windows_and_posix(tmp_path, download_server, monke
     monkeypatch.setattr("ECL.services.custom_downloads.sys.platform", platform)
     monkeypatch.delenv("ECL_DOWNLOAD_PROXY", raising=False)
     url, payload, _ = download_server
-    manager = OperationManager(tmp_path / "state", EventBus())
+    manager = OperationManager(EventBus())
     service = CustomDownloadService(manager)
     try:
         operation = service.submit(CustomDownloadRequest(url=url + "/file", target_path=tmp_path / "file"))
@@ -479,36 +475,26 @@ def test_atomic_new_target_on_windows_and_posix(tmp_path, download_server, monke
         manager.close()
 
 
-def test_terminal_revision_is_visible_before_persistence_finishes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_terminal_revision_is_visible_immediately_after_worker_exits() -> None:
     started = threading.Event()
     finish_worker = threading.Event()
-    persisting = threading.Event()
-    finish_persisting = threading.Event()
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
 
     def worker(context) -> None:
         started.set()
         assert finish_worker.wait(3)
         context.check_cancelled()
 
-    def persist(_operation: object) -> None:
-        persisting.set()
-        assert finish_persisting.wait(3)
-
-    monkeypatch.setattr(manager, "_persist", persist)
     try:
         operation_id = manager.submit("world_copy", worker)["operationId"]
         assert started.wait(3)
         manager.cancel(operation_id)
         cancelling = manager.get(operation_id)
         finish_worker.set()
-        assert persisting.wait(3)
+        manager._operations[operation_id].future.result(3)
         terminal = manager.get(operation_id)
         assert terminal["status"] == "cancelled"
         assert terminal["revision"] > cancelling["revision"]
     finally:
         finish_worker.set()
-        finish_persisting.set()
         manager.close()

@@ -43,7 +43,7 @@ def test_failed_update_preserves_disabled_plugin(tmp_path: Path, monkeypatch: py
     禁用插件的新版本目录切换失败时，旧版本和禁用记录都保留。
     """
     data_path = tmp_path / "data"
-    old_path = data_path / "plugins" / "demo"
+    old_path = data_path / "plugins" / "sources" / "demo"
     _plugin(old_path, "1.0.0")
     framework = _framework(data_path, tmp_path / "resources")
     assert framework.disable("demo").success
@@ -63,7 +63,7 @@ def test_failed_update_preserves_disabled_plugin(tmp_path: Path, monkeypatch: py
     assert framework._status["demo"] == "disabled"
     assert framework._candidate_map["demo"]["metadata"]["version"] == "1.0.0"
     assert json.loads((old_path / "plugin.json").read_text(encoding="utf-8"))["version"] == "1.0.0"
-    assert "demo" in json.loads((data_path / "plugin_state.json").read_text(encoding="utf-8"))["disabled"]
+    assert "demo" in json.loads((data_path / "plugins" / "state.json").read_text(encoding="utf-8"))["disabled"]
 
 
 def test_install_preserves_disabled_state_and_updates_candidate(tmp_path: Path) -> None:
@@ -71,7 +71,7 @@ def test_install_preserves_disabled_state_and_updates_candidate(tmp_path: Path) 
     更新禁用插件不会擅自启用；候选信息同步到新版本供界面与后续启用使用。
     """
     data_path = tmp_path / "data"
-    _plugin(data_path / "plugins" / "demo", "1.0.0")
+    _plugin(data_path / "plugins" / "sources" / "demo", "1.0.0")
     framework = _framework(data_path, tmp_path / "resources")
     assert framework.disable("demo").success
     source_path = tmp_path / "new"
@@ -97,7 +97,7 @@ def test_new_install_can_be_uninstalled_without_restart(tmp_path: Path) -> None:
 
     assert framework.install(str(source_path)).success
     assert framework.uninstall("demo").success
-    assert not (data_path / "plugins" / "demo").exists()
+    assert not (data_path / "plugins" / "sources" / "demo").exists()
 
 
 def test_pending_transaction_restores_old_directory_before_discovery(tmp_path: Path) -> None:
@@ -105,7 +105,7 @@ def test_pending_transaction_restores_old_directory_before_discovery(tmp_path: P
     崩溃留下的 pending 日志必须在插件发现前把旧版切回。
     """
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins"
+    plugin_dir = data_path / "plugins" / "sources"
     old_path = plugin_dir / "demo"
     _plugin(old_path, "1.0.0")
     new_path = tmp_path / "new"
@@ -128,7 +128,7 @@ def test_pending_first_install_is_removed_before_discovery(tmp_path: Path) -> No
     首次安装在目录切换后崩溃时，启动器不加载未经验证的新代码。
     """
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins"
+    plugin_dir = data_path / "plugins" / "sources"
     plugin_dir.mkdir(parents=True)
     new_path = tmp_path / "new"
     _plugin(new_path, "1.0.0")
@@ -149,7 +149,7 @@ def test_committed_transaction_keeps_new_directory_after_restart(tmp_path: Path,
     提交标记已落地但备份清理失败时，下次启动继续使用新版并清理备份。
     """
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins"
+    plugin_dir = data_path / "plugins" / "sources"
     _plugin(plugin_dir / "demo", "1.0.0")
     new_path = tmp_path / "new"
     _plugin(new_path, "2.0.0")
@@ -179,7 +179,7 @@ def test_uninstall_after_committed_cleanup_failure_does_not_resurrect_old_versio
     更新成功但备份待清理时立即卸载，重启不得从残留日志恢复旧插件。
     """
     data_path = tmp_path / "data"
-    _plugin(data_path / "plugins" / "demo", "1.0.0")
+    _plugin(data_path / "plugins" / "sources" / "demo", "1.0.0")
     framework = _framework(data_path, tmp_path / "resources")
     source_path = tmp_path / "new"
     _plugin(source_path, "2.0.0")
@@ -192,7 +192,7 @@ def test_uninstall_after_committed_cleanup_failure_does_not_resurrect_old_versio
         patcher.setattr(PluginInstallTransaction, "cleanup_committed", fail_cleanup)
         assert framework.install(str(source_path)).success
     assert original_cleanup is PluginInstallTransaction.cleanup_committed
-    journal_path = data_path / "plugin_install_transactions" / "demo.json"
+    journal_path = data_path / "plugins" / "transactions" / "demo.json"
     assert journal_path.exists()
 
     assert framework.uninstall("demo").success
@@ -205,13 +205,13 @@ def test_unrecoverable_journal_skips_user_plugin_without_erasing_disabled_state(
     非法恢复日志不能让可疑插件目录被加载，也不能清掉原禁用记录。
     """
     data_path = tmp_path / "data"
-    _plugin(data_path / "plugins" / "demo", "1.0.0")
-    journal_path = data_path / "plugin_install_transactions" / "demo.json"
+    _plugin(data_path / "plugins" / "sources" / "demo", "1.0.0")
+    journal_path = data_path / "plugins" / "transactions" / "demo.json"
     journal_path.parent.mkdir(parents=True)
     journal_path.write_text(
         '{"name":"demo","transaction_id":"../bad","had_old":true,"phase":"pending"}', encoding="utf-8"
     )
-    state_path = data_path / "plugin_state.json"
+    state_path = data_path / "plugins" / "state.json"
     state_path.write_text('{"disabled":["demo"]}', encoding="utf-8")
 
     framework = _framework(data_path, tmp_path / "resources")
@@ -226,7 +226,7 @@ def test_invalid_source_manifest_does_not_change_existing_plugin(tmp_path: Path)
     非对象或损坏的 JSON 在任何卸载及目录移动前被拒绝。
     """
     data_path = tmp_path / "data"
-    _plugin(data_path / "plugins" / "demo", "1.0.0")
+    _plugin(data_path / "plugins" / "sources" / "demo", "1.0.0")
     framework = _framework(data_path, tmp_path / "resources")
     source_path = tmp_path / "invalid"
     source_path.mkdir()
@@ -247,7 +247,7 @@ def test_uninstall_rejects_plugin_name_outside_user_plugin_directory(tmp_path: P
 
 def test_manifest_changed_during_staging_never_replaces_installed_code(tmp_path: Path, monkeypatch) -> None:
     data_path = tmp_path / "data"
-    _plugin(data_path / "plugins/demo", "1.0.0")
+    _plugin(data_path / "plugins/sources/demo", "1.0.0")
     manager = _framework(data_path, tmp_path / "resources")
     source_path = tmp_path / "source"
     _plugin(source_path, "2.0.0")
@@ -263,7 +263,7 @@ def test_manifest_changed_during_staging_never_replaces_installed_code(tmp_path:
     monkeypatch.setattr(PluginInstallTransaction, "stage", changed_stage)
     try:
         assert not manager.install(str(source_path)).success
-        metadata = json.loads((data_path / "plugins/demo/plugin.json").read_bytes())
+        metadata = json.loads((data_path / "plugins/sources/demo/plugin.json").read_bytes())
         assert metadata["version"] == "1.0.0"
         assert manager.list_plugins()[0]["version"] == "1.0.0"
     finally:

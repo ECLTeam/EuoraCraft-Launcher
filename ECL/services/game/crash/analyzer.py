@@ -646,7 +646,7 @@ class CrashAnalyzer:
             raise GameServiceError("崩溃报告不存在或已过期", "CRASH_REPORT_NOT_FOUND")
         if output_path is None:
             safe_version = re.sub(r"[^A-Za-z0-9._-]+", "-", str(record.result["versionId"]))[:48] or "Minecraft"
-            target = self.data_path / "exports" / f"EuoraCraft-crash-{safe_version}-{report_id[:8]}.zip"
+            target = self.data_path / "userdata" / "exports" / f"EuoraCraft-crash-{safe_version}-{report_id[:8]}.zip"
         else:
             target = output_path.expanduser().resolve(strict=False)
             if target.suffix.casefold() != ".zip":

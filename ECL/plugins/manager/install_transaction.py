@@ -8,7 +8,7 @@
 # 公开接口：
 #   - class PluginInstallTransactionError — 插件安装文件事务失败。
 #   - class PluginInstallTransaction — 暂存、切换、提交和回滚单个插件目录。
-#   - recover_plugin_install_transactions(data_path, plugin_dir) — 启动时恢复未完成的安装。
+#   - recover_plugin_install_transactions(data_path, plugin_dir, action_lock) — 启动时恢复未完成的安装。
 # ============================================================
 
 from __future__ import annotations
@@ -16,12 +16,14 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
+from threading import RLock
 from uuid import uuid4
 
 from ECL.plugin_api.contracts import ProtocolError
 from ECL.plugin_api.snapshot import CodeSnapshot
-from ECL.plugins.environment_pool import PluginEnvironmentError, _exclusive_lock
+from ECL.plugins.environment_pool import PluginEnvironmentError
 from ECL.utils import atomic_write_text, get_logger
 
 plugin_name_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
@@ -64,11 +66,10 @@ class PluginInstallTransaction:
         self.name = name
         self.transaction_id = identifier
         self.target_path = self.plugin_dir / name
-        self.transaction_path = self.data_path / "plugin_install_transactions"
+        self.transaction_path = self.data_path / "plugins" / "transactions"
         self.journal_path = self.transaction_path / f"{name}.json"
-        self.lock_path = self.transaction_path / f"{name}.lock"
-        self.stage_path = self.data_path / "plugin_install_staging" / identifier
-        self.backup_path = self.data_path / "plugin_install_backups" / identifier
+        self.stage_path = self.data_path / "plugins" / "staging" / identifier
+        self.backup_path = self.data_path / "plugins" / "backups" / identifier
         self.had_old = False
 
     def stage(self, source_path: Path) -> None:
@@ -111,7 +112,7 @@ class PluginInstallTransaction:
 
         :raises PluginInstallTransactionError: 暂存路径失去所属边界时抛出
         """
-        expected_parent = self.data_path.resolve() / "plugin_install_staging"
+        expected_parent = self.data_path.resolve() / "plugins" / "staging"
         if self.stage_path.is_symlink() or self.stage_path.resolve().parent != expected_parent:
             raise PluginInstallTransactionError("插件暂存路径超出安装目录")
         if self.stage_path.exists():
@@ -173,17 +174,21 @@ class PluginInstallTransaction:
             raise PluginInstallTransactionError("插件安装恢复日志写入失败") from exc
 
 
-def recover_plugin_install_transactions(data_path: Path, plugin_dir: Path) -> list[str]:
+def recover_plugin_install_transactions(
+    data_path: Path, plugin_dir: Path, action_lock: Callable[[str], RLock]
+) -> list[str]:
     """
     在插件发现前恢复所有未提交目录切换，并完成已提交事务的清理。
 
     无效或无法恢复的日志会保留并返回错误；调用方不得静默加载其同名目录。
+    每个事务在调用方提供的插件级互斥锁内恢复，与同时进行的安装共用同一串行边界。
 
     :param data_path: 启动器持久化数据目录
     :param plugin_dir: 用户插件发现目录
+    :param action_lock: 按插件名取得进程内互斥锁的工厂
     :return: 无法恢复的插件名称列表
     """
-    transaction_path = Path(data_path) / "plugin_install_transactions"
+    transaction_path = Path(data_path) / "plugins" / "transactions"
     if not transaction_path.is_dir():
         return []
     logger = get_logger("PluginInstallTransaction")
@@ -202,7 +207,7 @@ def recover_plugin_install_transactions(data_path: Path, plugin_dir: Path) -> li
                 raise PluginInstallTransactionError("插件安装恢复日志无效")
             transaction = PluginInstallTransaction(data_path, plugin_dir, name, payload["transaction_id"])
             transaction.had_old = payload["had_old"]
-            with _exclusive_lock(transaction.lock_path):
+            with action_lock(name):
                 if payload["phase"] == "committed":
                     if transaction.target_path.exists():
                         transaction.cleanup_committed()

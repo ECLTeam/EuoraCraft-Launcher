@@ -28,7 +28,7 @@ def game_install(tmp_path, monkeypatch):
     root = tmp_path / "game"
     root.mkdir()
     events = EventBus()
-    manager = OperationManager(tmp_path / "data", events, max_workers=2)
+    manager = OperationManager(events, max_workers=2)
     game = GameService(SimpleNamespace(), data_path=tmp_path / "data", operations=manager, enable_version_watcher=False)
     game.minecraft_versions_classified = lambda source: {"release": [{"id": "1.20.1", "releaseTime": "2023-01-01"}]}
     game.loader_versions = lambda *_: ["0.16.14"]

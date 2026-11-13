@@ -11,7 +11,7 @@ from ECL.utils.errors import GameServiceError
 
 
 def test_commit_does_not_block_unrelated_cancel(tmp_path):
-    manager = OperationManager(tmp_path, EventBus(), max_workers=2)
+    manager = OperationManager(EventBus(), max_workers=2)
     entered, release, running = Event(), Event(), Event()
 
     def commit(context):
@@ -45,7 +45,7 @@ def test_commit_does_not_block_unrelated_cancel(tmp_path):
 
 
 def test_real_failure_after_cancel_is_failed(tmp_path):
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
     entered, release = Event(), Event()
 
     def worker(context):
@@ -66,7 +66,7 @@ def test_real_failure_after_cancel_is_failed(tmp_path):
 
 
 def test_cancel_queued_task_never_calls_worker(tmp_path):
-    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     entered, release = Event(), Event()
     called = []
 
@@ -89,7 +89,7 @@ def test_cancel_queued_task_never_calls_worker(tmp_path):
 
 
 def test_cancel_before_commit_keeps_staged_effect_and_never_runs_action(tmp_path):
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
     entered, release = Event(), Event()
     actions = []
 
@@ -113,7 +113,7 @@ def test_cancel_before_commit_keeps_staged_effect_and_never_runs_action(tmp_path
 
 
 def test_finished_context_cannot_commit_or_report_late_progress(tmp_path):
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
     contexts, actions = [], []
     operation_id = manager.submit("resource_install", lambda context: contexts.append(context))["operationId"]
     manager._operations[operation_id].future.result(3)
@@ -132,7 +132,7 @@ def test_finished_context_cannot_commit_or_report_late_progress(tmp_path):
 
 
 def test_parallel_commit_is_rejected_while_first_action_is_running(tmp_path):
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
     entered, release = Event(), Event()
     contexts, actions = [], []
 
@@ -156,3 +156,22 @@ def test_parallel_commit_is_rejected_while_first_action_is_running(tmp_path):
         manager._operations[operation_id].future.result(3)
         manager.close()
     assert actions == []
+
+
+def test_terminal_operations_are_capped_and_oldest_evicted():
+    manager = OperationManager(EventBus(), max_workers=2)
+    submitted: list[str] = []
+    try:
+        for _ in range(OperationManager.max_terminal_operations + 5):
+            operation_id = manager.submit("resource_install", lambda context: None)["operationId"]
+            manager._operations[operation_id].future.result(5)
+            submitted.append(operation_id)
+
+        remaining = [item for item in submitted if item in manager._operations]
+        assert len(remaining) == OperationManager.max_terminal_operations
+        assert remaining == submitted[5:]
+        with pytest.raises(GameServiceError):
+            manager.get(submitted[0])
+        assert manager.get(submitted[-1])["status"] == "completed"
+    finally:
+        manager.close()

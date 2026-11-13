@@ -461,7 +461,7 @@ class FileHandlers(_FrontendState):
             raise ValueError(f"无法解析图片数据: {exc}") from exc
         ext = ImagePolicy.extension_by_mime.get(mime, ".jpg")
         digest = hashlib.sha1(payload).hexdigest()[:16]
-        target_dir = self.data_path / "backgrounds"
+        target_dir = self.data_path / "userdata" / "backgrounds"
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"{digest}{ext}"
         if not target.is_file():
@@ -689,7 +689,7 @@ class FileHandlers(_FrontendState):
                 """
                 在工作线程解析初始位置，仅为默认下载目录按需创建文件夹。
                 """
-                default_path = (self.data_path / "downloads").resolve(strict=False)
+                default_path = (self.data_path / "userdata" / "downloads").resolve(strict=False)
                 directory_path = request.default_directory or default_path
                 if directory_path == default_path:
                     directory_path.mkdir(parents=True, exist_ok=True)

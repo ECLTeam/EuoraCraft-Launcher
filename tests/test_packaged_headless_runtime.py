@@ -17,7 +17,7 @@ def test_packaged_headless_task_without_graphical_session(tmp_path) -> None:
     result_file = tmp_path / "result.json"
     data_path = tmp_path / "data"
     data_path.mkdir()
-    settings_file = data_path / "setting.json"
+    settings_file = data_path / "config" / "setting.json"
     settings_file.write_text("preserved", encoding="utf-8")
     environment = dict(os.environ, PYTHONUTF8="1")
     for key in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):

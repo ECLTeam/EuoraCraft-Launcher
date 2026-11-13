@@ -368,6 +368,9 @@ def create_application(
             )
             created.append(single_instance)
             single_instance.start()
+        else:
+            # 插件安装与设置写入只由进程内锁保证互斥，多开时无法阻止跨进程覆盖。
+            logger.warning("单实例互斥已关闭；多个启动器同时修改插件或设置时不保证互斥")
         disable_ssl_verify = bool(launcher_config.get("disable_ssl_verify", False))
         request_timeout = _network_timeout(launcher_config.get("request_timeout", 15))
         request_retries = _network_retries(launcher_config.get("request_retries", 2))
@@ -433,7 +436,7 @@ def create_application(
         logger.info("正在初始化游戏服务")
         # 共享进程管理器，使实例终端能同时展示插件与 Minecraft 实例的输出。
         shared_instances = InstancesManager()
-        operations = OperationManager(state.data_path, events)
+        operations = OperationManager(events)
         created.append(operations)
         downloads = CustomDownloadService(operations, data_path=state.data_path)
         java = JavaManager(

@@ -11,7 +11,7 @@ from ECL.plugins import PluginManager
 
 
 def test_session_disable_blocks_load_enable_reload_and_worker_without_persisting(tmp_path):
-    source = tmp_path / "data/plugins/example"
+    source = tmp_path / "data/plugins/sources/example"
     marker = tmp_path / "executed"
     make_plugin(source, marker)
     manager = PluginManager()
@@ -31,7 +31,7 @@ def test_session_disable_blocks_load_enable_reload_and_worker_without_persisting
         assert error.value.error_code == "PLUGIN_DISABLED_FOR_SESSION"
         manager._load_plugin(source, source / "plugin.json", False)
         assert not marker.exists()
-        assert not (tmp_path / "data/plugin_state.json").exists()
+        assert not (tmp_path / "data/plugins/state.json").exists()
     finally:
         manager.close()
     restarted = PluginManager()
@@ -49,7 +49,7 @@ def test_session_disable_propagates_only_through_required_dependencies(tmp_path)
         ("required", {"example": "*"}),
         ("optional", {"example": {"optional": True}}),
     ):
-        source = tmp_path / "data/plugins" / name
+        source = tmp_path / "data/plugins/sources" / name
         make_plugin(source, tmp_path / name)
         metadata = json.loads((source / "plugin.json").read_text())
         metadata.update(name=name, dependencies=dependency)
@@ -68,7 +68,7 @@ def test_session_disable_propagates_only_through_required_dependencies(tmp_path)
 
 
 def test_unknown_session_disabled_plugin_fails_before_any_plugin_executes(tmp_path):
-    make_plugin(tmp_path / "data/plugins/example", tmp_path / "executed")
+    make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "executed")
     manager = PluginManager()
     try:
         with pytest.raises(ProtocolError) as error:
@@ -81,7 +81,7 @@ def test_unknown_session_disabled_plugin_fails_before_any_plugin_executes(tmp_pa
 
 @pytest.fixture
 def framework(tmp_path: Path):
-    make_plugin(tmp_path / "data/plugins/example", tmp_path / "marker")
+    make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "marker")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources", auto_enable=False)
     yield manager
@@ -98,7 +98,7 @@ def test_safe_mode_discovers_metadata_without_executing(framework, tmp_path):
 
 def test_disabling_unstarted_plugin_persists_user_choice(framework, tmp_path):
     assert framework.disable("example").success
-    assert json.loads((tmp_path / "data/plugin_state.json").read_text())["disabled"] == ["example"]
+    assert json.loads((tmp_path / "data/plugins/state.json").read_text())["disabled"] == ["example"]
     assert framework.get_plugin("example") is None
 
 
@@ -118,7 +118,7 @@ def test_uninstall_disabled_plugin_removes_files_and_eligibility(framework, tmp_
     assert framework.disable("example").success
     assert framework.uninstall("example").success
     assert framework.list_plugins() == []
-    assert not (tmp_path / "data/plugins/example").exists()
+    assert not (tmp_path / "data/plugins/sources/example").exists()
     source = tmp_path / "source"
     make_plugin(source, tmp_path / "marker")
     assert framework.install(str(source)).success
@@ -127,14 +127,14 @@ def test_uninstall_disabled_plugin_removes_files_and_eligibility(framework, tmp_
 
 def test_close_does_not_mark_installed_plugins_disabled(framework, tmp_path):
     framework.close()
-    state_file = tmp_path / "data/plugin_state.json"
+    state_file = tmp_path / "data/plugins/state.json"
     assert not state_file.exists() or "example" not in json.loads(state_file.read_text())["disabled"]
 
 
 def test_enable_clears_disabled_choice(framework, tmp_path):
     framework.disable("example")
     assert framework.enable("example").success
-    assert "example" not in json.loads((tmp_path / "data/plugin_state.json").read_text())["disabled"]
+    assert "example" not in json.loads((tmp_path / "data/plugins/state.json").read_text())["disabled"]
 
 
 def test_third_party_injection_requires_known_plugin(framework):

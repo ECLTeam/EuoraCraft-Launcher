@@ -200,7 +200,7 @@ def test_network_download_is_locked_and_then_available_offline(tmp_path: Path) -
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
         pool = PluginEnvironmentPool(
-            tmp_path / "data", PluginWheelRepository(tmp_path / "data" / "plugin_cache" / "wheels", client)
+            tmp_path / "data", PluginWheelRepository(tmp_path / "data" / "plugins" / "cache" / "wheels", client)
         )
         spec = spec_for(tmp_path, wheel)
         spec = PluginEnvironmentSpec(spec.target_tag, spec.lock_path)

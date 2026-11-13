@@ -17,7 +17,7 @@ def test_no_dependency_plugin_needs_no_runtime_and_does_not_execute(tmp_path: Pa
     assert preparer.inspect(archive_path).dependencies_ready
     prepared = preparer.prepare(archive_path, confirm_unverified_source=True)
     assert prepared.dependency_directory is None and prepared.environment_key == ""
-    assert not (tmp_path / "data" / "plugin_deps").exists()
+    assert not (tmp_path / "data" / "plugins" / "deps").exists()
     assert not (tmp_path / "data" / "plugin_runtimes").exists()
 
 
@@ -45,7 +45,7 @@ def test_changed_archive_is_rejected_before_extract(tmp_path: Path) -> None:
     package = preparer.inspect(archive_path).package
     with pytest.raises(PluginDependencyError, match="预检后发生变化"):
         preparer.prepare(archive_path, confirm_unverified_source=True, expected_package=replace(package, version="99"))
-    assert not (tmp_path / "data" / "plugin_packages").exists()
+    assert not (tmp_path / "data" / "plugins" / "packages").exists()
 
 
 def test_missing_target_lock_is_rejected(tmp_path: Path) -> None:

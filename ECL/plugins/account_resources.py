@@ -21,7 +21,6 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.utils import atomic_write_text
 from ECL.utils.account_reading import AccountSummary
 
@@ -52,7 +51,7 @@ class PluginAccountResourceCatalog:
         :param data_path: 宿主数据目录
         :param snapshot: 不执行认证或返回凭据的领域快照
         """
-        self._file = data_path / "plugin_account_resources.json"
+        self._file = data_path / "plugins" / "account_resources.json"
         self._snapshot = snapshot
         self._lock = RLock()
         self._index = _Index()
@@ -106,7 +105,7 @@ class PluginAccountResourceCatalog:
         if len(accounts) > 4096 or not all(isinstance(item, AccountSummary) for item in accounts):
             raise ProtocolError("账户摘要格式无效", "PLUGIN_ACCOUNT_QUERY_FAILED")
         fingerprints = {self._fingerprint(account) for account in accounts}
-        with self._lock, _exclusive_lock(self._file.with_suffix(".lock")):
+        with self._lock:
             try:
                 previous = self._read_index()
                 resources = [

@@ -137,7 +137,7 @@ def test_corrupt_account_index_fails_closed_and_preserves_file(public):
     service, _, broker = public
     reviewed(service)
     assert call(broker, "accounts.list")["items"]
-    index = service.data_path / "plugin_account_resources.json"
+    index = service.data_path / "plugins" / "account_resources.json"
     index.write_text('{"credentials":"private"}', encoding="utf-8")
     with pytest.raises(ProtocolError):
         call(broker, "accounts.list")

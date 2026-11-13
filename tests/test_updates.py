@@ -520,7 +520,8 @@ def test_announcements_uses_last_valid_cache_when_remote_request_fails(tmp_path,
 def test_announcements_returns_empty_announcements_when_remote_and_cache_are_invalid(
     tmp_path, announcement_http_client
 ) -> None:
-    (tmp_path / "notice.json").write_text("{invalid", encoding="utf-8")
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config" / "notice.json").write_text("{invalid", encoding="utf-8")
     manager = AnnouncementService(
         tmp_path,
         http_client=announcement_http_client,

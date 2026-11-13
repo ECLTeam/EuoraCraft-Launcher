@@ -255,7 +255,7 @@ def test_catalog_corruption_preserves_file_and_denies_instances(shared):
     service, _, _ = shared
     page = candidates(service)
     allow(service, [page["items"][0]["resource_id"]], 0)
-    file = service.data_path / "plugin_resources.json"
+    file = service.data_path / "plugins" / "resources.json"
     file.write_text("broken", encoding="utf-8")
     with pytest.raises(InstanceReadError):
         service.refresh_resources()

@@ -208,7 +208,7 @@ class ScreenshotCoordinator:
         """
         source = resolve_relative_id(self._screenshot_root(game_path, version_id, version_isolation), screenshot_id)
         digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
-        destination = self._data_path / "backgrounds" / f"screenshot-{digest}{source.suffix.casefold()}"
+        destination = self._data_path / "userdata" / "backgrounds" / f"screenshot-{digest}{source.suffix.casefold()}"
         destination.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(destination, source.read_bytes())
         return {"path": str(destination), "config": json.dumps({"type": "local", "path": str(destination)})}

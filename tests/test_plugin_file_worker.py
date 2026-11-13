@@ -26,7 +26,7 @@ def test_snapshot_example_uses_real_worker_upload_commit_read_and_restart(tmp_pa
     )
     code_path = Path(__file__).resolve().parents[1] / "examples/plugins/worker_snapshot"
     metadata = json.loads((code_path / "plugin.json").read_bytes())
-    manager = OperationManager(tmp_path, EventBus())
+    manager = OperationManager(EventBus())
     service = PluginWorkerService(tmp_path, executable, operations=manager)
     try:
         service.register(metadata, code_path, "directory")

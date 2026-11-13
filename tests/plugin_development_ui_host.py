@@ -40,9 +40,9 @@ def _prepare_sources(root, output):
         encoding="utf-8",
     )
     for name in ("worker_development", "worker_no_hot_reload"):
-        shutil.copytree(root / "examples/plugins" / name, data / "plugins" / name)
+        shutil.copytree(root / "examples/plugins" / name, data / "plugins" / "sources" / name)
     for index in range(18):
-        target = data / "plugins" / f"extra_{index:02}"
+        target = data / "plugins" / "sources" / f"extra_{index:02}"
         shutil.copytree(root / "examples/plugins/worker_no_hot_reload", target)
         metadata = json.loads((target / "plugin.json").read_bytes())
         metadata["name"] = f"extra_{index:02}"
@@ -191,7 +191,7 @@ async def _exercise_settings(page, data):
         lambda: _call(page, "plugin_get_settings", {"plugin_name": "worker_development"}),
         lambda value: value["values"].get("greeting") == "界面验收保存值",
     )
-    source = data / "plugins/worker_development/main.py"
+    source = data / "plugins/sources/worker_development/main.py"
     source.write_text(
         source.read_text(encoding="utf-8").replace('code_version: str = "v1"', 'code_version: str = "v2"'),
         encoding="utf-8",
@@ -349,7 +349,7 @@ async def _verify_layouts(page, process, output):
 async def _exercise_opt_out(page, data):
     before = next(item for item in await _call(page, "plugin_list") if item["name"] == "worker_no_hot_reload")
     assert before["status"] == "enabled" and before["development"]["status"] == "opted_out", before
-    refused = data / "plugins/worker_no_hot_reload/main.py"
+    refused = data / "plugins/sources/worker_no_hot_reload/main.py"
     refused.write_text(
         refused.read_text(encoding="utf-8").replace('code_version: str = "v1"', 'code_version: str = "v2"'),
         encoding="utf-8",

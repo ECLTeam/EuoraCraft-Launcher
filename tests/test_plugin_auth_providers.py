@@ -28,7 +28,7 @@ def _register_provider_plugin(data_path, *, permission: bool = True) -> None:
     plugin_dir = (
         data_path.parent / "resources/resources/system_plugins/auth-demo"
         if permission
-        else data_path / "plugins/auth-demo"
+        else data_path / "plugins/sources/auth-demo"
     )
     plugin_dir.mkdir(parents=True)
     permissions = [{"scope": "accounts", "action": "write", "resource": "demo"}] if permission else []

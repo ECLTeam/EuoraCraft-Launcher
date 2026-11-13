@@ -49,7 +49,7 @@ def test_observed_removal_and_readding_same_object_does_not_reactivate_identity(
 def test_identity_index_rejects_rollback_and_reactivation(shared):
     service = shared[0]
     candidates(service)
-    file = service.data_path / "plugin_java_resources.json"
+    file = service.data_path / "plugins" / "java_resources.json"
     original = file.read_bytes()
     payload = json.loads(original)
     payload["revision"] = 0

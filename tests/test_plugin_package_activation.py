@@ -93,7 +93,7 @@ def test_failed_migration_keeps_legacy_pointer(tmp_path: Path) -> None:
     from ECL.plugins.package_archive import extract_plugin_package, inspect_plugin_package
 
     info = inspect_plugin_package(archive_path)
-    code_path = data_path / "plugin_packages" / "demo" / f"pkg-{info.manifest_sha256[:20]}"
+    code_path = data_path / "plugins" / "packages" / "demo" / f"pkg-{info.manifest_sha256[:20]}"
     extract_plugin_package(archive_path, code_path)
     (code_path / "wheels" / current_plugin_target() / wheel.name).unlink()
     payload = {

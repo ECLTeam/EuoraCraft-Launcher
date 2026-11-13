@@ -202,7 +202,7 @@ def test_catalog_uses_fixed_host_and_never_inherits_client_credentials(shared):
 
 def test_corrupt_index_is_preserved_and_does_not_remain_authorized(shared):
     api, _, _ = approved(shared)
-    index = shared[0].data_path / "plugin_java_resources.json"
+    index = shared[0].data_path / "plugins" / "java_resources.json"
     index.write_bytes(b"broken")
     with pytest.raises(ProtocolError) as error:
         invoke(api, "java.inventory")

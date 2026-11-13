@@ -49,7 +49,7 @@ def test_real_worker_download_publish_cancel_revoke_and_stop(tmp_path, is_frozen
         metadata["permissions"][-1]["resource_refs"] = [f"https:p10.example.test:{port}"]
         (code / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
         (code / "main.py").write_text((example / "main.py").read_text(encoding="utf-8"), encoding="utf-8")
-        manager = OperationManager(tmp_path / "data", EventBus())
+        manager = OperationManager(EventBus())
         service = PluginWorkerService(tmp_path / "data", executable, operations=manager)
         assert service._network_service.close()
         service._network_service = PluginNetworkService(

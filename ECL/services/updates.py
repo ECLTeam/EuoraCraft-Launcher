@@ -428,7 +428,7 @@ class AnnouncementService:
     ) -> None:
         self.logger = get_logger("AnnouncementService")
         self.data_path = Path(data_path)
-        self.notice_cache_path = self.data_path / "notice.json"
+        self.notice_cache_path = self.data_path / "config" / "notice.json"
         self.http = http_client
         self._notice_loader = notice_loader or self._download_notice
         self._clock = clock or (lambda: datetime.now(UTC))

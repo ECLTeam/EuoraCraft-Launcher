@@ -19,7 +19,7 @@ def test_installation_survives_restart_and_reinstall_never_inherits_identity(tmp
 def test_corrupt_installation_is_preserved_and_never_replaced(tmp_path: Path) -> None:
     store = PluginInstallationStore(tmp_path)
     store.ensure("example", "directory")
-    record = tmp_path / "plugin_installations" / "example.json"
+    record = tmp_path / "plugins" / "installations" / "example.json"
     record.write_text('{"broken":true}', encoding="utf-8")
     with pytest.raises(PluginInstallationError):
         store.ensure("example", "directory")

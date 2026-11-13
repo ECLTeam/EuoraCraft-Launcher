@@ -4,7 +4,7 @@
 
 使用 `python main.py --plugin-dev` 启动；安装版在启动器可执行文件后追加 `--plugin-dev`。插件页不提供模式开关，`--debug`、Vite 开发构建和 `--dev-channel` 不会代替这个参数。
 
-也可在数据目录的 `setting.json` 的 `plugins` 对象中手动加入可选字段 `"development_mode": true`，保留原文件其他内容。省略即关闭，首次生成或读取配置不会自动补写该项。该值只接受 JSON 布尔值，非法值报错并保留文件。
+也可在数据目录 `config/setting.json` 的 `plugins` 对象中手动加入可选字段 `"development_mode": true`，保留原文件其他内容。省略即关闭，首次生成或读取配置不会自动补写该项。该值只接受 JSON 布尔值，非法值报错并保留文件。
 
 `--plugin-dev` / `--no-plugin-dev` 互斥且优先于文件配置，仅本次进程生效、不写回文件；`--disable-plugins` 优先，不启动开发监听。修改文件后需重启，运行中保存其他配置不切换模式。已有进程不接受通过第二次启动切换，新参数不支持无头任务。
 

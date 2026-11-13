@@ -43,7 +43,7 @@ class _FakeHttpClient:
 
 def _build_framework(tmp_path, client) -> PluginManager:
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins" / "net-demo"
+    plugin_dir = data_path / "plugins" / "sources" / "net-demo"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps({"name": "net-demo", "entry_point": "main:NetPlugin"}),

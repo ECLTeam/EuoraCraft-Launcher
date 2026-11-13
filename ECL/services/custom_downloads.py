@@ -265,7 +265,7 @@ class CustomDownloadService:
         if self._data_path is None:
             raise GameServiceError("下载数据目录未初始化", "DOWNLOAD_UNAVAILABLE")
         return {
-            "downloadDirectory": str((self._data_path / "downloads").resolve(strict=False)),
+            "downloadDirectory": str((self._data_path / "userdata" / "downloads").resolve(strict=False)),
             "userAgent": DownloadPolicy.default_user_agent,
         }
 

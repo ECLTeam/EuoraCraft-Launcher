@@ -45,7 +45,7 @@ def manager(tmp_path, monkeypatch):
     monkeypatch.setattr(JavaScanner, "probe", probe)
     monkeypatch.setattr(JavaScanner, "scan", lambda self: [])
     events = EventBus()
-    operations = OperationManager(tmp_path, events)
+    operations = OperationManager(events)
     client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
     service = JavaManager(tmp_path, client, operations, events, reference_provider=scan_instance_java_references)
     yield service

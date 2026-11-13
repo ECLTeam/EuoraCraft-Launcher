@@ -86,7 +86,7 @@ def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> 
 def test_plugin_without_launch_permission_cannot_register_hook(tmp_path) -> None:
     """未声明 launch 权限的插件注册启动钩子时 enable 失败。"""
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins" / "launch-no-perm"
+    plugin_dir = data_path / "plugins" / "sources" / "launch-no-perm"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(

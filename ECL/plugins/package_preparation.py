@@ -22,13 +22,13 @@ import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from threading import Lock, RLock
 
 from ECL.plugins.dependency_lock import PluginDependencyError, PluginDependencyLock, plugin_target
 from ECL.plugins.environment_pool import (
     PluginDependencyDirectory,
     PluginEnvironmentPool,
     PluginEnvironmentSpec,
-    _exclusive_lock,
 )
 from ECL.plugins.package_archive import PluginPackageInfo, extract_plugin_package, inspect_plugin_package
 
@@ -165,6 +165,19 @@ class PluginPackagePreparer:
         if self.target_tag != current_plugin_target():
             raise PluginPreparationError("插件依赖目标不兼容当前宿主")
         self.environment_pool = PluginEnvironmentPool(self.data_path)
+        # 同名插件的解包与依赖准备互斥；不同插件可并行准备。
+        self._name_locks: dict[str, Lock] = {}
+        self._name_locks_guard = RLock()
+
+    def _name_lock(self, name: str) -> Lock:
+        """
+        取得插件名对应的进程内互斥锁。
+
+        :param name: 已通过归档预检的插件名
+        :return: 该插件独占的锁对象
+        """
+        with self._name_locks_guard:
+            return self._name_locks.setdefault(name, Lock())
 
     def inspect(self, archive_path: Path) -> PluginPackagePreflight:
         """
@@ -188,7 +201,7 @@ class PluginPackagePreparer:
             wheel_names = [name for name in names if name.startswith(f"wheels/{self.target_tag}/")]
             if any(not name.endswith(".whl") for name in wheel_names):
                 raise PluginPreparationError("当前目标离线依赖目录只能包含 wheel")
-        code_path = self.data_path / "plugin_packages" / package.name / f"pkg-{package.manifest_sha256[:20]}"
+        code_path = self.data_path / "plugins" / "packages" / package.name / f"pkg-{package.manifest_sha256[:20]}"
         ready = not lock.packages
         lock_path = code_path / lock_name
         if lock.packages and lock_path.is_file():
@@ -227,7 +240,7 @@ class PluginPackagePreparer:
         package = preflight.package
         if expected_package is not None and package != expected_package:
             raise PluginPreparationError("插件包在预检后发生变化")
-        package_root = self.data_path / "plugin_packages" / package.name
+        package_root = self.data_path / "plugins" / "packages" / package.name
         if (
             package_root.parent.is_symlink()
             or package_root.is_symlink()
@@ -235,7 +248,7 @@ class PluginPackagePreparer:
         ):
             raise PluginPreparationError("插件版本目录超出数据目录")
         code_path = package_root / f"pkg-{package.manifest_sha256[:20]}"
-        with _exclusive_lock(package_root.parent / f"{package.name}.lock"):
+        with self._name_lock(package.name):
             created = not code_path.exists()
             if created:
                 extracted = extract_plugin_package(archive_path, code_path)

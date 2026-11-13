@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ECL.plugins.dependency_lock import PluginDependencyError
-from ECL.plugins.environment_pool import PluginDependencyDirectory, _exclusive_lock
+from ECL.plugins.environment_pool import PluginDependencyDirectory
 from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.installation_store import WorkerManifest, manifest_validation_error_code
 from ECL.plugins.package_activation import PluginPackageActivation, PluginPackageActivationStore, plugin_name_pattern
@@ -85,10 +85,7 @@ class PluginPackages(_PluginState):
             preflight = self.inspect_package(source_path)
             name = preflight.package.name
             self.logger.info("插件归档检查完成；插件：%s", name)
-            with (
-                _exclusive_lock(self._data_path / "plugin_packages" / f"{name}.install.lock"),
-                self._plugin_action_lock(name),
-            ):
+            with self._plugin_action_lock(name):
                 candidate = self._candidate_map.get(name)
                 if candidate is not None and name not in self._package_entries:
                     return PluginActionResult(name, PluginAction.INSTALL, "forbidden", "不能覆盖同名目录或系统插件")
@@ -186,7 +183,7 @@ class PluginPackages(_PluginState):
         """
         self._package_entries.clear()
         self._package_candidates.clear()
-        package_root = self._data_path / "plugin_packages"
+        package_root = self._data_path / "plugins" / "packages"
         if package_root.is_symlink() or not package_root.is_dir():
             return set()
         names = {

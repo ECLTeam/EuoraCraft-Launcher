@@ -236,8 +236,8 @@ class UpdateApplier:
         self.http = http
         self.events = event_bus
         self._platform = platform or sys.platform
-        self.updates_dir = self.data_path / "updates"
-        self.pending_file = self.data_path / self.pending_update_file
+        self.updates_dir = self.data_path / "cache" / "updates"
+        self.pending_file = self.updates_dir / self.pending_update_file
 
     def enabled(self) -> bool:
         """
@@ -552,7 +552,7 @@ def clear_stale_pending_update(data_path: Path | str) -> bool:
     :param data_path: 启动器数据目录
     :return: 是否存在并被清理的待更新标记
     """
-    pending_file = Path(data_path) / UpdateApplier.pending_update_file
+    pending_file = Path(data_path) / "cache" / "updates" / UpdateApplier.pending_update_file
     if not pending_file.is_file():
         return False
     try:

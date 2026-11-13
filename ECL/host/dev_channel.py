@@ -163,7 +163,7 @@ class DevChannelService:
         self._frontend_dist = Path(frontend_dist) if frontend_dist else None  # 前端构建产物目录
         self._frontend_enabled = bool(self._frontend_dist and self._frontend_dist.is_dir())  # 是否托管内嵌前端
         self._index_template: bytes | None = None  # 注入连接信息后的内嵌前端入口缓存
-        self._discovery_path = self._data_path / self.discovery_filename  # 连接发现文件路径
+        self._discovery_path = self._data_path / "runtime" / self.discovery_filename  # 连接发现文件路径
         self._token = secrets.token_urlsafe(32)  # 一次性访问令牌，随进程生成
         self._port: int | None = None  # 实际监听端口
         self._loop: asyncio.AbstractEventLoop | None = None  # 服务线程的事件循环
@@ -731,7 +731,7 @@ class DevChannelService:
             "debug": self._debug,
             "devChannel": True,
             "dataPath": str(self._data_path),
-            "pluginDir": str(self._data_path / "plugins"),
+            "pluginDir": str(self._data_path / "plugins" / "sources"),
             "frontendUrl": self.frontend_url,
         }
 

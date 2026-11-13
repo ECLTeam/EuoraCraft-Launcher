@@ -17,7 +17,7 @@ from ECL.services.operations import OperationManager
 
 def make_service(tmp_path, monkeypatch, transport=None, launch_spec=None, install=False):
     events = EventBus()
-    operations = OperationManager(tmp_path, events)
+    operations = OperationManager(events)
     client = httpx.Client(transport=transport or httpx.MockTransport(lambda _: httpx.Response(200, json={})))
     manager = JavaManager(tmp_path, client, operations, events)
     records = []

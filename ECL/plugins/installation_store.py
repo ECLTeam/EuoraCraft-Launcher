@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from threading import Lock
 from typing import ClassVar, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -31,7 +32,6 @@ from pydantic import (
 )
 
 from ECL.plugins.dependencies import parse_dependency, parse_version
-from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.utils import atomic_write_text
 
@@ -200,7 +200,7 @@ class PluginInstallationStore:
     """
     保存独立于插件代码的安装资格，卸载重装不继承历史授权。
 
-    文件锁覆盖读取及替换；损坏记录明确失败，不自动重置或删除用户文件。
+    进程内互斥覆盖读取及替换；损坏记录明确失败，不自动重置或删除用户文件。
     """
 
     def __init__(self, data_path: Path) -> None:
@@ -210,7 +210,8 @@ class PluginInstallationStore:
         :param data_path: 当前应用数据根目录
         """
         self._data_path = data_path.resolve()
-        self._root_path = self._data_path / "plugin_installations"
+        self._root_path = self._data_path / "plugins" / "installations"
+        self._thread_lock = Lock()
 
     def ensure(self, name: str, source: Literal["directory", "package"]) -> str:
         """
@@ -222,7 +223,7 @@ class PluginInstallationStore:
         :raises PluginInstallationError: 名称、文件或来源不可信时抛出
         """
         record_path = self._record_path(name)
-        with _exclusive_lock(record_path.with_suffix(".lock"), wait_seconds=2):
+        with self._thread_lock:
             previous = self._read(record_path)
             if previous is not None and previous.active:
                 if previous.source != source or previous.name != name:
@@ -240,13 +241,13 @@ class PluginInstallationStore:
         :raises PluginInstallationError: 记录损坏时抛出
         """
         record_path = self._record_path(name)
-        with _exclusive_lock(record_path.with_suffix(".lock"), wait_seconds=2):
+        with self._thread_lock:
             record = self._read(record_path)
             if record is not None:
                 atomic_write_text(record_path, record.model_copy(update={"active": False}).model_dump_json())
 
     def _record_path(self, name: str) -> Path:
-        if self._root_path.is_symlink() or self._root_path.resolve().parent != self._data_path:
+        if self._root_path.is_symlink() or self._root_path.resolve() != self._data_path / "plugins" / "installations":
             raise PluginInstallationError("插件安装身份目录超出数据边界")
         try:
             WorkerManifest.model_validate({"name": name, "api_version": 2})

@@ -30,7 +30,6 @@ from pydantic import ValidationError
 
 from ECL.plugin_api._errors import PluginRuntimeError
 from ECL.plugins.dependencies import parse_dependency, parse_version
-from ECL.plugins.environment_pool import _exclusive_lock
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult
@@ -312,9 +311,9 @@ class PluginLifecycle(_PluginState):
         """
         删除普通目录插件；调用方已排除归档指针和非法名称。
         """
-        journal_path = self._data_path / "plugin_install_transactions" / f"{name}.json"
+        journal_path = self._data_path / "plugins" / "transactions" / f"{name}.json"
         if journal_path.exists():
-            failed = recover_plugin_install_transactions(self._data_path, self._plugin_dir)
+            failed = recover_plugin_install_transactions(self._data_path, self._plugin_dir, self._plugin_action_lock)
             if name in failed or journal_path.exists():
                 return PluginActionResult(name, PluginAction.UNINSTALL, "failed", "插件安装事务尚未完成，暂不能卸载")
         candidate = self._candidate_map.get(name)
@@ -482,7 +481,7 @@ class PluginLifecycle(_PluginState):
 
             transaction = PluginInstallTransaction(self._data_path, self._plugin_dir, target_name)
             try:
-                with _exclusive_lock(transaction.lock_path):
+                with self._plugin_action_lock(target_name):
                     if transaction.journal_path.exists():
                         return PluginActionResult(target_name, PluginAction.INSTALL, "failed", "旧安装事务尚未恢复")
                     transaction.stage(source)

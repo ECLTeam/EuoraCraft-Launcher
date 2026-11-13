@@ -25,7 +25,7 @@ def runtime(tmp_path):
     (code / "main.py").write_text("value = 1", encoding="utf-8")
     binding = PluginContentBinding.capture(code, "windows-x86_64-cp311")
     store = PluginRunStore()
-    manager = OperationManager(tmp_path, EventBus(), max_workers=2)
+    manager = OperationManager(EventBus(), max_workers=2)
     brokers = []
 
     def create(installation_id=None, content=None):
@@ -85,11 +85,8 @@ def test_task_views_filter_results_and_do_not_expose_raw_details(runtime, tmp_pa
     assert "private-path-secret" not in json.dumps(view)
     revoke(broker, store)
     assert call(broker, "operations.get", {"operation_ref": reference})["result"] is None
-    journal = json.loads(next((tmp_path / "operations/plugin").glob("*.json")).read_bytes())
-    assert journal["schema_version"] == 1
-    assert journal["phase"] == "terminal"
-    assert "private-path-secret" not in json.dumps(journal)
-    assert "safe" not in json.dumps(journal)
+    # 任务摘要不再落盘，进程内记录之外的任何位置都不应出现该任务。
+    assert not (tmp_path / "operations").exists()
 
 
 @pytest.mark.parametrize("other_kind", ["other_install", "other_run", "other_content", "user"])
@@ -154,8 +151,7 @@ def test_cancel_waits_for_actual_worker_and_deduplicates(runtime):
         release.set()
     assert finish(broker, manager, reference)["state"] in {"failed", "cancelled"}
     operation_id = broker.operations._references[reference].operation_id
-    journal = json.loads((manager._data_path / "plugin" / f"{operation_id}.json").read_bytes())
-    assert journal["cancellation_reason"] == "plugin_requested"
+    assert manager._operations[operation_id].cancellation_reason == "plugin_requested"
     assert broker.wait_idle()
 
 
@@ -232,61 +228,42 @@ def test_successful_commit_cannot_accept_second_action(runtime):
     assert actions == [1]
 
 
-@pytest.mark.parametrize("failed_phase", ["queued", "executing", "committing", "terminal"])
-def test_journal_failures_never_replay_business_actions(runtime, monkeypatch, failed_phase):
-    import ECL.services.operations as module
-
+@pytest.mark.parametrize("has_effect", [False, True])
+def test_plugin_tasks_never_write_operation_files(runtime, tmp_path, has_effect):
     broker, manager, _, _ = runtime
-    original_write = module.atomic_write_text
     actions = []
 
-    def write(target, payload):
-        if json.loads(payload)["phase"] == failed_phase:
-            raise OSError("test journal error")
-        return original_write(target, payload)
+    def worker(context):
+        if not has_effect:
+            return None
+        return context.finalize(lambda: actions.append(1))
 
-    monkeypatch.setattr(module, "atomic_write_text", write)
-    reference = submit(broker, lambda context: context.finalize(lambda: actions.append(1)))
+    reference = submit(broker, worker)
     view = finish(broker, manager, reference)
-    if failed_phase == "terminal":
-        assert view["state"] == "completed"
-        assert actions == [1]
-        assert not broker.wait_idle()
-    else:
-        assert view["state"] == "failed"
-        assert view["error_code"] == "PLUGIN_OPERATION_PERSIST_FAILED"
-        assert actions == []
-    monkeypatch.setattr(module, "atomic_write_text", original_write)
+    assert view["state"] == "completed"
+    assert actions == ([1] if has_effect else [])
     assert broker.wait_idle()
-    assert actions == ([1] if failed_phase == "terminal" else [])
+    assert not (tmp_path / "operations").exists()
 
 
-def test_terminal_does_not_mean_cleanup_finished(runtime, monkeypatch):
-    import ECL.services.operations as module
-
+def test_terminal_does_not_mean_cleanup_finished(runtime):
     broker, manager, _, _ = runtime
-    entered, release = Event(), Event()
-    original_write = module.atomic_write_text
+    entered = Event()
+    original_cleanup = manager._cleanup_owned
 
-    def write(target, payload):
-        if json.loads(payload)["phase"] == "terminal":
-            entered.set()
-            assert release.wait(5)
-        return original_write(target, payload)
+    def pending_cleanup(operation):
+        entered.set()
+        return False
 
-    monkeypatch.setattr(module, "atomic_write_text", write)
+    manager._cleanup_owned = pending_cleanup
     reference = submit(broker, lambda context: None)
-    try:
-        assert entered.wait(3)
-        assert call(broker, "operations.get", {"operation_ref": reference})["state"] == "completed"
-        assert not broker.wait_idle()
-        broker.close()
-        assert not broker.wait_idle()
-    finally:
-        release.set()
-    # closed run 的引用仍保留至实际收尾结束。
-    operation_id = broker.operations._references[reference].operation_id
-    manager._operations[operation_id].future.result(5)
+    assert entered.wait(3)
+    assert call(broker, "operations.get", {"operation_ref": reference})["state"] == "completed"
+    assert not broker.wait_idle()
+    broker.close()
+    assert not broker.wait_idle()
+    # 恢复真实清理后，收尾在同一标识上完成并释放引用。
+    manager._cleanup_owned = original_cleanup
     assert broker.wait_idle()
     assert broker.operations._references == {}
 
@@ -319,7 +296,7 @@ def test_reference_capacity_does_not_evict_active_or_finished_tasks(runtime):
     assert not any(item.origin is not None for item in manager._operations.values())
 
 
-def test_origin_snapshot_does_not_restore_from_journal(runtime):
+def test_origin_snapshot_does_not_restore_unknown_task(runtime):
     broker, manager, _, _ = runtime
     reference = submit(broker, lambda context: None)
     finish(broker, manager, reference)

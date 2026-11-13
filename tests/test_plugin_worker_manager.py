@@ -47,7 +47,7 @@ def test_directory_install_does_not_execute_until_enabled(tmp_path: Path):
 
 def test_manager_real_worker_command_settings_and_restart(tmp_path: Path):
     marker = tmp_path / "executed"
-    make_plugin(tmp_path / "data/plugins/example", marker)
+    make_plugin(tmp_path / "data/plugins/sources/example", marker)
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
@@ -70,7 +70,7 @@ def test_manager_real_worker_command_settings_and_restart(tmp_path: Path):
 
 def test_legacy_third_party_never_executes_in_host(tmp_path: Path):
     marker = tmp_path / "executed"
-    make_plugin(tmp_path / "data/plugins/example", marker, api_version=1)
+    make_plugin(tmp_path / "data/plugins/sources/example", marker, api_version=1)
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
@@ -83,7 +83,7 @@ def test_legacy_third_party_never_executes_in_host(tmp_path: Path):
 
 def test_unsupported_runtime_rejection_never_executes_entry(tmp_path: Path, monkeypatch):
     marker = tmp_path / "executed"
-    make_plugin(tmp_path / "data/plugins/example", marker)
+    make_plugin(tmp_path / "data/plugins/sources/example", marker)
 
     def unsupported(*_args):
         raise PluginRuntimeError("不支持的平台", "PLUGIN_RUNTIME_UNSUPPORTED")
@@ -99,7 +99,7 @@ def test_unsupported_runtime_rejection_never_executes_entry(tmp_path: Path, monk
 
 
 def test_unexpected_worker_exit_cleans_resources_without_page_polling(tmp_path: Path):
-    root = tmp_path / "data/plugins/example"
+    root = tmp_path / "data/plugins/sources/example"
     make_plugin(root, tmp_path / "marker")
     source = (root / "main.py").read_text(encoding="utf-8")
     source += "\n    def on_enable(self):\n        import threading\n        threading.Timer(0.3, lambda: os._exit(7)).start()\n"
@@ -124,7 +124,7 @@ def test_unexpected_worker_exit_cleans_resources_without_page_polling(tmp_path: 
 
 @pytest.mark.parametrize("metadata", [[], {"name": ["bad"]}, {"name": "example", "api_version": 2, "dependencies": []}])
 def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
-    root = tmp_path / "data/plugins/example"
+    root = tmp_path / "data/plugins/sources/example"
     root.mkdir(parents=True)
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (root / "main.py").write_text("raise RuntimeError('must not execute')", encoding="utf-8")
@@ -140,7 +140,7 @@ def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
 def test_dependency_failure_reports_dependency_error_instead_of_api_version(tmp_path: Path):
     from ECL.plugins.package_preparation import current_plugin_target
 
-    root = tmp_path / "data/plugins/example"
+    root = tmp_path / "data/plugins/sources/example"
     make_plugin(root, tmp_path / "marker")
     metadata_path = root / "plugin.json"
     metadata = json.loads(metadata_path.read_bytes())
@@ -175,7 +175,7 @@ def test_install_reports_specific_manifest_error_codes(tmp_path: Path):
         metadata["version"] = "not-a-version"
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
         assert manager.install(str(source)).message == "PLUGIN_MANIFEST_INVALID"
-        assert not (tmp_path / "data" / "plugins" / "example").exists()
+        assert not (tmp_path / "data" / "plugins" / "sources" / "example").exists()
     finally:
         manager.close()
 
@@ -215,7 +215,7 @@ def test_directory_with_complete_offline_lock_loads_its_own_dependency(tmp_path:
 
 
 def test_unsupported_plugin_can_be_disabled_and_uninstalled(tmp_path: Path):
-    make_plugin(tmp_path / "data/plugins/example", tmp_path / "marker", api_version=1)
+    make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "marker", api_version=1)
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
@@ -227,7 +227,7 @@ def test_unsupported_plugin_can_be_disabled_and_uninstalled(tmp_path: Path):
 
 
 def test_changed_directory_contents_block_running_worker(tmp_path: Path):
-    root = tmp_path / "data/plugins/example"
+    root = tmp_path / "data/plugins/sources/example"
     make_plugin(root, tmp_path / "marker")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
@@ -247,7 +247,7 @@ def test_changed_directory_contents_block_running_worker(tmp_path: Path):
 def test_callback_timeout_denies_new_calls_and_monitor_confirms_stop(tmp_path: Path):
     from ECL.plugins.framework import PluginCommandError
 
-    root = tmp_path / "data/plugins/example"
+    root = tmp_path / "data/plugins/sources/example"
     make_plugin(root, tmp_path / "marker")
     source = (root / "main.py").read_text(encoding="utf-8")
     source = source.replace("return {'value':value}", "__import__('time').sleep(5)\n        return {'value':value}")
@@ -278,7 +278,7 @@ def test_install_waits_for_concurrent_enable_then_stops_old_worker(tmp_path: Pat
     import psutil
 
     marker = tmp_path / "marker"
-    make_plugin(tmp_path / "data/plugins/example", marker)
+    make_plugin(tmp_path / "data/plugins/sources/example", marker)
     new_source = tmp_path / "source"
     make_plugin(new_source, marker)
     code = (new_source / "main.py").read_text(encoding="utf-8")
@@ -324,7 +324,7 @@ def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path:
     import ECL.plugins.settings as broker_module
     from ECL.plugin_api._rpc import RpcRequest
 
-    make_plugin(tmp_path / "data/plugins/example", tmp_path / "marker")
+    make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "marker")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     write_started, release_write = Event(), Event()
@@ -365,7 +365,7 @@ def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path:
                 break
             sleep(0.05)
         assert runtime["cleanup_state"] == "completed"
-        settings = next((tmp_path / "data/plugin_settings_v2").glob("*.json"))
+        settings = next((tmp_path / "data/plugins/settings").glob("*.json"))
         assert json.loads(settings.read_bytes())["values"] == {"greeting": "committed"}
     finally:
         release_write.set()

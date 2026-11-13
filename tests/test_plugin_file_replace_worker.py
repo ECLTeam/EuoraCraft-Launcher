@@ -32,7 +32,7 @@ def test_actual_worker_replace_and_cancel_without_automatic_rewrite(tmp_path, is
     code.mkdir()
     (code / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (code / "main.py").write_bytes((example / "main.py").read_bytes())
-    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     service = PluginWorkerService(tmp_path, executable, operations=manager)
     gate = Event()
 

@@ -140,7 +140,7 @@ def test_import_rejects_invalid_png_and_large_file(tmp_path: Path) -> None:
 
 
 def test_corrupt_metadata_is_backed_up_before_recovery(tmp_path: Path) -> None:
-    metadata = tmp_path / "wardrobe" / "wardrobe.json"
+    metadata = tmp_path / "userdata" / "wardrobe" / "wardrobe.json"
     metadata.parent.mkdir(parents=True)
     metadata.write_text("{broken", encoding="utf-8")
 

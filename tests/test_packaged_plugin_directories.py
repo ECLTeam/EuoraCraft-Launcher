@@ -34,7 +34,7 @@ async def _connect(data_path: Path, process: subprocess.Popen, log_path: Path):
         while True:
             if process.poll() is not None:
                 pytest.fail(log_path.read_text(encoding="utf-8", errors="replace"))
-            discovery_path = data_path / "dev_channel.json"
+            discovery_path = data_path / "runtime" / "dev_channel.json"
             if discovery_path.is_file():
                 payload = json.loads(discovery_path.read_text(encoding="utf-8"))
                 try:
@@ -479,7 +479,7 @@ class Plugin(BasePlugin):
                     assert probe["pid"] != info["pid"]
                     assert probe["resource"] == "offline-resource" and len(probe["native"]) == 16
                     assert probe["count"] == 2 and probe["first"] == "permitted"
-                    assert Path(probe["native_path"]).is_relative_to(data_path / "plugin_deps")
+                    assert Path(probe["native_path"]).is_relative_to(data_path / "plugins" / "deps")
                     assert (
                         probe["tasks"] == (7 if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD") else 5)
                         and probe["exported"]
@@ -547,4 +547,4 @@ class Plugin(BasePlugin):
                 for child in descendants:
                     if child.is_running():
                         child.kill()
-        (data_path / "dev_channel.json").unlink(missing_ok=True)
+        (data_path / "runtime" / "dev_channel.json").unlink(missing_ok=True)

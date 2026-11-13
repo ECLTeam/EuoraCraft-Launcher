@@ -32,11 +32,10 @@ def _write(path, content: str = "data") -> None:
 def test_reset_launcher_data_archives_only_declared_targets(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
     home_dir = tmp_path / "home"
-    _write(data_path / "setting.json", "{}")
-    _write(data_path / "info_card.json", "{}")
-    _write(data_path / "notice.json", "{}")
+    _write(data_path / "config" / "setting.json", "{}")
+    _write(data_path / "config" / "notice.json", "{}")
     _write(data_path / "accounts" / "legacy.json", "{}")
-    _write(data_path / "plugins" / "example" / "plugin.json", "{}")
+    _write(data_path / "plugins" / "sources" / "example" / "plugin.json", "{}")
     _write(data_path / "logs" / "launcher.log")
     _write(home_dir / ".ECL" / "accounts" / "accounts.json", "{}")
 
@@ -46,44 +45,42 @@ def test_reset_launcher_data_archives_only_declared_targets(tmp_path) -> None:
     assert scheduled.restart_required is True
     assert results[0].action == "reset_launcher_data"
     assert set(results[0].archived_targets) == {
-        "setting.json",
-        "info_card.json",
-        "notice.json",
+        "config/setting.json",
+        "config/notice.json",
     }
-    assert not (data_path / "setting.json").exists()
-    assert not (data_path / "info_card.json").exists()
-    assert not (data_path / "notice.json").exists()
+    assert not (data_path / "config" / "setting.json").exists()
+    assert not (data_path / "config" / "notice.json").exists()
     assert (data_path / "accounts" / "legacy.json").is_file()
-    assert (data_path / "plugins" / "example" / "plugin.json").is_file()
+    assert (data_path / "plugins" / "sources" / "example" / "plugin.json").is_file()
     assert (data_path / "logs" / "launcher.log").is_file()
     assert (home_dir / ".ECL" / "accounts" / "accounts.json").is_file()
     assert results[0].backup_path is not None
-    assert (results[0].backup_path / "setting.json").is_file()
-    assert not (data_path / MaintenancePolicy.pending_marker_filename).exists()
+    assert (results[0].backup_path / "config" / "setting.json").is_file()
+    assert not (data_path / "runtime" / MaintenancePolicy.pending_marker_filename).exists()
 
 
 def test_clear_plugins_can_be_scheduled_with_data_reset(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
-    _write(data_path / "setting.json", "{}")
-    _write(data_path / "plugins" / "example" / "plugin.json", "{}")
-    _write(data_path / "plugin_config" / "example.json", "{}")
+    _write(data_path / "config" / "setting.json", "{}")
+    _write(data_path / "plugins" / "sources" / "example" / "plugin.json", "{}")
+    _write(data_path / "plugins" / "config" / "example.json", "{}")
 
     schedule_debug_maintenance(data_path, "reset_launcher_data")
     schedule_debug_maintenance(data_path, "clear_plugins")
-    marker = json.loads((data_path / MaintenancePolicy.pending_marker_filename).read_text(encoding="utf-8"))
+    marker = json.loads((data_path / "runtime" / MaintenancePolicy.pending_marker_filename).read_text(encoding="utf-8"))
 
     assert marker["actions"] == ["reset_launcher_data", "clear_plugins"]
 
     results = apply_pending_debug_maintenance(data_path)
 
     assert [result.action for result in results] == ["reset_launcher_data", "clear_plugins"]
-    assert not (data_path / "plugins").exists()
-    assert not (data_path / "plugin_config").exists()
+    assert not (data_path / "plugins" / "sources").exists()
+    assert not (data_path / "plugins" / "config").exists()
 
 
 def test_claimed_maintenance_task_is_not_replayed(tmp_path) -> None:
     data_path = tmp_path / "ECL_data"
-    _write(data_path / "setting.json", "{}")
+    _write(data_path / "config" / "setting.json", "{}")
     schedule_debug_maintenance(data_path, "reset_launcher_data")
 
     first_results = apply_pending_debug_maintenance(data_path)
@@ -91,13 +88,13 @@ def test_claimed_maintenance_task_is_not_replayed(tmp_path) -> None:
 
     assert len(first_results) == 1
     assert second_results == []
-    journal = (data_path / "maintenance-history.jsonl").read_text(encoding="utf-8")
+    journal = (data_path / "logs" / "maintenance-history.jsonl").read_text(encoding="utf-8")
     assert '"status": "completed"' in journal
 
 
 def test_failed_maintenance_task_is_not_replayed(tmp_path, monkeypatch) -> None:
     data_path = tmp_path / "ECL_data"
-    _write(data_path / "setting.json", "{}")
+    _write(data_path / "config" / "setting.json", "{}")
     schedule_debug_maintenance(data_path, "reset_launcher_data")
 
     def raise_move_error(source, destination):
@@ -108,10 +105,10 @@ def test_failed_maintenance_task_is_not_replayed(tmp_path, monkeypatch) -> None:
     with pytest.raises(OSError, match="模拟移动失败"):
         apply_pending_debug_maintenance(data_path)
 
-    assert not (data_path / MaintenancePolicy.pending_marker_filename).exists()
-    assert list(data_path.glob(".pending_debug_maintenance.running-*.failed.json"))
+    assert not (data_path / "runtime" / MaintenancePolicy.pending_marker_filename).exists()
+    assert list((data_path / "runtime").glob(".pending_debug_maintenance.running-*.failed.json"))
     assert apply_pending_debug_maintenance(data_path) == []
-    journal = (data_path / "maintenance-history.jsonl").read_text(encoding="utf-8")
+    journal = (data_path / "logs" / "maintenance-history.jsonl").read_text(encoding="utf-8")
     assert '"status": "failed"' in journal
 
 

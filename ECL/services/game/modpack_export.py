@@ -93,6 +93,8 @@ class ExportContentPolicy:
             "caches",
             "webcache",
             "ecl_data",
+            "userdata",
+            "plugins",
             "pcl",
             "hmcl",
             "accounts",
@@ -120,6 +122,8 @@ class ExportContentPolicy:
             "mmc-pack.json",
             "modrinth.index.json",
             "dev_channel.json",
+            "single_instance.json",
+            "notice.json",
         }
     )
     config_directories = frozenset({"config", "defaultconfigs", "kubejs", "scripts", "configureddefaults"})

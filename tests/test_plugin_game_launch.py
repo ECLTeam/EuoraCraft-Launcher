@@ -36,7 +36,7 @@ def game_launch(tmp_path, monkeypatch):
     java = tmp_path / "java.exe"
     java.write_bytes(b"")
     events = EventBus()
-    manager = OperationManager(tmp_path / "data", events, max_workers=3)
+    manager = OperationManager(events, max_workers=3)
     game = GameService(
         FakeAccounts(),
         data_path=tmp_path / "data",

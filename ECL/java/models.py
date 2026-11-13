@@ -32,7 +32,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from time import monotonic, sleep
 from types import MappingProxyType
 from typing import ClassVar, Literal
 
@@ -275,7 +274,7 @@ class JavaPolicy:
 
         :param data_path: 当前启动器持久化数据目录
         """
-        root = data_path / "runtimes" / "java"
+        root = data_path / "runtime" / "java"
         is_bundle = any(part.lower().endswith(".app") for part in data_path.parts)
         if not is_bundle:
             try:
@@ -293,7 +292,7 @@ class JavaPolicy:
             base = Path.home() / "Library" / "Application Support"
         else:
             base = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-        root = base / "EuoraCraft-Launcher" / "runtimes" / "java"
+        root = base / "EuoraCraft-Launcher" / "runtime" / "java"
         root.mkdir(parents=True, exist_ok=True)
         return root.resolve()
 
@@ -323,45 +322,12 @@ class JavaRegistry:
     @contextmanager
     def locked(self) -> Iterator[None]:
         """
-        有界取得线程和文件互斥，退出时始终释放锁和句柄。
+        取得进程内互斥，退出时释放。
 
         :return: 仅用于短时清单或使用证据变更的互斥作用域
-        :raises JavaError: 五秒内无法取得文件锁时抛出
         """
         with self._thread_lock:
-            lock_path = self.root_path / ".registry.lock"
-            if lock_path.is_symlink():
-                raise JavaError("Java 管理锁文件无效", "JAVA_REGISTRY_INVALID")
-            with lock_path.open("a+b") as handle:
-                handle.seek(0, 2)
-                if not handle.tell():
-                    handle.write(b"0")
-                    handle.flush()
-                deadline = monotonic() + 5
-                while True:
-                    try:
-                        handle.seek(0)
-                        if sys.platform == "win32":
-                            import msvcrt
-
-                            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                        else:
-                            import fcntl
-
-                            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except OSError as exc:
-                        if monotonic() >= deadline:
-                            raise JavaError("Java 管理正在处理另一项操作，请稍后重试", "JAVA_BUSY") from exc
-                        sleep(0.05)
-                try:
-                    yield
-                finally:
-                    handle.seek(0)
-                    if sys.platform == "win32":
-                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                    else:
-                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            yield
 
     def read(self) -> RegistryState:
         """

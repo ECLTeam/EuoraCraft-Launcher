@@ -22,7 +22,6 @@ from threading import RLock
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
-from ECL.plugins.environment_pool import _exclusive_lock
 from ECL.plugins.runtime.models import SettingDefinition
 from ECL.utils import atomic_write_text
 
@@ -70,8 +69,8 @@ class PluginSettingsService:
         """
         只解析宿主生成的安装标识，拒绝链接祖先和越界配置文件。
         """
-        directory = "plugin_settings_schemas" if schema else "plugin_settings_v2"
-        target_path = self._data_path / directory / f"{installation_id}.json"
+        directory = "schemas" if schema else "settings"
+        target_path = self._data_path / "plugins" / directory / f"{installation_id}.json"
         if any(
             item.is_symlink() or not item.resolve().is_relative_to(self._data_path)
             for item in (target_path.parent, target_path)
@@ -244,7 +243,7 @@ class PluginSettingsService:
         选择记录由宿主独立维护，不从 Worker 的设置定义推导授权。
         """
         self._installation_lock(installation_id)
-        target = self._data_path / "plugin_file_selections" / f"{installation_id}.json"
+        target = self._data_path / "plugins" / "selections" / f"{installation_id}.json"
         if any(
             item.is_symlink() or not item.resolve().is_relative_to(self._data_path) for item in (target.parent, target)
         ):
@@ -336,24 +335,21 @@ class PluginSettingsService:
                 raise ProtocolError("设置值不符合定义", "PLUGIN_SETTING_TYPE_MISMATCH")
             target_path = self._file_path(installation_id)
             try:
-                with _exclusive_lock(target_path.with_suffix(".lock"), wait_seconds=2):
-                    values, revision = self._read(installation_id)
-                    if type(expected_revision) is not int or revision != expected_revision:
-                        raise ProtocolError("设置已由其他操作修改", "PLUGIN_REVISION_CONFLICT")
-                    candidate = json.dumps(
-                        {"schema_version": 1, "revision": revision + 1, "values": values | patch}, ensure_ascii=False
-                    )
-                    if len(candidate.encode("utf-8")) > 65536:
-                        raise ProtocolError("插件设置超过上限", "PLUGIN_SCHEMA_INVALID")
-                    accept()
-                    selections = {
-                        key: str(value)
-                        for key, value in patch.items()
-                        if run_id is None and definitions[key].type == "readonly_file"
-                    }
-                    self._write_values_and_selections(
-                        target_path, candidate, installation_id, content_digest, selections
-                    )
+                values, revision = self._read(installation_id)
+                if type(expected_revision) is not int or revision != expected_revision:
+                    raise ProtocolError("设置已由其他操作修改", "PLUGIN_REVISION_CONFLICT")
+                candidate = json.dumps(
+                    {"schema_version": 1, "revision": revision + 1, "values": values | patch}, ensure_ascii=False
+                )
+                if len(candidate.encode("utf-8")) > 65536:
+                    raise ProtocolError("插件设置超过上限", "PLUGIN_SCHEMA_INVALID")
+                accept()
+                selections = {
+                    key: str(value)
+                    for key, value in patch.items()
+                    if run_id is None and definitions[key].type == "readonly_file"
+                }
+                self._write_values_and_selections(target_path, candidate, installation_id, content_digest, selections)
             except OSError as exc:
                 raise ProtocolError("插件设置保存失败", "PLUGIN_STORAGE_FAILED") from exc
             with self._lock:

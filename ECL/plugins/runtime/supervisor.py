@@ -213,7 +213,8 @@ class WorkerSupervisor:
         if directory is None:
             return None
         root_path = directory.site_path.parent
-        pool = PluginEnvironmentPool(root_path.parents[1])
+        # site_path 为 <数据目录>/plugins/deps/<key>/site-packages，向上三级回到数据目录。
+        pool = PluginEnvironmentPool(root_path.parents[2])
         if pool.ready_directory(directory.key) != directory:
             raise ProtocolError("插件依赖目录已经变化", "PLUGIN_CONTENT_CHANGED")
         snapshot = DependencySnapshot.capture(root_path)

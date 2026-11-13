@@ -46,7 +46,7 @@ def profiles(tmp_path):
     game._lock = RLock()
     game._running_games = {}
     game._instance_profiles = store
-    manager = OperationManager(data_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     service = PluginWorkerService(
         data_path,
         instance_queries=game,

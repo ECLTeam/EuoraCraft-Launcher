@@ -17,13 +17,13 @@ import json
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import RLock
 
 from ECL.plugins.dependency_lock import PluginDependencyError, PluginDependencyLock, digest_pattern
 from ECL.plugins.environment_pool import (
     PluginDependencyDirectory,
     PluginEnvironmentPool,
     PluginEnvironmentSpec,
-    _exclusive_lock,
 )
 from ECL.plugins.package_preparation import (
     PluginPackagePreparer,
@@ -76,6 +76,8 @@ class PluginPackageActivationStore:
         """
         self.data_path = Path(data_path)
         self.environment_pool = PluginEnvironmentPool(self.data_path)
+        # 指针读改写共用一把进程内互斥，使用可重入锁以便 restore 内部复用。
+        self._thread_lock = RLock()
 
     def _pointer_path(self, name: str) -> Path:
         """
@@ -83,7 +85,7 @@ class PluginPackageActivationStore:
         """
         if not isinstance(name, str) or plugin_name_pattern.fullmatch(name) is None:
             raise PluginPackageActivationError("插件名包含非法字符")
-        root_path = self.data_path / "plugin_packages" / name
+        root_path = self.data_path / "plugins" / "packages" / name
         pointer_path = root_path / "active.json"
         if (
             root_path.parent.is_symlink()
@@ -134,7 +136,7 @@ class PluginPackageActivationStore:
         active = PluginPackageActivation(
             info.name, info.version, info.manifest_sha256, expected_path, prepared.environment_key, enabled, directory
         )
-        with _exclusive_lock(pointer_path.parent / "activation.lock"):
+        with self._thread_lock:
             if pointer_path.exists():
                 atomic_write_text(pointer_path.parent / "previous.json", pointer_path.read_text(encoding="utf-8"))
             self._write(active)
@@ -153,7 +155,7 @@ class PluginPackageActivationStore:
         pointer_path = self._pointer_path(name)
         if not pointer_path.exists():
             return None
-        with _exclusive_lock(pointer_path.parent / "activation.lock"):
+        with self._thread_lock:
             return self._restore_locked(name, pointer_path)
 
     def _restore_locked(self, name: str, pointer_path: Path) -> PluginPackageActivation:
@@ -249,7 +251,7 @@ class PluginPackageActivationStore:
         :raises PluginPackageActivationError: 安装记录不存在或无法验证
         """
         pointer_path = self._pointer_path(name)
-        with _exclusive_lock(pointer_path.parent / "activation.lock"):
+        with self._thread_lock:
             active = replace(self._restore_locked(name, pointer_path), enabled=enabled)
             self._write(active)
             return active
@@ -261,6 +263,6 @@ class PluginPackageActivationStore:
         :param name: 要撤销的插件名
         """
         pointer_path = self._pointer_path(name)
-        with _exclusive_lock(pointer_path.parent / "activation.lock"):
+        with self._thread_lock:
             if pointer_path.exists():
                 pointer_path.replace(pointer_path.parent / "uninstalled.json")

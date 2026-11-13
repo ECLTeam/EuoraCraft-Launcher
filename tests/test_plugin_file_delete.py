@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -204,31 +203,18 @@ def test_delayed_removal_keeps_cleanup_pending_until_original_entry_gone(files, 
     assert target_path.read_bytes() == b"replacement"
 
 
-@pytest.mark.parametrize("phase", ["executing", "committing", "terminal"])
-def test_delete_journal_failure_does_not_repeat_delete(files, tmp_path, monkeypatch, phase):
-    import ECL.services.operations as module
-
+def test_delete_runs_once_and_retries_reuse_receipt(files, tmp_path):
     broker, manager, _, _, _ = files
     target, etag = published(broker, manager)
     target_path = next(tmp_path.glob("plugin_data/*/files/target.bin"))
-    real = module.atomic_write_text
 
-    def fail(path, content):
-        record = json.loads(content)
-        if record.get("kind") == "plugin_file_delete" and record["phase"] == phase:
-            raise OSError("journal failure")
-        return real(path, content)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(module, "atomic_write_text", fail)
-        receipt = delete(broker, target, etag, "journal-delete")
-        view = finish(broker, manager, receipt)
-        assert target_path.exists() == (phase != "terminal")
-        assert view["effect"] == ("committed" if phase == "terminal" else "none")
-        assert view["cleanup_pending"] == (phase == "terminal")
-    view = call(broker, "operations.get", {"operation_ref": receipt["operation_ref"]})
-    assert not view["cleanup_pending"]
+    receipt = delete(broker, target, etag, "journal-delete")
+    view = finish(broker, manager, receipt)
+    assert not target_path.exists()
+    assert view["effect"] == "committed"
+    assert view["cleanup_pending"] is False
     assert delete(broker, target, etag, "journal-delete") == receipt
+    assert not (tmp_path / "operations").exists()
 
 
 def test_revocation_before_acceptance_preserves_file(files, tmp_path, monkeypatch):

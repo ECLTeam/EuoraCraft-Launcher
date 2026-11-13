@@ -13,7 +13,7 @@
 #       - progress(percent, message, **details) -> None — 发送统一的应用长任务进度事件。
 #   - class OperationManager — 管理可取消的应用下载、实例复制及资源处理任务。
 #       - submit(kind, worker) -> dict[str, str] — 登记并异步执行一个长任务，立即返回稳定的任务标识。
-#       - get(operation_id) -> dict[str, object] — 返回当前进程中的任务状态或上次持久化的最终结果。
+#       - get(operation_id) -> dict[str, object] — 返回当前进程内存中的任务状态。
 #       - cancel(operation_id) -> bool — 请求取消尚未完成的任务；工作函数在下一个安全检查点退出。
 #       - close() -> None — 阻止新任务、取消未完成任务并释放线程池。
 # ============================================================
@@ -23,19 +23,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from threading import Event, RLock
 from time import monotonic
 from types import MappingProxyType
 from typing import ClassVar, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
-
 from ECL.foundation import EventBus
-from ECL.utils import atomic_write_text, get_logger
+from ECL.utils import get_logger
 from ECL.utils.errors import GameServiceError
 from ECL.utils.operation_logging import OperationTrace, trace_scope
 
@@ -167,31 +164,8 @@ class OperationSnapshot:
     cancellation_requested: bool
     result: object
     error_code: str | None
-    audit_pending: bool
     cleanup_pending: bool
     business_stage: str | None = None
-
-
-class _PluginJournal(BaseModel):
-    """
-    严格保存最小任务审计摘要，不写入参数、路径或业务结果。
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-    schema_version: Literal[1] = 1
-    operation_id: str
-    installation_id: str
-    content_digest: str
-    run_id: str
-    kind: str
-    phase: OperationPhase
-    status: str
-    effect: OperationEffect
-    cancellation_requested: bool
-    cancellation_reason: OperationCancellationReason | None
-    accepted_at: str | None
-    error_code: str | None
-    revision: int
 
 
 @dataclass
@@ -219,7 +193,6 @@ class _Operation:
     phase: OperationPhase = "queued"
     effect: OperationEffect = "none"
     accepted_at: str | None = None
-    audit_pending: bool = True
     io_lock: RLock = field(default_factory=RLock)
     cancellation_reason: OperationCancellationReason | None = None
     is_cleanup_complete: bool = False
@@ -232,6 +205,7 @@ class OperationManager:
 
     max_plugin_operations: ClassVar[int] = 1024
     max_owner_operations: ClassVar[int] = 128
+    max_terminal_operations: ClassVar[int] = 200
     visible_plugin_kinds: ClassVar[frozenset[str]] = frozenset(
         {
             "plugin_game_install",
@@ -289,15 +263,15 @@ class OperationManager:
         }
     )
 
-    def __init__(self, data_path: Path, event_bus: EventBus, max_workers: int = 3) -> None:
+    def __init__(self, event_bus: EventBus, max_workers: int = 3) -> None:
         """
         创建应用唯一的操作注册表和工作线程池。
 
-        :param data_path: 最终任务结果的持久化根目录
+        任务记录只存在于本进程内存；结束的任务按数量上限回收，不写入磁盘。
+
         :param event_bus: 应用事件总线
         :param max_workers: 同时执行的后台任务上限
         """
-        self._data_path = data_path / "operations"
         self._events = event_bus
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ECL-ApplicationOperation")
         self._operations: dict[str, _Operation] = {}
@@ -370,7 +344,6 @@ class OperationManager:
             self._execute(operation, worker)
 
     def _execute(self, operation: _Operation, worker: OperationWorker) -> None:
-        is_initial_saved = operation.origin is None or self._persist(operation)
         with self._lock:
             operation.status = "running"
             operation.phase = "executing"
@@ -397,8 +370,6 @@ class OperationManager:
             operation.origin is None or operation.kind in self.visible_plugin_kinds,
         )
         try:
-            if not is_initial_saved or (operation.origin is not None and not self._persist(operation)):
-                raise GameServiceError("插件任务摘要保存失败", "PLUGIN_OPERATION_PERSIST_FAILED")
             context.check_cancelled()
             # worker 返回即代表副作用已经落盘；此处若再检查取消，会把已完成的任务
             # 标成「已取消」，导致用户重复执行同一操作。
@@ -442,8 +413,58 @@ class OperationManager:
             if operation.trace is not None:
                 operation.trace.log(self._logger, "后台任务执行完成")
         self._cleanup_owned(operation)
-        self._persist(operation)
+        self._log_terminal(operation)
+        self._evict_terminal_operations()
         self._emit(operation)
+
+    def _log_terminal(self, operation: _Operation) -> None:
+        """
+        为插件任务记录终态审计日志，替代此前的磁盘任务摘要文件。
+
+        只写入来源标识与阶段结果，不记录参数、路径或业务返回值。
+
+        :param operation: 已进入终态的任务
+        """
+        if operation.origin is None:
+            return
+        with self._lock:
+            origin = operation.origin
+            status = operation.status
+            effect = operation.effect
+            fields = (
+                operation.kind,
+                operation.phase,
+                status,
+                effect,
+                operation.error_code or "-",
+                operation.cancellation_reason or "-",
+            )
+        # 只对有实际副作用或失败的任务输出可检索的审计行，其余保持在调试级别。
+        is_auditable = status == "failed" or effect in {"committing", "committed", "partial"}
+        log = self._logger.info if is_auditable else self._logger.debug
+        log(
+            "插件任务终态；任务类型：%s；阶段：%s；状态：%s；副作用：%s；错误码：%s；取消原因：%s；"
+            "安装：%s；内容：%s；运行：%s",
+            *fields,
+            origin.installation_id,
+            origin.content_digest,
+            origin.run_id,
+        )
+
+    def _evict_terminal_operations(self) -> None:
+        """
+        按创建顺序回收超额的非插件终态任务，避免长时间运行时无限累积。
+
+        插件任务由运行关闭释放与总量上限管理，不参与此处驱逐。
+        """
+        with self._lock:
+            terminal = [item for item in self._operations.values() if item.origin is None and item.phase == "terminal"]
+            overflow = len(terminal) - self.max_terminal_operations
+            if overflow <= 0:
+                return
+            terminal.sort(key=lambda item: item.created_at)
+            for item in terminal[:overflow]:
+                self._operations.pop(item.operation_id, None)
 
     def _cleanup_owned(self, operation: _Operation) -> bool:
         """
@@ -468,7 +489,6 @@ class OperationManager:
                 if cleanup is not None and operation.effect in {"none", "staged"}:
                     operation.effect = "none"
                     operation.revision += 1
-                    operation.audit_pending = True
             return True
 
     def _update(
@@ -510,7 +530,7 @@ class OperationManager:
 
     def _report_effect(self, operation: _Operation, effect: OperationEffect) -> None:
         """
-        报告增量副作用并保存摘要，不允许覆盖已接受提交的结果。
+        报告增量副作用，不允许覆盖已接受提交的结果。
         """
         with self._lock:
             self._check_active(operation)
@@ -518,8 +538,6 @@ class OperationManager:
                 raise ValueError("不能覆盖已接受提交的副作用状态")
             operation.effect = effect
             operation.revision += 1
-        if operation.origin is not None and not self._persist(operation):
-            raise GameServiceError("插件任务摘要保存失败", "PLUGIN_OPERATION_PERSIST_FAILED")
 
     def _accept_commit(self, operation: _Operation) -> None:
         """
@@ -539,17 +557,13 @@ class OperationManager:
 
     def _finalize(self, operation: _Operation, action: Callable[[], object]) -> object:
         """
-        接受一次有限提交，先保存审计再于所有全局锁外执行领域动作。
+        接受一次有限提交，并在所有全局锁外执行领域动作。
         """
         previous_effect = operation.effect
         if operation.admission is not None:
             operation.admission.accept(lambda: self._accept_commit(operation))
         else:
             self._accept_commit(operation)
-        if operation.origin is not None and not self._persist(operation):
-            with self._lock:
-                operation.effect = previous_effect
-            raise GameServiceError("插件任务摘要保存失败", "PLUGIN_OPERATION_PERSIST_FAILED")
         try:
             result = action()
         except Exception as exc:
@@ -588,49 +602,6 @@ class OperationManager:
             snapshot = self._payload(operation)
         self._events.emit("game:operation_progress", snapshot)
 
-    def _persist(self, operation: _Operation) -> bool:
-        """
-        在每任务独立写锁内捕获最新状态，磁盘操作不占用全局任务锁。
-        """
-        import json
-
-        with operation.io_lock:
-            with self._lock:
-                revision = operation.revision
-                if operation.origin is not None:
-                    assert operation.admission is not None
-                    journal = _PluginJournal(
-                        operation_id=operation.operation_id,
-                        **asdict(operation.origin),
-                        kind=operation.kind,
-                        phase=operation.phase,
-                        status=operation.status,
-                        effect=operation.effect,
-                        cancellation_requested=operation.cancel_event.is_set(),
-                        cancellation_reason=operation.cancellation_reason,
-                        accepted_at=operation.accepted_at,
-                        error_code=operation.error_code,
-                        revision=revision,
-                    )
-                    payload = journal.model_dump_json()
-                    folder_path = self._data_path / "plugin"
-                else:
-                    payload = json.dumps(self._payload(operation), ensure_ascii=False, indent=2)
-                    folder_path = self._data_path
-            try:
-                folder_path.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(folder_path / f"{operation.operation_id}.json", payload)
-            except OSError:
-                with self._lock:
-                    operation.audit_pending = True
-                self._logger.exception(
-                    "持久化后台任务结果失败；任务类型：%s", self.kind_titles.get(operation.kind, "插件任务")
-                )
-                return False
-            with self._lock:
-                operation.audit_pending = operation.revision != revision
-            return True
-
     def owned_snapshot(self, operation_id: str, origin: OperationOrigin) -> OperationSnapshot:
         """
         仅返回当前进程中精确来源的任务，不从历史文件恢复控制权。
@@ -658,14 +629,8 @@ class OperationManager:
                 operation.cancel_event.is_set(),
                 operation.result,
                 operation.error_code,
-                operation.audit_pending,
                 operation.phase == "terminal"
-                and (
-                    operation.future is None
-                    or not operation.future.done()
-                    or not operation.is_cleanup_complete
-                    or operation.audit_pending
-                ),
+                and (operation.future is None or not operation.future.done() or not operation.is_cleanup_complete),
                 business_stage=(
                     operation.details["stage"]
                     if operation.kind in self.visible_plugin_kinds and isinstance(operation.details.get("stage"), str)
@@ -696,25 +661,23 @@ class OperationManager:
 
     def _retry_terminal(self, operation: _Operation) -> bool:
         """
-        对已结束 future 尝试一次清理和审计；其他查询正收尾时立即返回。
+        对已结束 future 尝试一次资源清理；其他查询正收尾时立即返回。
         """
         if operation.future is None or not operation.future.done():
             return False
         if not operation.io_lock.acquire(blocking=False):
             return False
         try:
-            is_clean = self._cleanup_owned(operation)
-            is_saved = not operation.audit_pending or self._persist(operation)
-            return is_clean and is_saved
+            return self._cleanup_owned(operation)
         finally:
             operation.io_lock.release()
 
     def owner_idle(self, origin: OperationOrigin) -> bool:
         """
-        查询实际 future 与审计收尾；失败摘要每次查询仅重试保存，不重复动作。
+        查询实际 future 与资源清理是否全部结束，不重复执行业务动作。
 
         :param origin: 当前收尾来源
-        :return: 所有工作线程与必要保存均已结束
+        :return: 所有工作线程与必要清理均已结束
         """
         with self._lock:
             operations = tuple(item for item in self._operations.values() if item.origin == origin)
@@ -726,7 +689,7 @@ class OperationManager:
 
     def release_owner(self, origin: OperationOrigin) -> bool:
         """
-        仅在实际执行与审计完成后释放已关闭运行的内存记录。
+        仅在实际执行与清理完成后释放已关闭运行的内存记录。
 
         :param origin: 已关闭来源
         :return: 是否已安全释放
@@ -739,7 +702,13 @@ class OperationManager:
 
     def get(self, operation_id: str) -> dict[str, object]:
         """
-        返回当前进程中的任务状态或上次持久化的最终结果。
+        返回当前进程内登记的任务状态。
+
+        任务记录不落盘，因此进程重启后同一标识一律视为不存在。
+
+        :param operation_id: 宿主任务标识
+        :return: 任务状态载荷
+        :raises GameServiceError: 标识格式非法或当前进程没有该任务时抛出
         """
         with self._lock:
             operation = self._operations.get(operation_id)
@@ -751,15 +720,6 @@ class OperationManager:
             or any(c not in "0123456789abcdef" for c in operation_id)
         ):
             raise GameServiceError("任务标识无效", "OPERATION_NOT_FOUND")
-        result_path = self._data_path / f"{operation_id}.json"
-        if result_path.is_file():
-            import json
-
-            try:
-                return json.loads(result_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, ValueError):
-                pass
-
         raise GameServiceError("未找到指定任务", "OPERATION_NOT_FOUND")
 
     def cancel(self, operation_id: str, *, reason: OperationCancellationReason = "user_requested") -> bool:
@@ -820,5 +780,5 @@ class OperationManager:
                 with trace_scope(operation.trace):
                     self._logger.info("排队中的后台任务已取消，未开始执行")
                     self._cleanup_owned(operation)
-                    self._persist(operation)
+                    self._log_terminal(operation)
                     self._emit(operation)

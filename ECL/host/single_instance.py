@@ -59,7 +59,7 @@ class SingleInstanceService:
         self.events = events
         self.data_path = Path(data_path)
         self.launcher_version = launcher_version
-        self.discovery_path = self.data_path / discovery_filename
+        self.discovery_path = self.data_path / "runtime" / discovery_filename
         self._token = secrets.token_urlsafe(32)  # 一次性访问令牌，随进程生成
         self._server_socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -257,7 +257,7 @@ def probe_running_instance(data_path: Path, argv: Sequence[str], *, timeout: flo
     :param timeout: 连接与应答的超时秒数
     :return: True 表示已存在主实例且置前请求送达
     """
-    discovery_path = Path(data_path) / discovery_filename
+    discovery_path = Path(data_path) / "runtime" / discovery_filename
     if not discovery_path.is_file():
         return False
     try:

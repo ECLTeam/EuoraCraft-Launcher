@@ -37,7 +37,7 @@ def test_actual_profile_worker_updates_and_cancels_without_automatic_writes(tmp_
         if is_frozen
         else None
     )
-    manager = OperationManager(data_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     service = PluginWorkerService(
         data_path,
         launch,

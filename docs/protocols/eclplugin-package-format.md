@@ -57,7 +57,7 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 
 ## 安装与运行边界
 
-同一完整锁字节、宿主 ABI 和平台共用 `plugin_deps/<key>/site-packages`；不同锁共享 `plugin_cache/wheels/<sha256>`，不向系统或宿主 site-packages 安装。就绪目录逐文件复核，禁止增量覆盖损坏目录；代码版本位于 `plugin_packages/<name>/pkg-<摘要>`，活动指针为 `active.json`。
+同一完整锁字节、宿主 ABI 和平台共用 `plugins/deps/<key>/site-packages`；不同锁共享 `plugins/cache/wheels/<sha256>`，不向系统或宿主 site-packages 安装。就绪目录逐文件复核，禁止增量覆盖损坏目录；代码版本位于 `plugins/packages/<name>/pkg-<摘要>`，活动指针为 `active.json`。
 
 不同 Worker 可以使用同名包的不同版本；每个 Worker 校验自己的完整锁、代码和依赖目录。不得覆盖标准库、ECL 或 API，单一环境内不同包提供同名导入仍拒绝。原生扩展须匹配当前解释器 ABI。
 
@@ -108,7 +108,7 @@ class Plugin(BasePlugin):
 
 ### 开发模式与热重载
 
-通过 `--plugin-dev` 或 `setting.json` 中非必填的 `plugins.development_mode: true` 在启动期启用开发模式；省略默认关闭，`--no-plugin-dev` 显式关闭，`--disable-plugins` 优先禁止开发监听。参数不落盘，文件配置需重启生效，临时开发信任不跨进程恢复。插件页没有模式切换入口。已启用的第三方目录插件使用宿主管理的稳定执行副本，监听实际安装目录；目录安装会复制源码，原始导入目录不自动同步。归档版本与系统插件不受监听。
+通过 `--plugin-dev` 或 `config/setting.json` 中非必填的 `plugins.development_mode: true` 在启动期启用开发模式；省略默认关闭，`--no-plugin-dev` 显式关闭，`--disable-plugins` 优先禁止开发监听。参数不落盘，文件配置需重启生效，临时开发信任不跨进程恢复。插件页没有模式切换入口。已启用的第三方目录插件使用宿主管理的稳定执行副本，监听实际安装目录；目录安装会复制源码，原始导入目录不自动同步。归档版本与系统插件不受监听。
 
 清单 `supports_hot_reload` 省略或严格布尔 true 表示允许，false 明确拒绝源码保存触发的自动重载；用户仍可手动重载。非法类型拒绝。文件集、750 ms 轮询与防抖、开发临时信任和清理状态见[开发模式](../guides/plugin-development/development-mode.md)。
 

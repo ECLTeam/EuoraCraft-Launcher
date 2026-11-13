@@ -14,7 +14,7 @@ from ECL.plugins.installation_store import WorkerManifest
 
 @pytest.fixture
 def development(tmp_path):
-    source = tmp_path / "data/plugins/example"
+    source = tmp_path / "data/plugins/sources/example"
     make_plugin(source, tmp_path / "marker")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
@@ -81,7 +81,7 @@ def test_opt_out_and_byte_identical_saves_do_not_restart(development):
 
 def test_development_uses_physical_source_for_noncanonical_host_path(development):
     manager, service, source = development
-    service._entry("example").source_path = source.parent / ".." / "plugins" / "example"
+    service._entry("example").source_path = source.parent / ".." / "sources" / "example"
     state = service.development.set_enabled(True)["items"][0]
     assert state["status"] == "watching"
     assert state["reload_count"] == 1
@@ -208,7 +208,7 @@ def test_source_removal_releases_listener_without_removing_private_configuration
     flush(service)
     assert service.development.view()["items"] == []
     assert service.development.set_enabled(False)["enabled"] is False
-    target = service.data_path / "plugin_settings_v2" / f"{settings['installation_id']}.json"
+    target = service.data_path / "plugins" / "settings" / f"{settings['installation_id']}.json"
     assert json.loads(target.read_bytes())["values"]["greeting"] == "preserved"
 
 
@@ -226,7 +226,7 @@ def test_reload_waits_for_accepted_write_then_recovers_without_second_worker(dev
     original_write = settings_module.atomic_write_text
 
     def write(target, content):
-        if target.parent.name == "plugin_settings_v2":
+        if target.parent.name == "settings" and target.parent.parent.name == "plugins":
             started.set()
             assert release.wait(10)
         return original_write(target, content)

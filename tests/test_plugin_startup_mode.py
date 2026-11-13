@@ -44,7 +44,8 @@ def test_plugin_development_conflicts_and_headless_are_rejected():
 
 @pytest.mark.parametrize("invalid", [None, "false", 0, 1, [], {}])
 def test_invalid_development_config_preserves_original_file(tmp_path, invalid):
-    config_file = tmp_path / "setting.json"
+    config_file = tmp_path / "config" / "setting.json"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps({"plugins": {"development_mode": invalid}, "game": {"minecraft_paths": ["kept"]}})
     config_file.write_text(content, encoding="utf-8")
     store = ConfigStore(tmp_path)
@@ -87,7 +88,7 @@ def test_running_instance_rejects_development_options(tmp_path, flag, prefix):
 
 
 def test_startup_development_loads_only_one_stable_copy_and_does_not_restore_trust(tmp_path):
-    source = tmp_path / "data/plugins/example"
+    source = tmp_path / "data/plugins/sources/example"
     marker = tmp_path / "executions"
     make_plugin(source, marker)
     code_file = source / "main.py"

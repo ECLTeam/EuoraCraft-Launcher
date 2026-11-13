@@ -26,11 +26,11 @@ async def main() -> None:
     data_path = output / "data"
     data_path.mkdir(parents=True)
     (data_path / "home").mkdir()
-    shutil.copytree(root / "examples/plugins/worker_no_hot_reload", data_path / "plugins/worker_no_hot_reload")
+    shutil.copytree(root / "examples/plugins/worker_no_hot_reload", data_path / "plugins/sources/worker_no_hot_reload")
     config = deepcopy(default_config)
     config["user_agreement"] = {"accepted": True, "uuid": "cli-acceptance"}
     config["ui"]["locale"] = "zh-CN"
-    (data_path / "setting.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+    (data_path / "config" / "setting.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
     wrapper = output / "launcher.py"
     wrapper.write_text(
         "from pathlib import Path\nimport os, sys\n"
@@ -148,7 +148,7 @@ async def main() -> None:
             assert await page.evaluate("document.documentElement.lang") == "en-US"
             await _call(page, "settings_set", {"section": "ui", "data": {**saved, "flowDebug": True}})
             await page.wait_for_timeout(250)
-            persisted = json.loads((data_path / "setting.json").read_text(encoding="utf-8"))
+            persisted = json.loads((data_path / "config" / "setting.json").read_text(encoding="utf-8"))
             assert persisted["ui"]["locale"] == "zh-CN"
             assert await page.evaluate("document.documentElement.lang") == "en-US"
             (output / "result.json").write_text(

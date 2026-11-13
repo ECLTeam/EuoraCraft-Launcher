@@ -62,7 +62,7 @@ class WardrobeStore:
     max_texture_dimension = 1024
 
     def __init__(self, data_path: Path) -> None:
-        self.root = data_path / "wardrobe"
+        self.root = data_path / "userdata" / "wardrobe"
         self.metadata_path = self.root / "wardrobe.json"
         self.skin_path = self.root / "skins"
         self.cape_path = self.root / "capes"

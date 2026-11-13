@@ -228,12 +228,14 @@ class _PluginState:
         )
         self.events.subscribe("config:updated", self._on_instance_config_changed)
         self._resource_path = Path(resource_path) if resource_path is not None else self._data_path
-        self._plugin_dir = self._data_path / "plugins"
+        self._plugin_dir = self._data_path / "plugins" / "sources"
         self._plugin_dir.mkdir(parents=True, exist_ok=True)
-        self._plugin_config_dir = self._data_path / "plugin_config"
+        self._plugin_config_dir = self._data_path / "plugins" / "config"
         self._plugin_config_dir.mkdir(parents=True, exist_ok=True)
-        self._plugin_state_path = self._data_path / "plugin_state.json"
-        failed_installs = set(recover_plugin_install_transactions(self._data_path, self._plugin_dir))
+        self._plugin_state_path = self._data_path / "plugins" / "state.json"
+        failed_installs = set(
+            recover_plugin_install_transactions(self._data_path, self._plugin_dir, self._plugin_action_lock)
+        )
         if failed_installs:
             self.logger.error("插件安装恢复失败，启动时跳过这些用户插件: %s", sorted(failed_installs))
         self.logger.info("正在初始化插件框架")

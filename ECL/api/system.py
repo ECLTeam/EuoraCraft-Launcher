@@ -393,7 +393,7 @@ class SystemHandlers(_FrontendState):
         """
         output_path = body.get("output_path")
         if output_path is None:
-            output_path = self.data_path / "exports" / "EuoraCraft-logs.zip"
+            output_path = self.data_path / "userdata" / "exports" / "EuoraCraft-logs.zip"
         elif not isinstance(output_path, str) or not output_path.strip() or "\0" in output_path:
             return {"success": False, "message": "日志导出路径无效", "errorCode": "INVALID_PATH"}
         target = Path(output_path).expanduser().resolve(strict=False)

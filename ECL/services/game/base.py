@@ -184,7 +184,7 @@ class _GameState(ModSourceAware):
         self._resource_search: ResourceSearchService = ResourceSearchService()
         self._resource_metadata: ResourceMetadataCache = ResourceMetadataCache()
         self._curseforge_api_key = curseforge_api_key
-        self._java_cache_file = self._data_path / "java_cache.json" if data_path else None
+        self._java_cache_file = self._data_path / "runtime" / "java_cache.json" if data_path else None
         self.authlib_injector = authlib_injector or (AuthlibInjector(data_path) if data_path else None)
         # 按需创建并复用 Java 和 Core 对象，避免每次查询都重新连接网络。
         self._java_runtimes: list[Any] = []
@@ -208,7 +208,7 @@ class _GameState(ModSourceAware):
             on_changed=self._notify_profile_changed,
         )
         self._owns_operations = operations is None
-        self._application_operations = operations or OperationManager(self._data_path, self.events)
+        self._application_operations = operations or OperationManager(self.events)
         self._modpack_preparations = ModpackPreparationService()
         self._export_output_paths: set[Path] = set()
         self._server_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}

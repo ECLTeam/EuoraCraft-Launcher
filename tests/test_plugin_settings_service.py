@@ -44,11 +44,11 @@ def test_multiline_setting_roundtrip_and_invalid_write_preserves_storage(tmp_pat
     service.publish("a" * 32, "c" * 32)
     content = "tcp://first.example:11010\nquic://second.example:11010"
     service.update("a" * 32, "b" * 64, {"greeting": content}, 0, lambda: None, schema_revision=schema)
-    before = (tmp_path / "plugin_settings_v2" / f"{'a' * 32}.json").read_bytes()
+    before = (tmp_path / "plugins" / "settings" / f"{'a' * 32}.json").read_bytes()
     assert service.view("a" * 32, "b" * 64, "c" * 32)["values"]["greeting"] == content
     with pytest.raises(ProtocolError):
         service.update("a" * 32, "b" * 64, {"greeting": 7}, 1, lambda: None, schema_revision=schema)
-    assert (tmp_path / "plugin_settings_v2" / f"{'a' * 32}.json").read_bytes() == before
+    assert (tmp_path / "plugins" / "settings" / f"{'a' * 32}.json").read_bytes() == before
 
 
 def test_stale_content_or_schema_cannot_overwrite_after_reload(tmp_path):
@@ -70,7 +70,7 @@ def test_removed_values_survive_and_type_change_preserves_original_file(tmp_path
     service = PluginSettingsService(tmp_path)
     define(service)
     service.update("a" * 32, "b" * 64, {"greeting": "user"}, 0, lambda: None, run_id="c" * 32)
-    target = tmp_path / "plugin_settings_v2" / f"{'a' * 32}.json"
+    target = tmp_path / "plugins" / "settings" / f"{'a' * 32}.json"
     original = target.read_bytes()
     define(service, run="e" * 32, kind="bool", default=False)
     with pytest.raises(ProtocolError) as error:
@@ -85,8 +85,8 @@ def test_removed_values_survive_and_type_change_preserves_original_file(tmp_path
 def test_corrupt_storage_is_not_an_empty_success(tmp_path):
     service = PluginSettingsService(tmp_path)
     define(service)
-    target = tmp_path / "plugin_settings_v2" / f"{'a' * 32}.json"
-    target.parent.mkdir()
+    target = tmp_path / "plugins" / "settings" / f"{'a' * 32}.json"
+    target.parent.mkdir(parents=True)
     target.write_bytes(b"{broken")
     with pytest.raises(ProtocolError) as error:
         service.view("a" * 32, "b" * 64, "c" * 32)
@@ -123,12 +123,12 @@ def test_corrupt_schema_does_not_replace_values_with_defaults(tmp_path):
     define(service)
     service.publish("a" * 32, "c" * 32)
     service.update("a" * 32, "b" * 64, {"greeting": "user value"}, 0, lambda: None, run_id="c" * 32)
-    schema_file = tmp_path / "plugin_settings_schemas" / f"{'a' * 32}.json"
+    schema_file = tmp_path / "plugins" / "schemas" / f"{'a' * 32}.json"
     payload = json.loads(schema_file.read_bytes())
     payload["definitions"][0]["default"] = "tampered"
     schema_file.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ProtocolError) as error:
         service.view("a" * 32, "b" * 64)
     assert error.value.error_code == "PLUGIN_STORAGE_FAILED"
-    values_file = tmp_path / "plugin_settings_v2" / f"{'a' * 32}.json"
+    values_file = tmp_path / "plugins" / "settings" / f"{'a' * 32}.json"
     assert json.loads(values_file.read_bytes())["values"] == {"greeting": "user value"}

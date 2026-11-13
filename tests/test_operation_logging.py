@@ -253,7 +253,7 @@ def test_exception_formatter_redacts_stack(records) -> None:
 @pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled"])
 def test_background_task_lifecycle_sampling_and_thread_context(tmp_path, records, outcome) -> None:
     logger, logs = records
-    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     manager._logger = logger
     entered, release = Event(), Event()
     worker_actions = []
@@ -288,7 +288,7 @@ def test_background_task_lifecycle_sampling_and_thread_context(tmp_path, records
         assert "任务编号" not in text and "操作编号" not in text
         assert submitted["operationId"] not in text
         assert {"completed": "执行完成", "failed": "执行失败", "cancelled": "已取消并停止执行"}[outcome] in text
-        assert (tmp_path / "operations" / (submitted["operationId"] + ".json")).is_file()
+        assert not (tmp_path / "operations").exists()
     finally:
         release.set()
         manager.close()
@@ -352,7 +352,7 @@ def test_plugin_command_timeout_keeps_worker_context_and_reports_real_result(rec
 
 def test_queued_task_cancellation_is_logged_after_future_stops(tmp_path, records) -> None:
     logger, logs = records
-    manager = OperationManager(tmp_path, EventBus(), max_workers=1)
+    manager = OperationManager(EventBus(), max_workers=1)
     manager._logger = logger
     entered, release = Event(), Event()
 

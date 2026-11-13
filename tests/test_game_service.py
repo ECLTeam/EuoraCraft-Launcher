@@ -460,7 +460,7 @@ def test_java_scanner_result_is_exposed_and_used_for_required_version(tmp_path) 
     assert [item["major_version"] for item in installations] == [21, 8]
     assert installations[0]["arch"] == "arm64"
     assert installations[1]["sources"] == ["user"]
-    assert scanner_options["cache_file"] == tmp_path / "java_cache.json"
+    assert scanner_options["cache_file"] == tmp_path / "runtime" / "java_cache.json"
     assert service._resolve_java_path(None, 8) == str(java8.path)
 
 

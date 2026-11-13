@@ -17,16 +17,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
 import sys
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic, sleep
-from typing import IO
+from threading import Lock, RLock
 from uuid import uuid4
 
 from packaging.requirements import Requirement
@@ -43,80 +39,6 @@ from ECL.utils import atomic_write_text
 
 PluginEnvironmentError = PluginDependencyError
 safe_component_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
-lock_wait_seconds = 120
-
-
-def _open_lock_file(lock_path: Path, deadline: float) -> IO[bytes]:
-    """
-    在等待预算内打开锁文件。
-
-    并发打开同一文件在 Windows 上可能短暂返回拒绝访问，属于文件系统过滤驱动
-    竞争而非永久权限错误；按预算重试，超时后抛出领域异常并保留原始 OSError。
-
-    :param lock_path: 受控目录内的锁文件
-    :param deadline: monotonic 时间戳的等待上限
-    :return: 以追加读写方式打开的文件对象
-    :raises PluginDependencyError: 预算内始终无法打开时抛出
-    """
-    while True:
-        try:
-            return lock_path.open("a+b")
-        except OSError as exc:
-            if monotonic() >= deadline:
-                raise PluginDependencyError("等待插件安装锁超时") from exc
-            sleep(0.1)
-
-
-@contextmanager
-def _exclusive_lock(lock_path: Path, *, wait_seconds: float = lock_wait_seconds) -> Iterator[None]:
-    """
-    对同一安装键使用有界跨进程文件锁，防止多个启动器覆盖目录。
-
-    Windows 和 POSIX 分别使用平台文件锁；进程退出时由系统释放。
-    打开与加锁共用同一等待预算，避免把瞬时竞争当成永久失败。
-
-    :param lock_path: 受控目录内的锁文件
-    :param wait_seconds: 等待上限；授权短事务可使用更短预算
-    """
-    if not 0 < wait_seconds <= lock_wait_seconds:
-        raise PluginDependencyError("插件文件锁等待范围无效")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    if lock_path.is_symlink():
-        raise PluginDependencyError("插件安装锁不能是符号链接")
-    deadline = monotonic() + wait_seconds
-    with _open_lock_file(lock_path, deadline) as lock_file:
-        lock_file.seek(0)
-        if os.name == "nt":
-            import msvcrt
-
-            while True:
-                try:
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError as exc:
-                    if monotonic() >= deadline:
-                        raise PluginDependencyError("等待插件安装锁超时") from exc
-                    sleep(0.1)
-            try:
-                yield
-            finally:
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            while True:
-                try:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError as exc:
-                    if monotonic() >= deadline:
-                        raise PluginDependencyError("等待插件安装锁超时") from exc
-                    sleep(0.1)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,9 +105,22 @@ class PluginEnvironmentPool:
             if not path_text.startswith("\\\\?\\"):
                 path_text = "\\\\?\\UNC\\" + path_text[2:] if path_text.startswith("\\\\") else "\\\\?\\" + path_text
                 self.data_path = Path(path_text)
-        self.environments_path = self.data_path / "plugin_deps"
-        self.cache_path = self.data_path / "plugin_cache" / "wheels"
+        self.environments_path = self.data_path / "plugins" / "deps"
+        self.cache_path = self.data_path / "plugins" / "cache" / "wheels"
         self.repository = repository or PluginWheelRepository(self.cache_path)
+        # 同一依赖键的安装互斥；不同键可并行，避免整池串行化。
+        self._key_locks: dict[str, Lock] = {}
+        self._key_locks_guard = RLock()
+
+    def _key_lock(self, key: str) -> Lock:
+        """
+        取得依赖键对应的进程内互斥锁。
+
+        :param key: 完整依赖键
+        :return: 该键独占的锁对象
+        """
+        with self._key_locks_guard:
+            return self._key_locks.setdefault(key, Lock())
 
     def environment_key(self, spec: PluginEnvironmentSpec) -> str:
         """
@@ -215,7 +150,7 @@ class PluginEnvironmentPool:
         if not isinstance(key, str) or digest_pattern.fullmatch(key) is None:
             raise PluginDependencyError("插件依赖键无效")
         root_path = self.environments_path / key
-        for path in (self.environments_path, root_path, self.data_path / "plugin_cache", self.cache_path):
+        for path in (self.environments_path, root_path, self.data_path / "plugins" / "cache", self.cache_path):
             if path.is_symlink() or not path.resolve().is_relative_to(self.data_path.resolve()):
                 raise PluginDependencyError("插件依赖目录超出数据目录")
         return root_path
@@ -300,7 +235,7 @@ class PluginEnvironmentPool:
         if self._lock_key(spec.target_tag, lock.raw) != key:
             raise PluginDependencyError("插件依赖锁在安装准备期间发生变化")
         direct = lock.validate_direct(list(spec.direct_dependencies))
-        with _exclusive_lock(self.environments_path / f"{key}.lock"):
+        with self._key_lock(key):
             ready = self.ready_directory(key)
             if ready is not None:
                 cached_wheels = tuple(
@@ -320,6 +255,7 @@ class PluginEnvironmentPool:
                 return ready
             if root_path.exists():
                 raise PluginDependencyError("已有插件依赖目录损坏，不能覆盖正在使用的文件")
+            self.environments_path.mkdir(parents=True, exist_ok=True)
             staging_path = self.environments_path / f".{uuid4().hex[:12]}.staging"
             staging_path.mkdir()
             try:
