@@ -112,7 +112,7 @@ def test_startup_development_loads_only_one_stable_copy_and_does_not_restore_tru
         assert manager.list_plugins()[0]["status"] == "enabled"
         executions = marker.read_text().splitlines()
         assert len(executions) == 1
-        assert "plugin_development_snapshots" in executions[0]
+        assert "development_snapshots" in executions[0]
         assert manager.worker_service.development.view()["items"][0]["reload_count"] == 1
         code_file.write_text(code_file.read_text(encoding="utf-8") + "\n# source changed\n", encoding="utf-8")
     finally:
@@ -124,6 +124,6 @@ def test_startup_development_loads_only_one_stable_copy_and_does_not_restore_tru
         assert manager.list_plugins()[0]["status"] == "enabled"
         executions = marker.read_text().splitlines()
         assert len(executions) == 2
-        assert all("plugin_development_snapshots" in item for item in executions)
+        assert all("development_snapshots" in item for item in executions)
     finally:
         manager.close()

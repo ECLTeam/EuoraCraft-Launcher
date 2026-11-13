@@ -97,7 +97,7 @@ class PluginDevelopmentService:
         :param debounce: 文件稳定等待秒数
         """
         self._workers = workers
-        self._root_path = data_path.resolve() / "plugin_development_snapshots"
+        self._root_path = data_path.resolve() / "plugins" / "development_snapshots"
         self._changed = changed or (lambda: None)
         self._interval = interval
         self._debounce = debounce
