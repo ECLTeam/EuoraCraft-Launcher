@@ -565,15 +565,18 @@ def test_custom_download_defaults_and_validation_do_not_log_secrets(tmp_path, ca
     from ECL.services.operations import OperationManager
 
     api = _build_api(tmp_path)
-    manager = OperationManager(tmp_path / "operations-data", EventBus())
+    manager = OperationManager(EventBus())
     api.context.downloads = CustomDownloadService(manager, data_path=api.data_path)
     try:
         defaults = asyncio.run(api.custom_download_defaults({}))
         assert defaults == {
             "success": True,
-            "data": {"downloadDirectory": str(api.data_path / "downloads"), "userAgent": "EuoraCraft-Launcher"},
+            "data": {
+                "downloadDirectory": str(api.data_path / "userdata" / "downloads"),
+                "userAgent": "EuoraCraft-Launcher",
+            },
         }
-        assert not (api.data_path / "downloads").exists()
+        assert not (api.data_path / "userdata" / "downloads").exists()
         invalid = asyncio.run(
             api.custom_download_start({"url": "https://host/file", "headers": {"Bad Key": "secret-value"}})
         )
@@ -597,8 +600,8 @@ def test_download_folder_picker_defaults_and_legacy_game_picker(tmp_path, monkey
 
     monkeypatch.setattr(files_module, "DialogExt", SimpleNamespace(file=lambda _webview: Dialog()))
     assert asyncio.run(api.select_directory({"purpose": "custom-download"})) == {"success": True, "data": {"path": ""}}
-    assert calls[-1] == {"set_title": "选择下载文件夹", "set_directory": str(api.data_path / "downloads")}
-    assert (api.data_path / "downloads").is_dir()
+    assert calls[-1] == {"set_title": "选择下载文件夹", "set_directory": str(api.data_path / "userdata" / "downloads")}
+    assert (api.data_path / "userdata" / "downloads").is_dir()
     selected = tmp_path / "different-folder"
     asyncio.run(api.select_directory({"purpose": "custom-download", "default_directory": str(selected)}))
     assert calls[-1]["set_directory"] == str(selected)
@@ -1975,7 +1978,7 @@ def test_debug_maintenance_schedules_allowed_action(tmp_path) -> None:
     assert result["success"] is True
     assert result["data"]["action"] == "clear_plugins"
     assert result["data"]["restart_required"] is True
-    assert (api.data_path / ".pending_debug_maintenance.json").is_file()
+    assert (api.data_path / "runtime" / ".pending_debug_maintenance.json").is_file()
 
 
 def test_frontend_ready_dispatches_cli_launch_once(tmp_path, monkeypatch) -> None:
