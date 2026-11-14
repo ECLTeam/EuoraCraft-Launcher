@@ -22,7 +22,7 @@ from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.api._imports import DependencySnapshot
 from ECL.plugins.api._rpc import RpcPeer, RpcRequest
 from ECL.plugins.api._transport import LocalChannel, LocalServer, create_local_server
-from ECL.plugins.api.contracts import JsonValue, ProtocolError, WireMessage
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, ProtocolPolicy, WireMessage
 from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
@@ -96,7 +96,7 @@ class WorkerSupervisor:
                 if (
                     hello.kind != "hello"
                     or hello.params.get("run_id") != self.run_id
-                    or hello.params.get("api_version") != 1
+                    or hello.params.get("api_version") not in ProtocolPolicy.supported_api_versions
                 ):
                     raise ProtocolError("Worker 引导握手不兼容")
                 if hello.params.get("has_host_modules") is not False or hello.params.get("is_supervised") is not True:

@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：校验第三方 v2 清单并原子维护安装身份，不导入插件或授予权限。
+# 文件作用：校验第三方插件清单（含 ADR-005 协商字段）并原子维护安装身份，不导入插件或授予权限。
 #
 # 公开接口：
 #   - class WorkerManifest — 第三方插件的受控运行声明。
@@ -30,10 +30,13 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
+from pydantic_core import PydanticCustomError
 
+from ECL.plugins.api.contracts import ProtocolPolicy
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.utils import atomic_write_text
+from ECL.version import __version__
 
 
 class PluginInstallationError(ValueError):
@@ -44,33 +47,119 @@ class PluginInstallationError(ValueError):
     error_code: str = "PLUGIN_INSTALLATION_INVALID"
 
 
+def _manifest_field_name(key: str) -> str:
+    """
+    把校验错误位置中的清单别名还原为模型字段名，供错误码按字段归类。
+
+    :param key: 校验错误 loc 中的字段标识，可能是别名
+    :return: WorkerManifest 的字段名，无对应字段时返回原值
+    """
+    for field_name, info in WorkerManifest.model_fields.items():
+        if info.alias == key:
+            return field_name
+    return key
+
+
 def manifest_validation_error_code(exc: ValidationError) -> str:
     """
     按校验失败的字段区分错误码，避免依赖或清单问题被误报为 API 版本不满足。
 
     :param exc: WorkerManifest 校验抛出的异常
-    :return: 仅 api_version 字段失败时返回 PLUGIN_API_VERSION_UNSUPPORTED，否则返回 PLUGIN_MANIFEST_INVALID
+    :return: api_version 失败返回 PLUGIN_API_VERSION_UNSUPPORTED；min_launcher
+        版本过高返回 PLUGIN_LAUNCHER_VERSION_UNSUPPORTED（格式问题仍归清单无效）；
+        features 含未知能力返回 PLUGIN_FEATURE_UNSUPPORTED；其余返回 PLUGIN_MANIFEST_INVALID
     """
-    fields = {error["loc"][0] for error in exc.errors() if error.get("loc")}
-    return "PLUGIN_API_VERSION_UNSUPPORTED" if fields == {"api_version"} else "PLUGIN_MANIFEST_INVALID"
+    fields = {_manifest_field_name(error["loc"][0]) for error in exc.errors() if error.get("loc")}
+    if fields == {"api_version"}:
+        return "PLUGIN_API_VERSION_UNSUPPORTED"
+    if fields == {"features"}:
+        return "PLUGIN_FEATURE_UNSUPPORTED"
+    if fields == {"min_launcher"} and any(
+        error.get("type") == "min_launcher_version_too_new" for error in exc.errors()
+    ):
+        return "PLUGIN_LAUNCHER_VERSION_UNSUPPORTED"
+    return "PLUGIN_MANIFEST_INVALID"
 
 
 class WorkerManifest(BaseModel):
     """
     校验插件清单入口，其他展示字段由既有元数据界面消费。
+
+    ``min_launcher`` 与 ``features`` 是 ADR-005 的协商字段：前者在清单
+    校验期直接与宿主版本比较，后者只做能力名白名单校验，"声明合法但
+    宿主未启用"不在此拦截，由能力自身 API 返回既有错误码。
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
-    api_version: StrictInt = Field(ge=1, le=1)
+    api_version: StrictInt = Field(ge=1)
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     entry_point: str = "main:Plugin"
     version: str = Field(default="0.0.0", max_length=64)
+    min_launcher: str = Field(default="", alias="minLauncher", max_length=32)
+    features: list[str] = Field(default_factory=list, max_length=64)
     python_dependencies: list[str] = Field(default_factory=list, alias="pythonDependencies", max_length=128)
     dependencies: dict[str, str | dict[str, str | bool]] = Field(default_factory=dict, max_length=128)
     custom_ui: CustomUiDeclaration | None = None
     supports_hot_reload: StrictBool = True
     homepage: str = Field(default="", max_length=256)
     license: str = Field(default="", max_length=128)
+
+    known_features: ClassVar[frozenset[str]] = frozenset({"panels", "webview", "hot_reload"})
+
+    @field_validator("api_version")
+    @classmethod
+    def _check_api_version(cls, value: int) -> int:
+        """
+        按 ADR-005 支持集合校验清单 API 版本。
+
+        :param value: 清单声明的 api_version
+        :return: 原值
+        :raises ValueError: 版本不在宿主支持集合内时抛出
+        """
+        if value not in ProtocolPolicy.supported_api_versions:
+            raise ValueError(f"api_version {value} 不在宿主支持集合内")
+        return value
+
+    @field_validator("min_launcher")
+    @classmethod
+    def _check_min_launcher(cls, value: str) -> str:
+        """
+        校验 min_launcher 的 PEP 440 格式并比较宿主版本。
+
+        :param value: 清单声明的启动器版本下限，空串表示不设限
+        :return: 原值
+        :raises PydanticCustomError: 格式非法或高于当前宿主版本时抛出，
+            过高场景使用 ``min_launcher_version_too_new`` 错误类型供错误码归类
+        """
+        if not value:
+            return value
+        required = parse_version(value)
+        if required is None:
+            raise ValueError(f"min_launcher {value!r} 不是合法的 PEP 440 版本")
+        host = parse_version(__version__)
+        if host is not None and required > host:
+            raise PydanticCustomError(
+                "min_launcher_version_too_new",
+                "插件要求启动器 {required}，当前宿主 {host}",
+                {"required": value, "host": __version__},
+            )
+        return value
+
+    @field_validator("features")
+    @classmethod
+    def _check_features(cls, values: list[str]) -> list[str]:
+        """
+        校验 features 是否全部在宿主已知能力白名单内。
+
+        :param values: 清单声明的可选能力列表
+        :return: 原值
+        :raises ValueError: 含未知能力名时抛出
+        """
+        unknown = [feature for feature in values if feature not in cls.known_features]
+        if unknown:
+            raise ValueError(f"未知插件能力：{', '.join(unknown)}")
+        return values
+
     reserved_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
     )

@@ -72,3 +72,82 @@ def test_manifest_homepage_and_license_defaults_and_validation() -> None:
     ):
         with pytest.raises(ValueError):
             WorkerManifest.model_validate(metadata)
+
+
+def test_manifest_api_version_is_checked_against_supported_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    api_version 改为 ADR-005 支持集合校验：集合内放行，集合外拒绝且错误码专指版本。
+    """
+    from pydantic import ValidationError
+
+    from ECL.plugins.api.contracts import ProtocolPolicy
+    from ECL.plugins.installation_store import manifest_validation_error_code
+
+    assert WorkerManifest.model_validate({"name": "example", "api_version": 1}).api_version == 1
+    with pytest.raises(ValidationError) as unsupported:
+        WorkerManifest.model_validate({"name": "example", "api_version": 2})
+    assert manifest_validation_error_code(unsupported.value) == "PLUGIN_API_VERSION_UNSUPPORTED"
+
+    # 支持集合扩展为 {1, 2} 后，v1 与 v2 清单同时可用（多版本并存基线）。
+    monkeypatch.setattr(ProtocolPolicy, "supported_api_versions", frozenset({1, 2}))
+    assert WorkerManifest.model_validate({"name": "example", "api_version": 2}).api_version == 2
+
+
+def test_manifest_min_launcher_is_compared_with_host_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    min_launcher 高于宿主版本拒绝且错误码专指版本；等于或低于放行；格式非法归清单无效。
+    """
+    from pydantic import ValidationError
+
+    import ECL.plugins.installation_store as store
+    from ECL.plugins.installation_store import manifest_validation_error_code
+
+    def _with_host_version(version: str) -> None:
+        monkeypatch.setattr(store, "__version__", version)
+
+    _with_host_version("0.3.1")
+    assert (
+        WorkerManifest.model_validate({"name": "example", "api_version": 1, "minLauncher": "0.3.1"}).min_launcher
+        == "0.3.1"
+    )
+    assert (
+        WorkerManifest.model_validate({"name": "example", "api_version": 1, "minLauncher": "0.2.0"}).min_launcher
+        == "0.2.0"
+    )
+    with pytest.raises(ValidationError) as too_new:
+        WorkerManifest.model_validate({"name": "example", "api_version": 1, "minLauncher": "0.4.0"})
+    assert manifest_validation_error_code(too_new.value) == "PLUGIN_LAUNCHER_VERSION_UNSUPPORTED"
+
+    with pytest.raises(ValidationError) as malformed:
+        WorkerManifest.model_validate({"name": "example", "api_version": 1, "minLauncher": "not-a-version"})
+    assert manifest_validation_error_code(malformed.value) == "PLUGIN_MANIFEST_INVALID"
+
+
+def test_manifest_features_are_whitelisted_but_need_not_be_enabled() -> None:
+    """
+    features 只做已知能力白名单校验；未知能力拒绝且错误码专指能力，已知能力无论是否启用都放行。
+    """
+    from pydantic import ValidationError
+
+    from ECL.plugins.installation_store import manifest_validation_error_code
+
+    manifest = WorkerManifest.model_validate(
+        {"name": "example", "api_version": 1, "features": ["panels", "hot_reload"]}
+    )
+    assert manifest.features == ["panels", "hot_reload"]
+    with pytest.raises(ValidationError) as unknown:
+        WorkerManifest.model_validate({"name": "example", "api_version": 1, "features": ["teleport"]})
+    assert manifest_validation_error_code(unknown.value) == "PLUGIN_FEATURE_UNSUPPORTED"
+
+
+def test_manifest_error_codes_distinguish_fields_not_swallowed_by_generic_code() -> None:
+    """
+    多字段同时失败时归入清单无效，单一协商字段失败时各自返回专码。
+    """
+    from pydantic import ValidationError
+
+    from ECL.plugins.installation_store import manifest_validation_error_code
+
+    with pytest.raises(ValidationError) as combined:
+        WorkerManifest.model_validate({"name": "example", "api_version": 99, "features": ["nope"]})
+    assert manifest_validation_error_code(combined.value) == "PLUGIN_MANIFEST_INVALID"

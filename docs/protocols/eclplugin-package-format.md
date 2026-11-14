@@ -77,16 +77,20 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 
 ## 第三方插件 API
 
-目录与归档共用清单和 SDK；`plugin.json` 必须显式声明 `api_version: 1`。示例：
+目录与归档共用清单和 SDK；`plugin.json` 必须显式声明 `api_version: 1`。清单还可声明两个协商字段（ADR-005）：`minLauncher` 为 PEP 440 启动器版本下限（空或不填表示不设限），`features` 为可选能力白名单声明（已知能力：`panels`、`webview`、`hot_reload`；声明合法但宿主未启用时不影响安装，由能力自身 API 报错）。示例：
 
 ```json
 {
     "name": "example",
     "api_version": 1,
     "version": "1.0.0",
-    "entry_point": "main:Plugin"
+    "entry_point": "main:Plugin",
+    "minLauncher": "0.3.1",
+    "features": ["panels"]
 }
 ```
+
+协商字段与 `api_version` 的错误码在安装期与加载期一致：`api_version` 不在宿主支持集合 → `PLUGIN_API_VERSION_UNSUPPORTED`；`minLauncher` 高于当前宿主版本 → `PLUGIN_LAUNCHER_VERSION_UNSUPPORTED`；`features` 含未知能力 → `PLUGIN_FEATURE_UNSUPPORTED`；其余清单问题 → `PLUGIN_MANIFEST_INVALID`。
 
 ```python
 from ECL.plugins.api import Plugin as BasePlugin

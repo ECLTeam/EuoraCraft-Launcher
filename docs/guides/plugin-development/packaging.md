@@ -4,6 +4,8 @@
 
 第三方清单必须包含 `api_version: 1`、合法 name、版本和包内 `entry_point`。路径形式为 `module/submodule:PluginClass`，宿主解析为包内 Python 文件，不接受任意导入表达式。
 
+可选协商字段（ADR-005）：`minLauncher`（PEP 440 启动器版本下限，高于宿主当前版本时安装与加载均被 `PLUGIN_LAUNCHER_VERSION_UNSUPPORTED` 拒绝）与 `features`（使用的可选能力列表，已知能力为 `panels`、`webview`、`hot_reload`；未知能力被 `PLUGIN_FEATURE_UNSUPPORTED` 拒绝，声明合法但宿主未启用时不影响安装）。`api_version` 不在宿主支持集合内则被 `PLUGIN_API_VERSION_UNSUPPORTED` 拒绝。
+
 `dependencies` 表达插件间版本关系，可以是版本约束字符串或含 version/optional 的对象；它决定加载关系，不会自动从商店安装插件。
 
 `pythonDependencies` 是 Python 直接库需求，与插件依赖独立；完整传递依赖写入目标锁文件。

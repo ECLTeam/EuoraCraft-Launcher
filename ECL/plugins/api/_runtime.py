@@ -18,7 +18,7 @@ from threading import RLock
 from types import ModuleType
 
 from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, ProtocolPolicy
 from ECL.plugins.api.plugin import HostClient, Plugin
 
 
@@ -54,7 +54,7 @@ class PluginRuntime:
         request.check_deadline()
         if request.method == "runtime.info" and not request.params:
             with self._lock:
-                return {"api_version": 1, "pid": os.getpid(), "run_state": self._phase}
+                return {"api_version": ProtocolPolicy.api_version, "pid": os.getpid(), "run_state": self._phase}
         if request.method == "lifecycle.invoke":
             return self._lifecycle(request)
         if request.method == "callbacks.invoke":

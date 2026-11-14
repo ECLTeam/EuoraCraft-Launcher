@@ -42,10 +42,15 @@ class ProtocolError(ValueError):
 
 class ProtocolPolicy:
     """
-    定义 API v2 引导和 RPC 使用的不可变协议限制。
+    定义插件引导和 RPC 使用的不可变协议限制与 API 版本契约。
+
+    ``api_version`` 是宿主当前对外声明的插件 API 版本；
+    ``supported_api_versions`` 是按 ADR-005 可同时放行的版本集合，
+    校验一律查集合而非比较单一值。
     """
 
     api_version: ClassVar[int] = 1
+    supported_api_versions: ClassVar[frozenset[int]] = frozenset({1})
     protocol_version: ClassVar[int] = 1
     max_frame_bytes: ClassVar[int] = 1024 * 1024
     max_depth: ClassVar[int] = 16
