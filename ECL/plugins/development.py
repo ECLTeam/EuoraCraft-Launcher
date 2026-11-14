@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +26,7 @@ from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.installation_store import WorkerManifest
-from ECL.utils import get_logger
+from ECL.utils import get_logger, remove_tree
 
 if TYPE_CHECKING:
     from ECL.plugins.worker_service import PluginWorkerService
@@ -513,7 +512,7 @@ class PluginDevelopmentService:
                     or (stat.st_dev, stat.st_ino) != identity
                 ):
                     raise OSError("开发副本身份已经变化")
-                shutil.rmtree(copy_path)
+                remove_tree(copy_path)
                 self._copies.pop(copy_path, None)
                 self._cleanup_notified.discard(copy_path)
             except OSError:

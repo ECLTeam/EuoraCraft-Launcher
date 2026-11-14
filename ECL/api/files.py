@@ -681,7 +681,7 @@ class FileHandlers(_FrontendState):
     @_ipc_handler("SELECT_DIRECTORY_ERROR")
     async def select_directory(self, body: dict[str, Any]) -> dict[str, Any]:
         """
-        按用途选择游戏目录或下载文件夹，取消时保留前端原值。
+        按用途选择游戏目录、插件目录或下载文件夹，取消时保留前端原值。
 
         :param body: 前端传入的 IPC 请求参数
         """
@@ -702,6 +702,8 @@ class FileHandlers(_FrontendState):
 
             directory = await to_thread.run_sync(prepare_directory)
             path = await self._pick_path(True, "选择下载文件夹", default_directory=directory)
+        elif request.purpose == "plugin-directory":
+            path = await self._pick_path(True, "选择插件目录")
         else:
             path = await self._pick_path(True, "选择游戏目录")
         return {"success": True, "data": {"path": path}}

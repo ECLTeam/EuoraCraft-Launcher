@@ -18,6 +18,7 @@
 #       - plugin_reload(body) -> dict[str, Any] — 重新加载插件。
 #       - plugin_install(body) -> dict[str, Any] — 安装插件。
 #       - plugin_package_inspect(body) -> dict[str, Any] — 只读预检本地归档及当前目标依赖。
+#       - plugin_directory_inspect(body) -> dict[str, Any] — 只读预检本地插件目录及当前目标依赖。
 #       - plugin_get_routes(body) -> dict[str, Any] — 获取插件路由。
 #       - plugin_get_slots(body) -> dict[str, Any] — 获取插件插槽。
 #       - plugin_get_vue_slots(body) -> dict[str, Any] — 获取插件 Vue 插槽。
@@ -34,6 +35,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import asdict
 from time import monotonic
@@ -53,6 +55,7 @@ from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
 from ECL.plugins.package_archive import PluginPackageError
 from ECL.plugins.run_store import PluginRunError
+from ECL.utils.operation_logging import current_operation
 
 from .bridge import _FrontendState, _open_folder
 
@@ -220,7 +223,7 @@ class PluginHandlers(_FrontendState):
         """
         plugin_path = body.get("plugin_path")
         if not isinstance(plugin_path, str) or not plugin_path.strip():
-            return failure("插件路径无效", "PLUGIN_INSTALL_FAILED")
+            return self._install_failure("插件路径无效")
         if plugin_path.lower().endswith(".eclplugin"):
             result = await asyncio.to_thread(
                 self.plugins.install,
@@ -233,8 +236,26 @@ class PluginHandlers(_FrontendState):
                 self.plugins.install, plugin_path, allow_network=body.get("allow_network") is True
             )
         if not result.success:
-            return failure(result.message or "安装插件失败", "PLUGIN_INSTALL_FAILED")
+            return self._install_failure(result.message or "安装插件失败")
         return {"success": True, "data": {"status": result.status, "message": result.message}}
+
+    def _install_failure(self, reason: str) -> dict[str, Any]:
+        """
+        记录安装失败的具体原因，并返回统一错误码。
+
+        统一错误码便于前端识别，但不足以定位问题，所以具体原因必须写入日志。
+        日志权由当前操作领取，避免 IPC 边界再补一条只含错误码的记录。
+
+        :param reason: 安装流程给出的失败说明
+        :return: 带统一错误码的失败响应
+        """
+        error_code = "PLUGIN_INSTALL_FAILED"
+        trace = current_operation()
+        if trace is None:
+            self.logger.warning("安装插件失败：%s；错误码：%s", reason, error_code)
+        elif trace.claim_failure(error_code):
+            trace.log(self.logger, f"安装插件失败：{reason}；错误码：{error_code}", logging.WARNING)
+        return failure(reason, error_code)
 
     async def plugin_package_inspect(self, body: dict[str, Any]) -> dict[str, Any]:
         """
@@ -250,6 +271,22 @@ class PluginHandlers(_FrontendState):
             preflight = await asyncio.to_thread(self.plugins.inspect_package, plugin_path)
         except (OSError, PluginPackageError, PluginDependencyError) as exc:
             return failure(str(exc), "PLUGIN_PACKAGE_INSPECT_FAILED")
+        return {"success": True, "data": asdict(preflight)}
+
+    async def plugin_directory_inspect(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        在用户确认安装前校验插件目录并返回来源与当前目标的依赖摘要。
+
+        :param body: 包含本地插件目录路径的 IPC 请求
+        :return: 可供确认界面展示的预检信息
+        """
+        plugin_path = body.get("plugin_path")
+        if not isinstance(plugin_path, str) or not plugin_path.strip():
+            return failure("插件目录路径无效", "PLUGIN_DIRECTORY_INSPECT_FAILED")
+        try:
+            preflight = await asyncio.to_thread(self.plugins.inspect_directory, plugin_path)
+        except (OSError, PluginDependencyError) as exc:
+            return failure(str(exc), "PLUGIN_DIRECTORY_INSPECT_FAILED")
         return {"success": True, "data": asdict(preflight)}
 
     async def plugin_get_routes(self, body: dict[str, Any]) -> dict[str, Any]:

@@ -36,7 +36,7 @@ jobs:
           python -m pip install --upgrade pip
           # 与 pyproject.toml 的 dev 依赖保持同一版本：ruff 升级可能引入新规则，
           # 浮动版本会让无关 PR 突然变红。升级时两处同步修改。
-          pip install "ruff==0.16.10"
+          pip install "ruff==0.17.5"
 
       - name: Run ruff
         run: |

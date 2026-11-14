@@ -286,6 +286,7 @@ class IpcLogPolicy:
             "plugin_reload": IpcLogSpec("重新加载插件", "action"),
             "plugin_install": IpcLogSpec("安装插件", "action"),
             "plugin_package_inspect": IpcLogSpec("检查插件安装包", "query"),
+            "plugin_directory_inspect": IpcLogSpec("检查插件目录", "query"),
             "plugin_get_routes": IpcLogSpec("获取插件路由", "query"),
             "plugin_get_slots": IpcLogSpec("获取插件插槽", "query"),
             "plugin_get_vue_slots": IpcLogSpec("获取插件 Vue 插槽", "query"),

@@ -132,4 +132,4 @@ TaskView 含 state、percent、stage、message、can_cancel、cancellation_reque
 
 ## 界面与扩展方法
 
-`ui.register_html/vue`、`ui.windows.open/get/focus/close` 见[插件界面](frontend.md)。`hooks.register`、`crash.register`、`compat.register`、`tools.register/run/stop`、`auth.register`、`connector.*` 见[扩展开发](extensions.md)。这些方法均只开放已接线能力，不透传宿主全局命令表。
+`ui.register_html/vue` 见[插件界面](frontend.md)；`ui.windows.open/get/focus/close` 在当前运行时一律返回 `PLUGIN_UI_ISOLATION_UNAVAILABLE`，独立窗口隔离不再提供。`hooks.register`、`crash.register`、`compat.register`、`tools.register/run/stop`、`auth.register`、`connector.*` 见[扩展开发](extensions.md)。这些方法均只开放已接线能力，不透传宿主全局命令表。

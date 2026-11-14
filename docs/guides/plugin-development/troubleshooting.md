@@ -52,6 +52,6 @@
 - 前端验证 Classic/Folia、亮暗、最小及放大窗口、长名称、键盘焦点和操作可达性。
 - 区分模拟、真实源码 Worker、原生窗口、真实游戏/网络及冻结产物；未执行或跳过的项目不能算通过。
 
-本项目测试命令以根目录 [AGENTS.md](../../../AGENTS.md)第 6 节为准。真实平台/发行物门禁的环境与证据见[原生运行时](../../../native/pytauri-runtime/README.md)及[无头运行](../headless-runtime.md)。
+本项目测试命令以根目录 [AGENTS.md](../../../AGENTS.md)第 6 节为准。真实平台/发行物门禁的环境与证据见 [PyTaruiX](https://github.com/ECLTeam/PyTaruiX) 及[无头运行](../headless-runtime.md)。
 
 Windows 源码启动器的可重复界面门禁为 `python tests/plugin_development_ui_host.py`：先构建 `frontend`，在含固定版本 Python Playwright 1.58.0 的工具环境运行。门禁加载生产前端和实际 Worker，使用独立数据/用户目录，验证配置保存、代码换代、显式退出、人工重载及关闭模式，保存 12 组主题/尺寸和六语言截图及结果到忽略的 `output/playwright/plugin-development/`。它不替代 Linux/macOS 或冻结发行物验收。

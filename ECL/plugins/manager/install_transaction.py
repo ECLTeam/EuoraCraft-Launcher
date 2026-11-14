@@ -24,7 +24,7 @@ from uuid import uuid4
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginEnvironmentError
-from ECL.utils import atomic_write_text, get_logger
+from ECL.utils import atomic_write_text, get_logger, remove_tree
 
 plugin_name_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 transaction_id_pattern = re.compile(r"[0-9a-f]{32}\Z")
@@ -116,7 +116,7 @@ class PluginInstallTransaction:
         if self.stage_path.is_symlink() or self.stage_path.resolve().parent != expected_parent:
             raise PluginInstallTransactionError("插件暂存路径超出安装目录")
         if self.stage_path.exists():
-            shutil.rmtree(self.stage_path)
+            remove_tree(self.stage_path)
 
     def commit(self) -> bool:
         """
@@ -139,9 +139,9 @@ class PluginInstallTransaction:
         :raises OSError: 文件系统拒绝清理时抛出
         """
         if self.backup_path.exists():
-            shutil.rmtree(self.backup_path)
+            remove_tree(self.backup_path)
         if self.stage_path.exists():
-            shutil.rmtree(self.stage_path)
+            remove_tree(self.stage_path)
         self.journal_path.unlink(missing_ok=True)
 
     def rollback(self) -> None:
@@ -154,14 +154,14 @@ class PluginInstallTransaction:
             if self.had_old:
                 if self.backup_path.exists():
                     if self.target_path.exists():
-                        shutil.rmtree(self.target_path)
+                        remove_tree(self.target_path)
                     self.backup_path.replace(self.target_path)
                 elif not self.target_path.exists() or not self.stage_path.exists():
                     raise PluginInstallTransactionError("插件旧版备份缺失，无法确认活动目录是否安全")
             elif self.target_path.exists():
-                shutil.rmtree(self.target_path)
+                remove_tree(self.target_path)
             if self.stage_path.exists():
-                shutil.rmtree(self.stage_path)
+                remove_tree(self.stage_path)
             self.journal_path.unlink(missing_ok=True)
         except OSError as exc:
             raise PluginInstallTransactionError("插件安装回滚失败") from exc

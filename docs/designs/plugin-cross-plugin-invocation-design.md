@@ -42,4 +42,4 @@
 
 ## 5. 验收
 
-`tests/test_plugin_cross_plugin.py` 覆盖：只导出可见、缺通道拒绝、转发参数不变、真实双 Worker 调用成功、目标禁用后调用被拒。示例见 `examples/plugins/worker_provider` 与 `examples/plugins/worker_caller`。
+`tests/test_plugin_cross_plugin.py` 覆盖：只导出可见、缺通道拒绝、转发参数不变、真实双 Worker 调用成功、目标禁用后调用被拒。

@@ -22,14 +22,14 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.dependencies import parse_dependency, parse_version
+from ECL.plugins.dependencies import DependencyRequirement, parse_dependency, parse_version
+from ECL.utils import remove_tree
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult
@@ -38,6 +38,21 @@ from .install_transaction import (
     PluginInstallTransactionError,
     recover_plugin_install_transactions,
 )
+
+
+def _manifest_error_summary(exc: ValidationError) -> str:
+    """
+    把清单校验异常归纳为字段和错误类型，避免日志写出用户填写的原始值。
+
+    :param exc: `WorkerManifest` 校验抛出的异常
+    :return: 以逗号分隔的“字段(错误类型)”说明，无法识别字段时返回错误数量
+    """
+    details = [
+        f"{'.'.join(str(part) for part in error['loc'])}({error['type']})" for error in exc.errors() if error.get("loc")
+    ]
+    if details:
+        return "，".join(details)
+    return f"共 {exc.error_count()} 处错误"
 
 
 class PluginLifecycle(_PluginState):
@@ -337,7 +352,7 @@ class PluginLifecycle(_PluginState):
             assert self.worker_service is not None
 
             def remove_files() -> None:
-                shutil.rmtree(resolved_plugin_dir)
+                remove_tree(resolved_plugin_dir)
 
             if self._status.get(name) == "unsupported":
                 self.worker_service.installations.retire(name)
@@ -346,7 +361,11 @@ class PluginLifecycle(_PluginState):
                 self.worker_service.remove(name, remove_files)
         except OSError as exc:
             self._status[name] = "error"
-            self._plugin_errors[name] = f"删除插件目录失败: {exc}"
+            self._plugin_errors[name] = (
+                "删除插件目录失败：文件被占用或为只读，请关闭占用该目录的程序后重试"
+                if isinstance(exc, PermissionError)
+                else f"删除插件目录失败: {exc}"
+            )
             return PluginActionResult(name, PluginAction.UNINSTALL, "failed", self._plugin_errors[name])
 
         self._candidate_map.pop(name, None)
@@ -456,6 +475,7 @@ class PluginLifecycle(_PluginState):
         try:
             WorkerManifest.model_validate(metadata)
         except ValidationError as exc:
+            self.logger.warning("插件 %s 清单校验失败：%s", source, _manifest_error_summary(exc))
             return PluginActionResult("", PluginAction.INSTALL, "invalid", manifest_validation_error_code(exc))
         target_name = metadata.get("name")
         if not isinstance(target_name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", target_name):
@@ -475,14 +495,24 @@ class PluginLifecycle(_PluginState):
                 return PluginActionResult(target_name, PluginAction.INSTALL, "forbidden", "不能覆盖系统插件")
             metadata_error = self._install_metadata_error(metadata)
             if metadata_error is not None:
+                self.logger.warning("插件 %s 安装前置校验失败：%s", target_name, metadata_error)
                 return PluginActionResult(target_name, PluginAction.INSTALL, "invalid", metadata_error)
-            if not self._are_dependencies_satisfied(metadata):
-                return PluginActionResult(target_name, PluginAction.INSTALL, "failed", "插件依赖未满足")
+            missing_dependencies = self._unsatisfied_dependencies(metadata)
+            if missing_dependencies:
+                missing_text = "、".join(missing_dependencies)
+                self.logger.warning("插件 %s 依赖未满足：%s", target_name, missing_text)
+                return PluginActionResult(
+                    target_name,
+                    PluginAction.INSTALL,
+                    "failed",
+                    f"插件依赖未满足：{missing_text}",
+                )
 
             transaction = PluginInstallTransaction(self._data_path, self._plugin_dir, target_name)
             try:
                 with self._plugin_action_lock(target_name):
                     if transaction.journal_path.exists():
+                        self.logger.warning("插件 %s 存在未恢复的安装事务，已拒绝覆盖", target_name)
                         return PluginActionResult(target_name, PluginAction.INSTALL, "failed", "旧安装事务尚未恢复")
                     transaction.stage(source)
                     return self._install_staged_plugin(transaction, metadata, allow_network=allow_network)
@@ -535,6 +565,7 @@ class PluginLifecycle(_PluginState):
             if not transaction.commit():
                 self.logger.warning("插件安装已提交，事务备份等待清理")
         except (OSError, ValueError, PluginInstallTransactionError) as exc:
+            self.logger.warning("插件 %s 安装提交失败，正在回滚：%s", name, exc)
             if has_begun:
                 transaction.rollback()
             else:
@@ -560,30 +591,52 @@ class PluginLifecycle(_PluginState):
 
     def _are_dependencies_satisfied(self, metadata: dict[str, Any]) -> bool:
         # 检查插件元数据中的依赖是否已被当前加载的插件满足。
-        deps = metadata.get("dependencies", {})
-        for dep_name, dep_value in deps.items():
-            req = parse_dependency(dep_name, dep_value)
-            if req is None:
+        return not self._unsatisfied_dependencies(metadata)
+
+    def _unsatisfied_dependencies(self, metadata: dict[str, Any]) -> list[str]:
+        """
+        列出当前未满足的必需依赖，供安装前置校验和失败原因使用。
+
+        清单中格式非法的依赖条目由清单校验负责，此处跳过；可选依赖缺失
+        不算失败，与启用阶段的判定保持一致。
+
+        :param metadata: 已通过清单结构校验的插件清单
+        :return: 未满足的依赖名称，全部满足时为空列表
+        """
+        unsatisfied: list[str] = []
+        for dep_name, dep_value in metadata.get("dependencies", {}).items():
+            requirement = parse_dependency(dep_name, dep_value)
+            if requirement is None or requirement.optional:
                 continue
-            dep_plugin = self._plugins.get(req.name)
-            if dep_plugin is None:
-                candidate = self._candidate_map.get(req.name)
-                if (
-                    candidate
-                    and self.worker_service is not None
-                    and not self._session_disable_reason(req.name)
-                    and self.worker_service.runtime_info(req.name)["run_state"] == "enabled"
-                ):
-                    version = parse_version(candidate["metadata"].get("version", "0.0.0"))
-                    if version is not None and req.specifier.contains(version, prereleases=True):
-                        continue
-                if not req.optional:
-                    return False
-                continue
-            dep_version = parse_version(dep_plugin.version)
-            if dep_version is None or not req.specifier.contains(dep_version, prereleases=True):
-                return False
-        return True
+            if not self._is_dependency_satisfied(requirement):
+                unsatisfied.append(requirement.name)
+        return unsatisfied
+
+    def _is_dependency_satisfied(self, requirement: DependencyRequirement) -> bool:
+        """
+        判断单个依赖是否由已加载插件或已启用安装满足。
+
+        未加载但已登记且已启用的插件同样视为可用，避免安装顺序强迫用户
+        先重启一次；版本不满足的已加载插件一律视为不满足。
+
+        :param requirement: 解析后的依赖要求
+        :return: 依赖名称与版本都满足时为 True
+        """
+        dep_plugin = self._plugins.get(requirement.name)
+        if dep_plugin is None:
+            candidate = self._candidate_map.get(requirement.name)
+            if (
+                candidate
+                and self.worker_service is not None
+                and not self._session_disable_reason(requirement.name)
+                and self.worker_service.runtime_info(requirement.name)["run_state"] == "enabled"
+            ):
+                version = parse_version(candidate["metadata"].get("version", "0.0.0"))
+                if version is not None and requirement.specifier.contains(version, prereleases=True):
+                    return True
+            return requirement.optional
+        dep_version = parse_version(dep_plugin.version)
+        return dep_version is not None and requirement.specifier.contains(dep_version, prereleases=True)
 
     def on_frontend_ready(self) -> None:
         """

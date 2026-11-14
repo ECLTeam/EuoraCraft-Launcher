@@ -15,23 +15,17 @@ def prepare(self, version_id, loader, version_isolation):
 
 上下文只有版本、加载器与隔离标记。prepare 可以按宿主数量、长度及字段规则补充 JVM/游戏参数和环境变量；其他阶段不提供同样的修改通道。必要前置回调失败可阻止本次启动，启动后/退出失败仅记录。
 
-参考 [worker_launch_hook](../../../examples/plugins/worker_launch_hook)。
-
 ## 崩溃分析
 
 `register_crash_analyzer(callback)` 需要实例查看或管理范围。回调参数包含 report_id、version_id、exit_code、detected_by、reasons 和最多 8000 字符 output，不包含任意文件路径。
 
 返回 `{summary?, reasons?}`，原因只接纳 title、detail、severity、source，最多 16 项，每段文本受限。它增强现有分析，不直接替换整个报告；某插件失败不会中止其他分析器。
 
-参考 [worker_crash_analyzer](../../../examples/plugins/worker_crash_analyzer)。
-
 ## 实例识别来源
 
 `register_instance_source(source, title, callback)` 需要实例查看或管理范围。宿主只对获准、已索引实例投递 root_ref、instance_rel、version_id、vanilla_name、primary_loader 等有界上下文；返回 `{fields: {键: 字符串}, warnings?: [...]}`，字段数量和文本长度受限。
 
 该接口不等于可信系统插件的带 Path 上下文和监听文件解析器的接口。不要把 `ECL.plugins.ExternalInstanceMetadata` 的内部示例直接复制到 Worker。
-
-参考 [worker_instance_source](../../../examples/plugins/worker_instance_source)。
 
 ## 受管工具
 
@@ -49,7 +43,7 @@ def prepare(self, version_id, loader, version_isolation):
 
 `resolve_credentials(account)` 在启动时收到自身账户与已保存 data，返回 player_name、uuid、access_token、user_type，可选 auth_server。不能伪造其他安装的提供方或读取其他账户凭据；撤权保留用户文件但停止旧回调。
 
-[worker_auth](../../../examples/plugins/worker_auth/README.md) 使用合成令牌，只验证协议，不代表外部认证服务已实现。精确字段与限制见[认证/联机契约](../../designs/plugin-auth-and-connector-extension-design.md)。
+使用合成令牌只能验证协议，不代表外部认证服务已实现。精确字段与限制见[认证/联机契约](../../designs/plugin-auth-and-connector-extension-design.md)。
 
 ## 外置联机与兼容协议
 

@@ -26,6 +26,8 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from uuid import uuid4
 
+from ECL.utils import remove_tree
+
 max_archive_bytes = 2 * 1024**3
 max_uncompressed_bytes = 4 * 1024**3
 max_file_bytes = 2 * 1024**3
@@ -267,7 +269,7 @@ def extract_plugin_package(archive_path: Path, target_path: Path) -> PluginPacka
             manifest_partial.write_bytes(manifest_bytes)
             manifest_partial.replace(target_path / "package-manifest.json")
     except (OSError, RuntimeError, ValueError, StopIteration, zipfile.BadZipFile) as exc:
-        shutil.rmtree(target_path)
+        remove_tree(target_path)
         if isinstance(exc, PluginPackageError):
             raise
         raise PluginPackageError("插件归档解包失败") from exc

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import platform
 import sys
@@ -8,6 +9,7 @@ import pytest
 from plugin_wheel_helpers import make_package, make_wheel
 
 from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginManager
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 
@@ -147,3 +149,62 @@ def test_two_package_workers_use_distinct_versions_without_host_dependency_confl
         assert "samplelib" not in sys.modules
     finally:
         restarted.close()
+
+
+def _write_directory_manifest(source, metadata):
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+
+def test_inspect_directory_reports_manifest_and_dependency_state(tmp_path):
+    source = tmp_path / "demo"
+    _write_directory_manifest(
+        source, {"name": "demo", "api_version": 1, "version": "1.2.3", "entry_point": "main:Plugin"}
+    )
+    manager = PluginManager()
+    manager.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        preflight = manager.inspect_directory(str(source))
+        assert preflight.name == "demo"
+        assert preflight.version == "1.2.3"
+        assert preflight.source_path == str(source)
+        assert preflight.python_dependencies == ()
+        assert preflight.has_target_lock is False
+        assert preflight.dependencies_ready is True
+    finally:
+        manager.close()
+
+
+def test_inspect_directory_rejects_folder_without_manifest(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    manager = PluginManager()
+    manager.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        with pytest.raises(PluginDependencyError) as error:
+            manager.inspect_directory(str(empty))
+        assert "plugin.json" in str(error.value)
+    finally:
+        manager.close()
+
+
+def test_inspect_directory_requires_lock_for_python_dependencies(tmp_path):
+    source = tmp_path / "demo"
+    _write_directory_manifest(
+        source,
+        {
+            "name": "demo",
+            "api_version": 1,
+            "version": "1.0.0",
+            "entry_point": "main:Plugin",
+            "pythonDependencies": ["example==1.0.0"],
+        },
+    )
+    manager = PluginManager()
+    manager.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        with pytest.raises(PluginDependencyError) as error:
+            manager.inspect_directory(str(source))
+        assert "依赖锁" in str(error.value)
+    finally:
+        manager.close()

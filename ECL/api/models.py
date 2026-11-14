@@ -1005,10 +1005,10 @@ class FileSelectionRequest(RequestModel):
 
 class DirectorySelectionRequest(RequestModel):
     """
-    为下载文件夹选择器提供用途和初始目录，旧游戏目录调用可保持空请求。
+    为下载文件夹、插件目录选择器提供用途，旧游戏目录调用可保持空请求。
     """
 
-    purpose: Literal["custom-download"] | None = None
+    purpose: Literal["custom-download", "plugin-directory"] | None = None
     default_directory: Path | None = None
 
     @field_validator("default_directory")

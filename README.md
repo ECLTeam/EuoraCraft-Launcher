@@ -2,6 +2,8 @@
 
 <img src="./resources/img/logo.ico" width="320" alt="EuoraCraft Launcher Logo" />
 
+**简体中文** · [繁體中文](./README.zh-TW.md) · [English](./README.en-US.md) · [日本語](./README.ja-JP.md) · [Русский](./README.ru-RU.md) · [Deutsch](./README.de-DE.md)
+
 **一个使用 Python 编写的现代化 Minecraft 第三方启动器，支持插件拓展功能，构建出自己的启动器吧**
 
 *Modern Minecraft third-party launcher written in Python, with plugin extensibility, build your own launcher.*
@@ -20,22 +22,24 @@
 
 </div>
 
-> **免责声明**：本启动器是独立的第三方社区工具，与 Mojang Studios、Microsoft 或任何其子公司没有任何附属关系、背书关系或官方关联。
+> **免责声明**：本启动器是独立的第三方社区工具，与 Mojang Studios、Microsoft 及其关联公司没有任何关联，也未获得它们的授权或认可。Minecraft 是 Mojang Synergies AB 的注册商标。
+>
+> 下载、安装或使用本软件，即表示您已阅读并同意[用户协议](https://docs.euora.cn/guide/user-agreement/)。
 
 ---
 
 ## 介绍
 
-**EuoraCraft Launcher** 是一款 Minecraft 第三方启动器，帮助你安装和启动游戏、管理不同版本与整合包，也支持与好友联机。初次接触 Minecraft，也可以从下方的「快速开始」入手。
+**EuoraCraft Launcher** 是一款 Minecraft 第三方启动器，帮助你安装和启动游戏、管理不同版本与整合包。初次接触 Minecraft，也可以从下方的「快速开始」入手。
 
 ---
 
 ## 功能特性
 
 - **管理游戏**：集中查看和启动不同版本的游戏与整合包。
-- **添加账户**：支持微软账户、离线账户和第三方登录服务。
+- **添加账户**：支持微软账户、离线账户和第三方登录服务（如 LittleSkin）。
 - **安装整合包与模组**：在线查找和安装整合包，管理游戏模组（Mod）等资源。
-- **好友联机**：与好友一起游玩。
+- **个性外观**：多套内置主题（经典、Folia、Absolutely、Catppuccin）、明暗模式与自定义背景。
 - **插件扩展**：按需要添加插件，丰富启动器功能。
 - **崩溃分析**：游戏出错时，帮助查找可能的原因。
 
@@ -65,6 +69,20 @@
 
 欢迎帮助完善翻译、文档或代码，具体方式见[贡献指南](CONTRIBUTING.md)。开发相关说明见[项目文档](docs/README.md)。
 
+### 从源码运行
+
+需要 Python 3.11+、Node.js 22 与 pnpm 10：
+
+```bash
+git clone --recurse-submodules https://github.com/ECLTeam/EuoraCraft-Launcher.git
+cd EuoraCraft-Launcher
+pip install -e ".[dev]"
+cd frontend && pnpm install && pnpm build && cd ..
+python main.py
+```
+
+`frontend` 与 `ECL/minecraft/game` 是子模块，内部改动提交到各自仓库，主仓库只更新子模块指针。环境要求、提交流程与检查范围见[贡献指南](CONTRIBUTING.md)。
+
 ## 贡献者们
 
 感谢所有为 EuoraCraft Launcher 做出贡献的开发者和社区支持者！
@@ -77,8 +95,7 @@
 
 ## 致谢
 
-- [pytauri](https://github.com/pytauri/pytauri)、[Naive UI](https://github.com/tusen-ai/naive-ui) — 为启动器提供支持
-- [EasyTier](https://easytier.cn/) — 提供联机支持
+- [PyTaruiX](https://github.com/ECLTeam/PyTaruiX)、[Naive UI](https://github.com/tusen-ai/naive-ui) — 为启动器提供支持
 - 所有贡献者和社区支持者
 
 ---

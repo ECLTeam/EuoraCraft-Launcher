@@ -3,22 +3,22 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：预检插件归档并准备独立安装目录，不下载解释器或执行插件代码。
+# 文件作用：预检插件归档与目录，并准备独立安装目录，不下载解释器或执行插件代码。
 #
 # 公开接口：
 #   - class PluginPreparationError — 插件预检或准备失败。
-#   - class PluginPackagePreflight — 不执行代码得到的安装预检信息。
+#   - class PluginPackagePreflight — 不执行代码得到的归档安装预检信息。
+#   - class PluginDirectoryPreflight — 不执行代码得到的目录安装预检信息。
 #   - class PluginPreparedPackage — 未加载的代码及依赖目录。
 #   - current_plugin_target() — 返回实际宿主目标标签。
 #   - verify_prepared_code() — 逐文件复核已解包插件代码。
-#   - class PluginPackagePreparer — 准备归档及固定锁依赖。
+#   - class PluginPackagePreparer — 预检并准备归档与目录插件的固定锁依赖。
 # ============================================================
 
 from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -31,6 +31,7 @@ from ECL.plugins.environment_pool import (
     PluginEnvironmentSpec,
 )
 from ECL.plugins.package_archive import PluginPackageInfo, extract_plugin_package, inspect_plugin_package
+from ECL.utils import remove_tree
 
 
 class PluginPreparationError(PluginDependencyError):
@@ -56,6 +57,25 @@ class PluginPackagePreflight:
     has_target_lock: bool
     unverified_source: bool = True
     dependencies_ready: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PluginDirectoryPreflight:
+    """
+    保存目录插件的只读预检信息，不复制文件、不安装依赖、不执行插件代码。
+
+    依赖就绪只说明当前宿主已有可复用的依赖目录，不代表插件已经加载。
+    """
+
+    name: str
+    version: str
+    entry_point: str
+    source_path: str
+    target_tag: str
+    python_dependencies: tuple[str, ...]
+    wheel_count: int
+    has_target_lock: bool
+    dependencies_ready: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +199,60 @@ class PluginPackagePreparer:
         with self._name_locks_guard:
             return self._name_locks.setdefault(name, Lock())
 
+    def inspect_directory(
+        self,
+        code_path: Path,
+        *,
+        name: str,
+        version: str,
+        entry_point: str,
+        direct: tuple[str, ...],
+    ) -> PluginDirectoryPreflight:
+        """
+        只读检查目录插件的依赖锁与离线 wheel，不复制、不安装、不执行插件代码。
+
+        判定条件与目录安装一致：声明了 Python 依赖却没有当前目标的锁就直接
+        失败，避免用户确认后才发现装不上；wheel 目录只允许放 wheel。
+
+        :param code_path: 已通过清单校验的插件源目录
+        :param name: 清单中的插件名
+        :param version: 清单中的版本
+        :param entry_point: 清单中的入口
+        :param direct: plugin.json 声明的直接依赖
+        :return: 当前宿主目标的目录预检结果
+        :raises PluginDependencyError: 锁缺失、直接依赖不满足或 wheel 目录含非法文件
+        """
+        lock_path = code_path / "locks" / f"{self.target_tag}.txt"
+        has_lock = lock_path.is_file()
+        if direct and not has_lock:
+            raise PluginDependencyError(f"插件缺少当前目标依赖锁: {self.target_tag}")
+        lock = PluginDependencyLock.parse(lock_path.read_bytes() if has_lock else b"")
+        direct_requirements = lock.validate_direct(list(direct))
+        wheelhouse_path = code_path / "wheels" / self.target_tag
+        wheel_paths = sorted(wheelhouse_path.iterdir()) if wheelhouse_path.is_dir() else []
+        if any(item.suffix != ".whl" or not item.is_file() for item in wheel_paths):
+            raise PluginDependencyError("当前目标离线依赖目录只能包含 wheel")
+        ready = True
+        if lock.packages:
+            spec = PluginEnvironmentSpec(
+                self.target_tag,
+                lock_path,
+                wheelhouse_path if wheelhouse_path.is_dir() else None,
+                direct,
+            )
+            ready = self.environment_pool.ready_directory(self.environment_pool.environment_key(spec)) is not None
+        return PluginDirectoryPreflight(
+            name,
+            version,
+            entry_point,
+            str(code_path),
+            self.target_tag,
+            tuple(str(item) for item in direct_requirements),
+            len(wheel_paths),
+            has_lock,
+            ready,
+        )
+
     def inspect(self, archive_path: Path) -> PluginPackagePreflight:
         """
         校验归档与完整锁，不联网、不解包到宿主环境、不执行插件代码。
@@ -253,7 +327,7 @@ class PluginPackagePreparer:
             if created:
                 extracted = extract_plugin_package(archive_path, code_path)
                 if extracted != package:
-                    shutil.rmtree(code_path)
+                    remove_tree(code_path)
                     raise PluginPreparationError("预检后插件归档发生变化")
             try:
                 verify_prepared_code(code_path, package.manifest_sha256)
@@ -263,7 +337,7 @@ class PluginPackagePreparer:
                 return PluginPreparedPackage(preflight, code_path, dependency_directory)
             except Exception:
                 if created:
-                    shutil.rmtree(code_path)
+                    remove_tree(code_path)
                 raise
 
     def prepare_dependencies(

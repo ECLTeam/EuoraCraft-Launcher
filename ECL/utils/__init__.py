@@ -26,7 +26,7 @@ from ECL.utils.errors import (
     WardrobeError,
 )
 from ECL.utils.event_bus import EventBus, EventHandler, Unsubscribe
-from ECL.utils.files import AtomicWritePolicy, atomic_write_bytes, atomic_write_text
+from ECL.utils.files import AtomicWritePolicy, RemoveTreePolicy, atomic_write_bytes, atomic_write_text, remove_tree
 from ECL.utils.logging import LoggingRuntime, configure_logging, get_logger
 from ECL.utils.themes import ThemeCatalog, normalize_theme_id
 
@@ -45,6 +45,7 @@ __all__ = [
     "GameServiceError",
     "LoggingRuntime",
     "PluginCommandError",
+    "RemoveTreePolicy",
     "ThemeCatalog",
     "Unsubscribe",
     "VersionScanError",
@@ -56,4 +57,5 @@ __all__ = [
     "get_pyproject_data",
     "get_runtime_info",
     "normalize_theme_id",
+    "remove_tree",
 ]

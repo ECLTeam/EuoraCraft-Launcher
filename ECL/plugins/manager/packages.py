@@ -24,7 +24,7 @@ from ECL.plugins.host_dependencies import HostDependencyPolicy
 from ECL.plugins.installation_store import WorkerManifest, manifest_validation_error_code
 from ECL.plugins.package_activation import PluginPackageActivation, PluginPackageActivationStore, plugin_name_pattern
 from ECL.plugins.package_archive import PluginPackageError
-from ECL.plugins.package_preparation import PluginPackagePreflight, PluginPackagePreparer
+from ECL.plugins.package_preparation import PluginDirectoryPreflight, PluginPackagePreflight, PluginPackagePreparer
 
 from .base import _PluginState
 from .contracts import PluginAction, PluginActionResult
@@ -61,6 +61,41 @@ class PluginPackages(_PluginState):
         except ValueError as exc:
             raise PluginDependencyError("插件清单无法解析") from exc
         return preflight
+
+    def inspect_directory(self, source_path: str) -> PluginDirectoryPreflight:
+        """
+        只读预检目录插件，供安装前确认来源与依赖就绪情况。
+
+        与归档预检一致：不复制目录、不联网、不执行插件代码；清单与依赖锁
+        不满足安装条件时直接说明原因，避免用户确认后才失败。
+
+        :param source_path: 插件源目录
+        :return: 当前宿主目标的目录预检结果
+        :raises PluginDependencyError: 路径、清单或依赖锁不满足安装条件
+        """
+        if not isinstance(source_path, str) or not source_path.strip():
+            raise PluginDependencyError("插件目录路径无效")
+        source = Path(source_path)
+        if not source.is_dir():
+            raise PluginDependencyError("插件目录不存在")
+        metadata_path = source / "plugin.json"
+        if not metadata_path.is_file():
+            raise PluginDependencyError("所选目录缺少 plugin.json")
+        try:
+            manifest = WorkerManifest.model_validate_json(metadata_path.read_bytes())
+        except ValidationError as exc:
+            if manifest_validation_error_code(exc) == "PLUGIN_API_VERSION_UNSUPPORTED":
+                raise PluginDependencyError("此插件要求的 API 版本不被当前启动器支持") from exc
+            raise PluginDependencyError("插件清单字段无效，请检查 name、version 与 entry_point") from exc
+        except ValueError as exc:
+            raise PluginDependencyError("插件清单无法解析，请确认是有效的 UTF-8 JSON") from exc
+        return PluginPackagePreparer(self._data_path).inspect_directory(
+            source,
+            name=manifest.name,
+            version=manifest.version,
+            entry_point=manifest.entry_point,
+            direct=tuple(manifest.python_dependencies),
+        )
 
     def _dependency_policy(self) -> HostDependencyPolicy:
         if self._host_dependency_policy is None:

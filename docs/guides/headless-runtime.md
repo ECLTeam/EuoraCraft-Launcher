@@ -74,7 +74,7 @@ ECL.exe --headless --role plugin --endpoint <宿主端点> --host-pid <PID> --ru
 
 插件生命周期与双向调用通过 IPC 交付，不使用 stdout 的探测结果协议。参数、连接或授权失败不会回退桌面。断连及关闭由宿主监管和会话资源清理处理；已经提交到宿主的业务任务须另按任务所有权和取消规则管理。
 
-正式 PluginManager 已接入目录与归档第三方插件：安装和发现只登记，完成内容审阅及必要授权后才创建 Worker；禁用、崩溃及必要权限撤销均由宿主持有的监管服务确认进程停止。可信主窗口提供权限审阅与撤销，现行文件、游戏及独立窗口能力按各自契约控制，详见[v2 协议](../protocols/eclplugin-package-format.md)；跨平台真实验收范围见[交付记录](../plans/plugin-posix-files-and-webviews-2026-11-01.md)。宿主任务收尾等待实际 future 和审计保存，不能以 Worker 退出代替；源码门禁不代表新的冻结发行物已经验收。
+正式 PluginManager 已接入目录与归档第三方插件：安装和发现只登记，完成内容审阅及必要授权后才创建 Worker；禁用、崩溃及必要权限撤销均由宿主持有的监管服务确认进程停止。可信主窗口提供权限审阅与撤销，现行文件与游戏能力按各自契约控制，详见[插件包格式](../protocols/eclplugin-package-format.md)；跨平台真实验收范围见[交付记录](../plans/plugin-posix-files-and-webviews-2026-11-01.md)。宿主任务收尾等待实际 future 和审计保存，不能以 Worker 退出代替；源码门禁不代表新的冻结发行物已经验收。
 
 ## 扩展边界
 
@@ -90,4 +90,4 @@ ECL.exe --headless --role plugin --endpoint <宿主端点> --host-pid <PID> --ru
 
 根目录仅保留 `main.py` 作为统一进程入口。启动引导位于 `ECL/bootstrap.py`，轻量插件 API 位于 `ECL/plugins/api/`，插件导入使用 `from ECL.plugins.api import Plugin`。旧 `ecl_bootstrap` 和 `ecl_plugin_api` 导入路径已移除，插件源码需要同步调整；启动器不会自动改写已安装插件或用户数据。
 
-直接导入 `ECL.plugins.api` 不初始化宿主插件管理器、桌面或业务服务。宿主内既有的 `ECL.plugins.Plugin` 接口仅用于可信发行系统插件；第三方必须声明 API v2 并使用独立 Worker，不提供旧基类适配。版本信息由 `ECL.version` 提供。
+直接导入 `ECL.plugins.api` 不初始化宿主插件管理器、桌面或业务服务。宿主内既有的 `ECL.plugins.Plugin` 接口仅用于可信发行系统插件；第三方必须声明 `api_version: 1` 并使用独立 Worker，不提供旧基类适配。版本信息由 `ECL.version` 提供。

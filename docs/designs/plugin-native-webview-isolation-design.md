@@ -1,6 +1,6 @@
 # ECL 插件原生前端隔离增补方案
 
-日期：2026-10-12，Asia/Shanghai；实施状态更新于 2026-11-01。固定源码原生 Wheel、生产 Broker 与独立窗口已接通，真实 WebView2 网络门禁及 Worker 往返、撤权关闭、重开已通过。构建入口、固定 Runtime 版本与限制见 [原生运行时说明](../../native/pytauri-runtime/README.md)，具体证据见[第二批交付](../plans/plugin-second-batch-delivery-2026-11-01.md)。本文件保留调研与失败实验的原因，不把早期原型状态作为当前功能状态。
+日期：2026-10-12，Asia/Shanghai；实施状态更新于 2026-11-01。固定源码原生 Wheel、生产 Broker 与独立窗口已接通，真实 WebView2 网络门禁及 Worker 往返、撤权关闭、重开已通过。构建入口、固定 Runtime 版本与限制见 [PyTaruiX](https://github.com/ECLTeam/PyTaruiX)，具体证据见[第二批交付](../plans/plugin-second-batch-delivery-2026-11-01.md)。本文件保留调研与失败实验的原因，不把早期原型状态作为当前功能状态。
 
 本文件补充已获实施批准的 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)，只调整 P04/P18 的原生边界。Worker 与权限/API 方向不变，不迁移到 PyTauriX，也不修改本机另一套 PyTauri 项目。
 
@@ -74,7 +74,7 @@ Windows 专属安全能力缺失时拒绝创建用户自定义窗口，给出稳
 
 ## 6. 未确认风险与审阅边界
 
-2026-11-01 原生实验确认：`ICoreWebView2_22` 的全来源资源事件能阻止 HTTP 子框架导航，但同一测试页面的 WebSocket 握手仍到达服务器。在该事件基础上增加 `Network.emulateNetworkConditions` 离线策略、等待原生完成回调后再加载测试页面，WebSocket 仍未被阻断。实验补丁与独立服务器测试见 [实验说明](../../native/pytauri-runtime/experiments/README.md)。这两种早期原型未满足 N01。当前生产实现已经增加固定拒绝代理、移除 loopback bypass、禁用 QUIC/非代理 UDP，并通过独立服务器与合法回传对照；不能把当时资源事件或离线模拟单独作为完整网络边界。
+2026-11-01 原生实验确认：`ICoreWebView2_22` 的全来源资源事件能阻止 HTTP 子框架导航，但同一测试页面的 WebSocket 握手仍到达服务器。在该事件基础上增加 `Network.emulateNetworkConditions` 离线策略、等待原生完成回调后再加载测试页面，WebSocket 仍未被阻断。这两种早期原型未满足 N01。当前生产实现已经增加固定拒绝代理、移除 loopback bypass、禁用 QUIC/非代理 UDP，并通过独立服务器与合法回传对照；不能把当时资源事件或离线模拟单独作为完整网络边界。
 
 - 当前 Wheel 与 upstream commit 的 Rust 依赖差异，需要 N00 建立实际构建证据；不是顺带升级 Tauri/Wry/PyO3 的授权。
 - 原生预加载注册顺序、iframe/worker 全来源过滤、WebSocket 等出口覆盖、Tauri 通用 IPC 在 iframe 中的路径，仍须源码定位及真实验收。

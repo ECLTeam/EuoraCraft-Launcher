@@ -49,11 +49,11 @@ def settings_changed(self, values, revision, sequence):
 
 插件页统一“插件设置”打开全屏弹窗，左侧搜索及选择已安装插件，右侧按照同一 schema 渲染控件。行内设置按钮定位同一界面。内部使用紧凑导航及标准设置行，选中状态随主题强调色变化，卡片表面、圆角和边框沿用公共样式。
 
-开关和选择项修改后保存，文本在提交/失焦时保存；保存结果、失败和冲突明确显示。切换插件不会把迟到值或提示写入另一插件。保存与 Worker、面板和独立前端共用一个配置服务及 revision。
+开关和选择项修改后保存，文本在提交/失焦时保存；保存结果、失败和冲突明确显示。切换插件不会把迟到值或提示写入另一插件。保存与 Worker 及面板共用一个配置服务及 revision。
 
 禁用插件后仍可管理已经发布且匹配当前内容的定义。不曾登记或内容已变化时，界面要求先启用；宿主不会为了查看配置而暗中执行插件。
 
-主窗口前端 SDK 的 `getPluginSettings(name)` 返回统一视图。写入使用 `updatePluginSetting(name, key, value, settingsView)`，必须保留读取时的视图，不能只传一个 revision 或自行拼内容摘要。独立窗口的 `ECL.call('settings.get/set', ...)` 使用 Worker 自身契约，只能访问本插件配置。
+主窗口前端 SDK 的 `getPluginSettings(name)` 返回统一视图。写入使用 `updatePluginSetting(name, key, value, settingsView)`，必须保留读取时的视图，不能只传一个 revision 或自行拼内容摘要。
 
 ## 持久化与定义变化
 

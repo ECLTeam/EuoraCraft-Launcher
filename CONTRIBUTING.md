@@ -62,10 +62,12 @@ Issue 关闭与版本发布分别报告：修复进入默认分支，不代表�
 ## 提交改动
 
 1. 检出仓库并初始化子模块：`git clone --recurse-submodules`，或对已有仓库执行 `git submodule update --init --recursive`。
-2. 环境要求：Python 3.11+、Node.js 22、pnpm 10。后端用 `pip install -e ".[dev]"`，前端用 `pnpm install --frozen-lockfile`。
-3. 改动前先按 [AGENTS.md](AGENTS.md) 第 0 节确认需求与方案；未经确认不要直接提交实现。
-4. 提交信息使用中文 Conventional Commits（`feat`、`fix`、`perf`、`docs`、`style`、`refactor`、`test`、`chore`），例如 `fix: 修复更新弹窗重复提示`；一次提交只包含同一功能的相关文件。
-5. PR 按模板说明关联 Issue、具体改动、实际执行的检查和待完成事项。纯文档变更没有关联 Issue 时说明原因即可。Issue 或 PR 中的讨论不替代实施批准。
+2. 环境要求：Python 3.11+、Node.js 22、pnpm 10（`frontend/package.json` 固定为 10.34.4，建议用 `corepack enable` 对齐版本）。后端用 `pip install -e ".[dev]"`，前端在 `frontend` 目录执行 `pnpm install --frozen-lockfile`。
+3. 本地运行：先在 `frontend` 执行 `pnpm build` 生成 `frontend/dist`，再回到主仓库执行 `python main.py`。只调界面且不需要真实数据时，在 `frontend` 执行 `pnpm showcase`，使用内置示例数据预览；`pnpm dev` 只启动前端开发服务器，不连接后端。
+4. 子模块边界：`frontend`（EuoraCraft-Launcher.Frontend）与 `ECL/minecraft/game`（EuoraCraft-Launcher.Core）是独立仓库，内部代码改动提交到各自仓库，主仓库只更新子模块指针；两侧的提交与推送顺序按 [AGENTS.md](AGENTS.md) 第 8 节。
+5. 改动前先按 [AGENTS.md](AGENTS.md) 第 0 节确认需求与方案；未经确认不要直接提交实现。
+6. 提交信息使用中文 Conventional Commits（`feat`、`fix`、`perf`、`docs`、`style`、`refactor`、`test`、`chore`），例如 `fix: 修复更新弹窗重复提示`；一次提交只包含同一功能的相关文件。
+7. PR 按模板说明关联 Issue、具体改动、实际执行的检查和待完成事项。纯文档变更没有关联 Issue 时说明原因即可。Issue 或 PR 中的讨论不替代实施批准。
 
 ## 检查会在什么时候运行
 
@@ -73,15 +75,17 @@ Issue 关闭与版本发布分别报告：修复进入默认分支，不代表�
 
 | 改动范围 | PR 上执行 | 推送到 `main` |
 | --- | --- | --- |
-| `ECL/`、`tests/`、`packaging/`、`native/`、`tools/`、`main.py`、`pyproject.toml` | Backend Tests、Ruff Lint | 全量 |
+| `ECL/`、`tests/`、`packaging/`、`tools/`、`main.py`、`pyproject.toml`、`.github/workflows/backend-tests.yml` | Backend Tests；Ruff Lint（仅 `*.py` 与 `pyproject.toml`） | Backend Tests 全量 |
 | `frontend` 子模块指针 | Frontend Checks | 全量 |
 | `ECL/plugins/`、`ECL/plugins/api/` 等插件运行时路径 | Plugin Worker Platforms（Windows / Linux / macOS） | 按路径 |
 | 依赖清单：`pyproject.toml`、`frontend/package.json`、`frontend/pnpm-lock.yaml` | Dependency Review（依赖审计） | 每周治理任务 |
-| `docs/governance/`、`ECL/tooling/governance.py`、扫描脚本 | Engineering Governance（含 31 个场景的可访问性扫描） | 每次推送 + 每周四定时 |
+| `docs/governance/`、`ECL/tooling/governance.py`、`tests/test_governance.py`、`frontend/tests/browser/` | Engineering Governance（5 个页面 × Classic/Folia × 明暗主题，共 20 次可访问性扫描） | 每次推送 + 每周四定时 |
 | 仅文档、模板、图片 | 无自动检查，按第 6 节自查格式、结构与链接 | — |
 
 几点说明：
 
+- **Ruff Lint 只在 PR 与手动触发时运行**，`main` 推送不执行；提交前请按 [AGENTS.md](AGENTS.md) 第 6.2 节本地执行 `ruff check` 与 `ruff format --check`。
+- **构建与发布**由推送 `v*` 标签或手动触发 `Build` 工作流完成，产出 Windows x64 / Windows ARM64 / Linux / macOS 产物；版本号规则与产物验收见[发布流程](docs/guides/release-process.md)。
 - **依赖更新**走单独工作流。Renovate 的 PR 只有清单变动时才跑审计，不会因为页面扫描与本次升级无关而变红。
 - **可访问性扫描**在 PR 上只跟随治理相关改动；日常界面改动由 `main` 推送与每周定时发现，避免每次 UI 调整都被整套扫描阻塞。
 - 同一分支连续推送会取消上一次未完成的运行，只保留最新结果。

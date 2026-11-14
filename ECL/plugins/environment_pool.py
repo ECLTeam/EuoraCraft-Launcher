@@ -18,7 +18,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +34,7 @@ from ECL.plugins.wheel_installation import (
     install_wheel,
     validate_wheel_dependencies,
 )
-from ECL.utils import atomic_write_text
+from ECL.utils import atomic_write_text, remove_tree
 
 PluginEnvironmentError = PluginDependencyError
 safe_component_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
@@ -310,4 +309,4 @@ class PluginEnvironmentPool:
                 raise PluginDependencyError("插件依赖目录安装失败") from exc
             finally:
                 if staging_path.exists():
-                    shutil.rmtree(staging_path)
+                    remove_tree(staging_path)

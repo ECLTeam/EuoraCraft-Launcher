@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -268,3 +269,24 @@ def test_manifest_changed_during_staging_never_replaces_installed_code(tmp_path:
         assert manager.list_plugins()[0]["version"] == "1.0.0"
     finally:
         manager.close()
+
+
+def test_uninstall_removes_readonly_files_copied_from_repository(tmp_path: Path) -> None:
+    """
+    从源码仓库复制的插件目录带有 Git 只读对象，卸载不应被系统拒绝。
+    """
+    data_path = tmp_path / "data"
+    source_path = tmp_path / "source"
+    _plugin(source_path, "1.0.0")
+    readonly = source_path / ".git" / "objects" / "a1" / "86a3da6d743ac5f0edd33"
+    readonly.parent.mkdir(parents=True)
+    readonly.write_bytes(b"x" * 32)
+    readonly.chmod(stat.S_IREAD)
+    framework = _framework(data_path, tmp_path / "resources")
+
+    assert framework.install(str(source_path)).success
+    plugin_dir = data_path / "plugins" / "sources" / "demo"
+    assert plugin_dir.joinpath(".git", "objects", "a1", "86a3da6d743ac5f0edd33").exists()
+
+    assert framework.uninstall("demo").success
+    assert not plugin_dir.exists()

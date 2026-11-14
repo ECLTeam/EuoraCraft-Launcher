@@ -128,7 +128,7 @@ Worker、面板、独立窗口与可信全屏设置界面共用 `PluginSettingsS
 
 撤销首先阻止新提交；已接受的设置写入可能继续落盘。宿主在途写入、Worker 和事件资源均结束后才报告清理完成，超时只报告 pending 或失败。事件队列满及可靠事件交付失败会关闭该 Broker 并回收运行；已经提交的设置仍报告真实 revision，不伪造回滚。
 
-完整示例见 [worker_echo](../../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](../guides/headless-runtime.md)，总体契约与后续能力见 [Worker API 设计](../designs/plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
+现行运行边界见 [无头运行说明](../guides/headless-runtime.md)，总体契约与后续能力见 [Worker API 设计](../designs/plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
 
 ### 启用与信任模型
 
@@ -138,7 +138,7 @@ Worker、面板、独立窗口与可信全屏设置界面共用 `PluginSettingsS
 
 ### 实例读取
 
-启用后 `host.call("resources.list", {"capability":"instances.read"})` 返回宿主目录中全部活动根引用；用 `instances.scan` 取得具体实例引用，再调用 `instances.get`。示例见 [instance_reader](../../examples/plugins/instance_reader/README.md)。
+启用后 `host.call("resources.list", {"capability":"instances.read"})` 返回宿主目录中全部活动根引用；用 `instances.scan` 取得具体实例引用，再调用 `instances.get`。
 
 资源和扫描列表均返回 `{items,next_cursor}`，可提交 `cursor`、`limit`（1—100，默认 50）。扫描另接受 `force`，仅刷新本次只读快照。单个摘要返回 `instance_ref`、`version_id`、`alias`、`loader`、`game_version`、`profile:{description,favorite,tags}`、`profile_etag`、`running_count`；不返回真实路径或完整实例配置。etag 绑定完整本地资料的存在状态、物理身份、稳定元数据和原始字节摘要，不是递增 revision；其他字段变化或同名同内容重建也会使其失效。运行引用本身不提供写入能力。
 
@@ -164,7 +164,7 @@ receipt = host.call("instances.profile_patch", {
 
 平台与文件系统限制见[文件平台边界](#文件平台边界)。宿主固定原目录和文件对象，核对原资料版本后释放其独占句柄，再用**原子替换**发布新资料：要么旧资料完整保留，要么新资料完整可见，不会出现半写或名称缺失。替换成功后旧版本不可找回，宿主不保留备份、不登记恢复记录。暂存或句柄尚未实际释放时保持 cleanup_pending；重启不恢复旧 Worker、旧任务或旧补丁。
 
-示例见 [worker_instance_profile](../../examples/plugins/worker_instance_profile/README.md)，边界及验收见 实例资料修改方案。
+边界及验收见 实例资料修改方案。
 
 ### 自身任务控制
 
@@ -196,7 +196,7 @@ commit 返回 `{operation_ref,state:"queued"}`，表示已接纳；实际结果�
 
 files.write_abort `{write_ref}` 不消耗变更回执，运行结束后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放配额或允许重新启用。
 
-同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换事务按下节原子替换。参见 完整协议与验收 和可安装的 [worker_snapshot 示例](../../examples/plugins/worker_snapshot/README.md)。
+同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换事务按下节原子替换。参见 完整协议与验收。
 
 ### 按版本删除私有文件
 
@@ -208,7 +208,7 @@ RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；�
 
 成功必须确认原对象目录项已消失，最终仅返回 `{deleted:true}`。该无内容确认绑定原基础准入，失权后result为null，effect不改。自身CloseHandle成功不代表实际删除；外部元数据句柄可能延迟移除，超时返回 PLUGIN_FILE_DELETE_PENDING、effect=unknown、cleanup_pending=true。内核删除仍可能晚到完成；后续只观察原对象身份，不重开名称补删，不触及同名新对象。实际清理完成可以清除cleanup_pending，但不把unknown改报成功。
 
-这是直接删除，成功后不可恢复，不进入回收站。Windows 沿用原对象句柄的延迟删除；POSIX 在实际移除前持久登记并隔离原对象，只有物理身份一致才 unlink。POSIX 中断后再次访问目录时，只恢复本实现严格记录中尚存的对象且不覆盖占名文件；身份或记录异常时保留全部数据并明确失败。该恢复不复活旧 Worker、任务，不扫描清理其他历史文件。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 实施与验收 和 [显式清理示例](../../examples/plugins/worker_file_cleanup/README.md)。
+这是直接删除，成功后不可恢复，不进入回收站。Windows 沿用原对象句柄的延迟删除；POSIX 在实际移除前持久登记并隔离原对象，只有物理身份一致才 unlink。POSIX 中断后再次访问目录时，只恢复本实现严格记录中尚存的对象且不覆盖占名文件；身份或记录异常时保留全部数据并明确失败。该恢复不复活旧 Worker、任务，不扫描清理其他历史文件。提交等待超时使用原mutation_key查询mutations.get；接受后不可取消。未释放资源阻止重新启用，暂存清理同样等待已知原对象实际消失才归还名额。参见 实施与验收。
 
 ### 按版本替换私有文件
 
@@ -219,8 +219,6 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 替换成功后旧内容不可找回，宿主不保留备份、不登记恢复记录，也不阻塞该路径的后续写入。接受前失败保留原文件；替换本身失败按真实结果报告effect，失败时原文件内容不变、暂存由任务收尾清理，`cleanup_pending` 只在暂存或句柄尚未实际释放时保持。
 
 崩溃语义：替换前中断，目标保持旧内容（`.upload-*` 暂存残留计入空间，不自动恢复或删除）；替换后中断，目标是新内容。重启不继续旧上传、不恢复旧run控制引用，也不扫描删除未知残留。
-
-示例见 [worker_file_replace](../../examples/plugins/worker_file_replace/README.md)。
 
 ## 只读网络请求
 
@@ -234,7 +232,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 每 run 同时2个请求，宿主8个请求、4个真实 DNS 工作者；满额立即拒绝。DNS超时或取消不证明实际解析结束，未结束时保留名额和清理 pending，阻止同安装重新启用；迟到结果只清理，不继续连接。解析工作者为有界守护线程，应用不无限 join，实际结束仍如实跟踪。连接/TLS 尚未返回真实流时按有限阶段预算等待，返回后登记并清理；关闭失败保留监管重试。
 
-稳定失败包含 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_RESOURCE_DENIED`、`PLUGIN_NETWORK_TARGET_DENIED`、`PLUGIN_NETWORK_RESOLUTION_FAILED`、`PLUGIN_NETWORK_FAILED`、`PLUGIN_REDIRECT_DENIED`、`PLUGIN_RESPONSE_TOO_LARGE`、`PLUGIN_NETWORK_ENCODING_UNSUPPORTED`、`PLUGIN_DEADLINE_EXCEEDED`、`PLUGIN_RATE_LIMITED`，运行失效沿用原失效错误码。项目文件、控制台和前端日志不记录 URL、头、响应或传输原始异常；其他上下文日志保持原行为。私有空间下载见下节。参见 实施与验收 和 [worker_network_read](../../examples/plugins/worker_network_read/README.md)。
+稳定失败包含 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_RESOURCE_DENIED`、`PLUGIN_NETWORK_TARGET_DENIED`、`PLUGIN_NETWORK_RESOLUTION_FAILED`、`PLUGIN_NETWORK_FAILED`、`PLUGIN_REDIRECT_DENIED`、`PLUGIN_RESPONSE_TOO_LARGE`、`PLUGIN_NETWORK_ENCODING_UNSUPPORTED`、`PLUGIN_DEADLINE_EXCEEDED`、`PLUGIN_RATE_LIMITED`，运行失效沿用原失效错误码。项目文件、控制台和前端日志不记录 URL、头、响应或传输原始异常；其他上下文日志保持原行为。私有空间下载见下节。参见 实施与验收。
 
 ## 私有空间下载任务
 
@@ -248,7 +246,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 成功为 completed、effect committed；最终 result 使用发布前捕获的 FileView，仅在提交时的原始基础准入于交付时仍有效才返回，否则为 null。重新启用不会恢复旧结果准入；可以通过当前 files API 重新读取。摘要始终计算并从原生暂存复核，可选期望摘要不符为 PLUGIN_HASH_MISMATCH。未知长度接收阶段不伪造百分比；只有文件发布完成才到100%。
 
-失败、排队取消和审计失败都尝试清理暂存与实际网络工作；系统 DNS 尚未返回、关闭/删除失败或审计未保存时保持 cleanup pending，阻止同安装重新启用。清理重试不会重做 HTTP 或发布，不删除成功文件，不扫描清除崩溃残留，不恢复旧run控制权。其余稳定错误沿用网络、文件和任务接口。参见 完整下载方案与验收 和 [worker_download](../../examples/plugins/worker_download/README.md)。
+失败、排队取消和审计失败都尝试清理暂存与实际网络工作；系统 DNS 尚未返回、关闭/删除失败或审计未保存时保持 cleanup pending，阻止同安装重新启用。清理重试不会重做 HTTP 或发布，不删除成功文件，不扫描清除崩溃残留，不恢复旧run控制权。其余稳定错误沿用网络、文件和任务接口。参见 完整下载方案与验收。
 
 ## 获准游戏目录、安装与进程控制
 
@@ -275,7 +273,7 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 用户与插件共用单个启动准备占位，冲突返回忙。异步账户和下载准备沿用宿主既有事件循环，进程创建是短提交点，之前再次核对运行准入、取消、目录身份和当前账户；之后关闭插件不会杀游戏。准备可能已经补全游戏文件，即使未创建进程也可能是partial。已创建游戏仍在启动器正常运行列表中；停止使用有限等待，并在未确认退出时返回 `PLUGIN_GAME_STOP_TIMEOUT`。重复停止已退出的自身进程成功且保留退出码。
 
-常见失败包括 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_GAME_VERSION_INVALID`、`PLUGIN_LOADER_VERSION_INVALID`、`PLUGIN_INSTALL_BUSY`、`PLUGIN_LAUNCH_BUSY`、`PLUGIN_HOST_NOT_READY`、`PLUGIN_FILE_EXISTS`、`PLUGIN_OWNER_MISMATCH`，其余沿用运行、资源、任务和安装错误。参见[安装示例](../../examples/plugins/worker_game_install/README.md)、[启动示例](../../examples/plugins/worker_game_launch/README.md)及[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)。
+常见失败包括 `PLUGIN_SCHEMA_INVALID`、`PLUGIN_GAME_VERSION_INVALID`、`PLUGIN_LOADER_VERSION_INVALID`、`PLUGIN_INSTALL_BUSY`、`PLUGIN_LAUNCH_BUSY`、`PLUGIN_HOST_NOT_READY`、`PLUGIN_FILE_EXISTS`、`PLUGIN_OWNER_MISMATCH`，其余沿用运行、资源、任务和安装错误。参见[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)。
 
 ### Java 资源和固定来源安装
 
@@ -292,7 +290,7 @@ Java 目录中的全部已登记运行时随启用可见，候选 `kind` 为 `ja
 
 已登记目标校验与选用按运行准入执行。本运行安装成功的目标可直接选用。`game.launch.options.runtime_ref` 可传入此引用，宿主在执行前与进程创建前重新核验运行准入及文件身份。其他启动参数不增加裸 Java 路径、JVM 参数或命令入口。
 
-每个运行最多保留 32 个未过期安装计划。安装目标先检查真实任务所有者，用户与不同插件的在途安装返回忙，不复用或取消其任务。重复去重键只查询同一回执。取消和超时不等于安装线程已结束；目标占位保留至实际清理。安装结果受原始运行准入约束，运行失效保留文件且不复活旧引用。示例见 [Java 查询与安装](../../examples/plugins/worker_java_query/README.md)。
+每个运行最多保留 32 个未过期安装计划。安装目标先检查真实任务所有者，用户与不同插件的在途安装返回忙，不复用或取消其任务。重复去重键只查询同一回执。取消和超时不等于安装线程已结束；目标占位保留至实际清理。安装结果受原始运行准入约束，运行失效保留文件且不复活旧引用。
 
 ### 模组、资源包、光影与在线目录
 
@@ -310,7 +308,7 @@ Java 目录中的全部已登记运行时随启用可见，候选 `kind` 为 `ja
 
 目录查询属于固定来源基础能力，复用用户设置的现有模组源，不接受插件指定 API 地址或提供方密钥。搜索每页 1—50 条，偏移最多 1000；版本分页每页 1—50 条。下载文件仍使用 `downloads.submit`，完成后再传私有 `FileRef` 安装。`download_info` 不隐式执行下载或写入。
 
-隔离与共享位置使用现有实例数据归属规则，不能根据实例名称自行拼路径。源与目标均固定实际句柄、拒绝链接和重解析点；同名目标不覆盖，资源版本变化后重新读取列表。当前单个资源安装最多 64 MiB，并继续受私有源文件自身配额约束。仅模组提供启用状态操作。示例与实际命令序列见 [游戏资源与整合包](../../examples/plugins/worker_game_tools/README.md)。
+隔离与共享位置使用现有实例数据归属规则，不能根据实例名称自行拼路径。源与目标均固定实际句柄、拒绝链接和重解析点；同名目标不覆盖，资源版本变化后重新读取列表。当前单个资源安装最多 64 MiB，并继续受私有源文件自身配额约束。仅模组提供启用状态操作。
 
 ### 整合包所属任务
 
@@ -345,7 +343,7 @@ Java 目录中的全部已登记运行时随启用可见，候选 `kind` 为 `ja
 
 ## 第二批独立窗口、认证与联机契约
 
-独立窗口与认证能力随启用获得。联机已迁入独立插件仓库，不再提供宿主联机能力。
+认证能力随启用获得；独立窗口当前不提供，按下方契约显式拒绝。联机已迁入独立插件仓库，不再提供宿主联机能力。
 
 ### 包内独立前端
 
@@ -357,7 +355,7 @@ Worker 使用 `ui.windows.open({})`，返回 `window_ref`、`ready`、`closing`�
 
 隔离原语在当前 `pytaurix` 发行中尚未提供（顶层导航锁定与消息 URI 拦截随旧自维护运行时退役）；
 `ui.windows.open` 现返回 `PLUGIN_UI_ISOLATION_UNAVAILABLE`，窗口不创建。上述窗口形态与消息协议
-为隔离原语落地后重新实现与验收的目标契约。示例见 [worker_custom_ui](../../examples/plugins/worker_custom_ui/README.md)。
+为隔离原语落地后重新实现与验收的目标契约。
 
 ### 认证与联机
 

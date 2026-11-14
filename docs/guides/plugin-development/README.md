@@ -1,6 +1,6 @@
 # 插件开发手册
 
-本手册面向第三方 Python Worker API v2 插件。以当前源码、[插件包协议](../../protocols/eclplugin-package-format.md)和实际宿主返回为准；可信系统插件的 `ECL.plugins.Plugin` 属于另一条内部接口。
+本手册面向第三方 Python 插件（独立 Worker 运行时）。以当前源码、[插件包协议](../../protocols/eclplugin-package-format.md)和实际宿主返回为准；可信系统插件的 `ECL.plugins.Plugin` 属于另一条内部接口。
 
 ## 阅读路径
 
@@ -28,12 +28,12 @@ Worker 隔离不是恶意 Python 的操作系统沙箱。宿主接口的文件/�
 
 插件配置默认使用[专用设置中心](settings.md)，不自行实现配置弹窗或设置页；插件内按钮通过绑定的 `SDK.ui.openSettings()` 打开同一全屏弹窗。官方插件已迁出为独立仓库（见仓库根 AGENTS.md 中的链接），实现约束遵循各自仓库内 AGENTS.md。
 
-全部可安装示例位于 [examples/plugins](../../../examples/plugins)。从 `worker_development` 开始观察代码保存及配置保留；需要独立前端时参考 `worker_custom_ui`，需要游戏资源和整合包时参考 `worker_game_tools`。
+示例插件已迁出主仓库，本章各页只说明接口与行为，不再附带示例源码。
 
 不要复制带真实凭据的账户文件或用户存档作为开发数据。可以使用 `python main.py --data-dir <独立测试目录>` 启动源码版本；需要热重载时追加 `--plugin-dev`，也可设置可选的 `plugins.development_mode`；具体优先级见[开发模式](development-mode.md)。
 
 ## 支持范围
 
-Worker 平台、文件系统、浏览器引擎及冻结产物分别验证。[原生运行时说明](../../../native/pytauri-runtime/README.md)列出独立窗口所需维护版及固定条件；某平台可启动 Worker，不代表全部领域操作和任意工具二进制已在该平台通过。
+Worker 平台、文件系统、浏览器引擎及冻结产物分别验证。运行时固定使用 [PyTaruiX](https://github.com/ECLTeam/PyTaruiX)，独立窗口隔离在当前版本不再提供；某平台可启动 Worker，不代表全部领域操作和任意工具二进制已在该平台通过。
 
 在线插件商店、发行人签名和通用跨插件事件总线不属于当前公开能力。归档哈希只证明内容完整性，开发会话信任也不会生成永久签名或生产授权。

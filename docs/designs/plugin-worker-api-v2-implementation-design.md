@@ -1067,7 +1067,7 @@ files.write_commit 是首个生产任务入口，返回 queued 接纳回执。�
 
 任务资源清理属于准入生命周期，排队取消、审计失败和工作线程结束均执行，失败仅重试清理和保存，不重做发布。成功清理能确认 staged 消失，不能覆盖 committed/unknown。固定配额计入活跃预留、已有文件和崩溃残留，不自动清扫旧文件。本阶段未包含的按版本删除、替换恢复及实例资料写入分别见后续第25—28节；子目录、共享空间及通用暂存恢复未开放。
 
-现行调用说明与示例见 [归档文档](../protocols/eclplugin-package-format.md#私有文件与新建事务) 和 [worker_snapshot](../../examples/plugins/worker_snapshot/README.md)。源码、两种冻结发行物、真实 WebView2 权限显示与本地交付结果集中在 P09 验收记录。
+现行调用说明见 [归档文档](../protocols/eclplugin-package-format.md#私有文件与新建事务)。源码、两种冻结发行物、真实 WebView2 权限显示与本地交付结果集中在 P09 验收记录。
 
 ## 25. P10 A 受控只读网络（2026-10-21）
 
@@ -1077,7 +1077,7 @@ PluginWorkerService拥有唯一PluginNetworkService，每个Broker持有RuntimeN
 
 HTTPcore公开NetworkBackend/NetworkStream仅向已准入数字IP连接，发送HTTP前核实peer；TLS验证、SNI和Host保留原站点。每跳独立池，HTTP/1、无代理、无复用、无Cookie。租约接受点仅记录有限动作，真实I/O在锁外；总30秒/单阶段5秒，原始收包及完整实体分别限额。最终清理后再次检查原租约与截止，撤销不通过新租约恢复旧请求。
 
-网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。公开示例、契约与验收见 [归档文档](../protocols/eclplugin-package-format.md#只读网络请求)、[worker_network_read](../../examples/plugins/worker_network_read/README.md) 与 P10验收记录。下载任务见第26节；实例资料写入见第28节。
+网络调用作用域在格式化前过滤httpcore/httpx原始日志，DNS显式传播上下文，不影响其他任务；异常只记录稳定码或安全堆栈位置。契约与验收见 [归档文档](../protocols/eclplugin-package-format.md#只读网络请求) 与 P10验收记录。下载任务见第26节；实例资料写入见第28节。
 
 
 ## 26. P10 B 私有空间下载任务（2026-10-21）
@@ -1088,7 +1088,7 @@ RuntimeDownloads连接现有网络、文件和唯一OperationManager，不增加
 
 Broker现有mutation回执用于提交去重和超时后查询；权限撤销后回执只返回自身控制引用，不恢复权限。Worker监管同时检查任务、网络取消与暂存清理。排队取消不等于future已完成；任务终态也不等于网络、暂存及审计已经收尾，真实pending继续阻止重新启用。关闭失败只重试清理，不重发HTTP或删除已发布目标。
 
-协议和示例见 [归档文档](../protocols/eclplugin-package-format.md#私有空间下载任务)、[worker_download](../../examples/plugins/worker_download/README.md)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 下载验收记录。删除、替换及实例资料修改见相邻切片；安装任务和自定义前端未开放。
+协议见 [归档文档](../protocols/eclplugin-package-format.md#私有空间下载任务)。本轮源码、真实Worker、冻结产物和桌面验收结果集中记录在 下载验收记录。删除、替换及实例资料修改见相邻切片；安装任务和自定义前端未开放。
 
 ## 27. 私有文件按版本替换与可信恢复（2026-10-22）
 
@@ -1112,7 +1112,7 @@ P12按用户批准范围实施，2026-10-30完成本机验收。新增game.catal
 
 PluginGameCoordinator复用应用GameService及唯一OperationManager，目录查询沿用当前有效来源，安装复用Core和InstallationProgress。安装占位由普通界面、整合包和插件共享；原生句柄固定目标，线程与句柄实际收尾前保持忙，保留用户实例与失败文件。启动复用宿主既有事件循环和账户客户端，进程创建进入短提交点；同一运行记录由正常游戏列表与插件所有者索引共同引用。停止只匹配确切进程对象，关闭插件和提交后撤权不杀游戏。
 
-三类任务在可信任务中心显示真实业务阶段，Worker继续使用自身任务引用及原读许可结果投影。权限弹窗支持根安装及具体实例启动/停止，六语言同步。当前实现、接口边界和验收记录见[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)、[协议](../protocols/eclplugin-package-format.md#获准游戏目录安装与进程控制)、[安装示例](../../examples/plugins/worker_game_install/README.md)及[启动示例](../../examples/plugins/worker_game_launch/README.md)。
+三类任务在可信任务中心显示真实业务阶段，Worker继续使用自身任务引用及原读许可结果投影。权限弹窗支持根安装及具体实例启动/停止，六语言同步。当前实现、接口边界和验收记录见[实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md)及[协议](../protocols/eclplugin-package-format.md#获准游戏目录安装与进程控制)。
 
 ## 30. 面向普通玩家的业务权限（2026-10-31）
 
