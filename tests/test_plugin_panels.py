@@ -8,6 +8,10 @@
 # 公开接口：
 #   - test_register_and_list_panels(panel_setup) -> None
 #   - test_register_rejects_invalid_panels(panel_setup) -> None
+#   - test_panel_structure_limits_are_removed(panel_setup) -> None
+#   - test_panel_new_display_nodes_register_and_data_roundtrip(panel_setup) -> None
+#   - test_panel_list_row_actions_require_key_column(panel_setup) -> None
+#   - test_panel_refresh_seconds_bounds(panel_setup) -> None
 #   - test_panel_data_without_callback_is_empty(panel_setup) -> None
 #   - test_panel_data_reads_callback_payload(panel_setup) -> None
 #   - test_panel_data_rejects_invalid_payload(panel_setup) -> None
@@ -95,14 +99,95 @@ def test_register_rejects_invalid_panels(panel_setup) -> None:
             {"panels": [panel([{"type": "unknown"}])]},
         )
     assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
-    deep = {"type": "group", "children": [{"type": "group", "children": [{"type": "group", "children": [TEXT_NODE]}]}]}
-    with pytest.raises(ProtocolError) as error:
-        request(broker, "panels.register", {"panels": [panel([deep])]})
-    assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
     request(broker, "panels.register", {"panels": [panel([TEXT_NODE])]})
     with pytest.raises(ProtocolError) as error:
         request(broker, "panels.register", {"panels": [panel([TEXT_NODE])]})
     assert error.value.error_code == "PLUGIN_REGISTRATION_CONFLICT"
+
+
+def test_panel_structure_limits_are_removed(panel_setup) -> None:
+    """嵌套深度、节点数量与列数不再设人为上限，合法结构一律放行。"""
+    broker, _payload = panel_setup
+    define_setting(broker)
+    deep = {"type": "group", "children": [{"type": "group", "children": [{"type": "group", "children": [TEXT_NODE]}]}]}
+    wide = [{"type": "text", "text": f"n{i}"} for i in range(60)]
+    many_columns = [{"key": f"col{i}", "label": f"列{i}"} for i in range(20)]
+    list_node = {"type": "list", "source": "rows", "columns": many_columns}
+    request(broker, "panels.register", {"panels": [panel([deep, *wide, list_node], key="wide")]})
+
+
+def test_panel_new_display_nodes_register_and_data_roundtrip(panel_setup) -> None:
+    """heading/divider/metric/badge 四种新展示节点随注册放行并出现在面板清单。"""
+    broker, _payload = panel_setup
+    nodes = [
+        {"type": "heading", "level": 2, "text": "概览"},
+        {"type": "divider"},
+        {"type": "metric", "label": "实例数", "value": "12", "tone": "primary", "hint": "本机"},
+        {"type": "badge", "text": "运行中", "tone": "success"},
+    ]
+    request(broker, "panels.register", {"panels": [panel(nodes, key="display")]})
+    listed = request(broker, "panels.list", {})
+    registered = next(item for item in listed["panels"] if item["key"] == "display")["nodes"]
+    assert {item["type"] for item in registered} == {"heading", "divider", "metric", "badge"}
+    assert registered[2]["value"] == "12"
+
+
+def test_panel_list_row_actions_require_key_column(panel_setup) -> None:
+    """行操作依赖宿主注入的 row_key，缺少 key 列即校验失败；合法声明随数据回流。"""
+    broker, _payload = panel_setup
+    action = {"label": "删除", "command": "demo.run", "tone": "danger", "confirm": "确认？"}
+    with pytest.raises(ProtocolError) as error:
+        request(
+            broker,
+            "panels.register",
+            {
+                "panels": [
+                    panel(
+                        [
+                            {
+                                "type": "list",
+                                "source": "rows",
+                                "columns": [{"key": "name", "label": "名"}],
+                                "row_actions": [action],
+                            }
+                        ],
+                        key="bad",
+                    )
+                ]
+            },
+        )
+    assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
+    request(
+        broker,
+        "panels.register",
+        {
+            "panels": [
+                panel(
+                    [
+                        {
+                            "type": "list",
+                            "source": "rows",
+                            "columns": [{"key": "key", "label": "键"}, {"key": "name", "label": "名"}],
+                            "row_actions": [action],
+                        }
+                    ],
+                    key="good",
+                )
+            ]
+        },
+    )
+
+
+def test_panel_refresh_seconds_bounds(panel_setup) -> None:
+    """refresh_seconds 0-3600 合法，越界与负数拒绝，0 表示仅手动刷新。"""
+    broker, _payload = panel_setup
+    request(broker, "panels.register", {"panels": [panel([TEXT_NODE], key="auto", refresh_seconds=30)]})
+    with pytest.raises(ProtocolError) as error:
+        request(broker, "panels.register", {"panels": [panel([TEXT_NODE], key="fast", refresh_seconds=3601)]})
+    assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
+    with pytest.raises(ProtocolError) as error:
+        request(broker, "panels.register", {"panels": [panel([TEXT_NODE], key="neg", refresh_seconds=-1)]})
+    assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
 
 
 def test_panel_data_without_callback_is_empty(panel_setup) -> None:

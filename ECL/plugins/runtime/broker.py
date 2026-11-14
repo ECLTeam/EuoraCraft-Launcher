@@ -1001,8 +1001,6 @@ class PluginHostBroker:
         def register() -> None:
             with self._lock:
                 self._ensure_accepting()
-                if len(self._panels) + len(definitions) > 16:
-                    raise ProtocolError("面板数量超过上限", "PLUGIN_RATE_LIMITED")
                 registered = {item[0].key for item in self._panels.values()}
                 if any(definition.key in registered for definition in definitions):
                     raise ProtocolError("面板已登记", "PLUGIN_REGISTRATION_CONFLICT")

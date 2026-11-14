@@ -207,12 +207,12 @@ class PanelTextNode(RequestModel):
 
 class PanelGroupNode(RequestModel):
     """
-    带可选标题的分组容器，子节点与父节点受同一总上限约束。
+    带可选标题的分组容器，子节点数量与嵌套深度不设人为上限。
     """
 
     type: Literal["group"]
     title: str = Field(default="", max_length=120)
-    children: list[PanelNode] = Field(min_length=1, max_length=16)
+    children: list[PanelNode] = Field(min_length=1)
 
 
 class PanelButtonNode(RequestModel):
@@ -246,6 +246,17 @@ class PanelColumn(RequestModel):
     label: str = Field(min_length=1, max_length=60)
 
 
+class PanelRowAction(RequestModel):
+    """
+    列表行内操作：命令只指向本插件已登记命令，行标识由宿主按行注入。
+    """
+
+    label: str = Field(min_length=1, max_length=60)
+    command: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+    tone: Literal["default", "primary", "danger"] = "default"
+    confirm: str = Field(default="", max_length=200)
+
+
 class PanelListNode(RequestModel):
     """
     表格节点，行数据只来自面板数据回调的同名列表。
@@ -253,8 +264,21 @@ class PanelListNode(RequestModel):
 
     type: Literal["list"]
     source: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
-    columns: list[PanelColumn] = Field(min_length=1, max_length=8)
+    columns: list[PanelColumn] = Field(min_length=1)
     empty_text: str = Field(default="", max_length=200)
+    row_actions: list[PanelRowAction] = Field(default_factory=list, max_length=3)
+
+    @model_validator(mode="after")
+    def row_actions_require_key_column(self) -> PanelListNode:
+        """
+        行操作依赖宿主注入的行标识，列表必须声明 ``key`` 列。
+
+        :return: 已校验列表节点
+        :raises ValueError: 声明了行操作但没有 key 列时抛出
+        """
+        if self.row_actions and "key" not in {item.key for item in self.columns}:
+            raise ValueError("声明行操作的列表必须包含 key 列")
+        return self
 
     @field_validator("columns")
     @classmethod
@@ -280,64 +304,73 @@ class PanelTaskNode(RequestModel):
     source: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
 
 
+class PanelHeadingNode(RequestModel):
+    """
+    面板标题行，一到三级，不解析模板或样式指令。
+    """
+
+    type: Literal["heading"]
+    level: StrictInt = Field(ge=1, le=3)
+    text: str = Field(min_length=1, max_length=120)
+
+
+class PanelDividerNode(RequestModel):
+    """
+    面板分隔线，无可配置字段。
+    """
+
+    type: Literal["divider"]
+
+
+class PanelMetricNode(RequestModel):
+    """
+    指标卡：数值 + 标签 + 可选提示，全部为静态展示字段。
+    """
+
+    type: Literal["metric"]
+    label: str = Field(min_length=1, max_length=60)
+    value: str = Field(min_length=1, max_length=60)
+    tone: Literal["default", "primary", "warning", "danger", "success"] = "default"
+    hint: str = Field(default="", max_length=120)
+
+
+class PanelBadgeNode(RequestModel):
+    """
+    行内状态徽章，静态展示字段。
+    """
+
+    type: Literal["badge"]
+    text: str = Field(min_length=1, max_length=40)
+    tone: Literal["default", "primary", "warning", "danger", "success"] = "default"
+
+
 PanelNode = Annotated[
-    PanelTextNode | PanelGroupNode | PanelButtonNode | PanelSettingNode | PanelListNode | PanelTaskNode,
+    PanelTextNode
+    | PanelGroupNode
+    | PanelButtonNode
+    | PanelSettingNode
+    | PanelListNode
+    | PanelTaskNode
+    | PanelHeadingNode
+    | PanelDividerNode
+    | PanelMetricNode
+    | PanelBadgeNode,
     Field(discriminator="type"),
 ]
 PanelGroupNode.model_rebuild()
 
 
-def _count_panel_nodes(nodes: list[PanelNode]) -> int:
-    """
-    统计节点树总数，用于在注册前拒绝超限结构。
-
-    :param nodes: 当前层节点
-    :return: 含子节点的总数
-    """
-    total = 0
-    for node in nodes:
-        total += 1
-        if isinstance(node, PanelGroupNode):
-            total += _count_panel_nodes(node.children)
-    return total
-
-
-def _panel_node_depth(nodes: list[PanelNode]) -> int:
-    """
-    计算节点树深度，分组嵌套层数受固定上限约束。
-
-    :param nodes: 当前层节点
-    :return: 最大嵌套层数，没有分组时为 1
-    """
-    deepest = 1
-    for node in nodes:
-        if isinstance(node, PanelGroupNode):
-            deepest = max(deepest, 1 + _panel_node_depth(node.children))
-    return deepest
-
-
 class PanelDefinition(RequestModel):
     """
-    声明式面板的完整描述，节点树有界且不含可执行内容。
+    声明式面板的完整描述，节点数量与嵌套深度不设人为上限，不含可执行内容。
     """
 
     key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
     title: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=1000)
-    nodes: list[PanelNode] = Field(min_length=1, max_length=48)
+    nodes: list[PanelNode] = Field(min_length=1)
     data_callback_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
-
-    @model_validator(mode="after")
-    def bounded_tree(self) -> PanelDefinition:
-        """
-        在注册入口拒绝超限节点树，避免渲染期才发现结构不可用。
-
-        :return: 已校验面板定义
-        :raises ValueError: 节点总数或嵌套深度超过上限时抛出
-        """
-        if _count_panel_nodes(self.nodes) > 48 or _panel_node_depth(self.nodes) > 3:
-            raise ValueError("面板节点数量或嵌套深度超过上限")
-        return self
+    refresh_seconds: StrictInt = Field(default=0, ge=0, le=3600)
 
 
 class PanelTaskProgress(RequestModel):
@@ -355,8 +388,8 @@ class PanelData(RequestModel):
     面板列表与任务进度的只读数据，按请求拉取，不做后台推送。
     """
 
-    lists: dict[str, list[dict[str, str]]] = Field(default_factory=dict, max_length=8)
-    tasks: dict[str, PanelTaskProgress] = Field(default_factory=dict, max_length=16)
+    lists: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
+    tasks: dict[str, PanelTaskProgress] = Field(default_factory=dict)
 
     @field_validator("lists")
     @classmethod

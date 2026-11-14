@@ -195,6 +195,7 @@ class Plugin:
         *,
         description: str = "",
         data_callback: Callable[[], JsonValue | Awaitable[JsonValue]] | None = None,
+        refresh_seconds: int = 0,
     ) -> str:
         """
         向宿主提交一个声明式面板，界面由宿主渲染而不是插件注入脚本。
@@ -204,17 +205,19 @@ class Plugin:
 
         :param key: 本插件命名空间内的面板标识
         :param title: 面板标题
-        :param nodes: 受限节点树，类型与上限由宿主复核
+        :param nodes: 节点树，节点类型由宿主复核，数量与嵌套深度不设上限
         :param description: 面板说明
         :param data_callback: 可选的列表与任务数据回调，无参且返回 PanelData 结构
+        :param refresh_seconds: 宿主定时重拉面板数据的间隔秒数，0 表示仅手动刷新
         :return: 宿主登记的面板引用
-        :raises HostApiError: 未授权、节点越界或标识冲突时抛出
+        :raises HostApiError: 节点类型非法或标识冲突时抛出
         """
         panel: dict[str, JsonValue] = {
             "key": key,
             "title": title,
             "description": description,
             "nodes": list(nodes),
+            "refresh_seconds": refresh_seconds,
         }
         if data_callback is not None:
             panel["data_callback_ref"] = self.register_callback(data_callback)
