@@ -20,7 +20,7 @@ from collections import deque
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
-from ECL.minecraft.game import InstancesManager
+from ECL.services.process_engine import ProcessEngine
 from ECL.utils import get_logger
 from ECL.utils.operation_logging import OperationTrace, current_operation, trace_scope
 
@@ -32,22 +32,23 @@ class ProcessService:
     """
     记录插件和游戏启动的子进程，保存近期输出，并向进程输入数据。
 
-    内部复用 :class:`InstancesManager` 启动子进程并逐行读取输出；本类按实例标识
-    维护元数据与最近输出环形缓冲，并通过事件总线推送 ``process:instance_log``
-    与 ``process:instances_changed`` 事件供前端实例视图消费。运行中的 Minecraft
-    实例通过订阅 ``game:instances_changed`` 事件自动登记，使实例终端同样展示游戏输出。
+    子进程生成细节由注入的 :class:`ProcessEngine` 实现（当前为 MC 域
+    MinecraftProcessEngine）；本类按实例标识维护元数据与最近输出环形缓冲，
+    并通过事件总线推送 ``process:instance_log`` 与 ``process:instances_changed``
+    事件供前端实例视图消费。运行中的 Minecraft 实例通过订阅
+    ``game:instances_changed`` 事件自动登记，使实例终端同样展示游戏输出。
 
     :param event_bus: 发送子进程状态事件的事件总线
-    :param instances_manager: 与游戏服务共享的进程管理器，缺省时自行创建
+    :param engine: 注入的子进程引擎，与游戏服务共享同一底层管理器
     """
 
     buffer_limit = 300
 
-    def __init__(self, event_bus: EventBus, instances_manager: InstancesManager | None = None) -> None:
+    def __init__(self, event_bus: EventBus, engine: ProcessEngine) -> None:
         self._events = event_bus
-        self._manager = instances_manager or InstancesManager()
-        self._manager.set_log_callback(self._on_log)
-        self._manager.set_exit_callback(self._on_exit)
+        self._engine = engine
+        self._engine.set_log_callback(self._on_log)
+        self._engine.set_exit_callback(self._on_exit)
         self._lock = RLock()
         self._meta: dict[str, dict[str, Any]] = {}
         self._buffers: dict[str, deque[str]] = {}
@@ -98,7 +99,7 @@ class ProcessService:
         """
         if not name or not type_ or not args:
             raise ValueError("实例名称、类型与启动参数不能为空")
-        instance_id, _process = self._manager.create_instance(
+        instance_id, _process = self._engine.create_instance(
             instance_name=name,
             instance_type=type_,
             args=args,
@@ -140,7 +141,7 @@ class ProcessService:
             if meta is None or not meta["stdin"]:
                 return False
         payload = data if data.endswith("\n") else data + "\n"
-        return self._manager.send_stdin(instance_id, payload)
+        return self._engine.send_stdin(instance_id, payload)
 
     def stop(self, instance_id: str, force: bool = False, wait_timeout: float | None = None) -> bool:
         """
@@ -151,7 +152,7 @@ class ProcessService:
         :param wait_timeout: 等待进程结束的秒数，None 表示不等待
         :return: 进程是否已结束
         """
-        has_stopped = self._manager.stop_instance(instance_id, force=force, wait_timeout=wait_timeout)
+        has_stopped = self._engine.stop_instance(instance_id, force=force, wait_timeout=wait_timeout)
         if not has_stopped:
             self._logger.info("已请求停止子进程，尚未确认退出")
         return has_stopped
@@ -168,7 +169,7 @@ class ProcessService:
         with self._lock:
             items: list[dict[str, Any]] = []
             for iid, meta in self._meta.items():
-                proc = self._manager.instances.get(iid, {}).get("Instance")
+                proc = self._engine.get_instance_process(iid)
                 pid = proc.pid if proc is not None else None
                 running = proc.poll() is None if proc is not None else False
                 items.append(
@@ -194,10 +195,10 @@ class ProcessService:
         with self._lock:
             plugin_ids = [iid for iid, meta in self._meta.items() if meta.get("type") != "Minecraft"]
         for iid in plugin_ids:
-            self._manager.stop_instance(iid, force=True, wait_timeout=1.0)
+            self._engine.stop_instance(iid, force=True, wait_timeout=1.0)
 
     def _on_log(self, line: str, instance_id: str) -> None:
-        # 处理 InstancesManager 逐行回读的输出，写入缓冲并推送实时事件。
+        # 处理进程引擎逐行回读的输出，写入缓冲并推送实时事件。
         with self._lock:
             meta = self._meta.get(instance_id)
             if meta is None:

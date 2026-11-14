@@ -43,10 +43,9 @@ kernel_exemptions: dict[str, str] = {
     "plugins/worker_service.py": "装配缝：宿主侧构造 RuntimeJava/PublicQueries/Resources 三个注入式适配器；待装配逻辑统一后消除",
     "plugins/manager/base.py": "装配缝：实例化 MC 适配器工厂并注入 worker_service，同时引用 InstanceQueries 协议描述注入能力；长期保留",
     "plugins/java_resources.py": "插件 Java 资源声明以 ECL.java 的模型与查询为参数类型；待扩展点模型下沉后消除",
-    "services/processes.py": "子进程引擎直接复用 Core 的 InstancesManager；待内核抽象进程引擎协议、MC 侧注入实现后消除（改名时由边界检查首次暴露，此前 ECL.game 不在违规前缀内）",
 }
 
-max_exemptions = 5
+max_exemptions = 4
 
 
 def _kernel_files() -> list[Path]:

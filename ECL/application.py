@@ -40,6 +40,7 @@ from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
 from ECL.java.queries import JavaQueries
 from ECL.minecraft.game import InstancesManager
+from ECL.minecraft.process_engine import MinecraftProcessEngine
 from ECL.minecraft.services.account import AccountManager, WardrobeStore
 from ECL.minecraft.services.account.plugin_textures import read_account_skin
 from ECL.minecraft.services.game import GameService
@@ -472,7 +473,7 @@ def create_application(
 
         finish_phase("插件")
         logger.debug("正在初始化子进程实例服务")
-        processes = ProcessService(event_bus=events, instances_manager=shared_instances)
+        processes = ProcessService(event_bus=events, engine=MinecraftProcessEngine(shared_instances))
         created.append(processes)
         logger.debug("子进程实例服务已初始化")
 

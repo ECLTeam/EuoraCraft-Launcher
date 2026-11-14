@@ -20,6 +20,7 @@ from uuid import uuid4
 
 import pytest
 
+from ECL.minecraft.process_engine import MinecraftProcessEngine
 from ECL.plugins.api._rpc import RpcRequest
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import ToolChannel
@@ -77,7 +78,7 @@ def test_tool_args_are_bounded(request) -> None:
 
 def test_process_ownership_separates_plugins_and_game() -> None:
     """只有创建者能操作自己的进程，游戏实例与其他插件进程都不属于它。"""
-    service = ProcessService(EventBus())
+    service = ProcessService(EventBus(), engine=MinecraftProcessEngine())
     service._meta["tool-1"] = {"name": "示例", "type": "plugin:demo", "stdin": False, "owner": "demo"}
     service._meta["game-1"] = {"name": "1.21.1", "type": "minecraft", "stdin": True}
     assert service.owned_by("tool-1", "demo") is True

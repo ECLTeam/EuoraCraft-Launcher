@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from ECL.minecraft.game import InstancesManager
+from ECL.minecraft.process_engine import MinecraftProcessEngine
 from ECL.services.processes import ProcessService
 from ECL.utils import EventBus
 
@@ -45,7 +46,7 @@ def make_service() -> tuple[ProcessService, EventBus, list[dict[str, Any]]]:
     events = EventBus()
     logs: list[dict[str, Any]] = []
     events.subscribe("process:instance_log", logs.append)
-    return ProcessService(events), events, logs
+    return ProcessService(events, engine=MinecraftProcessEngine()), events, logs
 
 
 def test_spawn_captures_output_then_exits() -> None:
@@ -118,7 +119,7 @@ def test_game_instance_registered_via_event_captures_output() -> None:
     logs: list[dict[str, Any]] = []
     events.subscribe("process:instance_log", logs.append)
     manager = InstancesManager()
-    service = ProcessService(events, instances_manager=manager)
+    service = ProcessService(events, engine=MinecraftProcessEngine(manager))
     script = "import time\nprint('game-boot', flush=True)\ntime.sleep(1)\n"
     iid, _proc = manager.create_instance(
         instance_name="1.20.1",
@@ -136,7 +137,7 @@ def test_game_instance_registered_via_event_captures_output() -> None:
 def test_close_keeps_running_game_instance() -> None:
     events = EventBus()
     manager = InstancesManager()
-    service = ProcessService(events, instances_manager=manager)
+    service = ProcessService(events, engine=MinecraftProcessEngine(manager))
     iid, _proc = manager.create_instance(
         instance_name="1.20.1",
         instance_type="Minecraft",
