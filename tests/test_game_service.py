@@ -71,6 +71,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -1564,7 +1565,13 @@ def test_command_builder_quotes_version_name_for_forge_ignore_list(tmp_path) -> 
     module_path_tokens = [token for token in argv if token.endswith("c.jar")]
     assert len(module_path_tokens) == 1
     expected_lib = str(game_path / "libraries")
-    assert module_path_tokens[0] == f"{expected_lib}/cpw/a.jar;{expected_lib}/cpw/b.jar;{expected_lib}/cpw/c.jar"
+    # JVM 模块路径分隔符与平台相关：Windows 为 ";"，其他系统为 ":"，
+    # 与命令构建器的 cp_delimiter 选择规则保持一致。
+    classpath_separator = ";" if sys.platform == "win32" else ":"
+    assert (
+        module_path_tokens[0]
+        == f"{expected_lib}/cpw/a.jar{classpath_separator}{expected_lib}/cpw/b.jar{classpath_separator}{expected_lib}/cpw/c.jar"
+    )
 
     opens_values = [argv[i + 1] for i, token in enumerate(argv) if token == "--add-opens"]
     assert opens_values == [
