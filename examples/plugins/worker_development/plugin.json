@@ -1,9 +1,0 @@
-{
-  "name": "worker_development",
-  "api_version": 2,
-  "version": "1.0.0",
-  "title": "插件开发与统一配置示例",
-  "description": "修改实际安装目录中的代码版本，观察热重载后用户配置仍然保留。",
-  "entry_point": "main:Plugin",
-  "permissions": []
-}

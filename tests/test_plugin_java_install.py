@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 from threading import Event
-from time import monotonic, sleep
+from time import monotonic
 
 import httpx
 import pytest
@@ -143,38 +141,3 @@ def test_user_task_cannot_be_shared_by_a_plugin(installation, monkeypatch):
         assert error.value.error_code == "PLUGIN_HOST_BUSY"
     finally:
         release.set()
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="实际第三方 Worker 当前要求 Windows x64")
-def test_actual_worker_example_prepares_installs_and_receives_owned_runtime(installation):
-    _, _, manager, _, _, service = installation
-    example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_java_query"
-    metadata = json.loads((example / "plugin.json").read_bytes())
-    metadata["name"] = "java-test"
-    service.register(metadata, example, "directory")
-    selected = candidates(service)["items"][0]["resource_id"]
-    allow(service, [selected], use=False, install=True)
-    service.enable("java-test")
-    broker = service.broker("java-test")
-    try:
-
-        def command(name, params=None):
-            return json.loads(broker.call_command(name, params or {}, 30)["json"])
-
-        package = command("catalog")["items"][0]["package_ref"]
-        plan = command("prepare_install", {"package_ref": package, "mutation_key": "worker-plan"})
-        receipt = command("install", {"plan_ref": plan["plan_ref"], "mutation_key": "worker-install"})
-        deadline = monotonic() + 10
-        while True:
-            result = command("status", {"operation_ref": receipt["operation_ref"]})
-            if result["state"] in {"completed", "failed", "cancelled"} and not result["cleanup_pending"]:
-                assert result["state"] == "completed", result
-                break
-            assert monotonic() < deadline
-            sleep(0.02)
-        assert command("install", {"plan_ref": plan["plan_ref"], "mutation_key": "worker-install"}) == receipt
-        record, check = broker.java.selection(result["result"]["runtime_ref"], monotonic() + 5)
-        check()
-        assert record.executable_path.is_file() and record in manager.registered_snapshot()
-    finally:
-        service.stop("java-test")

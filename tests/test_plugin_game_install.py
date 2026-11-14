@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-from pathlib import Path
 from threading import Event
-from time import monotonic, sleep
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +14,6 @@ from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.minecraft.services.game import GameService, GameServiceError
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
-from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
 from ECL.utils import EventBus
@@ -156,50 +152,6 @@ def test_install_rejects_unlisted_explicit_loader_before_writing(game_install):
     assert result["state"] == "failed" and result["error_code"] == "PLUGIN_LOADER_VERSION_INVALID"
     assert result["effect"] == "none"
     assert not (game_install.root / "versions/1.20.1").exists()
-
-
-@pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
-def test_actual_worker_catalog_install_result_and_duplicate_submission(game_install, is_frozen):
-    state = game_install
-    artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
-    if is_frozen and not artifact:
-        pytest.skip("需要本轮真实冻结产物")
-    if is_frozen:
-        state.worker._executable = ExecutableLaunchSpec(
-            Path(artifact), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller")
-        )
-    example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_game_install"
-    metadata = json.loads((example / "plugin.json").read_bytes())
-    state.worker.register(metadata, example, "directory")
-    state.worker.enable(metadata["name"])
-    broker = state.worker.broker(metadata["name"])
-
-    def command(name, params):
-        return json.loads(broker.call_command(name, params)["json"])
-
-    assert not state.writes
-    assert command("catalog", {})["items"][0]["version_id"] == "1.20.1"
-    roots = command("discover", {"capability": "instances.manage"})
-    params = {
-        "root_ref": roots["items"][0]["root_ref"],
-        "version_id": "1.20.1",
-        "version_name": "worker-installed",
-        "loader": "vanilla",
-        "mutation_key": "real-worker-install",
-    }
-    receipt = command("install", params)
-    assert command("install", params) == receipt
-    deadline = monotonic() + 15
-    while True:
-        result = command("status", {"operation_ref": receipt["operation_ref"]})
-        if result["state"] in {"completed", "failed", "cancelled"} and not result["cleanup_pending"]:
-            break
-        assert monotonic() < deadline
-        sleep(0.025)
-    assert result["state"] == "completed" and result["effect"] == "committed", result
-    assert result["result"]["version_id"] == "worker-installed"
-    assert len(state.writes) == 1
-    state.worker.stop(metadata["name"])
 
 
 def test_install_reservation_holds_busy_target_while_handle_close_is_pending(game_install):

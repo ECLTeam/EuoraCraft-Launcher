@@ -1,9 +1,0 @@
-{
-  "name": "worker_echo",
-  "api_version": 2,
-  "version": "1.0.0",
-  "title": "Worker 示例",
-  "description": "通过宿主命令和自身设置演示独立运行。",
-  "entry_point": "main:Plugin",
-  "permissions": []
-}

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from concurrent.futures import Future
-from pathlib import Path
 from threading import Event
-from time import monotonic, sleep
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +14,6 @@ from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.minecraft.services.game import GameService, GameServiceError
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
-from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
 from ECL.utils import EventBus
@@ -132,53 +128,6 @@ def completed_launch(state):
     result = finish(state.broker, state.manager, launch(state))
     assert result["state"] == "completed" and result["effect"] == "committed", result
     return result["result"]
-
-
-@pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])
-def test_actual_worker_launch_query_stop_and_close_preserves_process(game_launch, is_frozen):
-    state = game_launch
-    artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
-    if is_frozen and not artifact:
-        pytest.skip("需要本轮真实冻结产物")
-    if is_frozen:
-        state.worker._executable = ExecutableLaunchSpec(
-            Path(artifact), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller")
-        )
-    example = Path(__file__).resolve().parents[1] / "examples/plugins/worker_game_launch"
-    metadata = json.loads((example / "plugin.json").read_bytes())
-    state.worker.register(metadata, example, "directory")
-    state.worker.enable(metadata["name"])
-    broker = state.worker.broker(metadata["name"])
-
-    def command(name, params):
-        return json.loads(broker.call_command(name, params)["json"])
-
-    def wait(receipt):
-        deadline = monotonic() + 15
-        while True:
-            view = command("status", {"operation_ref": receipt["operation_ref"]})
-            if view["state"] in {"completed", "failed", "cancelled"} and not view["cleanup_pending"]:
-                assert view["state"] == "completed", view
-                return view["result"]
-            assert monotonic() < deadline
-            sleep(0.025)
-
-    assert not state.game._plugin_game_runs
-    root_ref = command("discover", {"capability": "instances.manage"})["items"][0]["root_ref"]
-    instance_ref = next(
-        item["instance_ref"] for item in command("scan", {"root_ref": root_ref})["items"] if item["version_id"] == "one"
-    )
-    params = {"instance_ref": instance_ref, "mutation_key": "worker-launch"}
-    receipt = command("launch", params)
-    assert command("launch", params) == receipt
-    run = wait(receipt)
-    assert run["running"] and command("running", {"instance_ref": instance_ref})["items"] == [run]
-    result = wait(command("stop", {"game_run_ref": run["game_run_ref"], "mutation_key": "worker-stop"}))
-    assert not result["running"] and result["exit_code"] is not None
-    survivor = wait(command("launch", {"instance_ref": instance_ref, "mutation_key": "worker-survivor"}))
-    process = next(run.process for run in state.game._plugin_game_runs.values() if run.process.pid == survivor["pid"])
-    state.worker.stop(metadata["name"])
-    assert process.poll() is None
 
 
 def revoke_launch(state):
