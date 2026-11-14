@@ -12,17 +12,18 @@
 
 ## 声明式面板
 
-`define_panel(key, title, nodes, description=..., data_callback=...)` 支持 text、group、button、setting、list、task。设置节点只能引用已定义键，按钮只能调用本插件已登记命令。
+`define_panel(key, title, nodes, description=..., data_callback=..., refresh_seconds=0)` 支持 text、group、button、setting、list、task、heading、divider、metric、badge。设置节点只能引用已定义键，按钮与列表行操作只能调用本插件已登记命令。
 
 ```python
 self.define_panel("tools", "Tools", (
-    {"type": "text", "text": "Configure and run the task"},
+    {"type": "heading", "level": 2, "text": "Configure and run the task"},
+    {"type": "metric", "label": "实例数", "value": "12", "tone": "primary"},
     {"type": "setting", "key": "greeting"},
     {"type": "button", "label": "Run", "command": "run"},
 ))
 ```
 
-单面板最多 48 个节点、深度 3，单运行最多 16 个面板。列表与任务数据回调返回 `lists` 和 `tasks`，不返回 DOM、模板或函数。面板任务展示状态与宿主 `TaskView.state` 是不同模型，不能直接把后者原样塞入节点。
+节点数量与嵌套深度不设上限（2026-11-15 边界开放）。`list` 节点可声明 `row_actions`（至多 3 个行内操作按钮，调用命令时宿主自动附带 `row_key` 参数，要求列表包含 `key` 列）。`refresh_seconds` 大于 0 时宿主定时重拉面板数据（1-3600 秒，0 表示仅手动刷新）。列表与任务数据回调返回 `lists` 和 `tasks`，不返回 DOM、模板或函数。面板任务展示状态与宿主 `TaskView.state` 是不同模型，不能直接把后者原样塞入节点。
 
 参考[声明式面板设计](../../designs/plugin-declarative-panel-design.md)。
 
