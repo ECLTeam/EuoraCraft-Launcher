@@ -79,8 +79,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from ECL.game import CoreError, GetGames, LaunchConfig, SearchMinecraft, build_minecraft_cmd
-from ECL.game.Core.LaunchCommand import parse_launch_command
+from ECL.minecraft.game import CoreError, GetGames, LaunchConfig, SearchMinecraft, build_minecraft_cmd
+from ECL.minecraft.game.Core.LaunchCommand import parse_launch_command
 from ECL.services.game import GameService, GameServiceError
 from ECL.utils import EventBus
 

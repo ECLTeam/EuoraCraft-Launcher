@@ -618,7 +618,7 @@ async def test_microsoft_device_login_flow(tmp_path) -> None:
 
 
 async def test_launcher_microsoft_login_reports_each_stage(tmp_path, monkeypatch) -> None:
-    microsoft_auth_core = import_module("ECL.game.auth.microsoft")
+    microsoft_auth_core = import_module("ECL.minecraft.game.auth.microsoft")
     stages = []
 
     class FakeMicrosoftAuth:

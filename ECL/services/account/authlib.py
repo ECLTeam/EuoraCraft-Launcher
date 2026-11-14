@@ -38,7 +38,7 @@ from uuid import uuid4
 
 import httpx
 
-from ECL.game import YggdrasilClient
+from ECL.minecraft.game import YggdrasilClient
 from ECL.utils import AccountError, AuthlibError, AuthlibProfileSelectionRequired, atomic_write_bytes, atomic_write_text
 
 from .littleskin import LittleSkinClient, LittleSkinCredentials, LittleSkinMinecraftToken

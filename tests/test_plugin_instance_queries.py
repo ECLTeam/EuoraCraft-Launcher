@@ -160,7 +160,7 @@ def allow(service, selected, revision):
 
 
 def runtime(service):
-    from ECL.mc.adapters.resources import RuntimeResources
+    from ECL.minecraft.adapters.resources import RuntimeResources
 
     entry = service._entry("reader")
     return RuntimeResources(entry.session, service._catalog, service._instance_queries, service.refresh_resources)

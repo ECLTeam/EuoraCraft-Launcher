@@ -64,16 +64,16 @@ from ECL.version import __version__
 if TYPE_CHECKING:
     from pytaurix import AppHandle
 
-    from ECL.mc.adapters.game_install import RuntimeGameInstall
-    from ECL.mc.adapters.game_launch import RuntimeGameLaunch
-    from ECL.mc.adapters.game_queries import RuntimeGameCatalog
-    from ECL.mc.adapters.game_resources import RuntimeGameResources
-    from ECL.mc.adapters.instance_profiles import RuntimeInstanceProfiles
-    from ECL.mc.adapters.java_api import RuntimeJava
-    from ECL.mc.adapters.modpacks import RuntimeModpacks
-    from ECL.mc.adapters.public_queries import RuntimePublicQueries
-    from ECL.mc.adapters.resource_queries import RuntimeResourceCatalog
-    from ECL.mc.adapters.resources import RuntimeResources
+    from ECL.minecraft.adapters.game_install import RuntimeGameInstall
+    from ECL.minecraft.adapters.game_launch import RuntimeGameLaunch
+    from ECL.minecraft.adapters.game_queries import RuntimeGameCatalog
+    from ECL.minecraft.adapters.game_resources import RuntimeGameResources
+    from ECL.minecraft.adapters.instance_profiles import RuntimeInstanceProfiles
+    from ECL.minecraft.adapters.java_api import RuntimeJava
+    from ECL.minecraft.adapters.modpacks import RuntimeModpacks
+    from ECL.minecraft.adapters.public_queries import RuntimePublicQueries
+    from ECL.minecraft.adapters.resource_queries import RuntimeResourceCatalog
+    from ECL.minecraft.adapters.resources import RuntimeResources
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 

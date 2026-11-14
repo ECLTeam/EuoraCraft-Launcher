@@ -26,7 +26,7 @@ import importlib
 import io
 import subprocess
 
-from ECL.game import InstancesManager
+from ECL.minecraft.game import InstancesManager
 
 
 class FakeProcess:
@@ -98,7 +98,7 @@ def test_stop_instance_kills_when_forced() -> None:
 
 
 def test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> None:
-    module = importlib.import_module("ECL.game.Core.InstancesManager")
+    module = importlib.import_module("ECL.minecraft.game.Core.InstancesManager")
 
     class ImmediateProcess:
         stdout = io.StringIO("")
@@ -131,7 +131,7 @@ def test_create_instance_does_not_lose_immediate_exit_callback(monkeypatch) -> N
 
 
 def test_apply_priority_skips_normal(monkeypatch) -> None:
-    module = importlib.import_module("ECL.game.Core.InstancesManager")
+    module = importlib.import_module("ECL.minecraft.game.Core.InstancesManager")
 
     class FakeProc:
         pid = 4242
@@ -145,7 +145,7 @@ def test_apply_priority_skips_normal(monkeypatch) -> None:
 
 
 def test_windows_priority_constants_are_not_read_on_posix(monkeypatch) -> None:
-    module = importlib.import_module("ECL.game.Core.InstancesManager")
+    module = importlib.import_module("ECL.minecraft.game.Core.InstancesManager")
     priority_constants = (
         "IDLE_PRIORITY_CLASS",
         "BELOW_NORMAL_PRIORITY_CLASS",
@@ -162,7 +162,7 @@ def test_windows_priority_constants_are_not_read_on_posix(monkeypatch) -> None:
 
 
 def test_apply_priority_sets_posix_nice_for_high(monkeypatch) -> None:
-    module = importlib.import_module("ECL.game.Core.InstancesManager")
+    module = importlib.import_module("ECL.minecraft.game.Core.InstancesManager")
 
     class FakeProc:
         pid = 4242

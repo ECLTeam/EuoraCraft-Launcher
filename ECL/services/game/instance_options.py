@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ECL.game import InstanceOptionsStore
+from ECL.minecraft.game import InstanceOptionsStore
 
 
 class InstanceOptionsCoordinator:

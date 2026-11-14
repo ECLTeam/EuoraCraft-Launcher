@@ -57,7 +57,7 @@ Alpha、RC 示例不新增序号或日期限制。Beta 必须使用 `vMAJOR.MINO
 可以推送版本标签发布，也可以在 Actions 中手动运行 `Build`、填写版本并勾选发布；两者使用同一套门禁。以下以 Beta 的标签发布为例，执行前替换为实际版本和发布日期，并确认当前会话已授权推送与发布：
 
 ```bash
-git -C ECL/game push origin main
+git -C ECL/minecraft/game push origin main
 git -C ECL/services/florolding push origin main
 git -C frontend push origin main
 git push origin main

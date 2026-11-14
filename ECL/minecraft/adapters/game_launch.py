@@ -17,8 +17,8 @@ from time import monotonic
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from ECL.mc.adapters.game_models import GameLaunchRequest, GameRunningRequest, GameStopRequest
-from ECL.mc.adapters.resources import RuntimeResources
+from ECL.minecraft.adapters.game_models import GameLaunchRequest, GameRunningRequest, GameStopRequest
+from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
@@ -27,7 +27,7 @@ from ECL.services.operations import OperationOrigin
 from ECL.utils.errors import GameServiceError
 
 if TYPE_CHECKING:
-    from ECL.mc.adapters.java_api import RuntimeJava
+    from ECL.minecraft.adapters.java_api import RuntimeJava
     from ECL.services.game.plugin_games import GameResourceTarget, PluginGameCoordinator, PluginGameRun
 
 

@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile, ZipFile
 
-from ECL.game import Compound, IntArray, List, load, load_limited
+from ECL.minecraft.game import Compound, IntArray, List, load, load_limited
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError

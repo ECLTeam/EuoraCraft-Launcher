@@ -1,7 +1,7 @@
 # 后端分层重构实施计划：services 减负与 Core 归位
 
 > 状态：**方案已确认，待实施**（三个决策点已由用户确认，见 §8）
-> 适用仓库：主仓库 `EuoraCraft-Launcher` + 子模块 `ECL/game`（EuoraCraft-Launcher.Core）
+> 适用仓库：主仓库 `EuoraCraft-Launcher` + 子模块 `ECL/minecraft/game`（EuoraCraft-Launcher.Core）
 > 依据流程：`AGENTS.md` §0 功能变更固定工作流
 
 ---
@@ -10,7 +10,7 @@
 
 ### 1.1 现状数据（实测）
 
-主仓库 `ECL/` 的 Python（剔除 `frontend`、`ECL/game`、`ECL/services/florolding` 三个子模块）合计 **38305 行**，分层如下：
+主仓库 `ECL/` 的 Python（剔除 `frontend`、`ECL/minecraft/game`、`ECL/services/florolding` 三个子模块）合计 **38305 行**，分层如下：
 
 | 层 | 行数 | 文件 | 占比 |
 |---|---:|---:|---:|
@@ -87,11 +87,11 @@
 
 ### 3.1 Core 的边界与唯一反向依赖
 
-Core（`ECL/game`，**4482 行**生产代码）现有能力：下载、文件校验、启动命令构建、版本清单、实例进程管理、认证、Java 扫描、版本搜索。
+Core（`ECL/minecraft/game`，**4482 行**生产代码）现有能力：下载、文件校验、启动命令构建、版本清单、实例进程管理、认证、Java 扫描、版本搜索。
 
-- **唯一反向依赖**：`ECL/game/Core/MicrosoftAuth.py:13` → `from ECL.utils.files import atomic_write_text`。
+- **唯一反向依赖**：`ECL/minecraft/game/Core/MicrosoftAuth.py:13` → `from ECL.utils.files import atomic_write_text`。
 - Core **没有** `# ===` 标准文件头（12 个生产文件全部缺失），docstring 风格为老式中文多行，另有 `# ---------- xxx ----------` 装饰分隔线、`type()` 代替 `isinstance()`、`os.path` + `open()` 等与 `AGENTS.md` §3 相冲突的写法。
-- Core **没有**独立 `pyproject.toml` / ruff 配置 / CI 测试工作流；主仓库 `pyproject.toml` 的 ruff `exclude` 和 pytest `testpaths=["tests"]` 都把 `ECL/game` 排除在外。**这意味着下沉代码会脱离现有质量门禁。**
+- Core **没有**独立 `pyproject.toml` / ruff 配置 / CI 测试工作流；主仓库 `pyproject.toml` 的 ruff `exclude` 和 pytest `testpaths=["tests"]` 都把 `ECL/minecraft/game` 排除在外。**这意味着下沉代码会脱离现有质量门禁。**
 
 ### 3.2 `services/game/` 与相关模块的归属划分
 
@@ -119,11 +119,11 @@ Core（`ECL/game`，**4482 行**生产代码）现有能力：下载、文件校
 
 | 文件 | 依赖的主仓库设施 |
 |---|---|
-| `manager.py` | `ECL.events.EventBus`、`ECL.services.operations`(OperationContext/OperationManager)、**`ECL.services.game.launch_settings`**、`ECL.utils.logging`、`ECL.game` |
-| `installer.py` | `ECL.services.operations`、`ECL.utils.network.download_proxy_url`、`ECL.game` |
+| `manager.py` | `ECL.events.EventBus`、`ECL.services.operations`(OperationContext/OperationManager)、**`ECL.services.game.launch_settings`**、`ECL.utils.logging`、`ECL.minecraft.game` |
+| `installer.py` | `ECL.services.operations`、`ECL.utils.network.download_proxy_url`、`ECL.minecraft.game` |
 | `lifecycle.py` | `ECL.utils.atomic_write_text`、`.registry` |
-| `registry.py` | `ECL.utils.atomic_write_text`、`ECL.game` |
-| `models.py` | `ECL.utils.errors.GameServiceError`、`ECL.game` |
+| `registry.py` | `ECL.utils.atomic_write_text`、`ECL.minecraft.game` |
+| `models.py` | `ECL.utils.errors.GameServiceError`、`ECL.minecraft.game` |
 | `catalog.py` / `archives.py` | 仅 `.models` |
 
 **关键点**：`manager.py` → `services/game/launch_settings` 是一处**反向依赖**；而 `services/game/base.py` → `services/java` 是正向依赖。二者包级互相牵扯。
@@ -149,7 +149,7 @@ Core（`ECL/game`，**4482 行**生产代码）现有能力：下载、文件校
 
 | 新增项 | 理由 |
 |---|---|
-| 公共异常基类（如 `ECL/game/errors.py` 的 `CoreError`，带 `error_code` 字段） | 待下沉模块现依赖 `ECL.utils.errors.GameServiceError`（带稳定错误码）；Core 现仅有 `MicrosoftAuth` 内的私有 `BException` |
+| 公共异常基类（如 `ECL/minecraft/game/errors.py` 的 `CoreError`，带 `error_code` 字段） | 待下沉模块现依赖 `ECL.utils.errors.GameServiceError`（带稳定错误码）；Core 现仅有 `MicrosoftAuth` 内的私有 `BException` |
 | `atomic_write_text`（从 `ECL/utils/files.py` 迁入，该文件纯标准库） | 消除 Core 唯一反向依赖，并供下沉模块使用 |
 | Core 侧 `ruff` 配置 + 测试工作流 | 否则下沉代码脱离质量门禁（见 §3.1） |
 | 补齐 `# ===` 标准文件头 | 下沉文件按 `AGENTS.md` §3.2 写，Core 存量文件顺带收敛（不跨模块大规模重写） |
@@ -210,7 +210,7 @@ Core（`ECL/game`，**4482 行**生产代码）现有能力：下载、文件校
 | **→ `ECL/utils/`**（纯无状态工具） | `instance_shortcuts`(191) | 191 |
 | **→ `ECL/foundation/`**（纯常量） | `themes`(20) | 20 |
 | **→ `services/account/`**（分组，见下） | `skin_avatar`(96) | 96 |
-| **暂留 `services/`** | `processes.py`(184) — 依赖 `ECL.game.InstancesManager`，需先确认移入 `host/` 不会造成 host→game 反向耦合 | 184 |
+| **暂留 `services/`** | `processes.py`(184) — 依赖 `ECL.minecraft.game.InstancesManager`，需先确认移入 `host/` 不会造成 host→game 反向耦合 | 184 |
 
 **新增 `services/account/` 分组**——这是 §2.2"分组而非拆散"的样板：把 `services/` 根目录中同属**账户与皮肤域**的 4 个平铺文件收敛为一个子包。
 
@@ -317,7 +317,7 @@ ECL/
 
 | 建议 | 理由 | 时机 |
 |---|---|---|
-| **补 2 条架构约束测试** | ① 层方向单向性：`foundation → utils → game/java → services/host → api`，用 ast 扫描禁止反向；② Core 边界：`ECL/game` 不得导入 `ECL.{events,services,plugins,api}`。现有 `tests/test_architecture.py` 已约束"只能经 `ECL.game` 公共入口导入 Core"，但 `_python_files()` 排除了 `ECL/game`，不覆盖 Core 自身 | **建议并入本次**（待确认） |
+| **补 2 条架构约束测试** | ① 层方向单向性：`foundation → utils → game/java → services/host → api`，用 ast 扫描禁止反向；② Core 边界：`ECL/minecraft/game` 不得导入 `ECL.{events,services,plugins,api}`。现有 `tests/test_architecture.py` 已约束"只能经 `ECL.minecraft.game` 公共入口导入 Core"，但 `_python_files()` 排除了 `ECL/minecraft/game`，不覆盖 Core 自身 | **建议并入本次**（待确认） |
 | 拆 `api/models.py` | 1146 行 / **109 个 Pydantic 模型**横跨所有域；按域归为 **4~5 个**（窗口·设置·进程 / Java / 游戏·实例 / 文件·衣橱·皮肤），非按类拆 | 另立 |
 | `plugins/` 内部收敛 | 5910 行 / 27 文件；`manager/` 9 文件、包安装三件套 782 行、依赖三件套 526 行。**仅收敛内部实现，公共 API 不动** | 另立 |
 | `tests/` 分组 | 90 个测试文件全平铺；按域分 **4~5 个**目录（`api` / `services` / `plugins` / `core` / `utils`），不镜像到每模块 | 另立 |

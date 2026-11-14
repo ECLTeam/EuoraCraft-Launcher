@@ -3,6 +3,6 @@
 	url = https://github.com/ECLTeam/EuoraCraft-Launcher.Frontend
 	branch = main
 [submodule "ECL/game"]
-	path = ECL/game
+	path = ECL/minecraft/game
 	url = https://github.com/ECLTeam/EuoraCraft-Launcher.Core
 	branch = main

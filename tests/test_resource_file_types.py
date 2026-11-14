@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.game import (
+from ECL.minecraft.game import (
     ByteArray,
     Compound,
     File,

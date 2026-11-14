@@ -12,8 +12,8 @@ from types import SimpleNamespace
 import pytest
 from anyio.from_thread import start_blocking_portal
 
-from ECL.mc.adapters.factory import DefaultMcAdapterFactory
-from ECL.mc.adapters.resources import RuntimeResources
+from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
+from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec

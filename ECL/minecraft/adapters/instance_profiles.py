@@ -14,7 +14,7 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from ECL.mc.adapters.resources import RuntimeResources
+from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.plugins.api.contracts import JsonValue
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import InstanceProfilePatchRequest

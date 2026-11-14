@@ -1779,7 +1779,7 @@ def test_guarded_call_without_timeout_runs_to_completion(tmp_path) -> None:
 
 
 def test_guarded_call_treats_auth_exception_as_known_error(tmp_path) -> None:
-    from ECL.game import AuthException
+    from ECL.minecraft.game import AuthException
 
     api = _build_api(tmp_path)
 

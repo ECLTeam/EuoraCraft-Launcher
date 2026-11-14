@@ -86,7 +86,7 @@ def resolve_instance_target(game_path: Any, version_id: Any, version_isolation: 
     versions_path = (root / "versions").resolve(strict=False)
     if instance_path.parent != versions_path:
         raise GameServiceError("实例路径越过游戏目录边界", "INVALID_INSTANCE_TARGET")
-    # 保持与当前 LaunchCoordinator / ECL.game PlaceholderReplacer 完全一致。
+    # 保持与当前 LaunchCoordinator / ECL.minecraft.game PlaceholderReplacer 完全一致。
     data_path = instance_path if bool(version_isolation) else versions_path
     return ResolvedInstanceTarget(root, name, bool(version_isolation), instance_path, data_path)
 

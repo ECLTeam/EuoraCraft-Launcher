@@ -38,7 +38,7 @@ from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
-from ECL.game import JavaRuntime, JavaScanner
+from ECL.minecraft.game import JavaRuntime, JavaScanner
 from ECL.utils import atomic_write_text
 from ECL.utils.errors import GameServiceError
 

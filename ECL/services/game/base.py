@@ -24,7 +24,8 @@ from tempfile import gettempdir
 from threading import Event, RLock, Thread
 from typing import TYPE_CHECKING, Any
 
-from ECL.game import (
+from ECL.java import JavaManager, RuntimeLease
+from ECL.minecraft.game import (
     ApiUrlConfig,
     BaseApiClient,
     BmclApiUrl,
@@ -38,7 +39,6 @@ from ECL.game import (
     SearchMinecraft,
     build_minecraft_cmd,
 )
-from ECL.java import JavaManager, RuntimeLease
 from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry

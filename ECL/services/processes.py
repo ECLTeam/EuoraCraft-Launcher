@@ -20,7 +20,7 @@ from collections import deque
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
-from ECL.game import InstancesManager
+from ECL.minecraft.game import InstancesManager
 from ECL.utils import get_logger
 from ECL.utils.operation_logging import OperationTrace, current_operation, trace_scope
 

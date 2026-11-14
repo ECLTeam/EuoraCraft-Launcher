@@ -30,7 +30,7 @@ import time
 
 import httpx
 
-from ECL.game.Core.MicrosoftAuth import _friendly_network_error
+from ECL.minecraft.game.Core.MicrosoftAuth import _friendly_network_error
 
 
 def test_connect_error_yields_readable_hint_even_with_empty_message() -> None:
@@ -73,7 +73,7 @@ class _ConnectFailingClient:
 
 
 async def test_device_flow_connect_error_message_is_readable() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
 
     auth = MicrosoftAuth(client_id="test-client", client=_ConnectFailingClient())
 
@@ -106,7 +106,7 @@ class _RateLimitedClient:
 
 
 async def test_get_profile_429_raises_friendly_message() -> None:
-    from ECL.game.Core.MicrosoftAuth import MinecraftAuthError, MinecraftClient
+    from ECL.minecraft.game.Core.MicrosoftAuth import MinecraftAuthError, MinecraftClient
 
     client = MinecraftClient(client=_RateLimitedClient())
 
@@ -119,7 +119,7 @@ async def test_get_profile_429_raises_friendly_message() -> None:
 
 
 async def test_refresh_network_error_preserves_refresh_token() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth
 
     auth = MicrosoftAuth(client_id="test-client", client=_RefreshFailingClient())
     auth._cache["refresh_token"] = "test-refresh-token"
@@ -131,7 +131,7 @@ async def test_refresh_network_error_preserves_refresh_token() -> None:
 
 
 async def test_refresh_invalid_grant_clears_cache_when_access_expired() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth
 
     auth = MicrosoftAuth(client_id="test-client", client=_InvalidGrantClient())
     auth._cache["refresh_token"] = "test-refresh-token"
@@ -145,7 +145,7 @@ async def test_refresh_invalid_grant_clears_cache_when_access_expired() -> None:
 
 
 async def test_refresh_invalid_grant_preserves_cache_when_access_valid() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth
 
     auth = MicrosoftAuth(client_id="test-client", client=_InvalidGrantClient())
     auth._cache["refresh_token"] = "test-refresh-token"
@@ -160,7 +160,7 @@ async def test_refresh_invalid_grant_preserves_cache_when_access_valid() -> None
 
 
 async def test_refresh_invalid_grant_clears_cache_without_access_token() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth
 
     auth = MicrosoftAuth(client_id="test-client", client=_InvalidGrantClient())
     auth._cache["refresh_token"] = "test-refresh-token"
@@ -172,7 +172,7 @@ async def test_refresh_invalid_grant_clears_cache_without_access_token() -> None
 
 
 async def test_refresh_other_error_preserves_refresh_token() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth
 
     auth = MicrosoftAuth(client_id="test-client", client=_OtherErrorClient())
     auth._cache["refresh_token"] = "test-refresh-token"
@@ -184,7 +184,7 @@ async def test_refresh_other_error_preserves_refresh_token() -> None:
 
 
 async def test_get_token_without_device_flow_raises_on_refresh_failure() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
 
     auth = MicrosoftAuth(client_id="test-client", client=_RefreshFailingClient())
     auth._cache["refresh_token"] = "test-refresh-token"
@@ -208,7 +208,7 @@ class _FailingCloseClient:
 
 
 async def test_manager_aclose_ignores_closed_loop_error(tmp_path) -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuthManager
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuthManager
 
     manager = MicrosoftAuthManager(client_id="test-client", cache_path=tmp_path)
     manager._shared_client = _FailingCloseClient()
@@ -217,7 +217,7 @@ async def test_manager_aclose_ignores_closed_loop_error(tmp_path) -> None:
 
 
 async def test_get_token_with_device_flow_enters_flow_on_refresh_failure() -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth, MicrosoftAuthError
 
     auth = MicrosoftAuth(client_id="test-client", client=_RefreshFailingClient())
     auth._cache["refresh_token"] = "test-refresh-token"
@@ -236,7 +236,7 @@ async def test_get_token_with_device_flow_enters_flow_on_refresh_failure() -> No
 
 
 async def test_save_account_list_persists_atomically(tmp_path) -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuthManager
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuthManager
 
     manager = MicrosoftAuthManager(client_id="test-client", cache_path=tmp_path)
     try:
@@ -252,7 +252,7 @@ async def test_save_account_list_persists_atomically(tmp_path) -> None:
 
 
 async def test_load_accounts_tolerates_corrupted_list(tmp_path) -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuthManager
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuthManager
 
     list_file = tmp_path / "accounts" / "ms_accounts_list.json"
     list_file.parent.mkdir(parents=True, exist_ok=True)
@@ -267,7 +267,7 @@ async def test_load_accounts_tolerates_corrupted_list(tmp_path) -> None:
 
 
 async def test_save_cache_writes_valid_json(tmp_path) -> None:
-    from ECL.game.Core.MicrosoftAuth import MicrosoftAuth
+    from ECL.minecraft.game.Core.MicrosoftAuth import MicrosoftAuth
 
     cache_file = tmp_path / "cache.json"
     auth = MicrosoftAuth(client_id="test-client", cache_file=cache_file, client=_RefreshFailingClient())

@@ -34,7 +34,7 @@
 
 ## Game
 
-`ECL/game` 是独立子模块和稳定公共门面。内部按 `auth`、`catalog`、`download`、`files`、`install`、`java`、`launch`、`network`、`utils` 组织。主仓库不得导入 `ECL.game.<内部包>`。
+`ECL/minecraft/game` 是独立子模块和稳定公共门面。内部按 `auth`、`catalog`、`download`、`files`、`install`、`java`、`launch`、`network`、`utils` 组织。主仓库不得导入 `ECL.minecraft.game.<内部包>`。
 
 ## Plugins
 

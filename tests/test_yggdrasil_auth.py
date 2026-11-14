@@ -35,7 +35,7 @@ from pathlib import Path
 
 import httpx
 
-from ECL.game import YggdrasilClient
+from ECL.minecraft.game import YggdrasilClient
 from ECL.services.account.authlib import AuthlibAccountManager, AuthlibInjector
 
 

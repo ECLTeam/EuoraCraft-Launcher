@@ -16,7 +16,7 @@ from test_modpack import (
 )
 
 from ECL.api.models import ModpackInstallRequest, ModpackPrepareRequest
-from ECL.game import LaunchConfig, build_minecraft_cmd
+from ECL.minecraft.game import LaunchConfig, build_minecraft_cmd
 from ECL.services.game.modpack import ModpackCoordinator, ModpackPlan, PackFileEntry, build_pack_plan
 from ECL.services.game.modpack_preparation import ModpackPreparationService, PreparedModpackFile
 from ECL.utils.errors import GameServiceError

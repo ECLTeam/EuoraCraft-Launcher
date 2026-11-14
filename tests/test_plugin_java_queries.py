@@ -9,9 +9,9 @@ import httpx
 import pytest
 from plugin_java_helpers import allow, candidates, invoke, make_service, runtime
 
-from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.models import JavaError, JavaPolicy
 from ECL.java.packages import JavaCatalog
+from ECL.minecraft.game import JavaRuntime, JavaScanner
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker

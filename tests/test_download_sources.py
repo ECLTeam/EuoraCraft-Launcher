@@ -16,7 +16,7 @@ from unittest.mock import ANY, Mock
 import httpx
 import pytest
 
-from ECL.game import ApiUrlConfig, BmclApiUrl, InstallEvent, InstallObserver
+from ECL.minecraft.game import ApiUrlConfig, BmclApiUrl, InstallEvent, InstallObserver
 from ECL.services.game import GameService
 from ECL.services.game.download_sources import PreferredApiClient
 from ECL.utils import EventBus

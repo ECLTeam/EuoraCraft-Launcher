@@ -11,8 +11,8 @@ import pytest
 from plugin_java_helpers import allow, candidates, make_service, runtime
 from test_java_manager import _archive_bytes, _plan
 
-from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.models import JavaError
+from ECL.minecraft.game import JavaRuntime, JavaScanner
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker

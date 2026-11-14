@@ -1,7 +1,7 @@
 ---
 name: ecl-agent-workflow
 
-description: Enforce a rigorous inspect → plan → code → test → commit → document workflow for AI agents working on EuoraCraft-Launcher (ECL启动器). Use for any backend (ECL/), frontend (frontend/src/), game core (ECL/game/), submodule, CI, or packaging change. Not for standalone one-off scripts or third-party dependency bumps without logic changes.
+description: Enforce a rigorous inspect → plan → code → test → commit → document workflow for AI agents working on EuoraCraft-Launcher (ECL启动器). Use for any backend (ECL/), frontend (frontend/src/), game core (ECL/minecraft/game/), submodule, CI, or packaging change. Not for standalone one-off scripts or third-party dependency bumps without logic changes.
 ---
 
 # ECL启动器 Agent Workflow
@@ -56,7 +56,7 @@ description: Enforce a rigorous inspect → plan → code → test → commit �
 
 - 对于跨前后端的变更，必须说明 IPC 接口变化和 DTO 对齐策略。
 
-- 对于涉及子模块的变更（`ECL/game`、`frontend`），必须评估子模块版本约束。
+- 对于涉及子模块的变更（`ECL/minecraft/game`、`frontend`），必须评估子模块版本约束。
 
 输出：变更计划文档（可直接写入 `docs/` 或在 commentary 中输出）。
 
@@ -122,7 +122,7 @@ description: Enforce a rigorous inspect → plan → code → test → commit �
 
 | 后端 API | `ECL/api/` | pytaurix IPC | pytest |
 
-| 游戏核心 | `ECL/game/` (子模块) | Python | pytest |
+| 游戏核心 | `ECL/minecraft/game/` (子模块) | Python | pytest |
 
 | 前端 | `frontend/src/` (子模块) | Vue 3 + TS | vitest |
 

@@ -43,7 +43,7 @@ import httpx
 import psutil
 from anyio import to_thread
 
-from ECL.game import CoreError, LaunchConfig
+from ECL.minecraft.game import CoreError, LaunchConfig
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.launch_hooks import LaunchContext
 from ECL.plugins.run_store import PluginRunError

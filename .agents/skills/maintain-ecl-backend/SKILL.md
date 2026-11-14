@@ -22,7 +22,7 @@ description: Maintain and refactor the EuoraCraft-Launcher (ECL启动器) Python
 
 7. 运行 `scripts/audit_backend.py`，处理所有错误项。
 
-8. 运行 Ruff、`compileall` 和 pytest；涉及 `ECL/game` 时同时检查子模块状态和测试。
+8. 运行 Ruff、`compileall` 和 pytest；涉及 `ECL/minecraft/game` 时同时检查子模块状态和测试。
 
 ## 模块组织
 
@@ -38,7 +38,7 @@ description: Maintain and refactor the EuoraCraft-Launcher (ECL启动器) Python
 
 - `services/game` 按目录扫描、安装任务和启动生命周期分组；外部只导入 `GameService`。
 
-- 主仓库只能从 `ECL.game` 公共入口导入，不直接引用内部能力包。
+- 主仓库只能从 `ECL.minecraft.game` 公共入口导入，不直接引用内部能力包。
 
 - `utils` 仅容纳无业务归属的技术能力，不创建 `helpers.py`、`misc.py` 或 `common_utils.py`。
 

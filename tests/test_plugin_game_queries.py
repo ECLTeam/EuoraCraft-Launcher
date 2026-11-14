@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.mc.adapters.factory import DefaultMcAdapterFactory
+from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
 from ECL.plugins.api._rpc import RpcRequest
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_models import PluginContentBinding

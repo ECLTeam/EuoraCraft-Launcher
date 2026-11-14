@@ -29,7 +29,7 @@ from urllib.parse import unquote, urlsplit
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ECL.game import Downloader
+from ECL.minecraft.game import Downloader
 from ECL.services.operations import OperationContext, OperationManager
 from ECL.utils.errors import GameServiceError
 

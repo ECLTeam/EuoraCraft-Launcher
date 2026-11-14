@@ -7,7 +7,7 @@
 适用范围与维护方式：
 
 - 本文件是主仓库规范的统一入口。通用工程原则适用于本项目新增或修改的前后端代码；语言、平台专属要求仅在对应范围生效。
-- 主仓库自行维护的代码与配置遵循本文件；前端章节约束本项目的前端变更与集成验收。`frontend`、`ECL/game` 等子仓库的内部语言和工具细节遵循各自规范，不得仅为满足主仓库风格而重写子仓库。
+- 主仓库自行维护的代码与配置遵循本文件；前端章节约束本项目的前端变更与集成验收。`frontend`、`ECL/minecraft/game` 等子仓库的内部语言和工具细节遵循各自规范，不得仅为满足主仓库风格而重写子仓库。
 - 新规则归入对应职责章节，合并重复表述；同一测试命令或验收门槛集中定义，其他章节引用，不按历次对话持续追加独立小节。
 - 同时适用且可以共同满足的要求按较严格者执行；存在直接矛盾时应说明冲突并向用户确认。用户明确指令优先于仓库默认约定，已有授权无需重复询问。
 - 存量不符合项随相关功能变更逐步收敛，不得借规范整理发起无关的全仓重构。
@@ -98,7 +98,7 @@
 
 ## 3. Python 后端规范（仅主仓库）
 
-本节仅约束主仓库自行维护的 Python 代码与测试，包括 `ECL/`（不含子模块）、`tests/`、根目录 Python 脚本及主仓库配置；不约束 `frontend`、`ECL/game` 等子仓库。子仓库须遵循其自身仓库的规范，主仓库不得仅为满足本节而重写其内部风格。
+本节仅约束主仓库自行维护的 Python 代码与测试，包括 `ECL/`（不含子模块）、`tests/`、根目录 Python 脚本及主仓库配置；不约束 `frontend`、`ECL/minecraft/game` 等子仓库。子仓库须遵循其自身仓库的规范，主仓库不得仅为满足本节而重写其内部风格。
 
 ### 3.1 语言与格式
 
@@ -184,8 +184,8 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 
 | 域 | 目录 | 依赖约束 |
 | --- | --- | --- |
-| 内核 | `ECL/plugins/`、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.mc`、`ECL.services.game`、`ECL.services.account`、`ECL.java`（装配缝豁免见 `tests/test_layer_boundary.py`） |
-| MC | `ECL/mc/`（含 `ECL/mc/adapters/` 能力适配器）、`ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/game/`（子模块） | 可依赖内核 |
+| 内核 | `ECL/plugins/`、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.minecraft`、`ECL.services.game`、`ECL.services.account`、`ECL.java`（装配缝豁免见 `tests/test_layer_boundary.py`） |
+| MC | `ECL/minecraft/`（含 `ECL/minecraft/adapters/` 能力适配器）、`ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/minecraft/game/`（Core 子模块） | 可依赖内核 |
 | 边界 | `ECL/api/` | 可依赖两者，只供前端调用 |
 
 - 新增能力先判断归属：定义了持久数据格式或属于启动链路必需的归 MC，其余归内核；无法判断时在实施方案中说明并由用户确认。
@@ -257,7 +257,7 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 | 后端定向验证                 | 在所属仓库执行 `ruff check <改动文件...>`、`ruff format --check <改动文件...>`；在主仓库执行 `python -m pytest <相关测试路径...> --tb=short -q`，覆盖相关主仓库及子模块调用。                                                                                                                                                                                                                       |
 | 主仓库后端全量验证           | 在主仓库执行 `ruff check ECL tests`、`ruff format --check ECL tests`、`python -m pytest --tb=short -q`。对应 CI 为 `.github/workflows/backend-tests.yml`。                                                                                                                                                                                                                                          |
 | 适用的主仓库 Ruff 全量检查   | 按 `.github/workflows/ruff.yml` 在主仓库执行 `ruff check . --output-format github`；符合 6.1 局部类别时，本地采用改动文件的定向 Ruff 检查。                                                                                                                                                                                                                                                         |
-| Core 子模块全量验证与集成    | 按子仓库规范及主仓库 CI 验证；在 `ECL/game` 执行 `ruff check .`，在主仓库执行 `python -m pytest ECL/game/tests --tb=short -q`，并通过相关主仓库集成测试。符合 6.1 局部类别时可采用定向命令，但必须遵守子仓库自身规范并覆盖实际集成调用。                                                                                                                                                            |
+| Core 子模块全量验证与集成    | 按子仓库规范及主仓库 CI 验证；在 `ECL/minecraft/game` 执行 `ruff check .`，在主仓库执行 `python -m pytest ECL/minecraft/game/tests --tb=short -q`，并通过相关主仓库集成测试。符合 6.1 局部类别时可采用定向命令，但必须遵守子仓库自身规范并覆盖实际集成调用。                                                                                                                                                            |
 | 前端定向验证                 | 在 `frontend` 执行 `pnpm exec prettier --check <改动文件...>`；涉及 Vue / TypeScript / JavaScript 时执行 `pnpm exec eslint <相关代码文件...>`，涉及模板、类型或运行代码时执行 `pnpm typecheck`；使用 `pnpm exec vitest run <相关测试文件...>` 运行选定测试。纯文档、文案和资源改动按 6.1 判断是否需要测试。                                                                                         |
 | 前端全量验证                 | 在 `frontend` 执行 `pnpm check`，与 `frontend/.github/workflows/lint.yml` 一致，包含 Prettier 格式检查、ESLint、类型检查与全量 Vitest。                                                                                                                                                                                                                                                             |
 | 前端 UI 或启动器运行流程变更 | 对应定向或全量检查通过后，按 6.3 验收受影响界面。修改模板、运行代码、资源处理或构建配置时，继续执行 `pnpm build`；界面效果默认在真实浏览器查看，原生验收仅在 6.3 所列条件下进行。纯局部 CSS、文案等改动不要求重新构建。                                                                                                                                                                             |
@@ -299,7 +299,7 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 
 本节适用于每次推送主仓库和创建发布标签，不限于本次修改过的子模块。`git status` 显示干净、子模块提交存在于本机，都不能证明 CI 能从远端取得该提交。
 
-1. 推送主仓库前，以**即将推送的主仓库提交**为准，用 `git ls-tree -r HEAD` 找出所有 `160000 commit` 条目及其指针；当前包括 `ECL/game`、`frontend`。不得只检查本次显示为 modified 的子模块；新增子模块也自动纳入检查。
+1. 推送主仓库前，以**即将推送的主仓库提交**为准，用 `git ls-tree -r HEAD` 找出所有 `160000 commit` 条目及其指针；当前包括 `ECL/minecraft/game`、`frontend`。不得只检查本次显示为 modified 的子模块；新增子模块也自动纳入检查。
 2. 对每个指针，从该子模块的 `origin` 获取 `.gitmodules` 指定的分支（未指定时为远端默认分支），确认指针提交是该远端分支的祖先或当前提交。例如当前两个子模块均以 `main` 为准，可先执行 `git -C <子模块路径> fetch origin main`，再执行 `git -C <子模块路径> merge-base --is-ancestor <主仓库记录的提交> origin/main`；命令返回非零即视为检查失败。本地 `main` 或本地对象存在不算通过。
 3. 任一指针尚未在远端分支上时，先按该子仓库规范验证并推送对应提交，重新获取远端并复查**全部**指针。所有检查通过前不得推送主仓库、创建标签或宣称推送完成；“推送所有提交”也包括主仓库已引用但本次未修改的子模块提交。
 4. 主仓库推送后，核对远端主仓库提交及其子模块指针；再通过全新浅克隆和 `git submodule update --init --recursive --depth=1`，或对应 CI 的子模块检出步骤，确认远端能实际检出。若先前的 CI 因缺失子模块提交失败，补推子模块不会自动重跑主仓库工作流，必须重跑受影响工作流并核对结果。

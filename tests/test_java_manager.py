@@ -15,10 +15,10 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaError, JavaInstallPlan, JavaPolicy, JavaReferenceConfig, RuntimeRecord
 from ECL.java.packages import JavaArchive
+from ECL.minecraft.game import JavaRuntime, JavaScanner
 from ECL.services.game.launch_settings import scan_instance_java_references
 from ECL.services.operations import OperationContext, OperationManager
 from ECL.utils import EventBus

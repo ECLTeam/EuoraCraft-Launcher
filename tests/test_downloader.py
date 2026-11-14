@@ -15,7 +15,7 @@ from pathlib import Path
 
 import httpx
 
-from ECL.game.Core.Downloader import Downloader
+from ECL.minecraft.game.Core.Downloader import Downloader
 
 
 def _redirect_handler(request: httpx.Request) -> httpx.Response:
@@ -37,7 +37,7 @@ async def test_downloader_follows_redirect(monkeypatch, tmp_path: Path) -> None:
         client_options.append(kwargs)
         return original(transport=httpx.MockTransport(_redirect_handler), **kwargs)
 
-    monkeypatch.setattr("ECL.game.Core.Downloader.httpx.AsyncClient", _client_factory)
+    monkeypatch.setattr("ECL.minecraft.game.Core.Downloader.httpx.AsyncClient", _client_factory)
 
     target = tmp_path / "file.jar"
     downloader = Downloader([("http://example.com/file.jar", target)], max_rounds=1)

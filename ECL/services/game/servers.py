@@ -26,7 +26,7 @@ from typing import Any
 
 from mcstatus import JavaServer
 
-from ECL.game import Compound, File, List, String, load
+from ECL.minecraft.game import Compound, File, List, String, load
 from ECL.utils import atomic_write_text
 
 from .base import GameServiceError

@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ECL.game import InstanceMetadata
+from ECL.minecraft.game import InstanceMetadata
 from ECL.plugins.api.contracts import JsonValue
 from ECL.utils.instance_reading import InstanceReadBoundary, InstanceReadError
 

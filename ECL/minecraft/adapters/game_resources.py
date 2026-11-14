@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from pydantic import Field, StrictBool, field_validator
 
-from ECL.mc.adapters.game_models import GameInstallRequest
+from ECL.minecraft.adapters.game_models import GameInstallRequest
 from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, RequestModel
@@ -31,7 +31,7 @@ from ECL.services.operations import OperationCommitRejectedError, OperationConte
 from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle
 
 if TYPE_CHECKING:
-    from ECL.mc.adapters.resources import RuntimeResources
+    from ECL.minecraft.adapters.resources import RuntimeResources
     from ECL.plugins.runtime.file_api import RuntimeFiles
     from ECL.plugins.runtime.operation_adapters import RuntimeOperations
     from ECL.services.game.plugin_games import GameResourceTarget, PluginGameCoordinator

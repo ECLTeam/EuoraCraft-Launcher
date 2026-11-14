@@ -25,9 +25,9 @@ from uuid import uuid4
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaError
 from ECL.java.queries import JavaQueries
-from ECL.mc.adapters.java_api import RuntimeJava
-from ECL.mc.adapters.public_queries import RuntimePublicQueries
-from ECL.mc.adapters.resources import RuntimeResources
+from ECL.minecraft.adapters.java_api import RuntimeJava
+from ECL.minecraft.adapters.public_queries import RuntimePublicQueries
+from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
 from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.api._rpc import RpcRequest
@@ -56,7 +56,7 @@ from ECL.utils.instance_reading import InstanceReadError
 if TYPE_CHECKING:
     from pytaurix import AppHandle
 
-    from ECL.mc.adapters.resources import InstanceQueries
+    from ECL.minecraft.adapters.resources import InstanceQueries
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 

@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from ECL.mc.adapters.public_queries import RuntimePublicQueries
+from ECL.minecraft.adapters.public_queries import RuntimePublicQueries
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.worker_service import PluginWorkerService

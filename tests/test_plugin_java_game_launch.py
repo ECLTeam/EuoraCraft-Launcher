@@ -7,13 +7,13 @@ from threading import Event
 import httpx
 import pytest
 
-from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
 from ECL.java.queries import JavaQueries
-from ECL.mc.adapters.factory import DefaultMcAdapterFactory
-from ECL.mc.adapters.java_api import RuntimeJava
-from ECL.mc.adapters.resources import RuntimeResources
+from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
+from ECL.minecraft.adapters.java_api import RuntimeJava
+from ECL.minecraft.adapters.resources import RuntimeResources
+from ECL.minecraft.game import JavaRuntime
 from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.utils import EventBus

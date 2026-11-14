@@ -134,7 +134,7 @@ indent-width = 4
 exclude = [
     "EuoraCraftLauncher-UI",
     "frontend",
-    "ECL/game",
+    "ECL/minecraft/game",
     "ECL_Libs",
     "resources",
     ".git",

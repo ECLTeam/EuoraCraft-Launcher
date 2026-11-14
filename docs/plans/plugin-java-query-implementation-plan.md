@@ -121,7 +121,7 @@ Core 的增强属于本文明确包含的子模块变更，仅修改公开探测
 | 位置 | 具体职责 |
 | --- | --- |
 | `ECL/java/queries.py`（新增）、manager/models/packages | 单一登记快照、受控校验、固定目录预算和白名单领域摘要 |
-| `ECL/game/Utils/JavaScanner.py` 及其公开导出/测试 | 公开 probe 的预算、输出、环境与真实收尾；保留现有真实调用方 |
+| `ECL/minecraft/game/Utils/JavaScanner.py` 及其公开导出/测试 | 公开 probe 的预算、输出、环境与真实收尾；保留现有真实调用方 |
 | `ECL/plugins/java_resources.py`（新增） | Java 授权身份索引、退休和目录 revision |
 | `ECL/plugins/runtime/java_api.py`（新增）、models/broker | 当前运行引用、严格请求/结果、授权校验、分页及清理归属 |
 | grant_models/grant_store、worker_service、manager/base、application | 动态精确授权、有效集合、唯一应用 Java 查询服务注入和关闭顺序 |

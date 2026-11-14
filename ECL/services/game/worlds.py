@@ -41,7 +41,7 @@ from urllib.parse import quote_plus
 
 from PIL import Image, UnidentifiedImageError
 
-from ECL.game import Byte, Compound, GameDataError, Int, WorldSeedStore, load
+from ECL.minecraft.game import Byte, Compound, GameDataError, Int, WorldSeedStore, load
 from ECL.services.operations import OperationContext
 from ECL.utils import atomic_write_text
 

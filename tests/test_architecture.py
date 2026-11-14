@@ -38,7 +38,7 @@ def test_bootstrap_and_plugin_api_live_only_inside_ecl() -> None:
 
 
 def _python_files() -> list[Path]:
-    submodule_roots = (ecl_root / "game", ecl_root / "services" / "florolding")
+    submodule_roots = (ecl_root / "minecraft" / "game", ecl_root / "services" / "florolding")
     return [path for path in ecl_root.rglob("*.py") if not any(path.is_relative_to(root) for root in submodule_roots)]
 
 
@@ -47,11 +47,13 @@ def test_application_imports_game_only_through_public_entrypoint() -> None:
     for path in _python_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("ECL.game."):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("ECL.minecraft.game."):
                 violations.append(f"{path}:{node.lineno}:{node.module}")
             if isinstance(node, ast.Import):
                 violations.extend(
-                    f"{path}:{node.lineno}:{alias.name}" for alias in node.names if alias.name.startswith("ECL.game.")
+                    f"{path}:{node.lineno}:{alias.name}"
+                    for alias in node.names
+                    if alias.name.startswith("ECL.minecraft.game.")
                 )
     assert violations == []
 
@@ -62,7 +64,7 @@ def test_no_service_locator_api_or_duplicate_libs_remains() -> None:
     assert "register_services" not in source
     assert "EventBus().get(" not in source
     assert "EventBus().register(" not in source
-    assert [path for path in ecl_root.rglob("Libs.py") if not path.is_relative_to(ecl_root / "game")] == []
+    assert [path for path in ecl_root.rglob("Libs.py") if not path.is_relative_to(ecl_root / "minecraft" / "game")] == []
     assert not (ecl_root / "api" / "legacy").exists()
     assert not (ecl_root / "api" / "domain_handlers.py").exists()
 
@@ -111,7 +113,7 @@ def test_ipc_registry_has_no_retired_compatibility_commands() -> None:
 
 
 def test_game_package_root_contains_only_public_boundary_modules() -> None:
-    root_modules = {path.name for path in (ecl_root / "game").glob("*.py")}
+    root_modules = {path.name for path in (ecl_root / "minecraft" / "game").glob("*.py")}
 
     assert root_modules == {"__init__.py"}
 

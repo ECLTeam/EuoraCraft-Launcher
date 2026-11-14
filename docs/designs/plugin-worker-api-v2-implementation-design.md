@@ -928,7 +928,7 @@ P14的各扩展、P15认证、P16联机互相不做一次性大改；每一类�
 | 原生窗口/IPC | [tauri.py](../../ECL/desktop/tauri.py) `Adapter.run:51`、[registry.py](../../ECL/api/registry.py) `dispatch:278`、[bridge.py](../../ECL/api/bridge.py) `authorize_window_command:525`、[windows.py](../../ECL/api/windows.py) `window_open:135`、[Capability](../../capabilities/default.toml)、[Tauri.toml](../../Tauri.toml) |
 | 开发通道旁路 | [dev_channel.py](../../ECL/desktop/dev_channel.py) 发现文件`:328`、`frontend.invoke:587` |
 | 前端基线 | `frontend@6429f15` 的 `src/api/transport/tauri.ts:36`、`src/composables/usePluginBridge.ts:299,351`、`src/plugin-sdk/ui.ts:565`、`src/features/windows/PluginWindowShell.vue` |
-| Core进程基线 | `ECL/game@467b58c` 的 `Core/InstancesManager.py` `create_instance:87,stop_instance:200` |
+| Core进程基线 | `ECL/minecraft/game@467b58c` 的 `Core/InstancesManager.py` `create_instance:87,stop_instance:200` |
 
 本机依赖源码根为 `D:\Projects\EuoraCraft-Launcher\EuoraCraft-Launcher\.venv\Lib\site-packages`。初始调研只读 Nuitka 引导、PyTauri 接口及 dist-info 元数据；批准实施后已执行真实冻结构建、独立测试 frame 和普通启动器验收，结果见第 18 节。
 

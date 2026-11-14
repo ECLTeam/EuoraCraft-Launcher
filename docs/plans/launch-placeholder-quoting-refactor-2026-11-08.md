@@ -13,7 +13,7 @@
 - 真实失败日志：`ECL_data/logs/EuoraCraft-Launcher.log.2026-11-07.gz` 第 1016 行起，`LAUNCH_COMMAND_INVALID`，"主类未作为唯一参数出现（出现 0 次）"。
 - 现场复现：用实例真实 JSON（`.minecraft/versions/Zombie Invade 100 Days/`）逐参数解析，第 5 个参数（`-p` 模块路径，替换后含 30 个引号）解析后引号状态为奇数，后续参数全部合并。
 - 最小复现：`MARKER "A"/x.jar";""B"/y.jar TAIL` 解析结果为 `['MARKER', 'A/x.jar;"B/y.jar TAIL']`，TAIL 被吞进引号。
-- 统一加引号的实现：[ECLauncherCore.py](../../ECL/game/Core/ECLauncherCore.py#L369-L380) `replace()`。
+- 统一加引号的实现：[ECLauncherCore.py](../../ECL/minecraft/game/Core/ECLauncherCore.py#L369-L380) `replace()`。
 - 既有端到端测试 [test_game_service.py](../../tests/test_game_service.py#L1482-L1534) 的 Forge JSON 未包含模块路径与 natives 参数形态，因此未拦住该回归；11-01 的修复（`09080a4`）解决的 ignoreList 切分本身是正确的。
 
 11-01 引入的 `validate_launch_command` 校验器工作正常：把以前会静默传给 Java 的坏命令拦成了明确报错，本次不需要修改校验器。
@@ -42,7 +42,7 @@
 
 ### 2.3 实现
 
-`ECL/game/Core/ECLauncherCore.py` 的 `PlaceholderReplacer`：
+`ECL/minecraft/game/Core/ECLauncherCore.py` 的 `PlaceholderReplacer`：
 
 - 新增类属性 `bare_keys: frozenset[str]`（按规范使用不可变容器，归入领域类而非模块级私有映射），内容为 2.1 节的四个键，附中文注释说明 `""` 转义语义与分类依据。
 - `replace()` 循环内按键是否属于 `bare_keys` 选择裸替换或引号替换。
@@ -53,7 +53,7 @@
 
 ### 3.1 Core 子仓库测试
 
-修改 [test_placeholder_replacer.py](../../ECL/game/tests/test_placeholder_replacer.py)：
+修改 [test_placeholder_replacer.py](../../ECL/minecraft/game/tests/test_placeholder_replacer.py)：
 
 | 用例 | 覆盖点 |
 | --- | --- |
@@ -61,7 +61,7 @@
 | `test_numeric_and_index_placeholders_are_bare` | `--assetIndex ${assets_index_name} --width ${resolution_width} --height ${resolution_height}` 替换结果不含引号 |
 | `test_paths_and_names_stay_quoted` | `game_directory`、`version_name`、`auth_player_name` 等仍带引号（守护既有行为） |
 
-新增/修改 [test_launch_command.py](../../ECL/game/tests/test_launch_command.py)：
+新增/修改 [test_launch_command.py](../../ECL/minecraft/game/tests/test_launch_command.py)：
 
 | 用例 | 覆盖点 |
 | --- | --- |
@@ -83,7 +83,7 @@
 
 ```powershell
 ruff check .
-python -m pytest ECL/game/tests --tb=short -q
+python -m pytest ECL/minecraft/game/tests --tb=short -q
 python -m pytest tests/test_game_service.py tests/test_modpack_preparation.py --tb=short -q
 ruff format --check ECL tests
 python -m pytest --tb=short -q

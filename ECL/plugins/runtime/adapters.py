@@ -18,15 +18,15 @@ from typing import TYPE_CHECKING, Protocol
 from ECL.plugins.run_store import PluginRunSession
 
 if TYPE_CHECKING:
-    from ECL.mc.adapters.game_install import RuntimeGameInstall
-    from ECL.mc.adapters.game_launch import RuntimeGameLaunch
-    from ECL.mc.adapters.game_queries import RuntimeGameCatalog
-    from ECL.mc.adapters.game_resources import RuntimeGameResources
-    from ECL.mc.adapters.instance_profiles import RuntimeInstanceProfiles
-    from ECL.mc.adapters.java_api import RuntimeJava
-    from ECL.mc.adapters.modpacks import RuntimeModpacks
-    from ECL.mc.adapters.resource_queries import RuntimeResourceCatalog
-    from ECL.mc.adapters.resources import RuntimeResources
+    from ECL.minecraft.adapters.game_install import RuntimeGameInstall
+    from ECL.minecraft.adapters.game_launch import RuntimeGameLaunch
+    from ECL.minecraft.adapters.game_queries import RuntimeGameCatalog
+    from ECL.minecraft.adapters.game_resources import RuntimeGameResources
+    from ECL.minecraft.adapters.instance_profiles import RuntimeInstanceProfiles
+    from ECL.minecraft.adapters.java_api import RuntimeJava
+    from ECL.minecraft.adapters.modpacks import RuntimeModpacks
+    from ECL.minecraft.adapters.resource_queries import RuntimeResourceCatalog
+    from ECL.minecraft.adapters.resources import RuntimeResources
     from ECL.plugins.runtime.file_api import RuntimeFiles
     from ECL.plugins.runtime.network_api import RuntimeNetwork
     from ECL.plugins.runtime.operation_adapters import RuntimeOperations

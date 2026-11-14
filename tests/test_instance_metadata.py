@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import JsonValue
 
-from ECL.game import InstanceMetadata
+from ECL.minecraft.game import InstanceMetadata
 from ECL.services.game.scan import ScanCoordinator, _JavaInstallation
 
 

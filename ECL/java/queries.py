@@ -16,7 +16,7 @@ from threading import BoundedSemaphore
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from ECL.game import JavaProbeError, JavaScanner
+from ECL.minecraft.game import JavaProbeError, JavaScanner
 
 from .models import JavaError, JavaPackage, JavaPolicy, RuntimeRecord
 

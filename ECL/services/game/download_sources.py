@@ -21,7 +21,7 @@ from typing import TypeVar
 
 import httpx
 
-from ECL.game import BaseApiClient, InstallEvent, InstallObserver
+from ECL.minecraft.game import BaseApiClient, InstallEvent, InstallObserver
 
 result_type = TypeVar("result_type")
 

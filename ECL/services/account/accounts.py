@@ -56,7 +56,7 @@ from uuid import UUID
 
 import httpx
 
-from ECL.game import MicrosoftAuthManager, name_to_uuid
+from ECL.minecraft.game import MicrosoftAuthManager, name_to_uuid
 from ECL.plugins.auth_providers import AuthProviderRegistry
 from ECL.utils import AccountError, EventBus, atomic_write_text, get_logger
 from ECL.utils.account_reading import AccountSummary

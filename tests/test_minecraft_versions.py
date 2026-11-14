@@ -24,7 +24,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.game import SearchMinecraft
+from ECL.minecraft.game import SearchMinecraft
 from ECL.services import GameService, VersionScanError
 
 
@@ -178,7 +178,7 @@ def test_loader_versions_handles_plain_list_and_empty_result(tmp_path, monkeypat
 
 def test_bmcl_forge_versions_use_same_newest_first_order() -> None:
     """BMCLAPI 源应和官方源一样按版本降序返回，不受镜像原始顺序影响。"""
-    from ECL.game.Core.NetLibs import BaseApiClient, BmclApiUrl
+    from ECL.minecraft.game.Core.NetLibs import BaseApiClient, BmclApiUrl
 
     client = BaseApiClient.__new__(BaseApiClient)
     client.config = BmclApiUrl()
@@ -198,7 +198,7 @@ def test_bmcl_forge_versions_use_same_newest_first_order() -> None:
 
 def test_forge_versions_read_from_maven_index() -> None:
     """官方源应读 maven-metadata.json，剥掉 "{mc}-" 前缀并按最新在前返回。"""
-    from ECL.game.Core.NetLibs import BaseApiClient
+    from ECL.minecraft.game.Core.NetLibs import BaseApiClient
 
     payload = {
         "1.20.1": ["1.20.1-47.4.21", "1.20.1-47.4.22"],

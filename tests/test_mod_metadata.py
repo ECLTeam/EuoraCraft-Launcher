@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from ECL.game import LocalModParser, ModDependencyDiagnostics, ModVersionPredicate
+from ECL.minecraft.game import LocalModParser, ModDependencyDiagnostics, ModVersionPredicate
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.resources import ResourceCoordinator
 

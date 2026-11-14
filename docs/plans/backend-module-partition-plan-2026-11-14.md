@@ -34,7 +34,7 @@
 | `ECL/tooling/` | 3 | 530 | 内核（开发工具） |
 | `ECL/utils/` | 19 | 4,004 | 混合，需拆少量 |
 | 根文件 | 4 | 1,505 | 混合 |
-| `ECL/game/`（子模块） | — | 8,865 | **MC**，不主动改 |
+| `ECL/minecraft/game/`（子模块） | — | 8,865 | **MC**，不主动改 |
 
 合计约 7.6 万行，其中 MC 侧约 3.7 万行（`services/game` + `services/account` + `java` + `game` + 适配器）。
 
@@ -72,7 +72,7 @@
 
 ### 4.1 整体归属
 
-`ECL/game/`（Core 子模块，8,865 行）、`ECL/java/`（2,193 行）、`ECL/services/game/`（32 文件 18,452 行）、`ECL/services/account/`（7 文件 3,854 行）、`services/custom_downloads.py`（476 行）。
+`ECL/minecraft/game/`（Core 子模块，8,865 行）、`ECL/java/`（2,193 行）、`ECL/services/game/`（32 文件 18,452 行）、`ECL/services/account/`（7 文件 3,854 行）、`services/custom_downloads.py`（476 行）。
 
 ### 4.2 需要从 `plugins/` 迁出的 11 个适配器
 

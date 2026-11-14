@@ -20,8 +20,8 @@ import httpx
 
 from ECL.java.manager import JavaManager
 from ECL.java.queries import JavaQueries
-from ECL.mc.adapters.factory import DefaultMcAdapterFactory
-from ECL.mc.adapters.resources import InstanceQueries
+from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
+from ECL.minecraft.adapters.resources import InstanceQueries
 from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.auth_providers import (
     AuthField,

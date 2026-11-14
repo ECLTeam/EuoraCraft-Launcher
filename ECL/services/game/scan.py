@@ -36,7 +36,7 @@ from typing import Any
 import httpx
 from pydantic import JsonValue
 
-from ECL.game import InstanceMetadata
+from ECL.minecraft.game import InstanceMetadata
 from ECL.utils import ConfigError, atomic_write_text
 
 from .base import GameServiceError, VersionScanError, _GameState
@@ -761,7 +761,7 @@ class ScanCoordinator(_GameState):
         user_paths = [path for path in user_java_paths or [] if isinstance(path, str) and path.strip()]
         if self.java_manager is not None:
             inventory = self.java_manager.inventory(force=True, extra_paths=tuple(Path(path) for path in user_paths))
-            from ECL.game import JavaRuntime
+            from ECL.minecraft.game import JavaRuntime
 
             self._java_runtimes = [
                 JavaRuntime(

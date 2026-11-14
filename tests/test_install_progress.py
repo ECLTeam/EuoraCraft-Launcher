@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.game.Core.InstallProgress import InstallEvent
+from ECL.minecraft.game.Core.InstallProgress import InstallEvent
 from ECL.services.game import GameService, GameServiceError
 from ECL.services.game.install_progress import InstallationProgress
 

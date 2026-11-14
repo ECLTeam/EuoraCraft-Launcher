@@ -154,7 +154,7 @@ from pydantic import (
 )
 
 from ECL.api.plugin_models import PluginInstallationQuery
-from ECL.game import GameDataError, WorldSeedStore
+from ECL.minecraft.game import GameDataError, WorldSeedStore
 from ECL.services.account.skin_avatar import SkinAvatarExporter
 from ECL.services.custom_downloads import CustomDownloadRequest
 from ECL.utils.config import default_config

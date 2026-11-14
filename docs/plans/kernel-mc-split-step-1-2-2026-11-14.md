@@ -29,7 +29,7 @@
 
 真正靠 `__init__` 注入的只有 `RuntimeResources`、`RuntimeJava`、`RuntimePublicQueries` 三个。
 
-**由此推出：适配器迁移不能只迁一部分。** 只迁 `resources.py`，留在原地的 6 个适配器会 import `ECL.mc`，而它们物理上仍在 `plugins/runtime/` 下，静态检查会判为"内核依赖 MC"。迁移是原子的，必须 11 个一起走，并同步改掉 broker 的 6 处就地实例化。
+**由此推出：适配器迁移不能只迁一部分。** 只迁 `resources.py`，留在原地的 6 个适配器会 import `ECL.minecraft`，而它们物理上仍在 `plugins/runtime/` 下，静态检查会判为"内核依赖 MC"。迁移是原子的，必须 11 个一起走，并同步改掉 broker 的 6 处就地实例化。
 
 ## 1. 调整后的范围
 
@@ -69,8 +69,8 @@ ECL/
 
 | 域 | 目录 | 依赖方向 |
 | --- | --- | --- |
-| 内核 | `ECL/plugins/`（除 `mc/`）、`ECL/plugins/api/`、`ECL/services/operations.py`、`processes.py`、`updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得 import `ECL.mc` |
-| MC | `ECL/mc/`、`ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/game/`（子模块） | 可依赖内核 |
+| 内核 | `ECL/plugins/`（除 `mc/`）、`ECL/plugins/api/`、`ECL/services/operations.py`、`processes.py`、`updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得 import `ECL.minecraft` |
+| MC | `ECL/mc/`、`ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/minecraft/game/`（子模块） | 可依赖内核 |
 | 边界 | `ECL/api/` | 可依赖两者 |
 
 ### 3.2 检查实现
@@ -78,7 +78,7 @@ ECL/
 新增 `tests/test_layer_boundary.py`，用 AST 扫描 import，不用文本匹配：
 
 - 遍历内核目录下的 `.py`，收集 `Import` / `ImportFrom` 的目标模块名。
-- 命中 `ECL.mc`、`ECL.services.game`、`ECL.services.account`、`ECL.java` 即违规。
+- 命中 `ECL.minecraft`、`ECL.services.game`、`ECL.services.account`、`ECL.java` 即违规。
 - 豁免以 `dict[str, str]` 显式维护（文件 → 原因），并断言豁免条目数不超过上限。
 
 ### 3.3 当前存量违规
@@ -150,7 +150,7 @@ class McAdapterFactory(Protocol):
 
 ### 5.4 验收
 
-- `python -c "import ECL.mc.adapters.resources"` 等 11 个逐个导入成功。
+- `python -c "import ECL.minecraft.adapters.resources"` 等 11 个逐个导入成功。
 - 边界检查豁免降到 4（实施修正：`application.py` 构造根、`worker_service.py` 与 `manager/base.py` 两个装配缝、`java_resources.py` 类型引用——`worker_service` 仍内联构造三个注入式适配器，工厂只接管 broker 的七个就地实例化，全部消除需装配逻辑统一，另行推进）。
 - 全量 `pytest` 通过。
 - 现有 v2 示例插件加载、命令、面板、设置调用正常。
@@ -158,7 +158,7 @@ class McAdapterFactory(Protocol):
 ## 6. 不做的事
 
 - 不迁 7 个插件扩展点注册表（职责在内核）。
-- 不动 `services/game`、`services/account`、`ECL/java`、`ECL/game` 子模块。
+- 不动 `services/game`、`services/account`、`ECL/java`、`ECL/minecraft/game` 子模块。
 - 不改任何 IPC 命令名、插件方法名。
 - 不动 `api_version`（2→1 是独立一刀，单独提交）。
 - 不改 `api/` 下的 handler 实现（第 4 步）。

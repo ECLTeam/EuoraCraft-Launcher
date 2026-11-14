@@ -9,8 +9,8 @@ import httpx
 import pytest
 from plugin_java_helpers import allow, candidates, make_service
 
-from ECL.game import JavaScanner
 from ECL.java.models import JavaPolicy
+from ECL.minecraft.game import JavaScanner
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 
 

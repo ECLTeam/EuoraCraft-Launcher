@@ -18,7 +18,7 @@ from threading import RLock
 from time import monotonic, time
 from typing import Literal, TypedDict
 
-from ECL.game import InstallEvent
+from ECL.minecraft.game import InstallEvent
 
 
 class _StageProgress(TypedDict):

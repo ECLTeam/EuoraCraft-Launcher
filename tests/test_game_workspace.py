@@ -29,7 +29,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.game import Byte, Compound, File, GameDataError, Int, Long, String, load
+from ECL.minecraft.game import Byte, Compound, File, GameDataError, Int, Long, String, load
 from ECL.services.game.base import GameServiceError
 from ECL.services.game.workspace import (
     WorkspaceCoordinator,

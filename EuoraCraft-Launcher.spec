@@ -128,8 +128,8 @@ hiddenimports = [
     "psutil",
     "pydantic",
     "pyperclip",
-    "ECL.game",
-    "ECL.game.auth",
+    "ECL.minecraft.game",
+    "ECL.minecraft.game.auth",
 ] + _wheel_hiddenimports + collect_submodules("ECL")
 excludes = [
     "scipy",

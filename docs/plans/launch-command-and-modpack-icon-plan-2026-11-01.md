@@ -24,15 +24,15 @@
 - 实例描述：[Zombie Invade 100 Days.json](../../.minecraft/versions/Zombie%20Invade%20100%20Days/Zombie%20Invade%20100%20Days.json#L11) 第 11 行。
 - 基础 Forge 描述：[forge-47.4.10-1.20.1.json](../../.minecraft/versions/forge-47.4.10-1.20.1/forge-47.4.10-1.20.1.json#L11) 第 11 行。
 - Forge 的忽略列表：[Zombie Invade 100 Days.json](../../.minecraft/versions/Zombie%20Invade%20100%20Days/Zombie%20Invade%20100%20Days.json#L29) 第 29 行。
-- 只给最后一次加引号的实现：[ECLauncherCore.py](../../ECL/game/Core/ECLauncherCore.py#L366-L393)。
-- 命令以单个字符串交给进程：[InstancesManager.py](../../ECL/game/Core/InstancesManager.py#L122-L134)。
+- 只给最后一次加引号的实现：[ECLauncherCore.py](../../ECL/minecraft/game/Core/ECLauncherCore.py#L366-L393)。
+- 命令以单个字符串交给进程：[InstancesManager.py](../../ECL/minecraft/game/Core/InstancesManager.py#L122-L134)。
 - 启动路径没有最终命令校验：[launch.py](../../ECL/services/game/launch.py#L913-L921)、[launch.py](../../ECL/services/game/launch.py#L1235)、[launch.py](../../ECL/services/game/launch.py#L1400-L1421)。
 
 根因链条：
 
 1. 在线安装默认把实例名设为整合包标题：[modpackImportStore.ts](../../frontend/src/features/instances/stores/modpackImportStore.ts#L151-L158)；本地导入也允许文件名保留空格：[modpackImportStore.ts](../../frontend/src/features/instances/stores/modpackImportStore.ts#L247-L252)。
 2. Forge/NeoForge 的版本 JSON 在 `-DignoreList` 中引用 `${version_name}.jar`。
-3. [ECLauncherCore.py](../../ECL/game/Core/ECLauncherCore.py#L385-L390) 用 `_replace_last` 只给最后一次出现加引号，`-DignoreList` 中的版本名保持裸值。
+3. [ECLauncherCore.py](../../ECL/minecraft/game/Core/ECLauncherCore.py#L385-L390) 用 `_replace_last` 只给最后一次出现加引号，`-DignoreList` 中的版本名保持裸值。
 4. Windows 命令行按空格切分后，`...,forge-,Zombie`、`Invade`、`100`、`Days.jar` 变成多个 token；JVM 跳过 `-DignoreList=...` 选项后，把 `Invade` 当作主类。
 5. 后续 `-cp`、`-p` 等变成程序参数，classpath 未生效，Java 报主类不存在。
 
@@ -41,13 +41,13 @@
 - 正确主类：`cpw.mods.bootstraplauncher.BootstrapLauncher`。
 - 提供主类的 jar：`.minecraft/libraries/cpw/mods/bootstraplauncher/1.1.2/bootstraplauncher-1.1.2.jar`，内含 `cpw/mods/bootstraplauncher/BootstrapLauncher.class`。
 - 实例 JSON 声明的 29 个 library 与父版本 `1.20.1.json` 声明的 88 个 library 均无缺失。
-- 实例自身 `<实例名>.jar` 缺失不是本次失败原因；[ECLauncherCore.py](../../ECL/game/Core/ECLauncherCore.py#L442-L447) 会回退到实例目录中的 `1.20.1.jar`。
+- 实例自身 `<实例名>.jar` 缺失不是本次失败原因；[ECLauncherCore.py](../../ECL/minecraft/game/Core/ECLauncherCore.py#L442-L447) 会回退到实例目录中的 `1.20.1.jar`。
 
 ## 1.2 实施范围
 
-### 1.2.1 修改 `ECL/game/Core/ECLauncherCore.py`
+### 1.2.1 修改 `ECL/minecraft/game/Core/ECLauncherCore.py`
 
-文件：[ECLauncherCore.py](../../ECL/game/Core/ECLauncherCore.py)
+文件：[ECLauncherCore.py](../../ECL/minecraft/game/Core/ECLauncherCore.py)
 
 | 位置 | 现状 | 改成什么 |
 | --- | --- | --- |
@@ -70,7 +70,7 @@ Windows 命令行解析会去掉 token 内部的引号，得到单个 token：
 
 同理，`--version ${version_name}` 仍会得到完整的 `"Zombie Invade 100 Days"`。
 
-### 1.2.2 新增 `ECL/game/Core/LaunchCommand.py`
+### 1.2.2 新增 `ECL/minecraft/game/Core/LaunchCommand.py`
 
 新文件，按 Core 子仓库约定添加文件头。公开接口：
 
@@ -91,14 +91,14 @@ Windows 命令行解析会去掉 token 内部的引号，得到单个 token：
 
 不在校验器里单独要求 `-DignoreList` 必须包含版本名：部分版本 JSON 的忽略列表本来就不引用版本名，硬编码该规则会产生误报。Forge/NeoForge 的具体形态由第 1.2.4 节的端到端用例直接断言 `-DignoreList` token。
 
-错误类型复用 [Errors.py](../../ECL/game/Core/Errors.py) 的 `CoreError`，构造时传入 `LAUNCH_COMMAND_INVALID`。
+错误类型复用 [Errors.py](../../ECL/minecraft/game/Core/Errors.py) 的 `CoreError`，构造时传入 `LAUNCH_COMMAND_INVALID`。
 
 ### 1.2.3 修改 `ECL/services/game/launch.py`
 
 文件：[launch.py](../../ECL/services/game/launch.py)
 
 - 第 46 行导入改为同时导入 `CoreError`：
-  `from ECL.game import CoreError, LaunchConfig`
+  `from ECL.minecraft.game import CoreError, LaunchConfig`
 - 在第 1417 行 `except Exception` 之前增加分支：
 
 ```python
@@ -114,12 +114,12 @@ except CoreError as exc:
 
 | 文件 | 用例 | 覆盖点 |
 | --- | --- | --- |
-| 新建 [test_launch_command.py](../../ECL/game/tests/test_launch_command.py) | `test_parse_launch_command_preserves_quoted_token` | 中文/含空格值在引号内保持一个 token |
+| 新建 [test_launch_command.py](../../ECL/minecraft/game/tests/test_launch_command.py) | `test_parse_launch_command_preserves_quoted_token` | 中文/含空格值在引号内保持一个 token |
 | 同上 | `test_validate_launch_command_accepts_space_version_name` | Forge 形态命令通过校验；`-DignoreList` token 含完整版本名；主类 token 正确 |
 | 同上 | `test_validate_launch_command_rejects_split_version_name` | 裸版本名导致 token 切分时抛出 `LAUNCH_COMMAND_INVALID` |
 | 同上 | `test_validate_launch_command_rejects_split_or_missing_main_class` | 主类被切开、缺失或重复时抛出 |
 | 同上 | `test_validate_launch_command_rejects_invalid_main_class` | 主类含空白/引号时抛出 |
-| 修改 [test_placeholder_replacer.py](../../ECL/game/tests/test_placeholder_replacer.py) | `test_version_name_is_quoted_in_every_placeholder_position` | 两处 `${version_name}` 都输出为带引号的值 |
+| 修改 [test_placeholder_replacer.py](../../ECL/minecraft/game/tests/test_placeholder_replacer.py) | `test_version_name_is_quoted_in_every_placeholder_position` | 两处 `${version_name}` 都输出为带引号的值 |
 | 修改 [test_game_service.py](../../tests/test_game_service.py) | `test_command_builder_quotes_version_name_for_forge_ignore_list` | 端到端构造 Forge 命令，解析 argv 后 `-DignoreList` 是单个 token，主类是 `BootstrapLauncher` |
 | 同上 | `test_command_builder_rejects_invalid_main_class_with_actionable_error` | 非法主类在启动前失败，而不是交给 Java |
 
@@ -133,11 +133,11 @@ except CoreError as exc:
 - 不改 classpath 构建、natives 解压、继承版本查找、文件补全逻辑。
 - 不限制实例名不能含空格，也不迁移或改名已有实例。
 - 不改变自定义 `_command_builder` 的注入语义；校验位于默认构建器 `build_minecraft_cmd` 内，测试用自定义构建器不受影响。
-- 不为 `ECLauncherCore.py` 的历史 Ruff 豁免做全文件收敛；本次只在 `ECL/game/ruff.toml` 既有豁免下修改该文件，新增 `LaunchCommand.py` 则按新文件标准通过检查。
+- 不为 `ECLauncherCore.py` 的历史 Ruff 豁免做全文件收敛；本次只在 `ECL/minecraft/game/ruff.toml` 既有豁免下修改该文件，新增 `LaunchCommand.py` 则按新文件标准通过检查。
 
 ## 1.4 实施步骤
 
-1. 新增 `ECL/game/Core/LaunchCommand.py`，实现平台解析与校验函数，添加 Core 文件头。
+1. 新增 `ECL/minecraft/game/Core/LaunchCommand.py`，实现平台解析与校验函数，添加 Core 文件头。
 2. 修改 `ECLauncherCore.py`：`version_name` 纳入标准替换，删除 `_replace_last`，在 `build_minecraft_cmd` 返回前调用校验。
 3. 修改 `launch.py`：增加 `CoreError` 导入与错误映射分支。
 4. 新增/修改第 1.2.4 节测试，先运行 Core 定向测试，再运行主仓库集成测试。
@@ -152,7 +152,7 @@ except CoreError as exc:
 
 ### 命令
 
-在 Core 子仓库（`ECL/game`）：
+在 Core 子仓库（`ECL/minecraft/game`）：
 
 ```powershell
 ruff check .
@@ -161,14 +161,14 @@ ruff check .
 在主仓库根目录：
 
 ```powershell
-python -m pytest ECL/game/tests --tb=short -q
+python -m pytest ECL/minecraft/game/tests --tb=short -q
 python -m pytest tests/test_game_service.py tests/test_modpack_preparation.py tests/test_plugin_game_launch.py tests/test_plugin_java_game_launch.py --tb=short -q
 ruff check ECL tests
 ruff format --check ECL tests
 python -m pytest --tb=short -q
 ```
 
-说明：Core 的测试依赖主仓库的 `ECL.game.*` 目录结构，不能在 `ECL/game` 内独立 `pytest`；按 [ruff.toml](../../ECL/game/ruff.toml#L1-L7) 的既有约定，Core 测试门禁由主仓库的 `pytest ECL/game/tests` 承担。`ECLauncherCore.py` 在 [ruff.toml](../../ECL/game/ruff.toml#L40-L56) 的既存豁免列表中，本次不扩大为全文件格式整理；新增 `LaunchCommand.py` 必须通过 `ruff check .`。
+说明：Core 的测试依赖主仓库的 `ECL.minecraft.game.*` 目录结构，不能在 `ECL/minecraft/game` 内独立 `pytest`；按 [ruff.toml](../../ECL/minecraft/game/ruff.toml#L1-L7) 的既有约定，Core 测试门禁由主仓库的 `pytest ECL/minecraft/game/tests` 承担。`ECLauncherCore.py` 在 [ruff.toml](../../ECL/minecraft/game/ruff.toml#L40-L56) 的既存豁免列表中，本次不扩大为全文件格式整理；新增 `LaunchCommand.py` 必须通过 `ruff check .`。
 
 ### 验收标准
 
@@ -468,7 +468,7 @@ pnpm build
 
 - 两个章节可分别实施、分别验收；第一章优先，因为它直接阻断启动。
 - 两章都完成后，按 AGENTS 第 7 节分别提交，提交信息使用中文 Conventional Commits；先集成本地 `main`，默认不推送、不打标签、不发布。
-- 第一章涉及 Core 子仓库：先验证并提交 `ECL/game` 的本地 `main`，再在主仓库集成对应指针，并运行主仓库集成测试。
+- 第一章涉及 Core 子仓库：先验证并提交 `ECL/minecraft/game` 的本地 `main`，再在主仓库集成对应指针，并运行主仓库集成测试。
 - 第二章只涉及主仓库与前端（若纳入 2.2.3）；前端改动先集成本地 `frontend` 的 `main`，再集成主仓库指针。
 - 真实启动器验收结果与自动化测试结果分开记录，不把 pytest 或 jsdom 通过泛化为桌面界面通过。
 

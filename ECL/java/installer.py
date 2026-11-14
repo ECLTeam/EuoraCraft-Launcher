@@ -28,7 +28,7 @@ from uuid import uuid4
 import httpx
 import psutil
 
-from ECL.game import JavaRuntime, JavaScanner
+from ECL.minecraft.game import JavaRuntime, JavaScanner
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.network import download_proxy_url
 

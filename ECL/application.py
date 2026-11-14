@@ -36,10 +36,10 @@ from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.desktop.background_media import BackgroundMediaService
 from ECL.desktop.dev_channel import DevChannelService
 from ECL.desktop.single_instance import SingleInstanceService
-from ECL.game import InstancesManager
 from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
 from ECL.java.queries import JavaQueries
+from ECL.minecraft.game import InstancesManager
 from ECL.plugins.framework import PluginManager
 from ECL.services.account import AccountManager, WardrobeStore
 from ECL.services.account.plugin_textures import read_account_skin

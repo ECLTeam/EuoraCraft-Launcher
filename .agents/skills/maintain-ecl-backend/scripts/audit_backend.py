@@ -29,8 +29,8 @@ def audit_file(path: Path, root: Path, game_root: Path) -> list[str]:
     tree = ast.parse(source, filename=str(relative))
     if not path.is_relative_to(game_root):
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("ECL.game."):
-                errors.append(f"{relative}:{node.lineno}: 只能从 ECL.game 公共入口导入")
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("ECL.minecraft.game."):
+                errors.append(f"{relative}:{node.lineno}: 只能从 ECL.minecraft.game 公共入口导入")
 
     for node in ast.walk(tree):
         if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) or not node.body:

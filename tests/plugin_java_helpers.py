@@ -5,11 +5,11 @@ import sys
 
 import httpx
 
-from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
 from ECL.java.queries import JavaQueries
-from ECL.mc.adapters.java_api import RuntimeJava
+from ECL.minecraft.adapters.java_api import RuntimeJava
+from ECL.minecraft.game import JavaRuntime
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
 from ECL.utils import EventBus

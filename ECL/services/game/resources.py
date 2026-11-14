@@ -55,7 +55,7 @@ from typing import Any, TypedDict
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-from ECL.game import (
+from ECL.minecraft.game import (
     Compound,
     GameDataError,
     InstanceMetadata,

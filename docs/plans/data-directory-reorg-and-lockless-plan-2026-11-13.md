@@ -9,7 +9,7 @@
 3. 启动器不再在磁盘上产生任何 `.lock` 文件，并发保护改由进程内锁承担。
 4. 任务中心不再落盘：删除 `operations/` 目录与全部任务历史文件，任务记录仅存于进程内存，审计信息转入 `logs/`。
 
-不在本轮范围：数据目录名 `ECL_data` 本身（`ECL_DATA_PATH`、`--data-dir`、打包与文档均引用）、`frontend/` 与 `ECL/game` 子仓库、用户 Minecraft 目录结构。
+不在本轮范围：数据目录名 `ECL_data` 本身（`ECL_DATA_PATH`、`--data-dir`、打包与文档均引用）、`frontend/` 与 `ECL/minecraft/game` 子仓库、用户 Minecraft 目录结构。
 
 ## 2. 现状基线
 

@@ -28,7 +28,7 @@
 | 长任务为线程池同步 worker（OperationContext 进度/取消） | `ECL/services/game/operations.py:101-144` |
 | CF 文件下载地址解析已有（含无 Key 报错、下载地址专用接口回退） | `ECL/services/game/resources.py:951-984`（`_fetch_curseforge_file`） |
 | 前端导入对话框/拖放/状态机已有；在线搜索组件按 resourceType 参数化 | `frontend/src/components/instances/ModpackImportModal.vue`、`frontend/src/components/mods/OnlineModSearch.vue`、`frontend/src/features/instances/stores/modpackImportStore.ts` |
-| 下载器为并发引擎，条目为 `(url, path)` 二元组，无逐条目校验 | `ECL/game/Core/Downloader.py:127-166` |
+| 下载器为并发引擎，条目为 `(url, path)` 二元组，无逐条目校验 | `ECL/minecraft/game/Core/Downloader.py:127-166` |
 | 安全解压（路径穿越/符号链接）已有 | `ECL/services/game/workspace.py`（`safe_extract_zip`） |
 
 ## 3. 总体设计

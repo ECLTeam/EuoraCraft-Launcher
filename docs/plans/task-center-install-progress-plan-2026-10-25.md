@@ -21,7 +21,7 @@
 ### 1.1 已确认的原因
 
 1. `ECL/services/game/install.py` 在 `build_*_download_list` 返回后才建立下载进度回调。Forge／NeoForge 的 Core 构建方法内部已经下载客户端、安装器、安装依赖并执行安装处理，前端在此期间只能保留早先的准备文案。
-2. `ECL/game/Core/LoaderInstaller.py` 的内部下载只通过 `log_callback` 输出速度和进度。主仓库 `base.py` 将该回调接到日志，没有接入安装进度事件。
+2. `ECL/minecraft/game/Core/LoaderInstaller.py` 的内部下载只通过 `log_callback` 输出速度和进度。主仓库 `base.py` 将该回调接到日志，没有接入安装进度事件。
 3. `NetLibs.py` 的客户端和安装器下载使用整份响应读取，未提供分块下载进度。
 4. `TaskQueuePanel.vue` 的实时下载卡优先按文件数计算百分比，任务卡由 `useAppRuntime.ts` 按 `done/total` 计算，二者可能分别显示文件和字节百分比。
 5. `Downloader.py` 任意文件大小预检失败后整体使用文件计数，大文件传输期间完成文件数不变；预检本身也没有明确的任务阶段反馈。
@@ -222,11 +222,11 @@ ruff format --check ECL tests
 ruff check . --format github
 python -m pytest --tb=short -q
 
-# ECL/game
+# ECL/minecraft/game
 ruff check .
 
 # 主仓库：Core 测试与集成
-python -m pytest ECL/game/tests --tb=short -q
+python -m pytest ECL/minecraft/game/tests --tb=short -q
 
 # frontend
 pnpm check
