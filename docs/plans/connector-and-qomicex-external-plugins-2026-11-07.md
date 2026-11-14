@@ -14,7 +14,7 @@
 | 作者             | ECLTeam                             | ECLTeam                             |
 | 显示版本         | v1.0.0-beta                         | v1.0.0-beta                         |
 | 清单版本         | `1.0.0-beta`                        | `1.0.0-beta`                        |
-| API              | `api_version: 2`，普通 Worker 插件  | `api_version: 2`，普通 Worker 插件  |
+| API              | `api_version: 1`，普通 Worker 插件  | `api_version: 1`，普通 Worker 插件  |
 | 分发             | 独立 `.eclplugin`，不随主安装包分发 | 独立 `.eclplugin`，不随主安装包分发 |
 | 界面             | 主窗口内的插件页面                  | 宿主插件设置页，按需登记联机扩展    |
 | 特权             | 无内置、隐藏、免授权或不可禁用待遇  | 无内置、隐藏、免授权或不可禁用待遇  |

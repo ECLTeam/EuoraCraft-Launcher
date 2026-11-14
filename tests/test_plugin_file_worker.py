@@ -46,7 +46,7 @@ def test_snapshot_example_uses_real_worker_upload_commit_read_and_restart(tmp_pa
         assert view["size"] > 0
         installation_id = broker.session.view().installation_id
         exported = tmp_path / "plugin_data" / installation_id / "files" / receipt["name"]
-        assert json.loads(exported.read_bytes())["api_version"] == 2
+        assert json.loads(exported.read_bytes())["api_version"] == 1
         service.stop("worker_snapshot")
         service.enable("worker_snapshot")
         broker = service.broker("worker_snapshot")

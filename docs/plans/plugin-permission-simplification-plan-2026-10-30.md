@@ -51,7 +51,7 @@
 
 ### 3.3 清单、查询与旧声明处理
 
-- `api_version: 2` 和现有 Host API 方法名保持当前契约；权限声明只允许上表三项。旧权限声明明确拒绝并提示更新插件，不做别名转换、自动合并或双格式支持。
+- `api_version: 1` 和现有 Host API 方法名保持当前契约；权限声明只允许上表三项。旧权限声明明确拒绝并提示更新插件，不做别名转换、自动合并或双格式支持。
 - 基础插件使用空 `permissions`；游戏管理示例只需声明 `instances.manage`，联网插件按需声明 `network.read` 及站点。
 - `resources.list` 的 `capability` 收敛为 `plugin.base`、`instances.read`、`instances.manage`。前者只发现自身私有数据空间，后两者发现相应获准游戏根及运行引用；同步更新请求模型、路由、示例和文档。
 - `permissions.list` 只列出已声明的三项可选业务权限；基础能力属于启用契约，在文档和简短启用说明中明确，不伪装成隐藏的16项授权记录。

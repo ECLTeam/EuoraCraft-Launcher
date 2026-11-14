@@ -67,7 +67,7 @@ def game_launch(tmp_path, monkeypatch):
         name = f"launcher{len(entries)}"
         source = tmp_path / name
         source.mkdir()
-        metadata = {"name": name, "api_version": 2}
+        metadata = {"name": name, "api_version": 1}
         (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
         (source / "main.py").write_text("value=1", encoding="utf-8")
         worker.register(metadata, source, "directory")

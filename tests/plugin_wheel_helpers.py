@@ -75,7 +75,7 @@ def make_package(
         json.dumps(
             {
                 "name": name,
-                "api_version": 2,
+                "api_version": 1,
                 "version": version,
                 "title": "归档示例",
                 "entry_point": "main:Plugin",

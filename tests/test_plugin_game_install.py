@@ -56,7 +56,7 @@ def game_install(tmp_path, monkeypatch):
     source.mkdir()
     metadata = {
         "name": "game-test",
-        "api_version": 2,
+        "api_version": 1,
         "permissions": [{"capability": cap} for cap in ["instances.manage", "instances.read"]],
     }
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")

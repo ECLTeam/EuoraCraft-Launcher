@@ -49,7 +49,7 @@ def test_real_worker_page_publishes_and_clears_on_exit(tmp_path: Path) -> None:
     metadata = {
         "name": "page-test",
         "version": "1.0.0",
-        "api_version": 2,
+        "api_version": 1,
         "entry_point": "main:Plugin",
         "permissions": [{"capability": "ui.inject", "required": False}],
     }

@@ -95,7 +95,7 @@ class WorkerSupervisor:
                 if (
                     hello.kind != "hello"
                     or hello.params.get("run_id") != self.run_id
-                    or hello.params.get("api_version") != 2
+                    or hello.params.get("api_version") != 1
                 ):
                     raise ProtocolError("Worker 引导握手不兼容")
                 if hello.params.get("has_host_modules") is not False or hello.params.get("is_supervised") is not True:

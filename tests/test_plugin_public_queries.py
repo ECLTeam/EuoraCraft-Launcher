@@ -29,7 +29,7 @@ def public(tmp_path):
     )
     source = tmp_path / "plugin"
     source.mkdir()
-    metadata = {"name": "public-test", "api_version": 2}
+    metadata = {"name": "public-test", "api_version": 1}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("from ECL.plugins.api import Plugin\n", encoding="utf-8")
     service.register(metadata, source, "directory")

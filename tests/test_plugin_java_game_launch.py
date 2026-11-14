@@ -42,7 +42,7 @@ def selected_java(request):
     source.mkdir()
     metadata = {
         "name": "selected-java-plugin",
-        "api_version": 2,
+        "api_version": 1,
         "permissions": [{"capability": name} for name in ("instances.manage", "java.read", "java.use")],
     }
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")

@@ -1,6 +1,6 @@
 # `.eclplugin` 归档格式 v1
 
-`.eclplugin` 是无签名 ZIP 归档，不是加密文件。第三方插件使用 API v2，在独立 Worker 中运行；系统插件仍由宿主维护。安装只准备文件，不执行入口。依赖安装到独立库目录，不另建解释器或 venv；Worker 复用当前发行物。归档摘要用于完整性校验，不证明作者身份。Worker 不提供恶意 Python 的操作系统文件或网络沙箱。
+`.eclplugin` 是无签名 ZIP 归档，不是加密文件。第三方插件使用插件 API（当前契约版本 1），在独立 Worker 中运行；系统插件仍由宿主维护。安装只准备文件，不执行入口。依赖安装到独立库目录，不另建解释器或 venv；Worker 复用当前发行物。归档摘要用于完整性校验，不证明作者身份。Worker 不提供恶意 Python 的操作系统文件或网络沙箱。
 
 后端用 `plugin_package_inspect` 预检，再通过 `plugin_install` 传入 `plugin_path`、`confirm_unverified_source: true` 和 `allow_network` 安装。Dev Channel 对应 `plugin.inspect` 和 `plugin.install`，路径字段为 `path`。预检返回 `dependencies_ready`；安装结果包含 `status` 和 `message`，列表提供 `pending_restart` 与 `installed_version`（Dev Channel 为 `pendingRestart`、`installedVersion`）。不再接受运行时离线包参数。未允许联网时仅使用包内 wheels、共享 wheel 缓存和已就绪依赖目录。
 
@@ -75,14 +75,14 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 
 输出文件不能位于插件源目录内。制作命令不解析、下载或锁定依赖；作者须自行准备需要随包携带的锁文件与 wheels。
 
-## 第三方 API v2
+## 第三方插件 API
 
-目录与归档共用清单和 SDK；`plugin.json` 必须显式声明 `api_version: 2`。示例：
+目录与归档共用清单和 SDK；`plugin.json` 必须显式声明 `api_version: 1`。示例：
 
 ```json
 {
     "name": "example",
-    "api_version": 2,
+    "api_version": 1,
     "version": "1.0.0",
     "entry_point": "main:Plugin"
 }
@@ -128,7 +128,7 @@ Worker、面板、独立窗口与可信全屏设置界面共用 `PluginSettingsS
 
 撤销首先阻止新提交；已接受的设置写入可能继续落盘。宿主在途写入、Worker 和事件资源均结束后才报告清理完成，超时只报告 pending 或失败。事件队列满及可靠事件交付失败会关闭该 Broker 并回收运行；已经提交的设置仍报告真实 revision，不伪造回滚。
 
-完整示例见 [worker_echo](../../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](../guides/headless-runtime.md)，总体契约与后续能力见 [Worker/API v2 设计](../designs/plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
+完整示例见 [worker_echo](../../examples/plugins/worker_echo/README.md)。现行运行边界见 [无头运行说明](../guides/headless-runtime.md)，总体契约与后续能力见 [Worker API 设计](../designs/plugin-worker-api-v2-implementation-design.md)。`ECL.plugins.Plugin` 仅供发行资源中的可信系统插件使用，不为第三方提供旧 SDK 适配。
 
 ### 启用与信任模型
 

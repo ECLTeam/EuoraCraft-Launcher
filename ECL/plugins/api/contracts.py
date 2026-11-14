@@ -45,7 +45,7 @@ class ProtocolPolicy:
     定义 API v2 引导和 RPC 使用的不可变协议限制。
     """
 
-    api_version: ClassVar[int] = 2
+    api_version: ClassVar[int] = 1
     protocol_version: ClassVar[int] = 1
     max_frame_bytes: ClassVar[int] = 1024 * 1024
     max_depth: ClassVar[int] = 16

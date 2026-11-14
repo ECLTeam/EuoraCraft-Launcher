@@ -141,7 +141,7 @@ def shared(tmp_path, queries):
     source = tmp_path / "plugin"
     source.mkdir()
     (source / "main.py").write_text("value=1", encoding="utf-8")
-    metadata = {"name": "reader", "api_version": 2, "permissions": [{"capability": "instances.read", "required": True}]}
+    metadata = {"name": "reader", "api_version": 1, "permissions": [{"capability": "instances.read", "required": True}]}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     service.register(metadata, source, "directory")
     yield service, roots, root

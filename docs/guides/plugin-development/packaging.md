@@ -2,7 +2,7 @@
 
 ## 清单
 
-第三方清单必须包含 `api_version: 2`、合法 name、版本和包内 `entry_point`。路径形式为 `module/submodule:PluginClass`，宿主解析为包内 Python 文件，不接受任意导入表达式。
+第三方清单必须包含 `api_version: 1`、合法 name、版本和包内 `entry_point`。路径形式为 `module/submodule:PluginClass`，宿主解析为包内 Python 文件，不接受任意导入表达式。
 
 `dependencies` 表达插件间版本关系，可以是版本约束字符串或含 version/optional 的对象；它决定加载关系，不会自动从商店安装插件。
 

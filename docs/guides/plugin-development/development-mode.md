@@ -17,7 +17,7 @@
 ```json
 {
     "name": "no_reload_example",
-    "api_version": 2,
+    "api_version": 1,
     "version": "1.0.0",
     "entry_point": "main:Plugin",
     "supports_hot_reload": false,

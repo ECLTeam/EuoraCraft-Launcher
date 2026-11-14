@@ -57,7 +57,7 @@ def profiles(tmp_path):
     )
     source = tmp_path / "source"
     source.mkdir()
-    metadata = {"name": "writer", "api_version": 2}
+    metadata = {"name": "writer", "api_version": 1}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (source / "main.py").write_text("value=1", encoding="utf-8")
     service.register(metadata, source, "directory")

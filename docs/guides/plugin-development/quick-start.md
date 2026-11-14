@@ -15,7 +15,7 @@ hello_plugin/
 ```json
 {
     "name": "hello_plugin",
-    "api_version": 2,
+    "api_version": 1,
     "version": "1.0.0",
     "title": "Hello Plugin",
     "description": "命令、设置与面板示例",

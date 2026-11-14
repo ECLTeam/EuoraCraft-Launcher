@@ -34,7 +34,7 @@ def worker(tmp_path, request):
     metadata = {
         "name": "task_control",
         "version": "1.0.0",
-        "api_version": 2,
+        "api_version": 1,
         "permissions": [],
     }
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")

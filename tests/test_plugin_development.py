@@ -134,7 +134,7 @@ def test_ignored_manifest_fields_do_not_block_development(development):
 @pytest.mark.parametrize("value", ["false", 0, 1, None])
 def test_manifest_rejects_non_boolean_hot_reload(value):
     with pytest.raises(ValueError):
-        WorkerManifest.model_validate({"api_version": 2, "name": "sample", "supports_hot_reload": value})
+        WorkerManifest.model_validate({"api_version": 1, "name": "sample", "supports_hot_reload": value})
 
 
 def test_ignored_build_inputs_do_not_reload(development):

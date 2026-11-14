@@ -302,7 +302,7 @@ class Plugin(BasePlugin):
         assert task['state'] == 'completed' and task['effect'] == 'committed', task
         content = self.host.call('files.read', {'target':{'root_ref':exported['root_ref'],
             'relative_path':exported['name']}, 'offset':0, 'count':32768})
-        assert json.loads(base64.b64decode(content['data_b64']))['api_version'] == 2
+        assert json.loads(base64.b64decode(content['data_b64']))['api_version'] == 1
         selected = export_snapshot(self.host)
         deadline = time.monotonic() + 10
         while True:
@@ -499,7 +499,7 @@ class Plugin(BasePlugin):
                     files_path = data_path / "plugin_data" / identity / "files"
                     exports = tuple(files_path.glob("snapshot-*.json"))
                     assert len(exports) == 1
-                    assert all(json.loads(path.read_bytes())["api_version"] == 2 for path in exports)
+                    assert all(json.loads(path.read_bytes())["api_version"] == 1 for path in exports)
                     assert all(json.loads(path.read_bytes())["replaced"] for path in exports)
                     if os.environ.get("ECL_PLUGIN_SMOKE_LIVE_DOWNLOAD"):
                         assert (files_path / "download.bin").read_bytes() == b"Microsoft Connect Test"

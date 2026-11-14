@@ -1,16 +1,16 @@
 # ADR-005：插件 API 版本契约与分域兼容承诺
 
 - 日期：2026-11-13。
-- 状态：待用户确认，未实施。
+- 状态：用户已确认方向。2026-11-14 完成版本基线重置：现行插件 API 以 `api_version = 1` 作为基础版本（原 v2 内部编号重置，发布前无外部插件，无兼容负担）；本文的协商机制（支持集合、`min_launcher`、`features`）尚未实施，另行推进。
 
 ## 问题
 
-平台化要求对插件作者给出可依赖的兼容承诺，但当前版本机制只有形态没有策略：
+平台化要求对插件作者给出可依赖的兼容承诺，但重置前的版本机制只有形态没有策略（历史现状）：
 
 | 位置 | 现状 | 后果 |
 | --- | --- | --- |
-| `plugin_api/contracts.py` | `ProtocolPolicy.api_version: ClassVar[int] = 2` | 单一常量，无支持集合 |
-| `plugins/installation_store.py` | `api_version: StrictInt = Field(ge=2, le=2)` | 唯一合法取值，v3 插件无法安装 |
+| `plugins/api/contracts.py` | `ProtocolPolicy.api_version: ClassVar[int] = 2` | 单一常量，无支持集合 |
+| `plugins/installation_store.py` | `api_version: StrictInt = Field(ge=2, le=2)` | 唯一合法取值，其他版本插件无法安装 |
 | `plugins/runtime/supervisor.py` | 握手时 `api_version != 2` 直接拒绝 | 宿主无法同时运行两个契约版本 |
 | `plugins/runtime/broker.py` | `runtime.info` 已返回 `launcher_version` | 能力已具备，但没有消费方 |
 
@@ -47,7 +47,7 @@
 | `features` 含未知能力 | `PLUGIN_FEATURE_UNSUPPORTED` | 拒绝安装并列出缺失能力 | 拒绝加载 |
 | `features` 声明合法但该能力在本运行未启用 | 不报错 | 安装通过 | 由能力自身 API 返回既有错误码 |
 
-宿主维护 `supported_api_versions: frozenset[int]`，运行会话记录该插件协商到的契约版本，门面据此决定可用方法集。首个支持集合为 `{2}`；引入 v3 时扩展为 `{2, 3}`，v2 插件行为不变。
+宿主维护 `supported_api_versions: frozenset[int]`，运行会话记录该插件协商到的契约版本，门面据此决定可用方法集。首个支持集合为 `{1}`；引入 v2 契约时扩展为 `{1, 2}`，v1 插件行为不变。
 
 ### 3. 兼容承诺按域划分
 
@@ -89,7 +89,7 @@
 
 - 清单校验：`api_version` 越界、`min_launcher` 过高、`features` 未知三种情况分别返回既定错误码，且不留下半安装状态。
 - 握手校验：伪造不兼容 `api_version` 的 Worker 被拒绝，错误码与安装期一致。
-- 多版本并存：`supported_api_versions = {2, 3}` 时，同一宿主分别加载 v2 与 v3 测试插件，两者都可用，且 v2 插件看不到 v3 新增方法。
+- 多版本并存：`supported_api_versions = {1, 2}` 时，同一宿主分别加载 v1 与 v2 测试插件，两者都可用，且 v1 插件看不到 v2 新增方法。
 - 门面稳定性：契约测试固化六个门面的方法名与参数结构快照，任何非预期变更导致测试失败。
 - 文档一致性：`protocols/eclplugin-package-format.md` 与 `guides/plugin-development/` 同步列出三个字段与错误码。
 

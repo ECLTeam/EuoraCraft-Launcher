@@ -54,7 +54,7 @@ class PluginRuntime:
         request.check_deadline()
         if request.method == "runtime.info" and not request.params:
             with self._lock:
-                return {"api_version": 2, "pid": os.getpid(), "run_state": self._phase}
+                return {"api_version": 1, "pid": os.getpid(), "run_state": self._phase}
         if request.method == "lifecycle.invoke":
             return self._lifecycle(request)
         if request.method == "callbacks.invoke":

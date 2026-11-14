@@ -83,7 +83,7 @@ class PluginContentBinding:
         """
         payload = {
             "layout_version": 2,
-            "api_version": 2,
+            "api_version": 1,
             "code_digest": self.snapshot.digest(),
             "lock_sha256": self.lock_sha256,
             "target_tag": self.target_tag,

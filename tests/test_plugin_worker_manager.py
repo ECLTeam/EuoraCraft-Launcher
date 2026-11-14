@@ -11,7 +11,7 @@ from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.framework import PluginManager
 
 
-def make_plugin(root: Path, marker: Path, *, api_version=2):
+def make_plugin(root: Path, marker: Path, *, api_version=1):
     root.mkdir(parents=True, exist_ok=True)
     metadata = {"name": "example", "version": "1.0.0", "api_version": api_version}
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
@@ -70,7 +70,7 @@ def test_manager_real_worker_command_settings_and_restart(tmp_path: Path):
 
 def test_legacy_third_party_never_executes_in_host(tmp_path: Path):
     marker = tmp_path / "executed"
-    make_plugin(tmp_path / "data/plugins/sources/example", marker, api_version=1)
+    make_plugin(tmp_path / "data/plugins/sources/example", marker, api_version=2)
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
@@ -122,7 +122,7 @@ def test_unexpected_worker_exit_cleans_resources_without_page_polling(tmp_path: 
         manager.close()
 
 
-@pytest.mark.parametrize("metadata", [[], {"name": ["bad"]}, {"name": "example", "api_version": 2, "dependencies": []}])
+@pytest.mark.parametrize("metadata", [[], {"name": ["bad"]}, {"name": "example", "api_version": 1, "dependencies": []}])
 def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
     root = tmp_path / "data/plugins/sources/example"
     root.mkdir(parents=True)
@@ -165,13 +165,13 @@ def test_install_reports_specific_manifest_error_codes(tmp_path: Path):
     make_plugin(source, tmp_path / "marker")
     metadata_path = source / "plugin.json"
     metadata = json.loads(metadata_path.read_bytes())
-    metadata["api_version"] = 1
+    metadata["api_version"] = 2
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
         assert manager.install(str(source)).message == "PLUGIN_API_VERSION_UNSUPPORTED"
-        metadata["api_version"] = 2
+        metadata["api_version"] = 1
         metadata["version"] = "not-a-version"
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
         assert manager.install(str(source)).message == "PLUGIN_MANIFEST_INVALID"

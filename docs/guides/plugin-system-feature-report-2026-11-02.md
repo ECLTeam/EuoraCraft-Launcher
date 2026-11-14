@@ -57,7 +57,7 @@
 
 ### 2.2 第三方 Worker 插件
 
-第三方插件必须显式声明 `api_version: 2`，使用 `ECL.plugins.api.Plugin`。宿主不把 framework、配置服务或账户服务对象传入 Worker，跨进程只传递经过校验的 JSON。
+第三方插件必须显式声明 `api_version: 1`，使用 `ECL.plugins.api.Plugin`。宿主不把 framework、配置服务或账户服务对象传入 Worker，跨进程只传递经过校验的 JSON。
 
 主要调用关系如下：
 

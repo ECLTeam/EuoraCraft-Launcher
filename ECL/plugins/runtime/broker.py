@@ -476,7 +476,7 @@ class PluginHostBroker:
         if method == "runtime.info":
             self._keys(params, set())
             return {
-                "api_version": 2,
+                "api_version": 1,
                 "protocol_version": 1,
                 "launcher_version": __version__,
                 "platform": platform.system(),

@@ -74,7 +74,7 @@
 
 ```json
 {
-    "api_version": 2,
+    "api_version": 1,
     "name": "example",
     "entry_point": "main:Plugin",
     "supports_hot_reload": false

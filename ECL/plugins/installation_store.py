@@ -61,7 +61,7 @@ class WorkerManifest(BaseModel):
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
-    api_version: StrictInt = Field(ge=2, le=2)
+    api_version: StrictInt = Field(ge=1, le=1)
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     entry_point: str = "main:Plugin"
     version: str = Field(default="0.0.0", max_length=64)
@@ -250,7 +250,7 @@ class PluginInstallationStore:
         if self._root_path.is_symlink() or self._root_path.resolve() != self._data_path / "plugins" / "installations":
             raise PluginInstallationError("插件安装身份目录超出数据边界")
         try:
-            WorkerManifest.model_validate({"name": name, "api_version": 2})
+            WorkerManifest.model_validate({"name": name, "api_version": 1})
         except ValidationError as exc:
             raise PluginInstallationError("插件安装名称无效") from exc
         return self._root_path / f"{name}.json"

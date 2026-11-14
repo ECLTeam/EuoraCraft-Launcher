@@ -49,7 +49,7 @@ self.define_html_slot(
 ```json
 {
     "name": "my_ui",
-    "api_version": 2,
+    "api_version": 1,
     "version": "1.0.0",
     "entry_point": "main:Plugin",
     "custom_ui": {
