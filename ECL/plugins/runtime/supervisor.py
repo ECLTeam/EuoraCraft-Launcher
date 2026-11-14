@@ -26,6 +26,7 @@ from ECL.plugins.api.contracts import JsonValue, ProtocolError, WireMessage
 from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
+from ECL.utils import get_logger
 
 from .executable import ExecutableLaunchSpec
 from .process_scope import PreparedProcess, ProcessReference, ProcessScope, create_process_scope
@@ -192,9 +193,12 @@ class WorkerSupervisor:
                 if reply.kind == "error":
                     code = reply.params.get("code")
                     allowed = {"PLUGIN_CONTENT_CHANGED", "PLUGIN_DEPENDENCY_CONFLICT", "PLUGIN_PROTOCOL_ERROR"}
-                    raise PluginRuntimeError(
-                        "插件入口加载失败", code if code in allowed else "PLUGIN_WORKER_EXECUTION_FAILED"
-                    )
+                    resolved = code if code in allowed else "PLUGIN_WORKER_EXECUTION_FAILED"
+                    # Worker 失败明细（入口异常 traceback 等）只进宿主日志；向上抛出的错误码契约不变。
+                    detail = reply.params.get("detail")
+                    if isinstance(detail, str) and detail:
+                        get_logger("PluginWorkerSupervisor").warning("插件 Worker 加载失败（%s）：%s", resolved, detail)
+                    raise PluginRuntimeError("插件入口加载失败", resolved)
                 if reply.kind != "loaded" or reply.params.get("pid") != self.pid:
                     raise ProtocolError("Worker 没有确认许可加载结果")
                 self.state = "loaded"

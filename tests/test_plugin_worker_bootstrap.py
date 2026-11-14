@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -72,6 +73,31 @@ def test_plugin_exception_is_reported_without_private_exception_text(tmp_path: P
             supervisor._authorize_snapshot(CodeSnapshot.capture(snapshot.root_path))
         assert error.value.error_code == "PLUGIN_WORKER_EXECUTION_FAILED"
         assert "private-token" not in str(error.value)
+    assert not marker.exists()
+
+
+def test_plugin_exception_detail_is_logged_for_diagnosis(tmp_path: Path) -> None:
+    snapshot, marker = _snapshot(tmp_path)
+    (snapshot.root_path / "main.py").write_text("raise ValueError('entry-import-boom')", encoding="utf-8")
+    # 应用日志器 propagate=False，直接在命名日志器上挂捕获器，不依赖根日志器传播。
+    logger = logging.getLogger("EuoraCraft-Launcher.PluginWorkerSupervisor")
+    captured: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    handler = _Capture(level=logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        with WorkerSupervisor() as supervisor:
+            with pytest.raises(PluginRuntimeError) as error:
+                supervisor._authorize_snapshot(CodeSnapshot.capture(snapshot.root_path))
+            assert error.value.error_code == "PLUGIN_WORKER_EXECUTION_FAILED"
+    finally:
+        logger.removeHandler(handler)
+    # 真实原因必须留在宿主日志；向上抛出的异常文本契约仍不含插件可控内容。
+    assert any("entry-import-boom" in record.getMessage() for record in captured)
     assert not marker.exists()
 
 

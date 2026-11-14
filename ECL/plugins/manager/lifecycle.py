@@ -174,6 +174,8 @@ class PluginLifecycle(_PluginState):
             return True, ""
         except (OSError, ValueError, PluginRuntimeError) as exc:
             code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
+            # 前端只收到错误码；真实原因（含 Worker 回传的失败明细）必须留在日志中，否则无法排查。
+            self.logger.warning("插件启用失败：%s；错误码：%s", name, code, exc_info=exc)
             self._status[name] = "error"
             self._plugin_errors[name] = code
             return False, code
@@ -397,12 +399,9 @@ class PluginLifecycle(_PluginState):
                         self.worker_service.development.retry(name)
                         self.worker_service.enable(name, frontend_ready=self._frontend_ready)
                     except (OSError, ValueError, PluginRuntimeError) as exc:
-                        return PluginActionResult(
-                            name,
-                            PluginAction.RELOAD,
-                            "failed",
-                            getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED"),
-                        )
+                        code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
+                        self.logger.warning("插件重载失败：%s；错误码：%s", name, code, exc_info=exc)
+                        return PluginActionResult(name, PluginAction.RELOAD, "failed", code)
                     self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
                     return PluginActionResult(name, PluginAction.RELOAD, "enabled")
                 stopped = self.disable(name, _persist_state=False)

@@ -16,6 +16,7 @@ import importlib
 import importlib.machinery
 import os
 import sys
+import traceback
 from pathlib import Path
 from types import ModuleType
 
@@ -216,23 +217,29 @@ def run_plugin_process(options: PluginProcessOptions) -> int:
         _serve(channel, options.run_id, options.host_pid)
         return 0
     except (PluginRuntimeError, ProtocolError) as exc:
-        _report_failure(channel, exc.error_code)
+        # 宿主协议类异常文本由宿主代码生成，可整体进入宿主日志用于诊断。
+        _report_failure(channel, exc.error_code, str(exc))
         return 2
     except (OSError, EOFError, SystemExit, KeyboardInterrupt):
-        _report_failure(channel, "PLUGIN_WORKER_EXECUTION_FAILED")
+        _report_failure(channel, "PLUGIN_WORKER_EXECUTION_FAILED", traceback.format_exc())
         return 2
     except Exception:
-        # 第三方入口是异常边界；只返回固定类别，避免冻结窗口模式弹出宿主错误窗或泄漏输入。
-        _report_failure(channel, "PLUGIN_WORKER_EXECUTION_FAILED")
+        # 第三方入口是异常边界；错误码只返回固定类别，避免冻结窗口模式弹出宿主错误窗或泄漏输入。
+        # traceback 作为 detail 只写入宿主日志，不返回给前端，供排查入口加载失败的真实原因。
+        _report_failure(channel, "PLUGIN_WORKER_EXECUTION_FAILED", traceback.format_exc())
         return 2
     finally:
         if channel is not None:
             channel.close()
 
 
-def _report_failure(channel: LocalChannel | None, code: str) -> None:
+def _report_failure(channel: LocalChannel | None, code: str, detail: str | None = None) -> None:
     """
-    只传递白名单错误类别，不转发插件可控制的异常文本。
+    错误码只传递白名单类别，不转发插件可控制的异常文本作为错误。
+
+    :param channel: 与宿主的本地通道；已关闭或未建立时不发送
+    :param code: 期望报告的错误类别，白名单外统一压平为 PLUGIN_WORKER_EXECUTION_FAILED
+    :param detail: 可选诊断明细（如入口异常 traceback），仅供宿主写入日志，不进入前端协议
     """
     if channel is None:
         return
@@ -242,8 +249,11 @@ def _report_failure(channel: LocalChannel | None, code: str) -> None:
         "PLUGIN_PROTOCOL_ERROR",
         "PLUGIN_WORKER_EXECUTION_FAILED",
     }
+    params: dict[str, JsonValue] = {"code": code if code in allowed else "PLUGIN_WORKER_EXECUTION_FAILED"}
+    if detail:
+        params["detail"] = detail
     try:
-        channel.send(WireMessage("error", {"code": code if code in allowed else "PLUGIN_WORKER_EXECUTION_FAILED"}), 1)
+        channel.send(WireMessage("error", params), 1)
     except (OSError, ProtocolError, PluginRuntimeError):
         # 对端已关闭时没有可交付对象；执行方仍退出，由平台监管实现负责最后回收。
         return

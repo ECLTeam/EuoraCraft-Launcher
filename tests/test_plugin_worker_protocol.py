@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ECL.plugins.api._process import _report_failure
 from ECL.plugins.api.contracts import ProtocolError, ProtocolPolicy, WireMessage
 from ECL.plugins.api.snapshot import CodeSnapshot
 
@@ -175,6 +176,27 @@ def test_internal_worker_failure_does_not_fall_through_to_desktop() -> None:
         [sys.executable, "-S", "-c", source], cwd=root_path, capture_output=True, text=True, check=True, timeout=10
     )
     assert json.loads(result.stdout) == {"code": 2, "host_loaded": False}
+
+
+class _RecordingChannel:
+    """记录发送帧的最小通道替身，LocalChannel 协议只要求 send。"""
+
+    def __init__(self) -> None:
+        self.messages: list[WireMessage] = []
+
+    def send(self, message: WireMessage, timeout: float) -> None:
+        self.messages.append(message)
+
+
+def test_report_failure_flattens_unknown_code_and_attaches_detail() -> None:
+    channel = _RecordingChannel()
+    _report_failure(channel, "PLUGIN_DEPENDENCY_CONFLICT", "诊断明细")
+    assert channel.messages[0].params == {"code": "PLUGIN_DEPENDENCY_CONFLICT", "detail": "诊断明细"}
+    _report_failure(channel, "ANY_UNKNOWN_CODE")
+    assert channel.messages[1].params == {"code": "PLUGIN_WORKER_EXECUTION_FAILED"}
+    # 无通道或无明细时不得构造 detail 键，保持 error 帧对旧宿主仍可解析。
+    _report_failure(None, "PLUGIN_DEPENDENCY_CONFLICT", "诊断明细")
+    assert len(channel.messages) == 2
 
 
 def test_cached_snapshot_still_rejects_a_different_authorized_digest(tmp_path):
