@@ -59,7 +59,7 @@ dev = [
     "debugpy>=1.8.0",
     "ipython>=8.20.0",
     "pip-tools>=7.4.0",
-    "uv==0.13.6"
+    "uv==0.13.8"
 ]
 
 [tool.setuptools.packages.find]
