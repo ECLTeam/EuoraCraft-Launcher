@@ -28,10 +28,10 @@ from typing import Literal
 
 from packaging.version import InvalidVersion
 
-from ECL.services.game.base import GameServiceError, _GameState
-from ECL.services.game.install_progress import InstallationSnapshot
-from ECL.services.game.install_targets import InstallReservation
-from ECL.services.game.workspace import resolve_instance_target
+from ECL.minecraft.services.game.base import GameServiceError, _GameState
+from ECL.minecraft.services.game.install_progress import InstallationSnapshot
+from ECL.minecraft.services.game.install_targets import InstallReservation
+from ECL.minecraft.services.game.workspace import resolve_instance_target
 from ECL.services.operations import OperationCommitRejectedError, OperationContext, OperationOrigin
 from ECL.utils.file_handles import FileBoundaryError, FileDirectory
 from ECL.utils.instance_reading import DirectoryIdentity, directory_identity

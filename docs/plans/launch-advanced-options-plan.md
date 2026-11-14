@@ -46,7 +46,7 @@
 | 位置 | 改动 |
 | --- | --- |
 | `ECL/api/models.py` | `LaunchRequest` 新增 `wrapper_command: str = ""`、`post_exit_command: str = ""`、`env_vars: str = ""`、`window_title: str = ""`、`launcher_visibility: Literal["none","minimize","quit"] = "none"`；文件头清单同步 |
-| `ECL/services/game/launch.py` | ① `launch_instance` 新参数接收与归一化；② 命令拼装处应用 wrapper（`{}` 替换或前缀）；③ `launch_context.env` 初始化为解析后的用户变量（插件钩子可覆写，合并点 `launch.py` 现有的 `{**os.environ, **launch_context.env}` 不变）；④ `on_instance_exit` 回调追加 `_run_post_exit_command`（后台线程 fire-and-forget，工作目录为实例目录）；⑤ 新增 `_start_title_rewriter`：启动成功后 daemon 线程等待游戏主窗口（60s 超时、进程退出即停）渲染模板并改标题；⑥ 启动成功且可见性非 `none` 时 `events.emit("launcher:visibility", {"action": ...})` |
+| `ECL/minecraft/services/game/launch.py` | ① `launch_instance` 新参数接收与归一化；② 命令拼装处应用 wrapper（`{}` 替换或前缀）；③ `launch_context.env` 初始化为解析后的用户变量（插件钩子可覆写，合并点 `launch.py` 现有的 `{**os.environ, **launch_context.env}` 不变）；④ `on_instance_exit` 回调追加 `_run_post_exit_command`（后台线程 fire-and-forget，工作目录为实例目录）；⑤ 新增 `_start_title_rewriter`：启动成功后 daemon 线程等待游戏主窗口（60s 超时、进程退出即停）渲染模板并改标题；⑥ 启动成功且可见性非 `none` 时 `events.emit("launcher:visibility", {"action": ...})` |
 | `ECL/services/frontend_events.py` | 桥接表新增 `"launcher:visibility"` 事件 |
 | `ECL/api/models.py` 头部 | 新字段注释 |
 

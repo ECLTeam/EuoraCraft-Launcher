@@ -29,9 +29,9 @@ from zipfile import ZipFile
 import pytest
 
 from ECL.minecraft.game import ByteArray, Compound, File, Int, IntArray, List, LongArray, String, load_limited
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.schematics import SchematicCoordinator, _block_color
-from ECL.services.game.workspace import WorkspaceCoordinator
+from ECL.minecraft.services.game.base import GameServiceError
+from ECL.minecraft.services.game.schematics import SchematicCoordinator, _block_color
+from ECL.minecraft.services.game.workspace import WorkspaceCoordinator
 
 
 class _SchematicHarness(SchematicCoordinator, WorkspaceCoordinator):

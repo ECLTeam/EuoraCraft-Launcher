@@ -36,11 +36,11 @@ from ECL.utils.operation_logging import private_transport_scope
 
 if TYPE_CHECKING:
     from ECL.minecraft.adapters.resources import RuntimeResources
+    from ECL.minecraft.services.game import GameService
+    from ECL.minecraft.services.game.modpack import PackFileEntry
     from ECL.plugins.runtime.file_api import RuntimeFiles
     from ECL.plugins.runtime.network_api import RuntimeNetwork
     from ECL.plugins.runtime.operation_adapters import RuntimeOperations
-    from ECL.services.game import GameService
-    from ECL.services.game.modpack import PackFileEntry
     from ECL.services.operations import OperationContext
 
 

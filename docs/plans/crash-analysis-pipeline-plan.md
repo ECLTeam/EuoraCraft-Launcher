@@ -7,7 +7,7 @@
 
 ## 1. 现状与差距
 
-现状：`ECL/services/game/crash_analysis.py`（913 行单文件）承担全部职责——30 条 `_Rule`、日志收集、规则匹配、堆栈兜底、mods 目录包名映射、会话报告管理、导出。启动链路（`launch.py:225-1212`）内联崩溃标记、检测信号与分析调度。
+现状：`ECL/minecraft/services/game/crash_analysis.py`（913 行单文件）承担全部职责——30 条 `_Rule`、日志收集、规则匹配、堆栈兜底、mods 目录包名映射、会话报告管理、导出。启动链路（`launch.py:225-1212`）内联崩溃标记、检测信号与分析调度。
 
 | 缺口 | 现状 | 目标（对标） |
 | --- | --- | --- |
@@ -36,14 +36,14 @@
 ## 3. 代码组织
 
 ```
-ECL/services/game/crash/
+ECL/minecraft/services/game/crash/
 ├── __init__.py      # 包标记
 ├── rules.py         # CrashRule dataclass + CrashRuleCatalog（30 条迁移 + HMCL 精选移植 + 命名组定义）
 ├── stacks.py        # CrashStackAnalyzer：堆栈帧解析、主嫌帧、包名候选、lambda/合成帧归并
 ├── mod_index.py     # CrashModIndex：三源 Mod 索引 + 会话内指纹缓存
 ├── capture.py       # CrashCapture：崩溃标记、检测信号、分析调度、launcher:error 事件发射（自 launch.py 迁出）
 └── analyzer.py      # CrashAnalyzer：管道编排 + 会话报告管理（自 crash_analysis.py 迁移主体）
-ECL/services/game/crash_analysis.py   # 薄门面：re-export CrashAnalyzer，防止外部导入路径断裂
+ECL/minecraft/services/game/crash_analysis.py   # 薄门面：re-export CrashAnalyzer，防止外部导入路径断裂
 ```
 
 - 站内导入全部迁移：`base.py:51/176`、`tests/test_crash_analysis.py` 等改为 `from .crash.analyzer import CrashAnalyzer`；门面仅作过渡兼容。

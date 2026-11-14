@@ -3,7 +3,7 @@
 日期：2026-11-01
 范围：
 
-- 后端 `ECL/services/game/instance_profiles.py`、`ECL/services/game/launch.py`
+- 后端 `ECL/minecraft/services/game/instance_profiles.py`、`ECL/minecraft/services/game/launch.py`
 - 前端 `frontend/src/components/instances/InstanceIcon.vue`、`frontend/src/views/instances/RunningInstancesTab.vue`
 - 前端 `frontend/src/components/ui/Select.vue`、`frontend/src/styles/components/ui/Select.css`
 - 前端 `frontend/src/styles/views/instances/InstancesTab.css`、`frontend/src/styles/views/OnlineMods.css`、`frontend/src/components/mods/OnlineModSearch.vue`
@@ -63,8 +63,8 @@
 
 | 文件 | 改动 |
 | --- | --- |
-| `ECL/services/game/instance_profiles.py` | 新增 `InstanceProfilePolicy.automatic_icon()` 与 `InstanceProfileStore.resolve_icon()`，`enrich_version()` 改用同一规则 |
-| `ECL/services/game/base.py`、`launch.py` | `_RunningGame` 增加 `version_type`（启动时取 `VanillaType`）；`list_instances()` 返回生效图标 |
+| `ECL/minecraft/services/game/instance_profiles.py` | 新增 `InstanceProfilePolicy.automatic_icon()` 与 `InstanceProfileStore.resolve_icon()`，`enrich_version()` 改用同一规则 |
+| `ECL/minecraft/services/game/base.py`、`launch.py` | `_RunningGame` 增加 `version_type`（启动时取 `VanillaType`）；`list_instances()` 返回生效图标 |
 | `tests/test_instance_profiles.py` | 新增 `test_resolve_icon_prefers_persisted_icon_and_falls_back_to_automatic`（自动图标 / 内置图标 / 本地图片绝对路径 / 资料损坏） |
 | `tests/test_game_service.py` | 运行实例列表断言补 `"icon": {"type": "loader", "value": "neoforge"}` |
 | `frontend/src/types/instances.ts` | 新增 `InstanceIconSource`，`GameInstance` 增加可选 `icon` |

@@ -13,8 +13,8 @@
 import json
 from pathlib import Path
 
+from ECL.minecraft.services.game.crash.analyzer import CrashAnalyzer
 from ECL.plugins.framework import PluginManager
-from ECL.services.game.crash.analyzer import CrashAnalyzer
 
 
 def _game(tmp_path: Path) -> Path:

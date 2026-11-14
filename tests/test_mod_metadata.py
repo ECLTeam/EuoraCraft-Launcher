@@ -7,8 +7,8 @@ import zipfile
 import pytest
 
 from ECL.minecraft.game import LocalModParser, ModDependencyDiagnostics, ModVersionPredicate
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.resources import ResourceCoordinator
+from ECL.minecraft.services.game.base import GameServiceError
+from ECL.minecraft.services.game.resources import ResourceCoordinator
 
 
 def _jar(path, document, nested=None):
@@ -159,7 +159,7 @@ def test_enabling_resource_does_not_overwrite_an_existing_mod(tmp_path, monkeypa
 def test_hash_lookup_cache_uses_content_and_does_not_cache_network_failure(monkeypatch):
     import httpx
 
-    from ECL.services.game import resources
+    from ECL.minecraft.services.game import resources
 
     service = object.__new__(ResourceCoordinator)
     monkeypatch.setattr(ResourceCoordinator, "identity_cache", {})

@@ -27,9 +27,9 @@ from typing import Any
 from anyio import to_thread
 
 from ECL.api.contracts import ApiResponse, success
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.resource_metadata import ResourceMetadataCache, ResourceMetadataError
-from ECL.services.game.resource_search import SearchCriteria, SearchResult
+from ECL.minecraft.services.game.base import GameServiceError
+from ECL.minecraft.services.game.resource_metadata import ResourceMetadataCache, ResourceMetadataError
+from ECL.minecraft.services.game.resource_search import SearchCriteria, SearchResult
 from ECL.utils.download_settings import resolve_mod_source
 
 from .bridge import _FrontendState, _ipc_handler, _open_folder, _validate_body

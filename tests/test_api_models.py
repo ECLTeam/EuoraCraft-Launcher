@@ -156,7 +156,7 @@ def test_launch_request_rejects_invalid_process_priority() -> None:
 
 
 def test_normalize_process_priority_falls_back_to_normal() -> None:
-    from ECL.services.game.base import _GameState
+    from ECL.minecraft.services.game.base import _GameState
 
     assert _GameState._normalize_process_priority("Above_Normal") == "above_normal"
     assert _GameState._normalize_process_priority("unknown") == "normal"

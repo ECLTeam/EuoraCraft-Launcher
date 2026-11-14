@@ -72,7 +72,7 @@
 
 ### 4.1 整体归属
 
-`ECL/minecraft/game/`（Core 子模块，8,865 行）、`ECL/java/`（2,193 行）、`ECL/services/game/`（32 文件 18,452 行）、`ECL/services/account/`（7 文件 3,854 行）、`services/custom_downloads.py`（476 行）。
+`ECL/minecraft/game/`（Core 子模块，8,865 行）、`ECL/java/`（2,193 行）、`ECL/minecraft/services/game/`（32 文件 18,452 行）、`ECL/minecraft/services/account/`（7 文件 3,854 行）、`services/custom_downloads.py`（476 行）。
 
 ### 4.2 需要从 `plugins/` 迁出的 11 个适配器
 

@@ -48,8 +48,8 @@ from zipfile import ZipFile
 import httpx
 import pytest
 
-from ECL.services.game import GameService
-from ECL.services.game.mcmod import McmodTranslator
+from ECL.minecraft.services.game import GameService
+from ECL.minecraft.services.game.mcmod import McmodTranslator
 
 sample_mods = [
     {"id": 2785, "name": "钠", "english": "Sodium", "abbr": "", "cf": "sodium", "mr": "sodium", "modIds": ["sodium"]},
@@ -371,7 +371,7 @@ def test_search_online_resources_omits_empty_facets(tmp_path: Path) -> None:
 def test_search_curseforge_403_raises_key_invalid(tmp_path: Path) -> None:
     from unittest.mock import patch
 
-    from ECL.services.game.base import GameServiceError
+    from ECL.minecraft.services.game.base import GameServiceError
 
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test-key")
     captured: dict[str, object] = {}
@@ -432,7 +432,7 @@ def test_curseforge_search_filters_mod_loader(tmp_path: Path, monkeypatch, loade
             status_code=200, raise_for_status=lambda: None, json=lambda: {"data": [], "pagination": {"totalCount": 0}}
         )
 
-    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+    monkeypatch.setattr("ECL.minecraft.services.game.resources._proxied_get", fake_get)
     service = GameService(_FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test")
     try:
         service.search_online_resources("", "1.21.1", loader, source="curseforge")

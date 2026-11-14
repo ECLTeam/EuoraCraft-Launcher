@@ -61,8 +61,8 @@ from ECL.api.models import (
     SkinAvatarExportRequest,
 )
 from ECL.application import ApplicationContext
-from ECL.services.account.skin_avatar import SkinAvatarExporter
-from ECL.services.game.resources import ResourceCatalogPolicy
+from ECL.minecraft.services.account.skin_avatar import SkinAvatarExporter
+from ECL.minecraft.services.game.resources import ResourceCatalogPolicy
 from ECL.utils.files import atomic_write_bytes
 
 from .bridge import (

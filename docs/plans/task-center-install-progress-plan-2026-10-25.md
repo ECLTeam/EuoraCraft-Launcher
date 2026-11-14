@@ -20,7 +20,7 @@
 
 ### 1.1 已确认的原因
 
-1. `ECL/services/game/install.py` 在 `build_*_download_list` 返回后才建立下载进度回调。Forge／NeoForge 的 Core 构建方法内部已经下载客户端、安装器、安装依赖并执行安装处理，前端在此期间只能保留早先的准备文案。
+1. `ECL/minecraft/services/game/install.py` 在 `build_*_download_list` 返回后才建立下载进度回调。Forge／NeoForge 的 Core 构建方法内部已经下载客户端、安装器、安装依赖并执行安装处理，前端在此期间只能保留早先的准备文案。
 2. `ECL/minecraft/game/Core/LoaderInstaller.py` 的内部下载只通过 `log_callback` 输出速度和进度。主仓库 `base.py` 将该回调接到日志，没有接入安装进度事件。
 3. `NetLibs.py` 的客户端和安装器下载使用整份响应读取，未提供分块下载进度。
 4. `TaskQueuePanel.vue` 的实时下载卡优先按文件数计算百分比，任务卡由 `useAppRuntime.ts` 按 `done/total` 计算，二者可能分别显示文件和字节百分比。
@@ -173,9 +173,9 @@
 | Core `NetLibs.py` | 文件流式下载、实际进度、取消检查、临时文件写入 |
 | Core `LoaderInstaller.py` | 内部下载与处理器分别报告，沿调用传递取消信号 |
 | Core `Downloader.py` | 有界预检反馈、传输统计、重试和回调结束顺序 |
-| 主仓库 `ECL/services/game/install.py` | 安装进度记录、快照、阶段计划、终态及取消确认 |
-| `ECL/services/game/download_sources.py`、`base.py` | 参数转发；保持共享 Core 上下文无任务专属可变回调 |
-| `ECL/services/game/modpack.py` | 基础版本安装明细进入原 operation；替换固定 26% 的展示路径 |
+| 主仓库 `ECL/minecraft/services/game/install.py` | 安装进度记录、快照、阶段计划、终态及取消确认 |
+| `ECL/minecraft/services/game/download_sources.py`、`base.py` | 参数转发；保持共享 Core 上下文无任务专属可变回调 |
+| `ECL/minecraft/services/game/modpack.py` | 基础版本安装明细进入原 operation；替换固定 26% 的展示路径 |
 | `ECL/services/operations.py` | 如必要，收敛 installation details 的完整替换语义，避免阶段指标残留；不另建管理器 |
 | frontend `types/instances.ts`、`types/operations.ts` 及事件／响应校验 | 新快照类型、数值和阶段校验；同步直接生产者与消费者 |
 | `useAppRuntime.ts`、`useTaskQueue.ts`、`applicationOperationStore.ts` | 接收权威快照，拒绝旧修订及终态后事件，处理阶段切换和指标清理 |

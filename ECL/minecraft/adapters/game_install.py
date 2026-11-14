@@ -24,7 +24,7 @@ from ECL.services.operations import OperationOrigin
 from ECL.utils.errors import GameServiceError
 
 if TYPE_CHECKING:
-    from ECL.services.game.plugin_games import PluginGameCoordinator
+    from ECL.minecraft.services.game.plugin_games import PluginGameCoordinator
 
 
 class RuntimeGameInstall:
@@ -63,7 +63,7 @@ class RuntimeGameInstall:
         :return: 自身任务引用，不表示游戏已经安装
         :raises ProtocolError: 请求、授权、占位或任务接纳不满足
         """
-        from ECL.services.game.plugin_games import InstalledGame
+        from ECL.minecraft.services.game.plugin_games import InstalledGame
 
         if self._closed.is_set():
             raise ProtocolError("游戏安装运行已关闭", "PLUGIN_SESSION_EXPIRED")

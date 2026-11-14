@@ -12,9 +12,9 @@ from pathlib import Path
 
 from ECL.desktop.single_instance import SingleInstanceService
 from ECL.java.models import JavaPolicy
+from ECL.minecraft.services.account.wardrobe import WardrobeStore
 from ECL.plugins.environment_pool import PluginEnvironmentPool
 from ECL.plugins.installation_store import PluginInstallationStore
-from ECL.services.account.wardrobe import WardrobeStore
 from ECL.utils import EventBus
 from ECL.utils.config import ConfigStore
 

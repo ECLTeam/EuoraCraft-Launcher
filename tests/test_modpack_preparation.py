@@ -17,8 +17,8 @@ from test_modpack import (
 
 from ECL.api.models import ModpackInstallRequest, ModpackPrepareRequest
 from ECL.minecraft.game import LaunchConfig, build_minecraft_cmd
-from ECL.services.game.modpack import ModpackCoordinator, ModpackPlan, PackFileEntry, build_pack_plan
-from ECL.services.game.modpack_preparation import ModpackPreparationService, PreparedModpackFile
+from ECL.minecraft.services.game.modpack import ModpackCoordinator, ModpackPlan, PackFileEntry, build_pack_plan
+from ECL.minecraft.services.game.modpack_preparation import ModpackPreparationService, PreparedModpackFile
 from ECL.utils.errors import GameServiceError
 
 
@@ -169,7 +169,7 @@ def test_cleanup_failure_is_visible_and_retries_are_bounded(preparations, monkey
         raise PermissionError("locked")
 
     with monkeypatch.context() as patch:
-        patch.setattr("ECL.services.game.modpack_preparation.shutil.rmtree", fail)
+        patch.setattr("ECL.minecraft.services.game.modpack_preparation.shutil.rmtree", fail)
         preparations.release(record.preparation_id)
         for _ in range(8):
             preparations._expire()

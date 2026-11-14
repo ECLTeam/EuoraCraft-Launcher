@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.services.game.instance_profile_transactions import InstanceProfileTarget, NativeProfileTarget
+from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTarget, NativeProfileTarget
 from ECL.utils.file_handles import FileBoundaryError
 from ECL.utils.instance_reading import InstanceReadError, directory_identity
 

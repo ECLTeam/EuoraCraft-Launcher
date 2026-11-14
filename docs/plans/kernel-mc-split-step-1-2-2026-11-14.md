@@ -70,7 +70,7 @@ ECL/
 | 域 | 目录 | 依赖方向 |
 | --- | --- | --- |
 | 内核 | `ECL/plugins/`（除 `mc/`）、`ECL/plugins/api/`、`ECL/services/operations.py`、`processes.py`、`updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得 import `ECL.minecraft` |
-| MC | `ECL/mc/`、`ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/minecraft/game/`（子模块） | 可依赖内核 |
+| MC | `ECL/mc/`、`ECL/minecraft/services/game/`、`ECL/minecraft/services/account/`、`ECL/java/`、`ECL/minecraft/game/`（子模块） | 可依赖内核 |
 | 边界 | `ECL/api/` | 可依赖两者 |
 
 ### 3.2 检查实现
@@ -78,7 +78,7 @@ ECL/
 新增 `tests/test_layer_boundary.py`，用 AST 扫描 import，不用文本匹配：
 
 - 遍历内核目录下的 `.py`，收集 `Import` / `ImportFrom` 的目标模块名。
-- 命中 `ECL.minecraft`、`ECL.services.game`、`ECL.services.account`、`ECL.java` 即违规。
+- 命中 `ECL.minecraft`、`ECL.minecraft.services.game`、`ECL.minecraft.services.account`、`ECL.java` 即违规。
 - 豁免以 `dict[str, str]` 显式维护（文件 → 原因），并断言豁免条目数不超过上限。
 
 ### 3.3 当前存量违规

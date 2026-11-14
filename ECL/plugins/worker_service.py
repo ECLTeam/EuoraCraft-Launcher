@@ -57,8 +57,8 @@ if TYPE_CHECKING:
     from pytaurix import AppHandle
 
     from ECL.minecraft.adapters.resources import InstanceQueries
-    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
-    from ECL.services.game.plugin_games import PluginGameCoordinator
+    from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.minecraft.services.game.plugin_games import PluginGameCoordinator
 
 # 生命周期钩子允许插件完成模块导入与资源索引；超过上限按执行失败回收进程树。
 lifecycle_hook_timeout_seconds = 30.0

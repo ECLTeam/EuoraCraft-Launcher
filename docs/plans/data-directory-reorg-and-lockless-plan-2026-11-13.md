@@ -128,13 +128,13 @@ ECL_data/
 
 | 旧 → 新 | 修改位置 |
 | --- | --- |
-| `setting.json` → `config/setting.json` | `ECL/utils/config.py:143`、`ECL/desktop/maintenance.py:36`、`ECL/services/game/modpack_export.py:111` |
+| `setting.json` → `config/setting.json` | `ECL/utils/config.py:143`、`ECL/desktop/maintenance.py:36`、`ECL/minecraft/services/game/modpack_export.py:111` |
 | `notice.json` → `config/notice.json` | `ECL/services/updates.py:431`、`ECL/desktop/maintenance.py:36` |
 | `accounts.json` → **不在本轮范围** | 生产环境位于 `~/.ECL/accounts`（`ECL/application.py:412`），不写入数据目录 |
-| `wardrobe/` → `userdata/wardrobe/` | `ECL/services/account/wardrobe.py:65-68` |
-| `backgrounds/` → `userdata/backgrounds/` | `ECL/api/files.py:464`、`ECL/services/game/screenshots.py:211` |
+| `wardrobe/` → `userdata/wardrobe/` | `ECL/minecraft/services/account/wardrobe.py:65-68` |
+| `backgrounds/` → `userdata/backgrounds/` | `ECL/api/files.py:464`、`ECL/minecraft/services/game/screenshots.py:211` |
 | `downloads/` → `userdata/downloads/` | `ECL/api/files.py:692`、`ECL/services/custom_downloads.py:268` |
-| `exports/` → `userdata/exports/` | `ECL/api/system.py:396`、`ECL/services/game/crash/analyzer.py:649` |
+| `exports/` → `userdata/exports/` | `ECL/api/system.py:396`、`ECL/minecraft/services/game/crash/analyzer.py:649` |
 | `plugins/` → `plugins/sources/` | `ECL/plugins/manager/base.py:231`、`ECL/desktop/dev_channel.py:734` |
 | `plugin_config/` → `plugins/config/` | `ECL/plugins/manager/base.py:233-234`、`ECL/plugins/manager/storage.py:27,36`、`ECL/desktop/maintenance.py:37` |
 | `plugin_settings_v2/` → `plugins/settings/` | `ECL/plugins/settings.py:73` |
@@ -152,8 +152,8 @@ ECL_data/
 | `plugin_account_resources.json` → `plugins/account_resources.json` | `ECL/plugins/account_resources.py:55` |
 | `plugin_java_resources.json` → `plugins/java_resources.json` | `ECL/plugins/java_resources.py:61` |
 | `runtimes/java/` → `runtime/java/` | `ECL/java/models.py:278`（`storage_root` 的 LOCALAPPDATA 回退分支同步改 `runtime/java`） |
-| `dependencies/authlib-injector/` → `runtime/authlib-injector/` | `ECL/services/account/authlib.py:70` |
-| `java_cache.json` → `runtime/java_cache.json` | `ECL/services/game/base.py:187` |
+| `dependencies/authlib-injector/` → `runtime/authlib-injector/` | `ECL/minecraft/services/account/authlib.py:70` |
+| `java_cache.json` → `runtime/java_cache.json` | `ECL/minecraft/services/game/base.py:187` |
 | `updates/` → `cache/updates/` | `ECL/desktop/app_update.py:239` |
 | `.pending_update.json` → `cache/updates/.pending_update.json` | `ECL/desktop/app_update.py:194,240,555` |
 | `single_instance.json`、`dev_channel.json` → `runtime/` | `ECL/desktop/single_instance.py:36,62,260`、`ECL/desktop/dev_channel.py:131,166` |
@@ -188,7 +188,7 @@ ECL_data/
 | 位置 | 改动 |
 | --- | --- |
 | `ECL/desktop/maintenance.py:34-37,77,81,125,145` | `reset_launcher_data` 目标改 `config/setting.json`、`config/notice.json`（`info_card.json` 已无生产代码写入，移出白名单）；`clear_plugins` 目标改为 `plugins/sources` 与 `plugins/config`，保留依赖缓存与安装记录；备份落 `userdata/backups/`，历史落 `logs/maintenance-history.jsonl`，待执行标记落 `runtime/` |
-| `ECL/services/game/modpack_export.py:87-118` | 导出排除/屏蔽表补充新路径条目（`plugins`、`runtime`、`userdata` 等），保证整合包导出不夹带数据目录 |
+| `ECL/minecraft/services/game/modpack_export.py:87-118` | 导出排除/屏蔽表补充新路径条目（`plugins`、`runtime`、`userdata` 等），保证整合包导出不夹带数据目录 |
 | `ECL/desktop/dev_channel.py:734` | `pluginDir` 指向 `plugins/sources` |
 | `.gitignore` | `/ECL_data/` 已覆盖，无需改动；可选清理根级遗留的 `/plugins/`、`/plugin_config/`、`/setting.json` |
 | `docs/guides/plugin-development/development-mode.md` 等 8 篇文档 | 按新路径更新示例与说明 |

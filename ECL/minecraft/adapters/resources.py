@@ -29,9 +29,9 @@ from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.instance_reading import InstanceReadBoundary, InstanceReadError
 
 if TYPE_CHECKING:
-    from ECL.services.game.instance_profile_transactions import InstanceProfileTarget
-    from ECL.services.game.instance_queries import InstanceSummary
-    from ECL.services.game.plugin_games import GameResourceTarget, InstalledGame
+    from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTarget
+    from ECL.minecraft.services.game.instance_queries import InstanceSummary
+    from ECL.minecraft.services.game.plugin_games import GameResourceTarget, InstalledGame
 
 
 class InstanceQueries(Protocol):
@@ -222,7 +222,7 @@ class RuntimeResources:
         :return: 物理目标及本运行准入
         :raises ProtocolError: 引用、目录或截止失效
         """
-        from ECL.services.game.plugin_games import GameResourceTarget
+        from ECL.minecraft.services.game.plugin_games import GameResourceTarget
 
         self._prepare()
         with self._lock:
@@ -319,7 +319,7 @@ class RuntimeResources:
         :return: 实例目标及原始管理准入
         :raises ProtocolError: 引用、管理范围或实际身份失效
         """
-        from ECL.services.game.instance_profile_transactions import InstanceProfileTarget
+        from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTarget
 
         target, lease = self.game_target(instance_ref, deadline)
         if target.version_id is None or target.instance_identity is None:

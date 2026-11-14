@@ -63,7 +63,7 @@
 | `runtime/operation_adapters.py` | 操作归属保留；剥离其中的授权字段 |
 | `development.py` | 开发模式审批（`begin_development`/`end_development`）中授权部分删除；内容复核保留 |
 | `auth_providers.py`、`launch_hooks.py`、`account_resources.py`、`java_resources.py`、`crash_extensions.py`、`instance_compat.py`、`modpacks.py` 等 | 注册类 API 保留业务机制，删除其"需要某能力"的准入判断 |
-| `ECL/services/game/launch.py` | 唯一的真实 `PluginGrantError` 导入随重命名调整 |
+| `ECL/minecraft/services/game/launch.py` | 唯一的真实 `PluginGrantError` 导入随重命名调整 |
 | `ECL/plugins/plugin.py`、`package_activation.py`、`package_preparation.py` | 内容校验链路保留；`PluginPreparedPackage` 的声明参数移除 |
 
 ## 4. 前端改动清单（子仓库）

@@ -74,8 +74,8 @@ if TYPE_CHECKING:
     from ECL.minecraft.adapters.public_queries import RuntimePublicQueries
     from ECL.minecraft.adapters.resource_queries import RuntimeResourceCatalog
     from ECL.minecraft.adapters.resources import RuntimeResources
-    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
-    from ECL.services.game.plugin_games import PluginGameCoordinator
+    from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.minecraft.services.game.plugin_games import PluginGameCoordinator
 
 
 @dataclass(frozen=True, slots=True)

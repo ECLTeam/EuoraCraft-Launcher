@@ -9,9 +9,9 @@ from pydantic import ValidationError
 
 from ECL.api.models import WorldPatchData
 from ECL.minecraft.game import Compound, File, GameDataError, Long, String, WorldSeedStore, load
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.workspace import WorkspaceCoordinator
-from ECL.services.game.worlds import WorldCoordinator
+from ECL.minecraft.services.game.base import GameServiceError
+from ECL.minecraft.services.game.workspace import WorkspaceCoordinator
+from ECL.minecraft.services.game.worlds import WorldCoordinator
 
 
 class WorldHarness(WorldCoordinator, WorkspaceCoordinator):

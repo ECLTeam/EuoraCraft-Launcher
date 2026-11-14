@@ -32,9 +32,9 @@ from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle
 
 if TYPE_CHECKING:
     from ECL.minecraft.adapters.resources import RuntimeResources
+    from ECL.minecraft.services.game.plugin_games import GameResourceTarget, PluginGameCoordinator
     from ECL.plugins.runtime.file_api import RuntimeFiles
     from ECL.plugins.runtime.operation_adapters import RuntimeOperations
-    from ECL.services.game.plugin_games import GameResourceTarget, PluginGameCoordinator
 
 
 class _List(InstanceGetRequest):

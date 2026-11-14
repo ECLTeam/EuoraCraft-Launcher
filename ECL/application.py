@@ -40,12 +40,12 @@ from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
 from ECL.java.queries import JavaQueries
 from ECL.minecraft.game import InstancesManager
+from ECL.minecraft.services.account import AccountManager, WardrobeStore
+from ECL.minecraft.services.account.plugin_textures import read_account_skin
+from ECL.minecraft.services.game import GameService
+from ECL.minecraft.services.game.launch_settings import scan_instance_java_references
 from ECL.plugins.framework import PluginManager
-from ECL.services.account import AccountManager, WardrobeStore
-from ECL.services.account.plugin_textures import read_account_skin
 from ECL.services.custom_downloads import CustomDownloadService
-from ECL.services.game import GameService
-from ECL.services.game.launch_settings import scan_instance_java_references
 from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
 from ECL.services.updates import AnnouncementService, StartupUpdateService

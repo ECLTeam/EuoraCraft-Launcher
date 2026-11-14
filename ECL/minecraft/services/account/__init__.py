@@ -12,10 +12,10 @@
 #   - class SkinAvatarExporter — 导出账户头像 PNG。
 # ============================================================
 
-from ECL.services.account.accounts import AccountManager, LauncherMicrosoftAccountManager
-from ECL.services.account.authlib import AuthlibAccountManager, AuthlibInjector
-from ECL.services.account.skin_avatar import SkinAvatarError, SkinAvatarExporter
-from ECL.services.account.wardrobe import WardrobeError, WardrobeStore
+from ECL.minecraft.services.account.accounts import AccountManager, LauncherMicrosoftAccountManager
+from ECL.minecraft.services.account.authlib import AuthlibAccountManager, AuthlibInjector
+from ECL.minecraft.services.account.skin_avatar import SkinAvatarError, SkinAvatarExporter
+from ECL.minecraft.services.account.wardrobe import WardrobeError, WardrobeStore
 from ECL.utils import AccountError, AuthlibError
 
 __all__ = [

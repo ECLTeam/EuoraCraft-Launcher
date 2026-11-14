@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from ECL.services.game.crash.analyzer import CrashAnalyzer
-from ECL.services.game.crash.rules import CrashRule, CrashRuleCatalog
+from ECL.minecraft.services.game.crash.analyzer import CrashAnalyzer
+from ECL.minecraft.services.game.crash.rules import CrashRule, CrashRuleCatalog
 
 
 def test_default_parameter_groups_are_empty_and_read_only() -> None:

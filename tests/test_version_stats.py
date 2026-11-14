@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from ECL.services.game.version_stats import VersionStatsStore
+from ECL.minecraft.services.game.version_stats import VersionStatsStore
 
 
 def test_version_stats_store_creates_defaults_and_accumulates_runs(tmp_path) -> None:

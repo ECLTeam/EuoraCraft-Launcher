@@ -569,7 +569,7 @@ def test_synchronous_long_operation_retains_start_and_timed_result(records) -> N
 
 
 def test_directory_config_reads_and_noop_writes_are_silent(tmp_path, records) -> None:
-    from ECL.services.game.scan import ScanCoordinator
+    from ECL.minecraft.services.game.scan import ScanCoordinator
 
     logger, logs = records
     state = SimpleNamespace(logger=logger, _lock=RLock(), _ecl_json_path=lambda root: tmp_path / "ecl.json")

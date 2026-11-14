@@ -11,9 +11,9 @@
 
 import json
 
+from ECL.minecraft.services.game.instance_compat import InstanceCompatibilityReader
 from ECL.plugins.framework import PluginManager
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
-from ECL.services.game.instance_compat import InstanceCompatibilityReader
 
 
 def test_plugin_can_register_instance_compatibility_provider(tmp_path) -> None:

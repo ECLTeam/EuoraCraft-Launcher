@@ -125,7 +125,7 @@ ECL 导出实例时同时支持私有 `.ecl` 格式和 Modrinth 格式，维护�
 
 ## 涉及文件
 
-- `ECL/services/game/export.py`：移除 `.ecl` 导出分支
+- `ECL/minecraft/services/game/export.py`：移除 `.ecl` 导出分支
 
 - `ECL/api/models.py`：移除 `EclExportModel`
 

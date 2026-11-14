@@ -64,7 +64,9 @@ def test_no_service_locator_api_or_duplicate_libs_remains() -> None:
     assert "register_services" not in source
     assert "EventBus().get(" not in source
     assert "EventBus().register(" not in source
-    assert [path for path in ecl_root.rglob("Libs.py") if not path.is_relative_to(ecl_root / "minecraft" / "game")] == []
+    assert [
+        path for path in ecl_root.rglob("Libs.py") if not path.is_relative_to(ecl_root / "minecraft" / "game")
+    ] == []
     assert not (ecl_root / "api" / "legacy").exists()
     assert not (ecl_root / "api" / "domain_handlers.py").exists()
 

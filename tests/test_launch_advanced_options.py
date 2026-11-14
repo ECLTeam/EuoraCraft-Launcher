@@ -44,9 +44,14 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.api.models import LaunchRequest
-from ECL.services.game import GameService, GameServiceError
-from ECL.services.game import launch as launch_module
-from ECL.services.game.launch import _apply_wrapper, _parse_env_vars, _render_window_title, _split_command_lines
+from ECL.minecraft.services.game import GameService, GameServiceError
+from ECL.minecraft.services.game import launch as launch_module
+from ECL.minecraft.services.game.launch import (
+    _apply_wrapper,
+    _parse_env_vars,
+    _render_window_title,
+    _split_command_lines,
+)
 from ECL.utils import EventBus
 from ECL.utils.config import default_config
 

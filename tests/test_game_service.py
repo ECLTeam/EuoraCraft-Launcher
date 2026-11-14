@@ -81,7 +81,7 @@ import pytest
 
 from ECL.minecraft.game import CoreError, GetGames, LaunchConfig, SearchMinecraft, build_minecraft_cmd
 from ECL.minecraft.game.Core.LaunchCommand import parse_launch_command
-from ECL.services.game import GameService, GameServiceError
+from ECL.minecraft.services.game import GameService, GameServiceError
 from ECL.utils import EventBus
 
 
@@ -352,7 +352,7 @@ def _launch_lifecycle_fixture(tmp_path, monkeypatch, clock):
         instances_manager=instances,
         command_builder=lambda _config: '"java.exe" game.Main',
     )
-    monkeypatch.setattr("ECL.services.game.launch.monotonic", lambda: clock[0])
+    monkeypatch.setattr("ECL.minecraft.services.game.launch.monotonic", lambda: clock[0])
     monkeypatch.setattr(
         service,
         "_context",
@@ -645,7 +645,7 @@ def test_launch_instance_checks_files_builds_command_and_tracks_process(tmp_path
     instances = FakeInstances()
     captured_configs = []
     clock = [100.0]
-    monkeypatch.setattr("ECL.services.game.launch.monotonic", lambda: clock[0])
+    monkeypatch.setattr("ECL.minecraft.services.game.launch.monotonic", lambda: clock[0])
     service = _build_service(
         instances_manager=instances,
         command_builder=lambda config: captured_configs.append(config) or '"java.exe" game.Main',
@@ -769,7 +769,7 @@ def test_launch_runs_pre_launch_command_in_final_game_directory(tmp_path, monkey
 def test_pre_launch_command_rejects_nonzero_exit_code(tmp_path, monkeypatch) -> None:
     service = _build_service()
     monkeypatch.setattr(
-        "ECL.services.game.launch.subprocess.run",
+        "ECL.minecraft.services.game.launch.subprocess.run",
         lambda *_args, **_kwargs: SimpleNamespace(stdout="", stderr="failed", returncode=3),
     )
 
@@ -781,7 +781,7 @@ def test_pre_launch_command_rejects_nonzero_exit_code(tmp_path, monkeypatch) -> 
 
 
 def test_javaw_is_replaced_with_java_exe_when_enabled_on_windows(tmp_path, monkeypatch) -> None:
-    from ECL.services.game import launch as launch_module
+    from ECL.minecraft.services.game import launch as launch_module
 
     service = _build_service()
     javaw_path = tmp_path / "javaw.exe"
@@ -795,7 +795,7 @@ def test_javaw_is_replaced_with_java_exe_when_enabled_on_windows(tmp_path, monke
 
 
 def test_high_performance_gpu_preference_uses_current_user_registry(tmp_path, monkeypatch) -> None:
-    from ECL.services.game import launch as launch_module
+    from ECL.minecraft.services.game import launch as launch_module
 
     class FakeRegistryKey:
         def __enter__(self):
@@ -869,7 +869,7 @@ def test_renderer_agent_downloads_matching_windows_artifact(tmp_path, monkeypatc
                 target_path.write_bytes(b"mesa-loader")
 
     service = _build_service(data_path=tmp_path, downloader_factory=RendererDownloader)
-    monkeypatch.setattr("ECL.services.game.launch.sys.platform", "win32")
+    monkeypatch.setattr("ECL.minecraft.services.game.launch.sys.platform", "win32")
     monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "ARM64")
 
     agent = asyncio.run(service._ensure_renderer_agent("vulkan"))
@@ -881,7 +881,7 @@ def test_renderer_agent_downloads_matching_windows_artifact(tmp_path, monkeypatc
 
 def test_renderer_agent_is_not_enabled_outside_windows(tmp_path, monkeypatch) -> None:
     service = _build_service(data_path=tmp_path)
-    monkeypatch.setattr("ECL.services.game.launch.sys.platform", "linux")
+    monkeypatch.setattr("ECL.minecraft.services.game.launch.sys.platform", "linux")
 
     assert asyncio.run(service._ensure_renderer_agent("software")) is None
     service.close()
@@ -984,7 +984,7 @@ def test_launch_fullscreen_uses_versions_directory_when_isolated(tmp_path, monke
 )
 def test_launch_initializes_only_unconfigured_language(tmp_path, monkeypatch, platform, initial, locale, expected):
     service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr("ECL.services.game.launch.sys.platform", platform)
+    monkeypatch.setattr("ECL.minecraft.services.game.launch.sys.platform", platform)
     service._search_factory = lambda _: SimpleNamespace(
         search_minecraft=lambda: {"1.21.8": {"VanillaVersion": "1.21.8"}}
     )
@@ -1135,7 +1135,7 @@ def test_launch_language_respects_base_version_identity(tmp_path, info, document
 @pytest.mark.parametrize("platform", ["win32", "linux"])
 @pytest.mark.parametrize("failure", ["read", "encoding", "replace"])
 def test_launch_options_failure_preserves_file_and_continues_launch(tmp_path, monkeypatch, platform, failure):
-    from ECL.services.game import launch as launch_module
+    from ECL.minecraft.services.game import launch as launch_module
 
     service, game_path, java_path = _fullscreen_launch_fixture(tmp_path, monkeypatch)
     service.logger = Mock()
@@ -1193,7 +1193,7 @@ def test_launch_options_failure_preserves_file_and_continues_launch(tmp_path, mo
     ],
 )
 def test_launch_options_preserves_bom_lines_and_avoids_repeated_writes(tmp_path, monkeypatch, initial):
-    from ECL.services.game import launch as launch_module
+    from ECL.minecraft.services.game import launch as launch_module
 
     service = _build_service()
     options_path = tmp_path / "options.txt"
@@ -2077,13 +2077,13 @@ def test_ecl_config_skips_unchanged_writes(tmp_path, monkeypatch) -> None:
     game_path = tmp_path / ".minecraft"
     service = _build_service()
     writes = []
-    original_write = __import__("ECL.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
+    original_write = __import__("ECL.minecraft.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
 
     def tracked_write(path, data):
         writes.append((path, data))
         original_write(path, data)
 
-    monkeypatch.setattr("ECL.services.game.scan.atomic_write_text", tracked_write)
+    monkeypatch.setattr("ECL.minecraft.services.game.scan.atomic_write_text", tracked_write)
     config = {"activeVersion": "1.21.1", "customField": 42}
 
     service.write_ecl_config(game_path, config)
@@ -2099,14 +2099,14 @@ def test_ecl_config_serializes_concurrent_identical_patches(tmp_path, monkeypatc
     service = _build_service()
     service.write_ecl_config(game_path, {"activeVersion": "old", "customField": 42})
     writes = []
-    original_write = __import__("ECL.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
+    original_write = __import__("ECL.minecraft.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
 
     def tracked_write(path, data):
         writes.append((path, data))
         time.sleep(0.02)
         original_write(path, data)
 
-    monkeypatch.setattr("ECL.services.game.scan.atomic_write_text", tracked_write)
+    monkeypatch.setattr("ECL.minecraft.services.game.scan.atomic_write_text", tracked_write)
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(
             executor.map(
@@ -2186,13 +2186,13 @@ def test_version_settings_skips_unchanged_writes_and_rejects_invalid(tmp_path, m
     game_path = tmp_path / ".minecraft"
     service = _build_service()
     writes = []
-    original_write = __import__("ECL.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
+    original_write = __import__("ECL.minecraft.services.game.scan", fromlist=["atomic_write_text"]).atomic_write_text
 
     def tracked_write(path, data):
         writes.append((path, data))
         original_write(path, data)
 
-    monkeypatch.setattr("ECL.services.game.scan.atomic_write_text", tracked_write)
+    monkeypatch.setattr("ECL.minecraft.services.game.scan.atomic_write_text", tracked_write)
     settings = {"customMemory": True, "memory": 6144}
 
     service.write_version_settings(game_path, "1.21.1", settings)
@@ -2322,7 +2322,7 @@ def test_silent_user_commands_log_start_and_exit(tmp_path, monkeypatch, phase) -
     messages = []
     monkeypatch.setattr(service.logger, "info", lambda message, *args: messages.append(message % args))
     monkeypatch.setattr(
-        "ECL.services.game.launch.subprocess.run",
+        "ECL.minecraft.services.game.launch.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(stdout="", stderr="", returncode=0),
     )
     try:

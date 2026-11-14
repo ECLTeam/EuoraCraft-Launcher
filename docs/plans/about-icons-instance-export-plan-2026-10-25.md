@@ -28,8 +28,8 @@
 | `frontend/src/components/instances/InstanceDetailOverviewTab.vue` | 当前导出按钮实际位于实例详情的概览快捷操作区，文字为“导出实例”；本次修改该入口，不额外迁移或新增设置分区。 |
 | `frontend/src/views/instances/ManageTab.vue` | `export` 动作直接弹出保存对话框，再提交 `game_instance_export`，没有设置页或文件选择。 |
 | `ECL/api/models.py`、`ECL/api/workspace.py` | 现有导出请求只有实例目标、保存路径及 `modrinth` 格式，没有元信息和文件选择。 |
-| `ECL/services/game/modpack.py` | 已有 Modrinth/CurseForge 模组指纹反查、后台导出任务及临时文件替换；实际遍历 `target.instance_path`，没有按最终隔离设置读取游戏内容。 |
-| `ECL/services/game/scan.py`、`workspace.py`、`launch.py` | 已有权威隔离策略与目录解析；当前未隔离游戏数据目录是游戏根下的 `versions`，隔离后才是 `versions/<实例>`。不能假定共享数据一定放在 `.minecraft` 根目录。 |
+| `ECL/minecraft/services/game/modpack.py` | 已有 Modrinth/CurseForge 模组指纹反查、后台导出任务及临时文件替换；实际遍历 `target.instance_path`，没有按最终隔离设置读取游戏内容。 |
+| `ECL/minecraft/services/game/scan.py`、`workspace.py`、`launch.py` | 已有权威隔离策略与目录解析；当前未隔离游戏数据目录是游戏根下的 `versions`，隔离后才是 `versions/<实例>`。不能假定共享数据一定放在 `.minecraft` 根目录。 |
 | `frontend/src/components/modals/FullscreenModal.vue` | 已有全屏窗口、焦点与标题栏整合，可用于导出页并在关闭后恢复实例详情。 |
 | `frontend/src/features/operations/stores/applicationOperationStore.ts` | 已有操作跟踪、进度、取消请求与最终状态管理，可承载扫描及导出，不另写轮询系统。 |
 | PCL-CE `Pages/PageInstance/PageInstanceExport.xaml` 及 `.xaml.cs` | 有名称/版本、分类默认勾选、资源包/光影/存档子项、其他目录、资源直接打包及高级规则；后端从实际隔离数据目录收集内容。 |
@@ -146,7 +146,7 @@
 
 1. 核对工作区、规范及影响消费者，保留无关 ADR 删除。
 2. 修改 `AboutTab.vue`、`AboutTab.css`，补齐六个标题图标；同步其局部回归预期。
-3. 扩展后端导出请求/结果模型及 `ModpackCoordinator` 的导出流程；将新增的文件条目、分类策略和选择校验放入 `ECL/services/game/modpack_export.py`，现有协调器负责调用、在线反查和任务提交。该模块的当前调用方仅为现有整合包导出流程，不创建新基类、通用插件框架或长期会话注册表。
+3. 扩展后端导出请求/结果模型及 `ModpackCoordinator` 的导出流程；将新增的文件条目、分类策略和选择校验放入 `ECL/minecraft/services/game/modpack_export.py`，现有协调器负责调用、在线反查和任务提交。该模块的当前调用方仅为现有整合包导出流程，不创建新基类、通用插件框架或长期会话注册表。
 4. 在 `ECL/api/workspace.py` 接入预览命令和扩展后的导出请求；同步命令注册、日志策略及类型。预览标为查询/准备，实际导出标为操作，日志不记录完整路径、文件清单或请求体。
 5. 新增 `frontend/src/types/instanceExport.ts`、领域 API、快照校验及导出 store，复用既有操作跟踪；同步 `types/api.ts` 和演示 Transport。
 6. 新增 `InstanceExportModal.vue` 及局部样式，将 `ManageTab` 中直接保存/导出的分支改为打开全屏设置页；更新概览入口为国际化的“导出”，清查其他实际调用方。

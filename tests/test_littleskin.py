@@ -13,11 +13,11 @@ from urllib.parse import parse_qs, urlencode
 import httpx
 import pytest
 
-import ECL.services.account.authlib as authlib_module
-import ECL.services.account.littleskin as littleskin_module
-from ECL.services.account.accounts import AccountManager
-from ECL.services.account.authlib import AuthlibAccountManager
-from ECL.services.account.littleskin import (
+import ECL.minecraft.services.account.authlib as authlib_module
+import ECL.minecraft.services.account.littleskin as littleskin_module
+from ECL.minecraft.services.account.accounts import AccountManager
+from ECL.minecraft.services.account.authlib import AuthlibAccountManager
+from ECL.minecraft.services.account.littleskin import (
     LittleSkinCallback,
     LittleSkinClient,
     LittleSkinCredentials,

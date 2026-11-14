@@ -18,8 +18,8 @@ import struct
 
 import pytest
 
-from ECL.services.game.instance_profiles import InstanceProfileStore
-from ECL.services.game.version_stats import VersionStatsStore
+from ECL.minecraft.services.game.instance_profiles import InstanceProfileStore
+from ECL.minecraft.services.game.version_stats import VersionStatsStore
 
 
 def _instance(tmp_path, version_id: str = "1.21.8"):

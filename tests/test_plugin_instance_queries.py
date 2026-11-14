@@ -12,12 +12,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from ECL.minecraft.services.game import GameService
+from ECL.minecraft.services.game.instance_profiles import InstanceProfileStore
+from ECL.minecraft.services.game.version_stats import VersionStatsStore
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.plugins.worker_service import PluginWorkerService
-from ECL.services.game import GameService
-from ECL.services.game.instance_profiles import InstanceProfileStore
-from ECL.services.game.version_stats import VersionStatsStore
 from ECL.utils.instance_reading import InstanceReadError
 
 

@@ -4,7 +4,7 @@
 范围：
 
 - 前端 `frontend/src/composables/useInstanceManager.ts`、`frontend/src/views/Game.vue`、`frontend/src/config/game.ts`、六份语言文件
-- 后端 `ECL/services/game/launch.py`
+- 后端 `ECL/minecraft/services/game/launch.py`
 
 ## 1. 现象
 
@@ -52,7 +52,7 @@
 | `frontend/src/i18n/locales/*.json` | 新增 `game.status.launchBusy`、`game.status.launchCancelMissed`（六种语言） |
 | `frontend/src/features/game-home/api/gameHomeApi.ts`、`stores/gameHomeStore.ts` | `cancelLaunch()` 返回后端是否接受取消，`NO_ACTIVE_LAUNCH` 不再当异常 |
 | `frontend/src/composables/useInstanceManager.test.ts` | 5 条用例：取消立即解锁并丢弃迟到结果、取消后重启不被旧会话覆盖、忙重试提示、连点保护、取消未生效提示 |
-| `ECL/services/game/launch.py` | 新增 `_ensure_launch_not_cancelled()` 与 `_stop_launched_process()`；补齐 4 处检查点，含进程创建后的取消回收 |
+| `ECL/minecraft/services/game/launch.py` | 新增 `_ensure_launch_not_cancelled()` 与 `_stop_launched_process()`；补齐 4 处检查点，含进程创建后的取消回收 |
 | `tests/test_game_service.py` | 新增 `test_cancel_launch_stops_before_file_check`、`test_cancel_launch_during_process_creation_stops_the_game` |
 
 ## 5. 验证

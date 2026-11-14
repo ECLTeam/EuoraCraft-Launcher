@@ -39,10 +39,10 @@ from ECL.minecraft.game import (
     SearchMinecraft,
     build_minecraft_cmd,
 )
+from ECL.minecraft.services.account import AccountManager, AuthlibInjector
 from ECL.plugins.crash_extensions import CrashAnalysisExtensionRegistry
 from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
-from ECL.services.account import AccountManager, AuthlibInjector
 from ECL.services.operations import OperationManager, OperationOrigin
 from ECL.utils import EventBus, GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
 from ECL.utils.instance_reading import DirectoryIdentity

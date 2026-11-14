@@ -17,8 +17,8 @@ import httpx
 import pytest
 
 from ECL.minecraft.game import ApiUrlConfig, BmclApiUrl, InstallEvent, InstallObserver
-from ECL.services.game import GameService
-from ECL.services.game.download_sources import PreferredApiClient
+from ECL.minecraft.services.game import GameService
+from ECL.minecraft.services.game.download_sources import PreferredApiClient
 from ECL.utils import EventBus
 
 

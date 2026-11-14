@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.services.game.launch import candidate_roots, resolve_launch_target
+from ECL.minecraft.services.game.launch import candidate_roots, resolve_launch_target
 from ECL.utils.errors import GameServiceError
 
 

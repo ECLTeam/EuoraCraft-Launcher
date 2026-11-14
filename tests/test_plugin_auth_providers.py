@@ -19,8 +19,8 @@ import json
 import pytest
 from test_accounts import FakeAuthlibManager, FakeMicrosoftManager
 
+from ECL.minecraft.services.account import AccountManager
 from ECL.plugins.framework import PluginManager
-from ECL.services import AccountManager
 from ECL.utils import AccountError
 
 

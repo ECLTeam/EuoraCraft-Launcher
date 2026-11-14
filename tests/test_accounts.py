@@ -78,9 +78,9 @@ from typing import Any
 import httpx
 import pytest
 
-import ECL.services.account.accounts as accounts_service
-from ECL.services import AccountManager
-from ECL.services.account.accounts import LauncherMicrosoftAccountManager
+import ECL.minecraft.services.account.accounts as accounts_service
+from ECL.minecraft.services.account import AccountManager
+from ECL.minecraft.services.account.accounts import LauncherMicrosoftAccountManager
 from ECL.utils import EventBus
 
 

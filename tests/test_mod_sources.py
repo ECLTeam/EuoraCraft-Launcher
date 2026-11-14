@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from ECL.services.game.mod_sources import (
+from ECL.minecraft.services.game.mod_sources import (
     ModSourcePolicy,
     ModSourceRequestPolicy,
     alternate_mod_source,

@@ -9,11 +9,11 @@ import pytest
 
 from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
 from ECL.minecraft.adapters.resources import RuntimeResources
+from ECL.minecraft.services.game import GameService
+from ECL.minecraft.services.game.instance_profiles import InstanceProfileStore
+from ECL.minecraft.services.game.version_stats import VersionStatsStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.worker_service import PluginWorkerService
-from ECL.services.game import GameService
-from ECL.services.game.instance_profiles import InstanceProfileStore
-from ECL.services.game.version_stats import VersionStatsStore
 from ECL.services.operations import OperationManager
 from ECL.utils import EventBus
 from ECL.utils.file_handles import FileHandle

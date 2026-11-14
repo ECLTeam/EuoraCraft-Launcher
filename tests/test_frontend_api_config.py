@@ -146,7 +146,7 @@ frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
 ConfigStore = import_module("ECL.utils.config").ConfigStore
 EventBus = import_module("ECL.utils").EventBus
-AccountError = import_module("ECL.services.account.accounts").AccountError
+AccountError = import_module("ECL.minecraft.services.account.accounts").AccountError
 LaunchOptions = import_module("ECL.cli").LaunchOptions
 command_handlers = import_module("ECL.api.registry").command_handlers
 _guarded_call = import_module("ECL.api.bridge")._guarded_call
@@ -436,7 +436,7 @@ def _build_api(tmp_path) -> FrontendApi:
     ],
 )
 def test_online_download_uses_instance_isolation(tmp_path, monkeypatch, source, resource_type, policy, mode, isolated):
-    from ECL.services.game import GameService
+    from ECL.minecraft.services.game import GameService
 
     if resource_type == "world" and source != "curseforge":
         pytest.skip("在线世界仅支持 CurseForge")
@@ -515,7 +515,7 @@ def test_online_download_rejects_invalid_instance_before_writing(tmp_path, monke
 
 
 def test_dual_source_search_uses_real_game_service_and_typed_ipc(tmp_path, monkeypatch) -> None:
-    from ECL.services.game import GameService
+    from ECL.minecraft.services.game import GameService
 
     calls = []
 
@@ -533,7 +533,7 @@ def test_dual_source_search_uses_real_game_service_and_typed_ipc(tmp_path, monke
             }
         return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: body)
 
-    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+    monkeypatch.setattr("ECL.minecraft.services.game.resources._proxied_get", fake_get)
     api = _build_api(tmp_path)
     api.game = GameService(
         FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test", enable_version_watcher=False
@@ -1723,7 +1723,7 @@ def test_host_does_not_own_connector_node_preload(tmp_path) -> None:
 
 
 def test_vanilla_search_shares_unfiltered_backend_session(tmp_path, monkeypatch) -> None:
-    from ECL.services.game import GameService
+    from ECL.minecraft.services.game import GameService
 
     calls = []
 
@@ -1732,7 +1732,7 @@ def test_vanilla_search_shares_unfiltered_backend_session(tmp_path, monkeypatch)
         body = {"hits": [], "total_hits": 0} if "modrinth" in url else {"data": [], "pagination": {"totalCount": 0}}
         return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: body)
 
-    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+    monkeypatch.setattr("ECL.minecraft.services.game.resources._proxied_get", fake_get)
     api = _build_api(tmp_path)
     api.game = GameService(
         FakeAccounts(), resource_path=tmp_path, curseforge_api_key="test", enable_version_watcher=False

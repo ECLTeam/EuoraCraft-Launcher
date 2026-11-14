@@ -6,9 +6,9 @@ from time import monotonic
 import pytest
 from pydantic import ValidationError
 
-from ECL.services.game.instance_profile_models import InstanceProfilePatch
-from ECL.services.game.instance_profiles import InstanceProfileStore
-from ECL.services.game.version_stats import VersionStatsStore
+from ECL.minecraft.services.game.instance_profile_models import InstanceProfilePatch
+from ECL.minecraft.services.game.instance_profiles import InstanceProfileStore
+from ECL.minecraft.services.game.version_stats import VersionStatsStore
 from ECL.utils.instance_reading import InstanceReadError
 
 

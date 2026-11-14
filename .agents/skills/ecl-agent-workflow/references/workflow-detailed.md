@@ -26,7 +26,7 @@
 
 ```
 
-[考察] 涉及模块：ECL/api/game.py, ECL/services/game/launch.py
+[考察] 涉及模块：ECL/api/game.py, ECL/minecraft/services/game/launch.py
 
 [考察] 已读文件：5 个源文件 + 2 个测试文件 + 1 篇 ADR
 

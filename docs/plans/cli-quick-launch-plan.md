@@ -80,7 +80,7 @@
 
 - `default_config["launcher"]` 新增 `"single_instance": True`。
 
-### 4.3 新增 `ECL/services/game/launch_target.py`
+### 4.3 新增 `ECL/minecraft/services/game/launch_target.py`
 
 - `resolve_launch_target(target: str, roots: Sequence[Path]) -> tuple[Path, str]`：
   目标为目录时要求形如 `<根>/versions/<名>`（否则报错说明期望形态）；

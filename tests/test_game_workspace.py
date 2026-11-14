@@ -30,14 +30,14 @@ from types import SimpleNamespace
 import pytest
 
 from ECL.minecraft.game import Byte, Compound, File, GameDataError, Int, Long, String, load
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.workspace import (
+from ECL.minecraft.services.game.base import GameServiceError
+from ECL.minecraft.services.game.workspace import (
     WorkspaceCoordinator,
     resolve_instance_target,
     resolve_relative_id,
     safe_extract_zip,
 )
-from ECL.services.game.worlds import WorldCoordinator
+from ECL.minecraft.services.game.worlds import WorldCoordinator
 
 
 def test_resolve_instance_target_matches_isolation_semantics(tmp_path: Path) -> None:
@@ -60,7 +60,7 @@ def test_instance_identity_distinguishes_roots_and_directory_from_game_version(t
 def test_scan_identity_does_not_fold_case_sensitive_paths(tmp_path: Path) -> None:
     from unittest.mock import patch
 
-    from ECL.services.game.scan import ScanCoordinator
+    from ECL.minecraft.services.game.scan import ScanCoordinator
 
     # 即使在 Windows 运行，也验证 POSIX 路径策略；不依赖本机卷是否开启目录大小写敏感。
     with patch.object(Path, "resolve", lambda path, **_: path):
@@ -77,7 +77,7 @@ def test_running_guards_distinguish_resolved_case_sensitive_roots(tmp_path: Path
     service.events = SimpleNamespace(emit=lambda *_args: None)
     service.list_instances = lambda: [{"gamePath": str(other_root), "versionId": "same"}]
     deleted_paths = []
-    monkeypatch.setattr("ECL.services.game.workspace.delete_path", deleted_paths.append)
+    monkeypatch.setattr("ECL.minecraft.services.game.workspace.delete_path", deleted_paths.append)
     service.delete_instance(root, "same")
     assert deleted_paths == [root / "versions" / "same"]
     worlds = WorldCoordinator.__new__(WorldCoordinator)
@@ -86,7 +86,7 @@ def test_running_guards_distinguish_resolved_case_sensitive_roots(tmp_path: Path
 
 
 def test_core_context_does_not_reuse_a_case_folded_root(tmp_path: Path, monkeypatch) -> None:
-    from ECL.services.game.base import _GameState
+    from ECL.minecraft.services.game.base import _GameState
 
     root = tmp_path / "Pack"
     service = _GameState.__new__(_GameState)
@@ -101,7 +101,7 @@ def test_core_context_does_not_reuse_a_case_folded_root(tmp_path: Path, monkeypa
 
 
 def test_java_lookup_distinguishes_resolved_case_sensitive_paths(tmp_path: Path, monkeypatch) -> None:
-    from ECL.services.game.launch import LaunchCoordinator
+    from ECL.minecraft.services.game.launch import LaunchCoordinator
 
     monkeypatch.setattr(Path, "resolve", lambda path, **_: path)
     java_path = tmp_path / "JavaA" / "java"
@@ -114,7 +114,7 @@ def test_java_lookup_distinguishes_resolved_case_sensitive_paths(tmp_path: Path,
 
 
 def test_scan_reports_verified_root_aliases_without_scanning_twice(tmp_path: Path, monkeypatch) -> None:
-    from ECL.services.game.scan import ScanCoordinator
+    from ECL.minecraft.services.game.scan import ScanCoordinator
 
     first_root = tmp_path / "Pack"
     second_root = tmp_path / "pack"
@@ -288,8 +288,8 @@ def test_instance_profile_cover_field_is_preserved(tmp_path: Path) -> None:
         json.dumps({"schemaVersion": 1, "cover": {"type": "local", "value": "cover.png"}}), encoding="utf-8"
     )
 
-    from ECL.services.game.instance_profiles import InstanceProfileStore
-    from ECL.services.game.version_stats import VersionStatsStore
+    from ECL.minecraft.services.game.instance_profiles import InstanceProfileStore
+    from ECL.minecraft.services.game.version_stats import VersionStatsStore
 
     store = InstanceProfileStore(tmp_path / "data", VersionStatsStore())
     assert store.read_profile(tmp_path, "test")["cover"]["value"] == "cover.png"
@@ -349,7 +349,7 @@ def test_world_patch_rejects_invalid_values(tmp_path: Path, field: str, value, c
 
 
 def _options_harness(tmp_path: Path):
-    from ECL.services.game.instance_options import InstanceOptionsCoordinator
+    from ECL.minecraft.services.game.instance_options import InstanceOptionsCoordinator
 
     class _Harness(InstanceOptionsCoordinator, WorkspaceCoordinator):
         def __init__(self) -> None:

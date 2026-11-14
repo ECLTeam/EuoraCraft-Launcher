@@ -28,7 +28,7 @@ from ECL.utils.errors import GameServiceError
 
 if TYPE_CHECKING:
     from ECL.minecraft.adapters.java_api import RuntimeJava
-    from ECL.services.game.plugin_games import GameResourceTarget, PluginGameCoordinator, PluginGameRun
+    from ECL.minecraft.services.game.plugin_games import GameResourceTarget, PluginGameCoordinator, PluginGameRun
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +95,7 @@ class RuntimeGameLaunch:
         """
         结果交付仍需原始管理准入，任务完成不能恢复已撤销权限。
         """
-        from ECL.services.game.plugin_games import PluginGameRun
+        from ECL.minecraft.services.game.plugin_games import PluginGameRun
 
         if not isinstance(value, PluginGameRun):
             return None

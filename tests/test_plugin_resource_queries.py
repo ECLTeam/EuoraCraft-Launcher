@@ -56,7 +56,7 @@ def test_real_catalog_search_versions_and_file_selection_return_only_public_fiel
             }
         return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
 
-    monkeypatch.setattr("ECL.services.game.resources._proxied_get", get)
+    monkeypatch.setattr("ECL.minecraft.services.game.resources._proxied_get", get)
     result = call(state.broker, kind + ".search", {"query": "fixture", "game_version": "1.21.1", "loader": "fabric"})
     assert result["items"] == [
         {"source": "modrinth", "project_id": "project", "title": "Fixture", "description": "Resource"}

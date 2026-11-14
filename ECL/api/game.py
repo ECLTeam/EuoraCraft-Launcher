@@ -70,7 +70,7 @@ from ECL.api.models import (
     LaunchRequest,
     LoaderCatalogRequest,
 )
-from ECL.services.game.launch_settings import InstanceLaunchOverrides, LaunchSettingsResolver
+from ECL.minecraft.services.game.launch_settings import InstanceLaunchOverrides, LaunchSettingsResolver
 from ECL.utils.download_settings import resolve_mirror_source
 
 from .bridge import _FrontendState, _ipc_handler, _validate_body

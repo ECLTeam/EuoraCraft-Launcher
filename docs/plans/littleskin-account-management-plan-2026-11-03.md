@@ -24,7 +24,7 @@
 
 主仓库基线：`082f832`；前端基线：`6a50fd6376475f30e936d98f9553a40d4be4973f`。
 
-- `ECL/services/account/littleskin.py` 已实现两种 OAuth、角色读取及游戏令牌兑换；当前登录只请求游戏登录权限，设备代码流另带 `offline_access`。
+- `ECL/minecraft/services/account/littleskin.py` 已实现两种 OAuth、角色读取及游戏令牌兑换；当前登录只请求游戏登录权限，设备代码流另带 `offline_access`。
 - `authlib.py` 持有账户 OAuth 凭据、刷新与删除互斥锁、轮换后写盘失败的恢复状态；管理请求必须复用同一凭据所有者，不能再维护一份令牌缓存。
 - `accounts.py` 聚合账户、提供材质地址并发布账户更新；账户来源标记为 `auth_provider: littleskin`。
 - `ECL/api/accounts.py` 已有当前账户皮肤下载、本地衣柜导入、去重、导出与 Microsoft 穿戴命令。当前远程同步只处理皮肤，导出标题和前端按钮也有皮肤限定，需要在本次下载范围内补齐披风。
@@ -115,7 +115,7 @@
 
 | 文件范围 | 变更 |
 | --- | --- |
-| `ECL/services/account/littleskin.py` | 外部模型、角色/衣柜请求、管理授权会话 |
+| `ECL/minecraft/services/account/littleskin.py` | 外部模型、角色/衣柜请求、管理授权会话 |
 | `authlib.py`、`accounts.py` | 凭据刷新复用、目标绑定、管理编排、材质通知 |
 | `ECL/api/accounts.py`、`models.py`、`registry.py`、`operation_logging.py` | 请求校验、命令、下载和安全日志 |
 | 前端账户类型、API、运行时模型、store/composable | 管理状态、分页、请求失效、授权恢复 |

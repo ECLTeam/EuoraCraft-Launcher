@@ -64,9 +64,9 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from ECL.services.game import GameService
-from ECL.services.game import modpack as modpack_module
-from ECL.services.game.modpack import (
+from ECL.minecraft.services.game import GameService
+from ECL.minecraft.services.game import modpack as modpack_module
+from ECL.minecraft.services.game.modpack import (
     ModpackPlan,
     _pack_icon_candidate,
     build_ftb_plan,
@@ -1172,7 +1172,7 @@ def test_search_online_resources_ftb(tmp_path, monkeypatch) -> None:
             json=lambda: {"status": "success", "packs": [{"id": 33, "name": "FTB Sky"}], "count": 1},
         )
 
-    monkeypatch.setattr("ECL.services.game.resources._proxied_get", fake_get)
+    monkeypatch.setattr("ECL.minecraft.services.game.resources._proxied_get", fake_get)
 
     result = service.search_online_resources("sky", "", "", source="ftb", resource_type="modpack")
 

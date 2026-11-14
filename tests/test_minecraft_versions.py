@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from ECL.minecraft.game import SearchMinecraft
-from ECL.services import GameService, VersionScanError
+from ECL.minecraft.services.game import GameService, VersionScanError
 
 
 class FakeAccounts:

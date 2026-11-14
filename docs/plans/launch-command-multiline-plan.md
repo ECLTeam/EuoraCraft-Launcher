@@ -37,7 +37,7 @@
 
 同页已有的 `jvmArgs`、`gameArgsTail` 使用 `class="advanced-argument-input"`（`width: min(440px, 42vw)`）配 `type="textarea"`，即为本次要对齐的目标形态。
 
-### 1.3 后端执行语义（`ECL/services/game/launch.py`）
+### 1.3 后端执行语义（`ECL/minecraft/services/game/launch.py`）
 
 | 字段 | 位置 | 语义 |
 | --- | --- | --- |
@@ -50,7 +50,7 @@
 
 ### 2.1 新增模块级纯函数 `_split_command_lines`
 
-`ECL/services/game/launch.py`：
+`ECL/minecraft/services/game/launch.py`：
 
 ```python
 def _split_command_lines(text: str) -> list[str]:
@@ -198,7 +198,7 @@ cd frontend && pnpm build
 
 后端：
 
-- `ECL/services/game/launch.py`（新增 `_split_command_lines`，改写两个执行方法）
+- `ECL/minecraft/services/game/launch.py`（新增 `_split_command_lines`，改写两个执行方法）
 - `tests/test_launch_advanced_options.py`（新增 6 个用例）
 
 前端：

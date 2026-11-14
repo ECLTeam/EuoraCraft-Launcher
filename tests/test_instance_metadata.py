@@ -9,7 +9,7 @@ import pytest
 from pydantic import JsonValue
 
 from ECL.minecraft.game import InstanceMetadata
-from ECL.services.game.scan import ScanCoordinator, _JavaInstallation
+from ECL.minecraft.services.game.scan import ScanCoordinator, _JavaInstallation
 
 
 def _version(root: Path, name: str, **fields: JsonValue) -> Path:

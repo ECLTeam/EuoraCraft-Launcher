@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from ECL.services.game.crash.stacks import CrashStackAnalyzer
+from ECL.minecraft.services.game.crash.stacks import CrashStackAnalyzer
 
 
 def test_stack_summary_selects_primary_frame_and_packages() -> None:

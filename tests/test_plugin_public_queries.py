@@ -7,10 +7,10 @@ from dataclasses import replace
 import pytest
 
 from ECL.minecraft.adapters.public_queries import RuntimePublicQueries
+from ECL.minecraft.services.account.accounts import AccountManager
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.worker_service import PluginWorkerService
-from ECL.services.account.accounts import AccountManager
 from ECL.utils import AccountError
 from ECL.utils.account_reading import AccountSummary
 from ECL.utils.config import default_config

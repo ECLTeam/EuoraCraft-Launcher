@@ -5,7 +5,7 @@ from threading import Event
 
 import pytest
 
-from ECL.services.game.resource_metadata import ResourceMetadataCache, ResourceMetadataError
+from ECL.minecraft.services.game.resource_metadata import ResourceMetadataCache, ResourceMetadataError
 
 
 def test_metadata_coalesces_network_load_and_partitions_sources() -> None:

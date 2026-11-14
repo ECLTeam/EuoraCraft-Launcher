@@ -26,7 +26,7 @@
 - Forge 的忽略列表：[Zombie Invade 100 Days.json](../../.minecraft/versions/Zombie%20Invade%20100%20Days/Zombie%20Invade%20100%20Days.json#L29) 第 29 行。
 - 只给最后一次加引号的实现：[ECLauncherCore.py](../../ECL/minecraft/game/Core/ECLauncherCore.py#L366-L393)。
 - 命令以单个字符串交给进程：[InstancesManager.py](../../ECL/minecraft/game/Core/InstancesManager.py#L122-L134)。
-- 启动路径没有最终命令校验：[launch.py](../../ECL/services/game/launch.py#L913-L921)、[launch.py](../../ECL/services/game/launch.py#L1235)、[launch.py](../../ECL/services/game/launch.py#L1400-L1421)。
+- 启动路径没有最终命令校验：[launch.py](../../ECL/minecraft/services/game/launch.py#L913-L921)、[launch.py](../../ECL/minecraft/services/game/launch.py#L1235)、[launch.py](../../ECL/minecraft/services/game/launch.py#L1400-L1421)。
 
 根因链条：
 
@@ -93,9 +93,9 @@ Windows 命令行解析会去掉 token 内部的引号，得到单个 token：
 
 错误类型复用 [Errors.py](../../ECL/minecraft/game/Core/Errors.py) 的 `CoreError`，构造时传入 `LAUNCH_COMMAND_INVALID`。
 
-### 1.2.3 修改 `ECL/services/game/launch.py`
+### 1.2.3 修改 `ECL/minecraft/services/game/launch.py`
 
-文件：[launch.py](../../ECL/services/game/launch.py)
+文件：[launch.py](../../ECL/minecraft/services/game/launch.py)
 
 - 第 46 行导入改为同时导入 `CoreError`：
   `from ECL.minecraft.game import CoreError, LaunchConfig`
@@ -203,24 +203,24 @@ python -m pytest --tb=short -q
 关键证据：
 
 - 在线图标已经可取：
-  - Modrinth：[resources.py](../../ECL/services/game/resources.py#L1180-L1186)。
-  - CurseForge：[resources.py](../../ECL/services/game/resources.py#L1139-L1162)。
-  - FTB：[resources.py](../../ECL/services/game/resources.py#L1211-L1235)。
+  - Modrinth：[resources.py](../../ECL/minecraft/services/game/resources.py#L1180-L1186)。
+  - CurseForge：[resources.py](../../ECL/minecraft/services/game/resources.py#L1139-L1162)。
+  - FTB：[resources.py](../../ECL/minecraft/services/game/resources.py#L1211-L1235)。
 - 前端已经展示图标：[OnlineModSearch.vue](../../frontend/src/components/mods/OnlineModSearch.vue#L1090-L1091)、[OnlineModSearch.vue](../../frontend/src/components/mods/OnlineModSearch.vue#L133)。
 - 在线安装意图没有携带图标：[OnlineModSearch.vue](../../frontend/src/components/mods/OnlineModSearch.vue#L1220-L1231)、[modpackImportStore.ts](../../frontend/src/features/instances/stores/modpackImportStore.ts#L34-L39)。
 - 在线准备请求模型没有图标：[models.py](../../ECL/api/models.py#L621-L624)；前端预览结构也没有图标：[modpackApi.ts](../../frontend/src/features/instances/api/modpackApi.ts#L25-L43)。
-- 安装计划没有图标：[modpack.py](../../ECL/services/game/modpack.py#L154-L172)。
-- 本地导入只复制 overrides：[modpack.py](../../ECL/services/game/modpack.py#L1339-L1365)；最终只写版本 json/jar：[modpack.py](../../ECL/services/game/modpack.py#L1367-L1396)。
+- 安装计划没有图标：[modpack.py](../../ECL/minecraft/services/game/modpack.py#L154-L172)。
+- 本地导入只复制 overrides：[modpack.py](../../ECL/minecraft/services/game/modpack.py#L1339-L1365)；最终只写版本 json/jar：[modpack.py](../../ECL/minecraft/services/game/modpack.py#L1367-L1396)。
 - 安装完成后实例无 `.ecl` 和 `icon.*`（实地检查 `Zombie Invade 100 Days` 目录）。
-- 自动图标规则：[instance_profiles.py](../../ECL/services/game/instance_profiles.py#L87-L101)；优先级：[instance_profiles.py](../../ECL/services/game/instance_profiles.py#L639-L660)。
-- 现有本地图标存储入口：[instance_profiles.py](../../ECL/services/game/instance_profiles.py#L420-L471)；写资料并触发刷新：[profiles.py](../../ECL/services/game/profiles.py#L141-L165)。
-- 扫描缓存已监听 `.ecl/icon.*`：[scan.py](../../ECL/services/game/scan.py#L193-L220)。
+- 自动图标规则：[instance_profiles.py](../../ECL/minecraft/services/game/instance_profiles.py#L87-L101)；优先级：[instance_profiles.py](../../ECL/minecraft/services/game/instance_profiles.py#L639-L660)。
+- 现有本地图标存储入口：[instance_profiles.py](../../ECL/minecraft/services/game/instance_profiles.py#L420-L471)；写资料并触发刷新：[profiles.py](../../ECL/minecraft/services/game/profiles.py#L141-L165)。
+- 扫描缓存已监听 `.ecl/icon.*`：[scan.py](../../ECL/minecraft/services/game/scan.py#L193-L220)。
 
 ## 2.2 实施范围
 
-### 2.2.1 修改 `ECL/services/game/modpack.py`
+### 2.2.1 修改 `ECL/minecraft/services/game/modpack.py`
 
-文件：[modpack.py](../../ECL/services/game/modpack.py)
+文件：[modpack.py](../../ECL/minecraft/services/game/modpack.py)
 
 #### 新增 `ModpackIconPolicy`
 
@@ -249,7 +249,7 @@ python -m pytest --tb=short -q
 
 #### 扩展 `ModpackPlan`
 
-在 [modpack.py](../../ECL/services/game/modpack.py#L154-L172) 增加两个可选字段：
+在 [modpack.py](../../ECL/minecraft/services/game/modpack.py#L154-L172) 增加两个可选字段：
 
 ```python
 icon_url: str | None = None
@@ -260,23 +260,23 @@ icon_source_path: Path | None = None
 
 #### 扩展 `build_ftb_plan`
 
-在 [modpack.py](../../ECL/services/game/modpack.py#L686-L719) 中从已获取的 `info` 读取图标：
+在 [modpack.py](../../ECL/minecraft/services/game/modpack.py#L686-L719) 中从已获取的 `info` 读取图标：
 
 - 取 `info["art"]` 中第一个 `type == "square"` 且 `url` 为非空字符串的条目。
-- 逻辑与 [resources.py](../../ECL/services/game/resources.py#L1211-L1216) 的 FTB 详情一致。
+- 逻辑与 [resources.py](../../ECL/minecraft/services/game/resources.py#L1211-L1216) 的 FTB 详情一致。
 - 写入 `ModpackPlan.icon_url`；无匹配时为 `None`。
 - 不新增网络请求；FTB 的 `info` 已由 `_fetch_ftb_plan` 获取。
 
 #### 扩展 `prepare_modpack`
 
-在 [modpack.py](../../ECL/services/game/modpack.py#L839-L926) 的准备 worker 中：
+在 [modpack.py](../../ECL/minecraft/services/game/modpack.py#L839-L926) 的准备 worker 中：
 
 - 本地来源（`source == "local"`）：
   - 在 `_detect_pack_layout` 之后调用 `_pack_icon_candidate(layout_root, extracted)`。
   - 命中时 `replace(plan, icon_source_path=candidate)`。
   - 未命中时保持 `None`。
 - Modrinth / CurseForge：
-  - 调用已有的 `self.fetch_project_info(source, project_id, "modpack")`。该方法在 [resources.py](../../ECL/services/game/resources.py#L1083-L1109)，内部已处理模组源切换与图标地址重写。
+  - 调用已有的 `self.fetch_project_info(source, project_id, "modpack")`。该方法在 [resources.py](../../ECL/minecraft/services/game/resources.py#L1083-L1109)，内部已处理模组源切换与图标地址重写。
   - 从返回值取 `iconUrl`，只接受 `http://` 或 `https://` 字符串；否则视为无图标。
   - 命中时 `replace(plan, icon_url=icon_url)`。
   - 该方法失败（网络、API Key、结构无效）时记录警告并继续准备，不阻断预览。
@@ -284,11 +284,11 @@ icon_source_path: Path | None = None
   - 直接使用 `build_ftb_plan` 写入的 `icon_url`，不再请求项目详情。
 - 图标失败只影响图标字段；`plan.warnings` 是否加入提示由实现时统一选择，但不得把图标失败升级为安装失败。
 
-`ModpackCoordinator` 与 `ResourceCoordinator`、`ProfileCoordinator` 通过 [GameService](../../ECL/services/game/__init__.py#L32-L45) 组合；`self.fetch_project_info` 与 `self.set_instance_icon` 在完整服务中可用。若测试直接实例化 `ModpackCoordinator`，需要注入或替换这两个方法，不把组合关系复制成新的服务层。
+`ModpackCoordinator` 与 `ResourceCoordinator`、`ProfileCoordinator` 通过 [GameService](../../ECL/minecraft/services/game/__init__.py#L32-L45) 组合；`self.fetch_project_info` 与 `self.set_instance_icon` 在完整服务中可用。若测试直接实例化 `ModpackCoordinator`，需要注入或替换这两个方法，不把组合关系复制成新的服务层。
 
 #### 扩展 `_install_plan_into_instance`
 
-在 [modpack.py](../../ECL/services/game/modpack.py#L1097-L1143) 中：
+在 [modpack.py](../../ECL/minecraft/services/game/modpack.py#L1097-L1143) 中：
 
 1. 在 `context.finalize` 之前准备图标本地文件：
    - `plan.icon_source_path` 存在：直接使用该路径，不复制。
@@ -296,7 +296,7 @@ icon_source_path: Path | None = None
    - 下载成功返回 `(path, is_temporary=True)`；本地来源返回 `(path, False)`。
 2. 执行现有 `context.finalize(lambda: _commit_staged_instance(...))`。
 3. 提交成功后，调用现有 `self.set_instance_icon(target.minecraft_root_path, target.instance_directory_name, "local", source_path=icon_path)`：
-   - 复用 [profiles.py](../../ECL/services/game/profiles.py#L141-L165) 的校验、原子写入和 `_notify_profile_changed`。
+   - 复用 [profiles.py](../../ECL/minecraft/services/game/profiles.py#L141-L165) 的校验、原子写入和 `_notify_profile_changed`。
    - 捕获 `GameServiceError`、`OSError`、`ValueError`，把原因追加到返回结果的 `warnings`，并记录日志；不抛出。
 4. 在 `finally` 中删除 `is_temporary=True` 的临时图标文件；本地来源文件不删除。
 5. 返回结果的 `warnings` 已包含图标失败说明；其他字段保持不变。
@@ -309,7 +309,7 @@ icon_source_path: Path | None = None
 
 `_download_pack_icon`：
 
-- 使用 [resources.py](../../ECL/services/game/resources.py#L122-L125) 的 `_proxied_stream`，`timeout=15`、`follow_redirects=True`。
+- 使用 [resources.py](../../ECL/minecraft/services/game/resources.py#L122-L125) 的 `_proxied_stream`，`timeout=15`、`follow_redirects=True`。
 - 先检查 `content-length`；超过 `ModpackIconPolicy.max_bytes` 直接放弃。
 - 按块读取并累计字节；超过上限立即中止并清理临时文件。
 - 扩展名优先取 `Content-Type` 映射；缺失或未知时取 URL 路径后缀；仍无法确定则放弃。
@@ -317,9 +317,9 @@ icon_source_path: Path | None = None
 
 ### 2.2.2 复用而非修改的现有能力
 
-- [instance_profiles.py](../../ECL/services/game/instance_profiles.py#L420-L471) 的 `set_icon`：负责 10 MiB、4096px、格式校验，写入 `.ecl/icon.<ext>`，并写 `icon: {"type": "local", "value": "icon.<ext>"}`。
-- [profiles.py](../../ECL/services/game/profiles.py#L141-L165) 的 `set_instance_icon`：负责错误转换与实例列表刷新通知。
-- [scan.py](../../ECL/services/game/scan.py#L193-L220)：已把 `.ecl/icon.*` 纳入缓存快照；安装后无需额外全量扫描即可刷新。
+- [instance_profiles.py](../../ECL/minecraft/services/game/instance_profiles.py#L420-L471) 的 `set_icon`：负责 10 MiB、4096px、格式校验，写入 `.ecl/icon.<ext>`，并写 `icon: {"type": "local", "value": "icon.<ext>"}`。
+- [profiles.py](../../ECL/minecraft/services/game/profiles.py#L141-L165) 的 `set_instance_icon`：负责错误转换与实例列表刷新通知。
+- [scan.py](../../ECL/minecraft/services/game/scan.py#L193-L220)：已把 `.ecl/icon.*` 纳入缓存快照；安装后无需额外全量扫描即可刷新。
 - [InstanceIcon.vue](../../frontend/src/components/instances/InstanceIcon.vue#L35-L43)：已支持 `type: "local"`；不改图标优先级。
 
 ### 2.2.3 可选的最小前端加固

@@ -24,7 +24,7 @@
 | 部分 | 体量 |
 |:---|:---|
 | `ECL/plugins/runtime/file_replacement.py` | 691 行，整文件删除 |
-| `ECL/services/game/instance_profile_transactions.py` | 905 行，改为原子替换 |
+| `ECL/minecraft/services/game/instance_profile_transactions.py` | 905 行，改为原子替换 |
 | 后端引用恢复的文件 | 18 个 |
 | IPC 命令 | `plugin_file_recoveries_list`、`plugin_file_recovery_resolve`、`plugin_instance_profile_recoveries_list`、`plugin_instance_profile_recovery_resolve` |
 | 前端 | 弹窗 240 行 + API + 校验 + 6 语言文案 |
@@ -39,7 +39,7 @@
    `commit_upload` 改走「核对原文件 etag + SHA-256 → 原子替换 → 归还预留」；`close()` 不再等待 `has_pending`。
 3. `ECL/utils/windows_file_handles.py`：为已打开的暂存句柄提供「以替换方式发布」的原生调用；
    保留现有的身份与边界校验，不放开路径规则。
-4. `ECL/services/game/instance_profile_transactions.py`：删除 `ReplacementRecord` 等价物与 `resolve/list`；
+4. `ECL/minecraft/services/game/instance_profile_transactions.py`：删除 `ReplacementRecord` 等价物与 `resolve/list`；
    保留 JSON 结构校验、字段白名单、64 KiB 上限与 etag 冲突检测；提交改为原子替换。
 5. `ECL/api/plugins.py`、`ECL/api/registry.py`、`ECL/api/models.py`、`ECL/api/operation_logging.py`：
    删除 4 个命令、对应 DTO 与日志规格。

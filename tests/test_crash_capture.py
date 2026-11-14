@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from ECL.services.game.crash.capture import CrashCapture, CrashRunSnapshot
+from ECL.minecraft.services.game.crash.capture import CrashCapture, CrashRunSnapshot
 from ECL.utils import EventBus
 
 

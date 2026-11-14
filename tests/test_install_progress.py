@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from ECL.minecraft.game.Core.InstallProgress import InstallEvent
-from ECL.services.game import GameService, GameServiceError
-from ECL.services.game.install_progress import InstallationProgress
+from ECL.minecraft.services.game import GameService, GameServiceError
+from ECL.minecraft.services.game.install_progress import InstallationProgress
 
 
 @pytest.mark.parametrize("loader", ["vanilla", "fabric", "quilt", "forge", "neoforge"])

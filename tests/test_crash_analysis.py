@@ -23,9 +23,9 @@ from zipfile import ZipFile
 
 import pytest
 
-from ECL.services.game import GameServiceError
-from ECL.services.game.crash import analyzer as crash_analyzer_module
-from ECL.services.game.crash.analyzer import CrashAnalyzer
+from ECL.minecraft.services.game import GameServiceError
+from ECL.minecraft.services.game.crash import analyzer as crash_analyzer_module
+from ECL.minecraft.services.game.crash.analyzer import CrashAnalyzer
 
 
 def _game(tmp_path: Path) -> tuple[Path, Path]:

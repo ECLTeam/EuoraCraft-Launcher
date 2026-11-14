@@ -184,8 +184,8 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 
 | 域 | 目录 | 依赖约束 |
 | --- | --- | --- |
-| 内核 | `ECL/plugins/`、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.minecraft`、`ECL.services.game`、`ECL.services.account`、`ECL.java`（装配缝豁免见 `tests/test_layer_boundary.py`） |
-| MC | `ECL/minecraft/`（含 `ECL/minecraft/adapters/` 能力适配器）、`ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/minecraft/game/`（Core 子模块） | 可依赖内核 |
+| 内核 | `ECL/plugins/`、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.minecraft`、`ECL.minecraft.services.game`、`ECL.minecraft.services.account`、`ECL.java`（装配缝豁免见 `tests/test_layer_boundary.py`） |
+| MC | `ECL/minecraft/`（含 `ECL/minecraft/adapters/` 能力适配器）、`ECL/minecraft/services/game/`、`ECL/minecraft/services/account/`、`ECL/java/`、`ECL/minecraft/game/`（Core 子模块） | 可依赖内核 |
 | 边界 | `ECL/api/` | 可依赖两者，只供前端调用 |
 
 - 新增能力先判断归属：定义了持久数据格式或属于启动链路必需的归 MC，其余归内核；无法判断时在实施方案中说明并由用户确认。

@@ -27,11 +27,11 @@ if TYPE_CHECKING:
     from ECL.minecraft.adapters.modpacks import RuntimeModpacks
     from ECL.minecraft.adapters.resource_queries import RuntimeResourceCatalog
     from ECL.minecraft.adapters.resources import RuntimeResources
+    from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.minecraft.services.game.plugin_games import PluginGameCoordinator
     from ECL.plugins.runtime.file_api import RuntimeFiles
     from ECL.plugins.runtime.network_api import RuntimeNetwork
     from ECL.plugins.runtime.operation_adapters import RuntimeOperations
-    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
-    from ECL.services.game.plugin_games import PluginGameCoordinator
 
 
 class McAdapters:

@@ -119,7 +119,7 @@ Core（`ECL/minecraft/game`，**4482 行**生产代码）现有能力：下载�
 
 | 文件 | 依赖的主仓库设施 |
 |---|---|
-| `manager.py` | `ECL.events.EventBus`、`ECL.services.operations`(OperationContext/OperationManager)、**`ECL.services.game.launch_settings`**、`ECL.utils.logging`、`ECL.minecraft.game` |
+| `manager.py` | `ECL.events.EventBus`、`ECL.services.operations`(OperationContext/OperationManager)、**`ECL.minecraft.services.game.launch_settings`**、`ECL.utils.logging`、`ECL.minecraft.game` |
 | `installer.py` | `ECL.services.operations`、`ECL.utils.network.download_proxy_url`、`ECL.minecraft.game` |
 | `lifecycle.py` | `ECL.utils.atomic_write_text`、`.registry` |
 | `registry.py` | `ECL.utils.atomic_write_text`、`ECL.minecraft.game` |
@@ -138,7 +138,7 @@ Core（`ECL/minecraft/game`，**4482 行**生产代码）现有能力：下载�
 
 | 动作 | 影响面 |
 |---|---|
-| 删除 `services/game/crash_analysis.py` | 改 `tests/test_plugin_crash_extensions.py:17` → `from ECL.services.game.crash.analyzer import CrashAnalyzer` |
+| 删除 `services/game/crash_analysis.py` | 改 `tests/test_plugin_crash_extensions.py:17` → `from ECL.minecraft.services.game.crash.analyzer import CrashAnalyzer` |
 | 删除 `services/game/operations.py` | 改 `modpack.py:39`、`resources.py:65`、`workspace.py:41`、`worlds.py:46` → `from ECL.services.operations import OperationContext` |
 
 `ECL/plugins/framework.py` 保留。
@@ -237,7 +237,7 @@ Core（`ECL/minecraft/game`，**4482 行**生产代码）现有能力：下载�
 7. **顶层微型层合并**（§4.3）：`adapters/` + `common/` + `events/` → `ECL/foundation/`。⚠️ `from ECL.events import EventBus` 有 **31 处**引用，全仓共约 45 处导入需同步修改。
 8. **主仓库内收敛**（§4.3）：`catalog.py` 并入 `scan.py`、`launch_target.py` 并入 `launch.py`，逐个合并、每合并一次跑一次测试。
 9. **应用基础设施移出**（§4.4）：建 `ECL/desktop/` → 迁 7 个模块 → 建 `services/account/` 并归入 4 个账户皮肤模块 → `themes` 进 `foundation/` → 改 `application.py` / `api/*` 导入。
-10. **收尾**：更新 `services/__init__.py` 与 `ECL/services/game/__init__.py` 的聚合导出；确认 IPC 命令名与错误码零变化。
+10. **收尾**：更新 `services/__init__.py` 与 `ECL/minecraft/services/game/__init__.py` 的聚合导出；确认 IPC 命令名与错误码零变化。
 11. **推送**：按 `AGENTS.md` §5 校验全部子模块指针在远端存在 → 推子模块 → 推主仓库。
 
 **每步都必须单独提交**（`AGENTS.md` §1），提交信息用 Conventional Commits + 中文描述。

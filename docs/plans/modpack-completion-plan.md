@@ -20,26 +20,26 @@
 
 | 现状 | 位置 |
 | --- | --- |
-| 导入仅识别 `modrinth.index.json` / `manifest.json` / `ecl-pack.json`，只复制 overrides，要求基础版本已安装 | `ECL/services/game/resources.py:1379-1429` |
-| 导出仅 modrinth 格式，`files: []`，mods 全部打入 overrides | `ECL/services/game/resources.py:1324-1377`（ADR-017） |
-| 在线搜索无 modpack 类型（仅 mod/resourcepack/shaderpack/datapack/world） | `ECL/services/game/resources.py:89-121`（`ResourceCatalogPolicy`） |
-| 哈希反查已有 Modrinth 单哈希实现，CF 侧为空占位 | `ECL/services/game/resources.py:1192-1219`（`identify_resource_hash`） |
-| 安装管线支持 vanilla/fabric/forge/neoforge/quilt，异步任务化 | `ECL/services/game/install.py:113-346`（`install_version`/`_run_install`） |
-| 长任务为线程池同步 worker（OperationContext 进度/取消） | `ECL/services/game/operations.py:101-144` |
-| CF 文件下载地址解析已有（含无 Key 报错、下载地址专用接口回退） | `ECL/services/game/resources.py:951-984`（`_fetch_curseforge_file`） |
+| 导入仅识别 `modrinth.index.json` / `manifest.json` / `ecl-pack.json`，只复制 overrides，要求基础版本已安装 | `ECL/minecraft/services/game/resources.py:1379-1429` |
+| 导出仅 modrinth 格式，`files: []`，mods 全部打入 overrides | `ECL/minecraft/services/game/resources.py:1324-1377`（ADR-017） |
+| 在线搜索无 modpack 类型（仅 mod/resourcepack/shaderpack/datapack/world） | `ECL/minecraft/services/game/resources.py:89-121`（`ResourceCatalogPolicy`） |
+| 哈希反查已有 Modrinth 单哈希实现，CF 侧为空占位 | `ECL/minecraft/services/game/resources.py:1192-1219`（`identify_resource_hash`） |
+| 安装管线支持 vanilla/fabric/forge/neoforge/quilt，异步任务化 | `ECL/minecraft/services/game/install.py:113-346`（`install_version`/`_run_install`） |
+| 长任务为线程池同步 worker（OperationContext 进度/取消） | `ECL/minecraft/services/game/operations.py:101-144` |
+| CF 文件下载地址解析已有（含无 Key 报错、下载地址专用接口回退） | `ECL/minecraft/services/game/resources.py:951-984`（`_fetch_curseforge_file`） |
 | 前端导入对话框/拖放/状态机已有；在线搜索组件按 resourceType 参数化 | `frontend/src/components/instances/ModpackImportModal.vue`、`frontend/src/components/mods/OnlineModSearch.vue`、`frontend/src/features/instances/stores/modpackImportStore.ts` |
 | 下载器为并发引擎，条目为 `(url, path)` 二元组，无逐条目校验 | `ECL/minecraft/game/Core/Downloader.py:127-166` |
-| 安全解压（路径穿越/符号链接）已有 | `ECL/services/game/workspace.py`（`safe_extract_zip`） |
+| 安全解压（路径穿越/符号链接）已有 | `ECL/minecraft/services/game/workspace.py`（`safe_extract_zip`） |
 
 ## 3. 总体设计
 
 ### 3.1 模块划分
 
-- **新文件 `ECL/services/game/modpack.py`**：`ModpackCoordinator`（GameService Mixin，与现有 13 个协调器同构）。
+- **新文件 `ECL/minecraft/services/game/modpack.py`**：`ModpackCoordinator`（GameService Mixin，与现有 13 个协调器同构）。
   - 承载：格式识别与解析、导入编排、在线安装、导出反查。
   - `import_instance_pack` / `export_instance_pack` 从 `resources.py` **迁入**本模块，公开签名与 IPC 命令名不变（`self.game.*` 聚合面不变，`api/workspace.py:213-227` 无需改动调用方式）。
   - 同时落实对比文档 4.2-7 对 resources.py（1429 行）的拆分方向。
-- **`ECL/services/game/install.py` 重构**：抽出同步安装核心 `install_blocking(...)`（见 3.5）。
+- **`ECL/minecraft/services/game/install.py` 重构**：抽出同步安装核心 `install_blocking(...)`（见 3.5）。
 - `resources.py` 保留通用资源（mod/资源包/光影/数据包/原理图/存档）逻辑；`_fetch_curseforge_file`、`_download_online_file`、`_proxied_*` 等被 modpack 复用的工具函数下沉到共享位置（迁移到 modpack.py 或保留在 resources.py 由其引用，实施时按依赖方向取后者，避免循环导入）。
 
 ### 3.2 统一计划模型

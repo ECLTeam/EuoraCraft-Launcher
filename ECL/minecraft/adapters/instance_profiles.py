@@ -21,7 +21,7 @@ from ECL.plugins.runtime.models import InstanceProfilePatchRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 
 if TYPE_CHECKING:
-    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTransactions
 
 
 class RuntimeInstanceProfiles:
@@ -58,7 +58,7 @@ class RuntimeInstanceProfiles:
         :return: 当前run自身任务引用，不表示已保存资料
         :raises ProtocolError: 权限、资源或执行器不满足提交条件
         """
-        from ECL.services.game.instance_profile_models import InstanceProfilePatch, InstanceProfileSnapshot
+        from ECL.minecraft.services.game.instance_profile_models import InstanceProfilePatch, InstanceProfileSnapshot
 
         deadline = monotonic() + 30
         query = InstanceProfilePatchRequest.model_validate(params)
@@ -75,7 +75,7 @@ class RuntimeInstanceProfiles:
                 return None
             # 操作和结果交付绑定同一原始管理准入。
             self._resources.verify_profile_read(target, management, monotonic() + 5)
-            from ECL.services.game.instance_profiles import InstanceProfileStore
+            from ECL.minecraft.services.game.instance_profiles import InstanceProfileStore
 
             fields = InstanceProfileStore.parse_local_fields(result.document)
             return {

@@ -19,7 +19,7 @@ import ECL
 
 ecl_root = Path(ECL.__file__).parent
 
-mc_module_prefixes = ("ECL.minecraft", "ECL.services.game", "ECL.services.account", "ECL.java")
+mc_module_prefixes = ("ECL.minecraft", "ECL.java")
 
 kernel_directories = (
     "plugins",

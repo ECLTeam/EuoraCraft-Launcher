@@ -22,8 +22,8 @@ from ECL.minecraft.game import (
     String,
     load,
 )
-from ECL.services.game.resources import ResourceCoordinator
-from ECL.services.game.workspace import WorkspaceCoordinator
+from ECL.minecraft.services.game.resources import ResourceCoordinator
+from ECL.minecraft.services.game.workspace import WorkspaceCoordinator
 
 
 class ResourceService(ResourceCoordinator, WorkspaceCoordinator):

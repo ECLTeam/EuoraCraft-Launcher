@@ -21,7 +21,7 @@ from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.errors import GameServiceError
 
 if TYPE_CHECKING:
-    from ECL.services.game.plugin_games import PluginGameCoordinator
+    from ECL.minecraft.services.game.plugin_games import PluginGameCoordinator
 
 
 class RuntimeGameCatalog:

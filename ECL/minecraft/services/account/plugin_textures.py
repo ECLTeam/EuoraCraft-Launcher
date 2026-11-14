@@ -21,7 +21,7 @@ from PIL import Image
 from ECL.utils.errors import AccountError
 
 if TYPE_CHECKING:
-    from ECL.services.account.accounts import AccountManager
+    from ECL.minecraft.services.account.accounts import AccountManager
 
 
 def read_account_skin(accounts: AccountManager, client: httpx.Client, account_id: str) -> bytes | None:

@@ -450,8 +450,8 @@ Windows x64 Nuitka真实发行构建是首版必须项；Windows PyInstaller one
 |---|---|---|
 | 任务 | `ECL/services/operations.py:94,157,207,286,314` | 无插件 owner；`finalize` 在全局任务锁内执行 action；需增加执行来源/授权上下文和独立提交状态 |
 | 自定义下载 | `ECL/services/custom_downloads.py:272,347,378` | 有暂存文件和 finalize；无插件权限及重定向授权边界；不能原样传任意绝对路径 |
-| Minecraft 安装 | `ECL/services/game/install.py:131,211,287` | 独立 asyncio任务；取消用 `abandon_on_cancel`，不能把等待方结束当作线程停止；需插件任务适配 |
-| Minecraft 启动 | `ECL/services/game/launch.py:848,1133,1234` | `_launch_cancel_event` 是全局单任务；必须绑定来源，不能由插件取消用户启动 |
+| Minecraft 安装 | `ECL/minecraft/services/game/install.py:131,211,287` | 独立 asyncio任务；取消用 `abandon_on_cancel`，不能把等待方结束当作线程停止；需插件任务适配 |
+| Minecraft 启动 | `ECL/minecraft/services/game/launch.py:848,1133,1234` | `_launch_cancel_event` 是全局单任务；必须绑定来源，不能由插件取消用户启动 |
 | Java | `ECL/java/manager.py:147,252,319,342,366` | 有内部计划和合并任务；跨来源同目标任务不能因相同 plan而赋予插件取消权 |
 | 联机 | `ECL/services/connector.py:435,656,753,850` | 全应用单房间；同步建房/加入更新共享状态，未提供插件会话所有者或一致取消上下文 |
 | 文件 | `ECL/api/files.py:311,328,359` | 现有读取处理属于可信前端接口；v2资源边界须独立建立，不直接调用任意路径 IPC |
@@ -924,7 +924,7 @@ P14的各扩展、P15认证、P16联机互相不做一次性大改；每一类�
 | 当前进程内执行 | [discovery.py](../../ECL/plugins/manager/discovery.py) `_create_instance:162`、[plugin.py](../../ECL/plugins/plugin.py) `__init__:185`、[registry.py](../../ECL/plugins/manager/registry.py) `call_command:415` |
 | 权限/安装摘要/事务 | [permissions.py](../../ECL/plugins/permissions.py) `PermissionManager:138`、[package_preparation.py](../../ECL/plugins/package_preparation.py) `verify_prepared_code:92`、[package_activation.py](../../ECL/plugins/package_activation.py) `_payload:97,activate:114`、[lifecycle.py](../../ECL/plugins/manager/lifecycle.py) `_install_staged_plugin:388` |
 | 任务/提交 | [operations.py](../../ECL/services/operations.py) `_Operation:94,submit:157,finalize:207,cancel:314`、[custom_downloads.py](../../ECL/services/custom_downloads.py) `_download:347` |
-| 游戏/Java/联机 | [install.py](../../ECL/services/game/install.py) `install_version:131,_run_install:211,install_blocking:287`、[launch.py](../../ECL/services/game/launch.py) `cancel_launch:1234`、[Java manager](../../ECL/java/manager.py) `install:342,_submit_once:366`、[connector.py](../../ECL/services/connector.py) `host_port:656,host_instance:726,join:753,leave:850` |
+| 游戏/Java/联机 | [install.py](../../ECL/minecraft/services/game/install.py) `install_version:131,_run_install:211,install_blocking:287`、[launch.py](../../ECL/minecraft/services/game/launch.py) `cancel_launch:1234`、[Java manager](../../ECL/java/manager.py) `install:342,_submit_once:366`、[connector.py](../../ECL/services/connector.py) `host_port:656,host_instance:726,join:753,leave:850` |
 | 原生窗口/IPC | [tauri.py](../../ECL/desktop/tauri.py) `Adapter.run:51`、[registry.py](../../ECL/api/registry.py) `dispatch:278`、[bridge.py](../../ECL/api/bridge.py) `authorize_window_command:525`、[windows.py](../../ECL/api/windows.py) `window_open:135`、[Capability](../../capabilities/default.toml)、[Tauri.toml](../../Tauri.toml) |
 | 开发通道旁路 | [dev_channel.py](../../ECL/desktop/dev_channel.py) 发现文件`:328`、`frontend.invoke:587` |
 | 前端基线 | `frontend@6429f15` 的 `src/api/transport/tauri.ts:36`、`src/composables/usePluginBridge.ts:299,351`、`src/plugin-sdk/ui.ts:565`、`src/features/windows/PluginWindowShell.vue` |

@@ -197,8 +197,8 @@ python main.py --headless --task launch --launch 'D:\我的游戏\versions\1.21.
 | `ECL/headless/context.py`、`tasks.py`、`headless.py`                        | 按任务装配、输出与日志分离、真实取消/清理、任务专属导入边界                                              |
 | 新增 `ECL/headless/business.py`                                             | 拥有有副作用无头启动所需服务及逆序关闭；当前调用方仅为普通无头 `launch`，不初始化桌面服务                |
 | `ECL/application.py`、`ECL/launcher.py`                                    | 桌面输入接线、有效配置覆盖、运行锁和共享账户写入边界接入；保持既有桌面服务生命周期                       |
-| `ECL/services/account/accounts.py` 及实际认证存储所属模块                  | 显式账户选择、凭据获取与并发复核；只读账户摘要；共享存储短锁                                             |
-| `ECL/services/game/launch.py`、`launch_settings.py`、`instance_queries.py` | 共享目标/设置输入，预检和完整本地检查；实际启动、进程归属和退出收尾                                      |
+| `ECL/minecraft/services/account/accounts.py` 及实际认证存储所属模块                  | 显式账户选择、凭据获取与并发复核；只读账户摘要；共享存储短锁                                             |
+| `ECL/minecraft/services/game/launch.py`、`launch_settings.py`、`instance_queries.py` | 共享目标/设置输入，预检和完整本地检查；实际启动、进程归属和退出收尾                                      |
 | `ECL/java/queries.py`、`manager.py`、`models.py`                           | 复用登记和探测规则，提供无写入列表读取；避免用会写入的初始化替代只读查询                                 |
 | `ECL/utils/config.py` 及现有环境配置读取模块                               | 区分只读配置加载、持久配置、环境和会话覆盖；无头缺失文件不自动创建，损坏不恢复默认覆盖                   |
 | `ECL/plugins/manager/base.py`、`lifecycle.py` 及加载/开发入口              | 会话禁用、依赖阻断、全入口禁止重新启用；无头必要能力校验                                                 |

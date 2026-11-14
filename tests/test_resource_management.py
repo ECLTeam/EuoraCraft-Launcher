@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ECL.services.game.base import GameServiceError
-from ECL.services.game.resources import ResourceCoordinator
+from ECL.minecraft.services.game.base import GameServiceError
+from ECL.minecraft.services.game.resources import ResourceCoordinator
 
 
 def test_batch_delete_reports_missing_resources_and_keeps_other_failures(tmp_path, monkeypatch) -> None:

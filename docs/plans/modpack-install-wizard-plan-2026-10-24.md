@@ -22,7 +22,7 @@
 
 | 位置                                                                                  | 当前行为与影响                                                                                                                                     |
 | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ECL/services/game/modpack.py`：`PackFileEntry`、各解析器                             | 已表达客户端 required / optional / unsupported；缺少供界面选择的文件身份和展示模型。CurseForge 条目初始路径同为 `mods/`，不能用此路径作为选择 ID。 |
+| `ECL/minecraft/services/game/modpack.py`：`PackFileEntry`、各解析器                             | 已表达客户端 required / optional / unsupported；缺少供界面选择的文件身份和展示模型。CurseForge 条目初始路径同为 `mods/`，不能用此路径作为选择 ID。 |
 | 同文件：`import_instance_pack`、`install_modpack_online`                              | 收到请求后直接提交完整安装，没有预览和确认阶段；在线包下载后立即解析并安装。                                                                       |
 | 同文件：`_resolve_pack_entries`、`_install_plan_into_instance`                        | 只跳过客户端不适用条目，其余全部下载；安装已有 staging、哈希校验和失败清理，可继续复用。                                                           |
 | `ECL/api/models.py`、`workspace.py`                                                   | 导入及在线安装请求没有可选文件参数，没有安装准备接口。                                                                                             |
@@ -67,7 +67,7 @@
 ### 4.1 职责与文件划分
 
 - `modpack.py` 保留格式解析、基础版本保障、文件下载校验和实例创建。把当前「读包后立即安装」拆成准备计划与执行计划。
-- 新增 `ECL/services/game/modpack_preparation.py`，由 `ModpackPreparationService` 维护本次进程的准备记录、临时文件、状态与释放；当前调用方仅为 `ModpackCoordinator` 和 `_GameState` 生命周期。该服务用于两个 IPC 阶段间持有同一份解析结果，不作为通用缓存或插件资源框架。
+- 新增 `ECL/minecraft/services/game/modpack_preparation.py`，由 `ModpackPreparationService` 维护本次进程的准备记录、临时文件、状态与释放；当前调用方仅为 `ModpackCoordinator` 和 `_GameState` 生命周期。该服务用于两个 IPC 阶段间持有同一份解析结果，不作为通用缓存或插件资源框架。
 - `_GameState` 创建服务并在应用关闭时释放，公开接口采用明确模型，不把内部裸 JSON 或临时路径交给前端。
 - 准备过程中的网络和解压在既有 `OperationManager` 工作线程内执行；IPC 不直接执行阻塞工作。
 
@@ -180,7 +180,7 @@
 
 标题：`[问题] 导入含 CurseForge 文件引用的 MCBBS 整合包时报缺少下载地址`。
 
-涉及模块：`ECL/services/game/modpack.py`。首次复现基线为 `bfb566a329ae5c2ceed0fa8dd93c7c181c79e284`，Windows / Python 3.11；本次调研基线同一分支逻辑仍存在。
+涉及模块：`ECL/minecraft/services/game/modpack.py`。首次复现基线为 `bfb566a329ae5c2ceed0fa8dd93c7c181c79e284`，Windows / Python 3.11；本次调研基线同一分支逻辑仍存在。
 
 复现：构造 mcbbs.packmeta，addons 包含 net.minecraft 1.21.1，files 包含 projectID=123、fileID=456。调用 `build_pack_plan` 得到 mcbbs 计划，条目有项目/文件标识但 url 为空；随后调用 `_resolve_pack_entries`。
 
@@ -230,7 +230,7 @@
 
 GitHub 连接器创建 Issue 持续返回 `403 Resource not accessible by integration`，未产生编号。第 10 节 MCBBS 引用报告保留，另有以下两条独立报告待权限恢复后分别查重登记：
 
-1. **MCBBS 清单 force 被错误解释为可选文件**。模块：`ECL/services/game/modpack.py`；Windows/Python 3.11，基线 `aba831f`。构造 `force=false` 的 CurseForge 引用并调用 `build_pack_plan`，原逻辑得到 optional；应为 required，force 不参与安装勾选。回归：`test_mcbbs_force_is_not_optional`。本地已修复，尚未远端交付。
+1. **MCBBS 清单 force 被错误解释为可选文件**。模块：`ECL/minecraft/services/game/modpack.py`；Windows/Python 3.11，基线 `aba831f`。构造 `force=false` 的 CurseForge 引用并调用 `build_pack_plan`，原逻辑得到 optional；应为 required，force 不参与安装勾选。回归：`test_mcbbs_force_is_not_optional`。本地已修复，尚未远端交付。
 2. **整合包安装成功后实例因缺少 mainClass 无法启动**。模块：主仓库整合包编排与固定 Core 接口集成；同一环境与基线。安装标准包后，目标 JSON 原来只有 id/inheritsFrom，`game_launch` 在 Core 构造命令时抛出 `KeyError: mainClass`。预期导入实例包含完整启动元数据。回归：`test_imported_instance_builds_core_launch_command_with_complete_metadata` 的原版和加载器分支，修复前两例均失败，修复后通过；真实原版实例主菜单验收通过。本地已修复，尚未远端交付。
 
 ### 12.5 首次 Git 交付

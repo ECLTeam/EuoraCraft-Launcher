@@ -19,8 +19,8 @@
 
 - `ECL/utils/environment.py` 读取根目录 `.env` 和运行环境；Microsoft 配置在组合根 `ECL/application.py` 注入账户服务，缺省再使用 `ECL/utils/build_env.py` 的构建值。
 - `.github/workflows/build.yml` 有两处认证配置注入步骤，分别覆盖常规平台构建与另一构建路径，均须同步修改。
-- `ECL/services/account/accounts.py` 聚合账户、当前账户和 Microsoft 登录任务；`ECL/api/accounts.py` 对外提供账户命令。
-- `ECL/services/account/authlib.py` 负责外置账户及游戏令牌持久化、刷新和角色绑定。现有多角色待登录数据依赖密码，不适合直接套用 OAuth 角色选择。
+- `ECL/minecraft/services/account/accounts.py` 聚合账户、当前账户和 Microsoft 登录任务；`ECL/api/accounts.py` 对外提供账户命令。
+- `ECL/minecraft/services/account/authlib.py` 负责外置账户及游戏令牌持久化、刷新和角色绑定。现有多角色待登录数据依赖密码，不适合直接套用 OAuth 角色选择。
 - 前端 `AddAccountModal.vue` 使用同一个弹窗切换登录步骤，业务由 `useAccountManager.ts`、账户 store 与领域 API 编排。
 - 新功能继续以外置账户参与游戏启动，不更改 Minecraft 外置认证协议，不为品牌新增游戏启动分支，不修改 Core 子模块内部认证实现。
 - 保留普通外置账号密码登录；不转换或清理已有账户文件。前端现有 `MAPPING_TABLE.yaml` 删除和主仓库 `output/` 均为无关改动，不纳入本次提交。
@@ -79,7 +79,7 @@ OAuth 令牌始终视为不透明字符串。取得访问令牌后读取角色�
 
 ## 5. 职责、IPC 与账户持久化
 
-- 新增 `ECL/services/account/littleskin.py`，提供职责明确的 LittleSkin OAuth 客户端及有类型的请求结果；当前调用方是账户登录服务和已保存 LittleSkin 账户的凭据刷新。负责官方协议、会话回调资源和远程请求，不创建跨提供方认证框架。
+- 新增 `ECL/minecraft/services/account/littleskin.py`，提供职责明确的 LittleSkin OAuth 客户端及有类型的请求结果；当前调用方是账户登录服务和已保存 LittleSkin 账户的凭据刷新。负责官方协议、会话回调资源和远程请求，不创建跨提供方认证框架。
 - `AccountManager` 作为登录会话的权威维护者，按会话 ID 隔离两种方式，持有任务、阶段和取消状态；状态变化通过既有事件机制通知界面。取消确认后禁止旧任务继续提交账户。
 - `AuthlibAccountManager` 继续作为外置账户与凭据文件的唯一维护者，新增接收已校验 LittleSkin 登录结果的公开方法，不让新模块调用其私有 `_store_response`，也不伪造密码待登录数据。
 - 账户主类型保持 `authlib`。新增明确的 LittleSkin 来源标记和登录方式，用于区分刷新策略和品牌展示；不借用插件认证 `provider` 的业务语义。对应后端模型、前端快照校验和显示同步更新。
@@ -113,7 +113,7 @@ OAuth 令牌始终视为不透明字符串。取得访问令牌后读取角色�
 | --- | --- |
 | `ECL/utils/environment.py`、`ECL/utils/build_env.py`、`ECL/application.py` | 配置读取、构建值和组合根注入 |
 | `.env.example`、`.github/workflows/build.yml` | 占位示例、两处构建注入及缺配置处理 |
-| `ECL/services/account/littleskin.py`、`authlib.py`、`accounts.py` | OAuth 协议、回调、登录状态、保存与刷新 |
+| `ECL/minecraft/services/account/littleskin.py`、`authlib.py`、`accounts.py` | OAuth 协议、回调、登录状态、保存与刷新 |
 | `ECL/api/accounts.py`、`models.py`、`operation_logging.py` 及现有命令登记入口 | 请求校验、IPC、状态事件和日志策略 |
 | `frontend/src/api/client/commands.ts`、`src/types/accounts.ts` | 命令和账户契约 |
 | 前端账户 API、store、`accountSnapshot.ts`、`useAccountManager.ts` | 外部结果校验、共享状态与页面会话生命周期 |

@@ -6,7 +6,7 @@ from threading import Barrier, Event, Lock
 import pytest
 
 from ECL.api.models import OnlineResourceSearchRequest
-from ECL.services.game.resource_search import (
+from ECL.minecraft.services.game.resource_search import (
     ResourceSearchService,
     SearchBatch,
     SearchCriteria,

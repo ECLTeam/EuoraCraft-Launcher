@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from ECL.services.game.launch_settings import InstanceLaunchOverrides, LaunchSettingsResolver
+from ECL.minecraft.services.game.launch_settings import InstanceLaunchOverrides, LaunchSettingsResolver
 
 
 def test_instance_and_single_use_overrides_preserve_false_and_empty() -> None:
@@ -116,7 +116,7 @@ def test_argument_parser_preserves_windows_paths_quotes_and_explicit_empty_args(
 
 
 def test_instance_settings_reset_preserves_unknown_fields_and_future_schema_is_read_only(tmp_path) -> None:
-    from ECL.services.game import GameService
+    from ECL.minecraft.services.game import GameService
     from ECL.utils.errors import GameServiceError
 
     service = GameService(object(), data_path=tmp_path / "data", enable_version_watcher=False)

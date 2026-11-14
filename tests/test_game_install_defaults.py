@@ -8,7 +8,7 @@ from unittest.mock import ANY, Mock
 import httpx
 import pytest
 
-from ECL.services.game import GameService, GameServiceError
+from ECL.minecraft.services.game import GameService, GameServiceError
 
 
 @pytest.fixture

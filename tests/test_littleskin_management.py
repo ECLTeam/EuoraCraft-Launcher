@@ -9,8 +9,8 @@ import httpx
 import pytest
 
 from ECL.api.models import LittleSkinStartRequest, LittleSkinTextureRequest, WardrobeSyncTextureRequest
-from ECL.services.account.authlib import AuthlibAccountManager
-from ECL.services.account.littleskin import (
+from ECL.minecraft.services.account.authlib import AuthlibAccountManager
+from ECL.minecraft.services.account.littleskin import (
     LittleSkinClient,
     LittleSkinCredentials,
     LittleSkinLogin,

@@ -57,9 +57,9 @@ from ECL.utils.instance_reading import InstanceReadError
 from .install_transaction import recover_plugin_install_transactions
 
 if TYPE_CHECKING:
+    from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTransactions
+    from ECL.minecraft.services.game.plugin_games import PluginGameCoordinator
     from ECL.plugins.package_activation import PluginPackageActivationStore
-    from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
-    from ECL.services.game.plugin_games import PluginGameCoordinator
 
 
 class _PluginState:

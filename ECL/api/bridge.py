@@ -46,9 +46,9 @@ from ECL.application import ApplicationContext
 from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.desktop.maintenance import DebugMaintenanceError
 from ECL.minecraft.game import AuthException, GameDataError, NetException
-from ECL.services.account import AccountError, WardrobeError
-from ECL.services.game import GameServiceError
-from ECL.services.game.launch import candidate_roots, resolve_launch_target
+from ECL.minecraft.services.account import AccountError, WardrobeError
+from ECL.minecraft.services.game import GameServiceError
+from ECL.minecraft.services.game.launch import candidate_roots, resolve_launch_target
 from ECL.utils import atomic_write_text, get_logger
 from ECL.utils.logging import get_frontend_log_history
 from ECL.utils.network import download_proxy_url

@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from zipfile import ZipFile
 
-from ECL.services.game.crash.mod_index import CrashModIndex
+from ECL.minecraft.services.game.crash.mod_index import CrashModIndex
 
 
 def _make_example_jar(mods_dir: Path) -> None:
