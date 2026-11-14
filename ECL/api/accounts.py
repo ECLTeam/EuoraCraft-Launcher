@@ -669,12 +669,14 @@ class AccountHandlers(_FrontendState):
         safe_name = (
             re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", item["name"]).strip(" .")[: self.safe_filename_max_chars] or "skin"
         )
-        picked = await to_thread.run_sync(
+        title = "另存为皮肤" if item["kind"] == "skin" else "另存为披风"
+        picked = await self._run_native_dialog(
+            title,
             lambda: DialogExt.file(self._webview).blocking_save_file(
                 add_filter=("PNG 图片", ["png"]),
                 set_file_name=f"{safe_name}.png",
-                set_title="另存为皮肤" if item["kind"] == "skin" else "另存为披风",
-            )
+                set_title=title,
+            ),
         )
         if not picked:
             return {"success": True, "data": {"path": None}}

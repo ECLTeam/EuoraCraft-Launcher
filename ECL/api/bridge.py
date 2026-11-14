@@ -20,10 +20,11 @@ import os
 import subprocess
 import sys
 from collections import deque
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
@@ -35,6 +36,7 @@ from pytaurix.ffi import Emitter as _Emitter
 from pytaurix.ipc import WebviewWindow
 
 from ECL.api.contracts import ApiResponse, failure
+from ECL.api.dialogs import native_dialog_slot
 from ECL.api.models import (
     DebugProcessSpawnRequest,
     FrontendLogRequest,
@@ -380,6 +382,9 @@ def _validate_body(model: Any, body: dict[str, Any]) -> tuple[Any, ApiResponse |
         return None, _FrontendState._invalid_request(exc)
 
 
+_DialogResult = TypeVar("_DialogResult")
+
+
 class _FrontendState:
     """
     保存前端 IPC 命令共用的日志器、事件总线和后端服务。
@@ -482,6 +487,25 @@ class _FrontendState:
         flush = getattr(self, "_flush_window_bounds", None)
         if callable(flush):
             flush()
+
+    async def _run_native_dialog(self, title: str, action: Callable[[], _DialogResult]) -> _DialogResult | None:
+        """
+        在独占槽位内执行一次原生选择对话框。
+
+        系统对话框应当表现为模态，用户在其打开期间再次触发选择不能再叠加新窗口。
+        槽位已被占用时本方法不弹窗，按“未选择”返回 None，由调用方沿用取消语义。
+
+        :param title: 对话框标题，仅用于记录重复请求
+        :param action: 在线程中执行的原生对话框调用
+        :return: 对话框返回值；槽位已被占用时返回 None
+        """
+        if not native_dialog_slot.try_acquire():
+            self.logger.debug("已有原生选择对话框打开，忽略重复请求：%s", title)
+            return None
+        try:
+            return await to_thread.run_sync(action)
+        finally:
+            native_dialog_slot.release()
 
     @staticmethod
     def _invalid_request(exc: ValidationError) -> ApiResponse:

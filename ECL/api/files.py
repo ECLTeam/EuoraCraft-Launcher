@@ -508,12 +508,13 @@ class FileHandlers(_FrontendState):
         if self._webview is None:
             return {"success": False, "message": "窗口尚未就绪", "errorCode": "WEBVIEW_NOT_READY"}
 
-        picked = await to_thread.run_sync(
+        picked = await self._run_native_dialog(
+            "保存背景图",
             lambda: DialogExt.file(self._webview).blocking_save_file(
                 add_filter=("图片", list(ImagePolicy.mime_by_extension)),
                 set_file_name=default_name,
                 set_title="保存背景图",
-            )
+            ),
         )
         if not picked:
             return {"success": False, "message": "未选择保存路径", "errorCode": "SAVE_CANCELLED"}
@@ -553,12 +554,13 @@ class FileHandlers(_FrontendState):
         png_bytes = await to_thread.run_sync(SkinAvatarExporter.decode_png, request.data_url, request.size)
         if self._webview is None:
             return {"success": False, "message": "窗口尚未就绪", "errorCode": "WEBVIEW_NOT_READY"}
-        picked = await to_thread.run_sync(
+        picked = await self._run_native_dialog(
+            "导出皮肤头像",
             lambda: DialogExt.file(self._webview).blocking_save_file(
                 add_filter=("PNG 图片", ["png"]),
                 set_file_name="skin-avatar.png",
                 set_title="导出皮肤头像",
-            )
+            ),
         )
         if not picked:
             return {"success": True, "data": {"path": None}}
@@ -633,7 +635,8 @@ class FileHandlers(_FrontendState):
         """
         在后台线程调用主窗口的原生选择器，可为目录选择提供初始位置。
 
-        对话框阻塞由工作线程承担；用户取消时返回空字符串，不改变已有选择。
+        对话框阻塞由工作线程承担；同一时刻只允许一个原生对话框，重复请求按取消
+        返回空字符串，不改变已有选择。
         """
         if self._webview is None:
             return ""
@@ -648,8 +651,8 @@ class FileHandlers(_FrontendState):
                 return dialog.blocking_pick_file(add_filter=("文件", extensions), set_title=title)
             return dialog.blocking_pick_file(set_title=title)
 
-        file_path = await to_thread.run_sync(_pick)
-        return self._normalize_file_path(str(file_path)) if file_path else ""
+        picked = await self._run_native_dialog(title, _pick)
+        return self._normalize_file_path(str(picked)) if picked else ""
 
     async def _pick_save_path(
         self,
@@ -670,8 +673,10 @@ class FileHandlers(_FrontendState):
         }
         if default_directory:
             options["set_directory"] = default_directory
-        file_path = await to_thread.run_sync(lambda: DialogExt.file(self._webview).blocking_save_file(**options))
-        return self._normalize_file_path(str(file_path)) if file_path else ""
+        picked = await self._run_native_dialog(
+            title, lambda: DialogExt.file(self._webview).blocking_save_file(**options)
+        )
+        return self._normalize_file_path(str(picked)) if picked else ""
 
     @_ipc_handler("SELECT_DIRECTORY_ERROR")
     async def select_directory(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -816,7 +821,7 @@ class FileHandlers(_FrontendState):
                 )
             return dialog.blocking_pick_files(set_title="选择文件")
 
-        selected = await to_thread.run_sync(pick_files)
+        selected = await self._run_native_dialog("选择文件", pick_files)
         paths = [self._normalize_file_path(str(path)) for path in (selected or [])]
         return success({"paths": paths})
 
