@@ -82,7 +82,10 @@ class PluginInstallTransaction:
         self.stage_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             source_snapshot = CodeSnapshot.capture(source_path)
-            shutil.copytree(source_path, self.stage_path)
+            # 忽略名单与 CodeSnapshot.capture 共用同一来源，两边都必须排除版本控制元数据，
+            # 否则暂存副本的内容清单复核会失败。
+            copy_ignore = shutil.ignore_patterns(*CodeSnapshot.excluded_entry_names)
+            shutil.copytree(source_path, self.stage_path, ignore=copy_ignore)
             source_snapshot.verify(source_snapshot.digest())
             CodeSnapshot.capture(self.stage_path).verify(source_snapshot.digest())
         except (OSError, ProtocolError) as exc:

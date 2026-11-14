@@ -44,6 +44,10 @@ class CodeSnapshot:
     files: tuple[CodeFile, ...]
     max_files: ClassVar[int] = 10000
     max_bytes: ClassVar[int] = 256 * 1024 * 1024
+    # 版本控制元数据不属于插件内容：目录安装复制（install_transaction.stage 的
+    # copytree ignore）与内容清单共用同一份排除名单，两边语义必须字面一致，
+    # 否则暂存复核会以 PLUGIN_CONTENT_CHANGED 失败。
+    excluded_entry_names: ClassVar[frozenset[str]] = frozenset({".git"})
     # 最近一次确认的 (大小, 修改时间) 清单，只用于跳过重复的字节哈希。
     # 不参与摘要、比较与序列化：授权身份仍然只由 files 决定。
     _verified_metadata: dict[str, tuple[int, int]] = field(default_factory=dict, repr=False, compare=False)
@@ -61,7 +65,14 @@ class CodeSnapshot:
         if root_path.is_symlink() or not root_path.is_dir():
             raise ProtocolError("插件代码根目录无效", "PLUGIN_CONTENT_CHANGED")
         root_path = root_path.resolve()
-        entries = tuple(sorted(root_path.rglob("*")))
+        all_entries = tuple(sorted(root_path.rglob("*")))
+        # 排除名单先于链接与越界检查：被排除的条目（如 .git）不进入内容身份，
+        # 即使其本身是链接或指向外部也不构成越界。
+        entries = tuple(
+            entry
+            for entry in all_entries
+            if not any(part in cls.excluded_entry_names for part in entry.relative_to(root_path).parts)
+        )
         if any(entry.is_symlink() or not entry.resolve().is_relative_to(root_path) for entry in entries):
             raise ProtocolError("插件快照包含链接或越界文件", "PLUGIN_CONTENT_CHANGED")
         file_paths = tuple(entry for entry in entries if entry.is_file())

@@ -273,12 +273,15 @@ def test_manifest_changed_during_staging_never_replaces_installed_code(tmp_path:
 
 def test_uninstall_removes_readonly_files_copied_from_repository(tmp_path: Path) -> None:
     """
-    从源码仓库复制的插件目录带有 Git 只读对象，卸载不应被系统拒绝。
+    插件自带的只读文件（如包内资源）复制后，卸载不应被系统拒绝。
+
+    版本控制元数据已不再进入安装副本，本用例改用普通只读插件文件保留
+    remove_tree 清除只读属性的覆盖。
     """
     data_path = tmp_path / "data"
     source_path = tmp_path / "source"
     _plugin(source_path, "1.0.0")
-    readonly = source_path / ".git" / "objects" / "a1" / "86a3da6d743ac5f0edd33"
+    readonly = source_path / "assets" / "locked.bin"
     readonly.parent.mkdir(parents=True)
     readonly.write_bytes(b"x" * 32)
     readonly.chmod(stat.S_IREAD)
@@ -286,7 +289,27 @@ def test_uninstall_removes_readonly_files_copied_from_repository(tmp_path: Path)
 
     assert framework.install(str(source_path)).success
     plugin_dir = data_path / "plugins" / "sources" / "demo"
-    assert plugin_dir.joinpath(".git", "objects", "a1", "86a3da6d743ac5f0edd33").exists()
+    assert plugin_dir.joinpath("assets", "locked.bin").exists()
 
     assert framework.uninstall("demo").success
     assert not plugin_dir.exists()
+
+
+def test_install_from_directory_excludes_git_metadata(tmp_path: Path) -> None:
+    """
+    带版本控制元数据的源码目录安装后，安装副本不包含 .git，只读对象文件不落盘。
+    """
+    data_path = tmp_path / "data"
+    framework = _framework(data_path, tmp_path / "resources")
+    source_path = tmp_path / "repo-source"
+    _plugin(source_path, "1.0.0")
+    git_objects = source_path / ".git" / "objects" / "a1"
+    git_objects.mkdir(parents=True)
+    git_file = git_objects / "blob"
+    git_file.write_text("object", encoding="utf-8")
+    git_file.chmod(stat.S_IREAD)  # 模拟 .git 对象的只读属性
+
+    assert framework.install(str(source_path)).success
+    installed = data_path / "plugins" / "sources" / "demo"
+    assert (installed / "main.py").exists()
+    assert not list(installed.rglob(".git"))
