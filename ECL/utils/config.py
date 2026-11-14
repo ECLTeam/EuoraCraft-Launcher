@@ -94,8 +94,7 @@ default_config: dict[str, JsonValue] = {
         "last_manage_path": "",
     },
     "download": {"mirror_source": "official", "mod_source": "official"},
-    # 插件界面注入总开关：关闭后不渲染任何第三方插件注入的主窗口内容。
-    "plugins": {"allow_ui_injection": True},
+    "plugins": {},
     "ui": {
         "locale": "zh-CN",
         "theme": {

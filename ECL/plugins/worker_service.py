@@ -852,45 +852,6 @@ class PluginWorkerService:
         finally:
             _cross_call_depth.reset(token)
 
-    def clear_all_slots(self) -> None:
-        """
-        撤销全部第三方插槽内容，用户关闭总开关后立即生效。
-
-        只清理第三方安装；系统插件的界面不受该开关影响。
-        """
-        if self._slot_sink is None:
-            return
-        for name in tuple(self._entries):
-            self._slot_sink(name, {"kind": "clear"})
-
-    def reload_ui_injection_plugins(self) -> None:
-        """
-        总开关重新打开后重启已获准注入的插件，让它们重新登记插槽内容。
-
-        只处理已启用且当前授权允许 ``ui.inject`` 的第三方安装：插槽内容只在插件
-        加载时登记，关闭总开关时宿主已撤销全部内容，因此恢复显示必须重跑一次加载。
-        单个插件重启失败只记录警告，不阻断其余插件，也不改变开关本身。
-
-        :raises ProtocolError: 宿主未提供界面注入或重启后仍无法启用
-        """
-        for name in tuple(self._entries):
-            entry = self._entries.get(name)
-            if entry is None or entry.state != "enabled":
-                continue
-            try:
-                allowed = any(
-                    item.capability == "ui.inject" and item.decision == "allow" for item in entry.session.view().items
-                )
-            except (ProtocolError, ValueError):
-                continue
-            if not allowed:
-                continue
-            try:
-                self.stop(name)
-                self.enable(name)
-            except (ProtocolError, OSError, RuntimeError):
-                get_logger("PluginWorkerService").warning("插件界面注入恢复时无法重新加载 %s", name)
-
     def _clear_slots(self, name: str) -> None:
         """
         撤销该安装已注入的主窗口内容，禁用或卸载后不再保留。

@@ -123,7 +123,7 @@ def test_ignored_manifest_fields_do_not_block_development(development):
     run = service.runtime_info("example")["run_id"]
     manifest = json.loads((source / "plugin.json").read_bytes())
     # 权限声明不再是清单字段；改动属于普通内容变化，按热重载处理。
-    manifest["permissions"] = [{"capability": "ui.inject", "required": True}]
+    manifest["permissions"] = [{"capability": "network.read", "required": True}]
     (source / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
     flush(service)
     assert service.runtime_info("example")["run_id"] != run

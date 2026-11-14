@@ -143,8 +143,8 @@ def test_third_party_injection_requires_known_plugin(framework):
     framework._on_vue_slot_registered("unknown", "slot", "bad", "<div />", "", "")
     assert framework.get_slots() == {}
     assert framework.get_vue_slots() == {}
-    # 已登记插件的内容进入收集路径；是否获准由 Broker 按 ui.inject 判定，
-    # 第三方注入已按用户决定开放，不再在注册表层一律拒绝。
+    # 已登记插件的内容进入收集路径；第三方注入已按用户决定全量开放，
+    # 注册表层只拒绝未登记来源。
     framework._on_html_injected("example", "slot", "<div>ok</div>", None)
     assert framework.get_slots()["slot"][0]["plugin"] == "example"
 

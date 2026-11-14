@@ -302,8 +302,7 @@ class PluginRegistry(_PluginState):
     def _on_html_injected(
         self, plugin_name: str, slot_id: str, html: str, key: str | None, context_key: str | None = None
     ) -> None:
-        # 收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加。
-        # 第三方内容已在 Broker 按 ui.inject 授权校验，这里只拒绝未知来源。
+        # 收集 HTML 注入事件到对应插槽，按插件名与 key 原位更新或追加；只接受已登记安装。
         if plugin_name not in self._candidate_map and plugin_name not in self._plugins:
             return
         entries = self._slots.setdefault(slot_id, [])

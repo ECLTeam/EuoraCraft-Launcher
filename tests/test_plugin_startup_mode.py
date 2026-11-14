@@ -16,10 +16,9 @@ from ECL.utils.errors import ConfigValidationError
 @pytest.mark.parametrize("flag, expected", [("--plugin-dev", True), ("--no-plugin-dev", False)])
 def test_plugin_development_flags_override_file_without_mutation(flag, expected):
     options = parse_launch_options([flag])
-    original = {"plugins": {"development_mode": not expected, "allow_ui_injection": False}}
+    original = {"plugins": {"development_mode": not expected}}
     assert apply_launch_overrides(original, options)["plugins"] == {
         "development_mode": expected,
-        "allow_ui_injection": False,
     }
     assert original["plugins"]["development_mode"] is not expected
     assert parse_launch_options([]).plugin_development is None
@@ -61,9 +60,8 @@ def test_optional_development_config_is_not_written_and_is_preserved_on_other_up
     original = store.config_path.read_bytes()
     assert "development_mode" not in store.get_config("plugins")
     assert store.config_path.read_bytes() == original
-    store.save_config("plugins", {"development_mode": True, "allow_ui_injection": True})
-    store.save_config("plugins", {"allow_ui_injection": False})
-    assert store.get_config("plugins") == {"development_mode": True, "allow_ui_injection": False}
+    store.save_config("plugins", {"development_mode": True})
+    assert store.get_config("plugins") == {"development_mode": True}
     before = store.config_path.read_bytes()
     with pytest.raises(ConfigValidationError):
         store.save_config("plugins", {"development_mode": "true"})

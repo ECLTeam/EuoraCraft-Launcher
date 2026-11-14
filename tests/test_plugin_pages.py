@@ -51,7 +51,7 @@ def test_real_worker_page_publishes_and_clears_on_exit(tmp_path: Path) -> None:
         "version": "1.0.0",
         "api_version": 1,
         "entry_point": "main:Plugin",
-        "permissions": [{"capability": "ui.inject", "required": False}],
+        "permissions": [{"capability": "network.read", "required": False}],
     }
     (code / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (code / "main.py").write_text(

@@ -28,7 +28,7 @@ self.define_panel("tools", "Tools", (
 
 ## 主窗口插槽
 
-清单单独申请 `ui.inject`。通过 `define_html_slot(slot_id, html, key=..., context_key=...)` 或 `define_vue_slot(slot_id, component_name, template, script=..., style=..., key=..., context_key=...)` 注册。
+主窗口注入对所有插件开放，无需申请权限。通过 `define_html_slot(slot_id, html, key=..., context_key=...)` 或 `define_vue_slot(slot_id, component_name, template, script=..., style=..., key=..., context_key=...)` 注册。
 
 已有插槽包含标题栏、侧栏、内容顶部/底部、实例区域、插件页、设置、任务队列等；是否挂载及其上下文由实际页面决定。稳定 key 用于更新同一内容，不要每次刷新制造随机插槽身份。
 
@@ -38,7 +38,7 @@ self.define_html_slot(
 )
 ```
 
-用户关闭主窗口注入总开关后撤销第三方内容；重新开启按当前宿主流程重载获准插件以重新登记。禁用、卸载和运行结束也会清理。
+禁用、卸载和运行结束会清理插件注入的主窗口内容。
 
 同页注入可访问主窗口 DOM 和通用桥，当前尚无完整通用桥隔离。`frontend/src/plugin-sdk` 的主题、DOM、控件、状态、路由和业务封装是主窗口工具，不属于 Worker 或独立窗口的契约接口。详见[注入决策](../../designs/plugin-main-window-injection-decision.md)。
 

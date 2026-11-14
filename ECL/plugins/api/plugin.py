@@ -233,7 +233,7 @@ class Plugin:
         context_key: str | None = None,
     ) -> None:
         """
-        向主窗口插槽提交一段 HTML 片段，需已获准 ui.inject。
+        向主窗口插槽提交一段 HTML 片段。
 
         内容与主窗口同文档渲染，可读取页面上已显示的数据；插件不得在此
         假设自己仍受 Broker 保护，业务调用仍须走 Host API。
@@ -242,7 +242,7 @@ class Plugin:
         :param html: 片段内容，上限 60000 字符
         :param key: 同一插槽内的稳定更新键，省略时追加
         :param context_key: 插槽上下文键，省略表示全部上下文
-        :raises HostApiError: 未获准界面注入或内容越界时抛出
+        :raises HostApiError: 内容越界时抛出
         """
         self.host.call(
             "ui.register_html",
@@ -303,11 +303,11 @@ class Plugin:
         nav: dict[str, str | int] | None = None,
     ) -> None:
         """
-        登记当前插件的主窗口页面，需用户批准 ui.inject。
+        登记当前插件的主窗口页面。
 
         默认挂在插件命名空间内的顶层路由；container="more" 时挂到宿主
-        「更多」页的有界子路由并声明导航入口。页面随当前运行退出或撤销
-        注入权限移除，不保留跨运行路由与菜单项。
+        「更多」页的有界子路由并声明导航入口。页面随当前运行退出撤销，
+        不保留跨运行路由与菜单项。
 
         :param path: 插件内以斜杠开头的相对路由
         :param title: 入口显示名称
