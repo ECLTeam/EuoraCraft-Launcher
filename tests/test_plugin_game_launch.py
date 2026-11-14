@@ -12,10 +12,11 @@ from types import SimpleNamespace
 import pytest
 from anyio.from_thread import start_blocking_portal
 
+from ECL.mc.adapters.factory import DefaultMcAdapterFactory
+from ECL.mc.adapters.resources import RuntimeResources
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
-from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService, GameServiceError
 from ECL.services.operations import OperationManager
@@ -58,6 +59,7 @@ def game_launch(tmp_path, monkeypatch):
         instance_roots=lambda: (root,),
         operations=manager,
         game_operations=game,
+        mc_factory=DefaultMcAdapterFactory(),
     )
     entries = []
 
@@ -80,6 +82,7 @@ def game_launch(tmp_path, monkeypatch):
             operations=manager,
             resources=resources,
             game_operations=game,
+            mc_factory=DefaultMcAdapterFactory(),
         )
         root_id = call(broker, "resources.list", {"capability": "instances.manage"})["items"][0]["root_ref"]
         ref = next(

@@ -151,7 +151,7 @@ class McAdapterFactory(Protocol):
 ### 5.4 验收
 
 - `python -c "import ECL.mc.adapters.resources"` 等 11 个逐个导入成功。
-- 边界检查豁免降到 1（仅 `manager/base.py`）。
+- 边界检查豁免降到 4（实施修正：`application.py` 构造根、`worker_service.py` 与 `manager/base.py` 两个装配缝、`java_resources.py` 类型引用——`worker_service` 仍内联构造三个注入式适配器，工厂只接管 broker 的七个就地实例化，全部消除需装配逻辑统一，另行推进）。
 - 全量 `pytest` 通过。
 - 现有 v2 示例插件加载、命令、面板、设置调用正常。
 

@@ -6,9 +6,9 @@ from dataclasses import replace
 
 import pytest
 
+from ECL.mc.adapters.public_queries import RuntimePublicQueries
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
-from ECL.plugins.runtime.public_queries import RuntimePublicQueries
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.account.accounts import AccountManager
 from ECL.utils import AccountError

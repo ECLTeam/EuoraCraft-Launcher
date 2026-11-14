@@ -14,11 +14,11 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING
 
+from ECL.mc.adapters.resources import RuntimeResources
 from ECL.plugins.api.contracts import JsonValue
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import InstanceProfilePatchRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
-from ECL.plugins.runtime.resources import RuntimeResources
 
 if TYPE_CHECKING:
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions

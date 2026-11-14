@@ -25,6 +25,9 @@ from uuid import uuid4
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaError
 from ECL.java.queries import JavaQueries
+from ECL.mc.adapters.java_api import RuntimeJava
+from ECL.mc.adapters.public_queries import RuntimePublicQueries
+from ECL.mc.adapters.resources import RuntimeResources
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
 from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.api._rpc import RpcRequest
@@ -37,13 +40,12 @@ from ECL.plugins.package_preparation import PluginPackagePreparer, current_plugi
 from ECL.plugins.resource_catalog import PluginResourceCatalog
 from ECL.plugins.run_models import PluginContentBinding, PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession, PluginRunStore
+from ECL.plugins.runtime.adapters import McAdapterFactory
 from ECL.plugins.runtime.broker import CrossPluginChannel, PluginHostBroker, ToolChannel
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.file_storage import PluginFileStorage
-from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.network_api import PluginNetworkService
-from ECL.plugins.runtime.public_queries import RuntimePublicQueries
-from ECL.plugins.runtime.resources import InstanceQueries, ResourcePages, RuntimeResources
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
@@ -54,6 +56,7 @@ from ECL.utils.instance_reading import InstanceReadError
 if TYPE_CHECKING:
     from pytaurix import AppHandle
 
+    from ECL.mc.adapters.resources import InstanceQueries
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -100,6 +103,7 @@ class PluginWorkerService:
         instance_queries: InstanceQueries | None = None,
         instance_profiles: InstanceProfileTransactions | None = None,
         instance_roots: Callable[[], tuple[Path, ...]] | None = None,
+        mc_factory: McAdapterFactory | None = None,
         operations: OperationManager | None = None,
         game_operations: PluginGameCoordinator | None = None,
         java_queries: JavaQueries | None = None,
@@ -174,6 +178,7 @@ class PluginWorkerService:
         self._network_service = PluginNetworkService()
         self._instance_profiles = instance_profiles
         self._instance_queries = instance_queries
+        self._mc_factory = mc_factory
         self._catalog = (
             PluginResourceCatalog(data_path, instance_roots, instance_queries.query_instance_names)
             if instance_queries is not None and instance_roots is not None
@@ -537,6 +542,7 @@ class PluginWorkerService:
                     network_service=self._network_service,
                     instance_profiles=self._instance_profiles,
                     game_operations=self._game_operations,
+                    mc_factory=self._mc_factory,
                     public_queries=RuntimePublicQueries(
                         entry.session,
                         self._account_catalog,

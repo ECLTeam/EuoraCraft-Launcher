@@ -7,8 +7,9 @@ from time import monotonic
 
 import pytest
 
+from ECL.mc.adapters.factory import DefaultMcAdapterFactory
+from ECL.mc.adapters.resources import RuntimeResources
 from ECL.plugins.runtime.broker import PluginHostBroker
-from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService
 from ECL.services.game.instance_profiles import InstanceProfileStore
@@ -71,6 +72,7 @@ def profiles(tmp_path):
         operations=manager,
         resources=resources,
         instance_profiles=store.transactions,
+        mc_factory=DefaultMcAdapterFactory(),
     )
     resources_page = call(broker, "resources.list", {"capability": "instances.read"})
     instances = call(broker, "instances.scan", {"root_ref": resources_page["items"][0]["root_ref"]})["items"]
@@ -147,7 +149,7 @@ def test_cancel_queued_profile_releases_real_occupancy_without_writing(profiles)
 
 @pytest.mark.parametrize("reason", ["session", "deadline"])
 def test_queued_profile_rechecks_session_and_total_deadline(profiles, monkeypatch, reason):
-    import ECL.plugins.runtime.instance_profiles as api_module
+    import ECL.mc.adapters.instance_profiles as api_module
     import ECL.plugins.runtime.operation_adapters as operation_module
 
     broker, manager, store, _service, root, before, _, _ = profiles

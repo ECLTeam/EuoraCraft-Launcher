@@ -30,17 +30,12 @@ from ECL.plugins.api._rpc import RpcRequest
 from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
+from ECL.plugins.runtime.adapters import McAdapterFactory
 from ECL.plugins.runtime.custom_ui import RuntimeCustomUi
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.plugins.runtime.download_api import RuntimeDownloads
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage
-from ECL.plugins.runtime.game_install import RuntimeGameInstall
-from ECL.plugins.runtime.game_launch import RuntimeGameLaunch
-from ECL.plugins.runtime.game_queries import RuntimeGameCatalog
-from ECL.plugins.runtime.game_resources import RuntimeGameResources
-from ECL.plugins.runtime.instance_profiles import RuntimeInstanceProfiles
-from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.models import (
     AuthProviderDefinition,
     CommandDefinition,
@@ -58,12 +53,8 @@ from ECL.plugins.runtime.models import (
     VueSlotDefinition,
     validate_fields,
 )
-from ECL.plugins.runtime.modpacks import RuntimeModpacks
 from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
-from ECL.plugins.runtime.public_queries import RuntimePublicQueries
-from ECL.plugins.runtime.resource_queries import RuntimeResourceCatalog
-from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
 from ECL.utils import get_logger
@@ -73,6 +64,16 @@ from ECL.version import __version__
 if TYPE_CHECKING:
     from pytaurix import AppHandle
 
+    from ECL.mc.adapters.game_install import RuntimeGameInstall
+    from ECL.mc.adapters.game_launch import RuntimeGameLaunch
+    from ECL.mc.adapters.game_queries import RuntimeGameCatalog
+    from ECL.mc.adapters.game_resources import RuntimeGameResources
+    from ECL.mc.adapters.instance_profiles import RuntimeInstanceProfiles
+    from ECL.mc.adapters.java_api import RuntimeJava
+    from ECL.mc.adapters.modpacks import RuntimeModpacks
+    from ECL.mc.adapters.public_queries import RuntimePublicQueries
+    from ECL.mc.adapters.resource_queries import RuntimeResourceCatalog
+    from ECL.mc.adapters.resources import RuntimeResources
     from ECL.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.services.game.plugin_games import PluginGameCoordinator
 
@@ -196,6 +197,7 @@ class PluginHostBroker:
         game_operations: PluginGameCoordinator | None = None,
         java: RuntimeJava | None = None,
         public_queries: RuntimePublicQueries | None = None,
+        mc_factory: McAdapterFactory | None = None,
         slot_sink: Callable[[dict[str, JsonValue]], None] | None = None,
         cross_plugin: CrossPluginChannel | None = None,
         hook_sink: Callable[[str, str, bool], None] | None = None,
@@ -223,6 +225,7 @@ class PluginHostBroker:
         :param game_operations: 应用唯一游戏业务入口，未提供时拒绝游戏方法
         :param java: 当前运行的 Java 查询及实际探测资源，缺失时拒绝 Java 方法
         :param public_queries: 明确选定账户与公开配置的白名单查询
+        :param mc_factory: MC 侧适配器工厂；未提供时不开放游戏与整合包方法
         :param slot_sink: 可信界面插槽接收方；未提供时拒绝界面注入方法
         :param cross_plugin: 跨插件发现与调用通道；未提供时拒绝相关方法
         :param hook_sink: 启动钩子接收方；未提供时拒绝钩子登记
@@ -247,57 +250,41 @@ class PluginHostBroker:
         self._tool_channel = tool_channel
         self._tools: dict[str, ToolDefinition] = {}
         self._online_sink = online_sink
-        self._resources = resources
-        self.game_catalog: RuntimeGameCatalog | None = (
-            RuntimeGameCatalog(session, game_operations) if game_operations is not None else None
-        )
         self.operations: RuntimeOperations | None = RuntimeOperations(session, operations) if operations else None
-        self.game_install: RuntimeGameInstall | None = (
-            RuntimeGameInstall(session, game_operations, resources, self.operations)
-            if game_operations is not None and resources is not None and self.operations is not None
-            else None
-        )
-        self.game_launch: RuntimeGameLaunch | None = (
-            RuntimeGameLaunch(session, game_operations, resources, self.operations, java)
-            if game_operations is not None and resources is not None and self.operations is not None
-            else None
-        )
         self.files: RuntimeFiles | None = (
             RuntimeFiles(session, file_storage, self.operations) if file_storage and self.operations else None
         )
         self.network: RuntimeNetwork | None = RuntimeNetwork(session, network_service) if network_service else None
+        mc = (
+            mc_factory.create(
+                session,
+                game_operations=game_operations,
+                resources=resources,
+                java=java,
+                instance_profiles=instance_profiles,
+                operations=self.operations,
+                files=self.files,
+                network=self.network,
+                data_path=data_path,
+            )
+            if mc_factory is not None
+            else None
+        )
+        self._resources = resources
+        self.game_catalog: RuntimeGameCatalog | None = mc.game_catalog if mc is not None else None
+        self.game_install: RuntimeGameInstall | None = mc.game_install if mc is not None else None
+        self.game_launch: RuntimeGameLaunch | None = mc.game_launch if mc is not None else None
         self.java: RuntimeJava | None = java
         self.public_queries = public_queries
-        self.resource_catalog = (
-            RuntimeResourceCatalog(session, game_operations) if game_operations is not None else None
-        )
-        self.game_resources: RuntimeGameResources | None = (
-            RuntimeGameResources(resources, game_operations, self.files, self.operations)
-            if resources is not None
-            and game_operations is not None
-            and self.files is not None
-            and self.operations is not None
-            else None
-        )
-        self.modpacks: RuntimeModpacks | None = (
-            RuntimeModpacks(session, game_operations, resources, self.files, self.operations, self.network, data_path)
-            if game_operations is not None
-            and resources is not None
-            and self.files is not None
-            and self.operations is not None
-            and self.network is not None
-            else None
-        )
+        self.resource_catalog: RuntimeResourceCatalog | None = mc.resource_catalog if mc is not None else None
+        self.game_resources: RuntimeGameResources | None = mc.game_resources if mc is not None else None
+        self.modpacks: RuntimeModpacks | None = mc.modpacks if mc is not None else None
         self.downloads: RuntimeDownloads | None = (
             RuntimeDownloads(session, self.files, self.network, self.operations)
             if self.files is not None and self.network is not None and self.operations is not None
             else None
         )
-        self.instance_profiles: RuntimeInstanceProfiles | None = (
-            RuntimeInstanceProfiles(session, resources, instance_profiles, self.operations)
-            if resources is not None and instance_profiles is not None and self.operations is not None
-            else None
-        )
+        self.instance_profiles: RuntimeInstanceProfiles | None = mc.instance_profiles if mc is not None else None
         self.settings = settings_service or PluginSettingsService(data_path)
         self._settings_identity = session.view().installation_id
         self._lock = RLock()

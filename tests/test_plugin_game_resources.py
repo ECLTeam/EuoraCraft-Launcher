@@ -6,6 +6,7 @@ from time import monotonic
 
 import pytest
 
+from ECL.mc.adapters.factory import DefaultMcAdapterFactory
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
@@ -23,6 +24,7 @@ def assets(request):
         operations=state.manager,
         resources=state.broker._resources,
         game_operations=state.game,
+        mc_factory=DefaultMcAdapterFactory(),
         file_storage=state.worker._file_storage,
         network_service=state.worker._network_service,
     )

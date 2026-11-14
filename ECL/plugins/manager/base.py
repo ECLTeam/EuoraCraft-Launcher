@@ -20,6 +20,8 @@ import httpx
 
 from ECL.java.manager import JavaManager
 from ECL.java.queries import JavaQueries
+from ECL.mc.adapters.factory import DefaultMcAdapterFactory
+from ECL.mc.adapters.resources import InstanceQueries
 from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.auth_providers import (
     AuthField,
@@ -46,7 +48,6 @@ from ECL.plugins.instance_compat import (
 from ECL.plugins.launch_hooks import LaunchContext, LaunchHookRegistry, apply_remote_modifications
 from ECL.plugins.plugin import Plugin
 from ECL.plugins.run_models import PluginLease
-from ECL.plugins.runtime.resources import InstanceQueries
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
 from ECL.utils import EventBus, get_logger
@@ -204,6 +205,7 @@ class _PluginState:
             instance_queries=self._instance_queries,
             instance_profiles=self._instance_profiles,
             instance_roots=self._instance_roots,
+            mc_factory=DefaultMcAdapterFactory(),
             operations=self._operations,
             game_operations=self._game_operations,
             java_queries=self._java_queries,

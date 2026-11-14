@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from ECL.mc.adapters.factory import DefaultMcAdapterFactory
 from ECL.plugins.api._rpc import RpcRequest
 from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_models import PluginContentBinding
@@ -35,7 +36,12 @@ def catalogs(tmp_path):
     def create(allow=True):
         session = store.open_session(uuid4().hex, binding)
         broker = PluginHostBroker(
-            session, tmp_path, lambda *args: {}, run_state=lambda: "enabled", game_operations=game
+            session,
+            tmp_path,
+            lambda *args: {},
+            run_state=lambda: "enabled",
+            game_operations=game,
+            mc_factory=DefaultMcAdapterFactory(),
         )
         brokers.append(broker)
         return broker

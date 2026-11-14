@@ -40,17 +40,12 @@ kernel_root_modules = (
 
 kernel_exemptions: dict[str, str] = {
     "application.py": "构造根装配游戏服务，需要构建期注入的认证与资源站密钥；待装配逻辑迁出后消除",
-    "plugins/worker_service.py": "组装插件能力需要 ECL.java 与 services.game 的实例类型；待 MC 侧提供装配入口后消除",
-    "plugins/manager/base.py": "同上，管理器构造插件运行所需的游戏与 Java 协作者",
+    "plugins/worker_service.py": "装配缝：宿主侧构造 RuntimeJava/PublicQueries/Resources 三个注入式适配器；待装配逻辑统一后消除",
+    "plugins/manager/base.py": "装配缝：实例化 MC 适配器工厂并注入 worker_service，同时引用 InstanceQueries 协议描述注入能力；长期保留",
     "plugins/java_resources.py": "插件 Java 资源声明以 ECL.java 的模型与查询为参数类型；待扩展点模型下沉后消除",
-    "plugins/runtime/resources.py": "MC 适配器本体，第 2b 步迁入 ECL/mc/adapters 后消除",
-    "plugins/runtime/instance_profiles.py": "MC 适配器本体，第 2b 步迁入 ECL/mc/adapters 后消除",
-    "plugins/runtime/java_api.py": "MC 适配器本体，第 2b 步迁入 ECL/mc/adapters 后消除",
-    "plugins/runtime/game_install.py": "MC 适配器本体，第 2b 步迁入 ECL/mc/adapters 后消除",
-    "plugins/runtime/game_launch.py": "MC 适配器本体，第 2b 步迁入 ECL/mc/adapters 后消除",
 }
 
-max_exemptions = 9
+max_exemptions = 4
 
 
 def _kernel_files() -> list[Path]:

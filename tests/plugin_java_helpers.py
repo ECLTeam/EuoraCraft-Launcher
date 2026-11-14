@@ -9,7 +9,7 @@ from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
 from ECL.java.queries import JavaQueries
-from ECL.plugins.runtime.java_api import RuntimeJava
+from ECL.mc.adapters.java_api import RuntimeJava
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
 from ECL.utils import EventBus

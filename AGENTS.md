@@ -184,8 +184,8 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 
 | 域 | 目录 | 依赖约束 |
 | --- | --- | --- |
-| 内核 | `ECL/plugins/`（除未来的 MC 适配器域）、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.mc`、`ECL.services.game`、`ECL.services.account`、`ECL.java` |
-| MC | `ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/game/`（子模块）；独立 MC 域目录（如 `ECL/mc/`）随适配器外移步骤创建 | 可依赖内核 |
+| 内核 | `ECL/plugins/`、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.mc`、`ECL.services.game`、`ECL.services.account`、`ECL.java`（装配缝豁免见 `tests/test_layer_boundary.py`） |
+| MC | `ECL/mc/`（含 `ECL/mc/adapters/` 能力适配器）、`ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/game/`（子模块） | 可依赖内核 |
 | 边界 | `ECL/api/` | 可依赖两者，只供前端调用 |
 
 - 新增能力先判断归属：定义了持久数据格式或属于启动链路必需的归 MC，其余归内核；无法判断时在实施方案中说明并由用户确认。

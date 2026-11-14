@@ -25,20 +25,20 @@ from uuid import uuid4
 import httpcore
 from pydantic import Field, field_validator
 
+from ECL.mc.adapters.game_models import GameInstallRequest
 from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
-from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, NetworkRequest, RequestModel
 from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.file_handles import FileDirectory
 from ECL.utils.operation_logging import private_transport_scope
 
 if TYPE_CHECKING:
+    from ECL.mc.adapters.resources import RuntimeResources
     from ECL.plugins.runtime.file_api import RuntimeFiles
     from ECL.plugins.runtime.network_api import RuntimeNetwork
     from ECL.plugins.runtime.operation_adapters import RuntimeOperations
-    from ECL.plugins.runtime.resources import RuntimeResources
     from ECL.services.game import GameService
     from ECL.services.game.modpack import PackFileEntry
     from ECL.services.operations import OperationContext

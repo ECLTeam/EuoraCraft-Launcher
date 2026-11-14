@@ -11,10 +11,11 @@ from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
 from ECL.java.queries import JavaQueries
+from ECL.mc.adapters.factory import DefaultMcAdapterFactory
+from ECL.mc.adapters.java_api import RuntimeJava
+from ECL.mc.adapters.resources import RuntimeResources
 from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
-from ECL.plugins.runtime.java_api import RuntimeJava
-from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.utils import EventBus
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_host_files import call, finish
@@ -57,6 +58,7 @@ def selected_java(request):
         run_state=lambda: "enabled",
         operations=state.manager,
         game_operations=state.game,
+        mc_factory=DefaultMcAdapterFactory(),
         resources=RuntimeResources(session, worker._catalog, state.game, worker.refresh_resources),
         java=RuntimeJava(session, queries, worker._java_catalog, worker.refresh_java_resources, manager),
     )
