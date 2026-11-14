@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.utils import atomic_write_text
 from ECL.utils.account_reading import AccountSummary
 

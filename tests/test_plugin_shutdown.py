@@ -14,8 +14,8 @@
 from unittest.mock import Mock
 
 import ECL.launcher as launcher_module
-from ECL.foundation import EventBus
-from ECL.plugins import PluginManager
+from ECL.plugins.framework import PluginManager
+from ECL.utils import EventBus
 
 
 def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:

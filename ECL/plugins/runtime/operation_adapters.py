@@ -18,7 +18,7 @@ from time import monotonic
 from typing import Literal
 from uuid import uuid4
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.models import OperationGetRequest, OperationListRequest

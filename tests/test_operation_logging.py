@@ -13,8 +13,8 @@ from ECL.api.bridge import _ipc_handler, guard_ipc_handler
 from ECL.api.contracts import failure, success
 from ECL.api.operation_logging import IpcLogPolicy, IpcLogRuntime
 from ECL.api.registry import IpcCommandRegistry
-from ECL.foundation import EventBus
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from ECL.utils.operation_logging import (
     OperationLogFilter,
     ReadableLogFormatter,

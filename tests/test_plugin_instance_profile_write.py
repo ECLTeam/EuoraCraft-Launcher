@@ -7,7 +7,6 @@ from time import monotonic
 
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.plugins.worker_service import PluginWorkerService
@@ -15,6 +14,7 @@ from ECL.services.game import GameService
 from ECL.services.game.instance_profiles import InstanceProfileStore
 from ECL.services.game.version_stats import VersionStatsStore
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from ECL.utils.file_handles import FileHandle
 from ECL.utils.instance_reading import InstanceReadError
 from tests.test_plugin_host_files import call, finish

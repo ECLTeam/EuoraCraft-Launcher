@@ -11,13 +11,13 @@ from uuid import uuid4
 import pytest
 from plugin_network_helpers import MappedDialer, server, trusted_ssl_context
 
-from ECL.foundation import EventBus
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 
 
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])

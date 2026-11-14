@@ -20,11 +20,11 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.foundation.event_bus import EventBus
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import ToolChannel
 from ECL.services.processes import ProcessService
+from ECL.utils.event_bus import EventBus
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
 
 

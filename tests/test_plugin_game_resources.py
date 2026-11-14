@@ -6,7 +6,7 @@ from time import monotonic
 
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_host_files import begin, call, chunk, commit, finish

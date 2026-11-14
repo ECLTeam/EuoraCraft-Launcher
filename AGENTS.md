@@ -178,6 +178,21 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 - 禁止使用单行 docstring；项目架构测试会检查已声明 docstring 的多行格式。
 - 回归、平台分支与子模块集成测试遵循第 6 节。
 
+### 3.7 后端分层边界
+
+后端按职责分为三个域，依赖方向单向：**MC 可依赖内核，内核不得依赖 MC**。内核是不含 Minecraft 语义的通用插件宿主运行时；MC 承担全部游戏语义；边界层只做协议转换与校验。
+
+| 域 | 目录 | 依赖约束 |
+| --- | --- | --- |
+| 内核 | `ECL/plugins/`（除未来的 MC 适配器域）、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.mc`、`ECL.services.game`、`ECL.services.account`、`ECL.java` |
+| MC | `ECL/services/game/`、`ECL/services/account/`、`ECL/java/`、`ECL/game/`（子模块）；独立 MC 域目录（如 `ECL/mc/`）随适配器外移步骤创建 | 可依赖内核 |
+| 边界 | `ECL/api/` | 可依赖两者，只供前端调用 |
+
+- 新增能力先判断归属：定义了持久数据格式或属于启动链路必需的归 MC，其余归内核；无法判断时在实施方案中说明并由用户确认。
+- 内核需要 MC 能力时通过协议注入，不在内核内实例化 MC 实现；类型引用放 `if TYPE_CHECKING:`。
+- 边界由 `tests/test_layer_boundary.py` 用 AST 扫描校验。存量违规以显式豁免条目维护，每条注明原因与消除条件，测试内断言豁免条目上限；不得用目录通配跳过检查。
+- 插件对宿主暴露的扩展点注册表属于内核，即使其声明类型带有游戏语义。
+
 ## 4. 前端规范
 
 本节适用于项目新增或修改的前端代码。已有不符合项随相关变更逐步收敛，不得仅为统一风格进行无关的全仓重写。

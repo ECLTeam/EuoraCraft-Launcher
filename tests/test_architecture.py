@@ -32,7 +32,7 @@ def test_repository_root_contains_only_main_python_entrypoint() -> None:
 
 def test_bootstrap_and_plugin_api_live_only_inside_ecl() -> None:
     assert (ecl_root / "bootstrap.py").is_file()
-    assert (ecl_root / "plugin_api" / "__init__.py").is_file()
+    assert (ecl_root / "plugins" / "api" / "__init__.py").is_file()
     assert not (ecl_root.parent / "ecl_bootstrap.py").exists()
     assert not (ecl_root.parent / "ecl_plugin_api").exists()
 

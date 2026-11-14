@@ -56,11 +56,11 @@ from uuid import UUID
 
 import httpx
 
-from ECL.foundation import BuildEnvironment, EventBus
 from ECL.game import MicrosoftAuthManager, name_to_uuid
 from ECL.plugins.auth_providers import AuthProviderRegistry
-from ECL.utils import AccountError, atomic_write_text, get_logger
+from ECL.utils import AccountError, EventBus, atomic_write_text, get_logger
 from ECL.utils.account_reading import AccountSummary
+from ECL.utils.build_env import BuildEnvironment
 
 from .authlib import AuthlibAccountManager, AuthlibError
 from .littleskin import LittleSkinClient, LittleSkinCredentials, LittleSkinLogin, LittleSkinMinecraftToken

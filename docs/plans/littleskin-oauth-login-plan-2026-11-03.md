@@ -17,7 +17,7 @@
 
 调研基线：主仓库 `db93e53`，前端 gitlink `4d56026457febba21f5845d42fc4d92a72453b66`。
 
-- `ECL/utils/environment.py` 读取根目录 `.env` 和运行环境；Microsoft 配置在组合根 `ECL/application.py` 注入账户服务，缺省再使用 `ECL/foundation/build_env.py` 的构建值。
+- `ECL/utils/environment.py` 读取根目录 `.env` 和运行环境；Microsoft 配置在组合根 `ECL/application.py` 注入账户服务，缺省再使用 `ECL/utils/build_env.py` 的构建值。
 - `.github/workflows/build.yml` 有两处认证配置注入步骤，分别覆盖常规平台构建与另一构建路径，均须同步修改。
 - `ECL/services/account/accounts.py` 聚合账户、当前账户和 Microsoft 登录任务；`ECL/api/accounts.py` 对外提供账户命令。
 - `ECL/services/account/authlib.py` 负责外置账户及游戏令牌持久化、刷新和角色绑定。现有多角色待登录数据依赖密码，不适合直接套用 OAuth 角色选择。
@@ -111,7 +111,7 @@ OAuth 令牌始终视为不透明字符串。取得访问令牌后读取角色�
 
 | 文件范围 | 计划修改 |
 | --- | --- |
-| `ECL/utils/environment.py`、`ECL/foundation/build_env.py`、`ECL/application.py` | 配置读取、构建值和组合根注入 |
+| `ECL/utils/environment.py`、`ECL/utils/build_env.py`、`ECL/application.py` | 配置读取、构建值和组合根注入 |
 | `.env.example`、`.github/workflows/build.yml` | 占位示例、两处构建注入及缺配置处理 |
 | `ECL/services/account/littleskin.py`、`authlib.py`、`accounts.py` | OAuth 协议、回调、登录状态、保存与刷新 |
 | `ECL/api/accounts.py`、`models.py`、`operation_logging.py` 及现有命令登记入口 | 请求校验、IPC、状态事件和日志策略 |

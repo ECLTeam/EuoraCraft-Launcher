@@ -30,7 +30,6 @@ from threading import Event
 import httpx
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.services.updates import (
     AnnouncementService,
     StartupUpdateService,
@@ -39,6 +38,7 @@ from ECL.services.updates import (
     compare_versions,
     parse_version,
 )
+from ECL.utils import EventBus
 
 
 def _response(status_code: int = 200, *, json: object = None) -> httpx.Response:

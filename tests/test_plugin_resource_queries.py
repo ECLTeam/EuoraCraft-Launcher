@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_host_files import call
 

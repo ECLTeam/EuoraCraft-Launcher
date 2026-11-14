@@ -13,8 +13,8 @@ import pytest
 from plugin_network_helpers import MappedDialer, make_runtime, server
 from plugin_network_helpers import trusted_ssl_context as ssl_context
 
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker

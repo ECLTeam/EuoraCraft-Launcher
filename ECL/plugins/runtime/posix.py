@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import psutil
 
 from ECL.bootstrap import local_worker_endpoint
-from ECL.plugin_api._errors import PluginRuntimeError
+from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 
 if TYPE_CHECKING:

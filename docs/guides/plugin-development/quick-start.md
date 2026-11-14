@@ -28,7 +28,7 @@ hello_plugin/
 ```python
 from __future__ import annotations
 
-from ECL.plugin_api import Plugin as BasePlugin
+from ECL.plugins.api import Plugin as BasePlugin
 
 
 class Plugin(BasePlugin):

@@ -21,7 +21,7 @@ from threading import RLock
 from time import monotonic, sleep
 from uuid import uuid4
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.file_storage import FileDeletion, PluginFileStorage, StagedFile

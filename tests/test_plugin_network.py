@@ -15,8 +15,9 @@ import json
 
 import pytest
 
-from ECL.plugins import Plugin, PluginManager
+from ECL.plugins.framework import PluginManager
 from ECL.plugins.network import PluginHttpError
+from ECL.plugins.plugin import Plugin
 
 
 class _FakeHeaders(dict):
@@ -50,7 +51,7 @@ def _build_framework(tmp_path, client) -> PluginManager:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import Plugin\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class NetPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n",

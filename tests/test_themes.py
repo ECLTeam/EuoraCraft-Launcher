@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from ECL.foundation.themes import ThemeCatalog, normalize_theme_id
+from ECL.utils.themes import ThemeCatalog, normalize_theme_id
 
 
 def test_builtin_theme_ids_cover_skins_and_catppuccin_flavors() -> None:

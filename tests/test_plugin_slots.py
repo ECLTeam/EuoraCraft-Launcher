@@ -13,8 +13,9 @@
 
 from pathlib import Path
 
-from ECL.foundation import EventBus
-from ECL.plugins import Plugin, PluginManager
+from ECL.plugins.framework import PluginManager
+from ECL.plugins.plugin import Plugin
+from ECL.utils import EventBus
 
 
 def _framework() -> PluginManager:

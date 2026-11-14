@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from ECL.plugin_api import _guardian
+from ECL.plugins.api import _guardian
 
 
 def test_guardian_retains_original_identity_while_cleanup_pending(monkeypatch):

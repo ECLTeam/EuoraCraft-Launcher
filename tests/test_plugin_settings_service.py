@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.models import SettingDefinition
 from ECL.plugins.settings import PluginSettingsService
 

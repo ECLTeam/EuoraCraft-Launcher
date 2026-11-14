@@ -21,8 +21,8 @@ from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
-from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginEnvironmentError
 from ECL.utils import atomic_write_text, get_logger
 

@@ -117,7 +117,7 @@ def test_importing_main_does_not_preload_any_process_executor() -> None:
 def test_plugin_dispatch_loads_only_the_selected_executor() -> None:
     result = _run_isolated(
         "import main,sys,json,types\n"
-        "module=types.ModuleType('ECL.plugin_api._process')\n"
+        "module=types.ModuleType('ECL.plugins.api._process')\n"
         "module.run_plugin_process=lambda options: 7 if options.host_pid==123 else 9\n"
         "sys.modules[module.__name__]=module\n"
         f"code=main.run_launcher({list(plugin_arguments)!r})\n"

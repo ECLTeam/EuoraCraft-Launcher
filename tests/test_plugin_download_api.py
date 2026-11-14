@@ -10,7 +10,7 @@ from plugin_download_helpers import downloads as downloads
 from plugin_network_helpers import MappedDialer, server
 from pydantic import ValidationError
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.download_api import RuntimeDownloads
 from ECL.plugins.runtime.models import DownloadSubmitRequest

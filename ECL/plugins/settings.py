@@ -21,7 +21,7 @@ from threading import RLock
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.runtime.models import SettingDefinition
 from ECL.utils import atomic_write_text
 

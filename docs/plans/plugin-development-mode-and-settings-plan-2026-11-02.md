@@ -40,7 +40,7 @@
 | `ECL/plugins/manager/lifecycle.py`  | 已有目录插件手动禁用再启用流程                     | 接入开发模式调度，保留人工禁用意图                        |
 | `ECL/plugins/worker_service.py`     | 运行、清理、监测归属集中；`root_path` 用于运行内容 | 区分开发源目录和执行副本，串行切换运行代次                |
 | `ECL/plugins/grant_store.py`        | 授权绑定代码摘要，变化后拒绝                       | 增加开发会话的临时准入，普通运行维持现有规则              |
-| `ECL/plugin_api/snapshot.py`        | 扫描完整代码清单并复核，未提供源码开发监听         | 与开发文件集、复制校验协调，保持正式快照边界              |
+| `ECL/plugins/api/snapshot.py`        | 扫描完整代码清单并复核，未提供源码开发监听         | 与开发文件集、复制校验协调，保持正式快照边界              |
 | `ECL/plugins/runtime/broker.py`     | 自身设置 schema、读写锁、文件、事件集中于单个运行  | 将配置读写移交统一服务，保留 Worker 授权与事件适配        |
 | `ECL/api/plugins.py`                | 管理入口及 Worker 设置接口已存在                   | 增加开发状态/切换，补齐统一设置的输入输出契约             |
 | `frontend/src/views/Plugins.vue`    | 每个插件的设置按钮打开单插件弹窗                   | 增加统一设置与开发模式入口，原设置按钮定位同一界面        |

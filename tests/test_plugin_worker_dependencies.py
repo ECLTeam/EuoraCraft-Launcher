@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from plugin_wheel_helpers import make_wheel, wheel_lock
 
-from ECL.plugin_api._imports import LockedImports
-from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.api._imports import LockedImports
+from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.dependency_lock import plugin_target
 from ECL.plugins.environment_pool import PluginEnvironmentPool, PluginEnvironmentSpec
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec

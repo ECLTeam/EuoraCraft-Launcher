@@ -44,7 +44,7 @@ import psutil
 from anyio import to_thread
 
 from ECL.game import CoreError, LaunchConfig
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.launch_hooks import LaunchContext
 from ECL.plugins.run_store import PluginRunError
 from ECL.services.account.authlib import AuthlibError

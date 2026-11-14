@@ -26,8 +26,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import Field, ValidationError
 
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration, CustomUiRequest

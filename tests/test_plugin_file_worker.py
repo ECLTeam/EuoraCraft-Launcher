@@ -7,11 +7,11 @@ from time import monotonic, sleep
 
 import pytest
 
-from ECL.foundation import EventBus
-from ECL.plugin_api._rpc import RpcRequest
+from ECL.plugins.api._rpc import RpcRequest
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 
 
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])

@@ -2,7 +2,7 @@
 
 ## 生命周期
 
-第三方基类为 `ECL.plugin_api.Plugin`，构造参数只有已绑定的 `HostClient`。通常覆盖 `on_load`、`on_enable`、`on_frontend_ready`、`on_disable`、`on_unload`；可使用同步或 async 方法。
+第三方基类为 `ECL.plugins.api.Plugin`，构造参数只有已绑定的 `HostClient`。通常覆盖 `on_load`、`on_enable`、`on_frontend_ready`、`on_disable`、`on_unload`；可使用同步或 async 方法。
 
 `on_load` 注册定义，`on_enable` 完成业务启用；可信前端就绪后会调用 `on_frontend_ready`。退出回调是准备通知，不等于宿主已经结束线程、网络或进程。插件自己的资源应有明确释放路径，不依赖垃圾回收或无限等待。
 

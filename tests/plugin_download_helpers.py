@@ -7,14 +7,14 @@ from uuid import uuid4
 import pytest
 from plugin_network_helpers import MappedDialer, trusted_ssl_context
 
-from ECL.foundation import EventBus
-from ECL.plugin_api._rpc import RpcRequest
+from ECL.plugins.api._rpc import RpcRequest
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 
 
 def call(broker, method, params=None, key=None, seconds=5):

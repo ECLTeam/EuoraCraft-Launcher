@@ -36,7 +36,7 @@ import pytest
 import ECL.application as application_module
 from ECL.application import ApplicationContext, create_application
 from ECL.cli import LaunchOptions
-from ECL.foundation import EventBus
+from ECL.utils import EventBus
 
 
 class Closable:

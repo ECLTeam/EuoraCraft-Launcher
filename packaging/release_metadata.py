@@ -124,7 +124,7 @@ def _source_metadata(root_path: Path) -> ReleaseMetadata:
     只解析源码版本常量，不执行版本模块或使用分支名称推测版本。
     """
     try:
-        source = (root_path / "ECL" / "foundation" / "version.py").read_text(encoding="utf-8")
+        source = (root_path / "ECL" / "version.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
     except (OSError, UnicodeError, SyntaxError) as exc:
         raise ReleaseValidationError("无法读取源码版本信息") from exc

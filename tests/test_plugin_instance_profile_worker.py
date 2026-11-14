@@ -8,13 +8,13 @@ from time import monotonic, sleep
 
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService
 from ECL.services.game.instance_profiles import InstanceProfileStore
 from ECL.services.game.version_stats import VersionStatsStore
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 
 
 @pytest.mark.parametrize("is_frozen", [False, True], ids=["source", "frozen"])

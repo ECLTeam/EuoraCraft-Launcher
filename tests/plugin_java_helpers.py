@@ -5,7 +5,6 @@ import sys
 
 import httpx
 
-from ECL.foundation import EventBus
 from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
@@ -13,6 +12,7 @@ from ECL.java.queries import JavaQueries
 from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 
 
 def make_service(tmp_path, monkeypatch, transport=None, launch_spec=None, install=False):
@@ -39,7 +39,7 @@ def make_service(tmp_path, monkeypatch, transport=None, launch_spec=None, instal
     source.mkdir()
     metadata = {"name": "java-test", "api_version": 2}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
-    (source / "main.py").write_text("from ECL.plugin_api import Plugin\n", encoding="utf-8")
+    (source / "main.py").write_text("from ECL.plugins.api import Plugin\n", encoding="utf-8")
     service.register(metadata, source, "directory")
     return service, manager, records, client, operations
 

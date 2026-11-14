@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from test_plugin_worker_manager import make_plugin
 
-from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins import PluginManager
+from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.framework import PluginManager
 
 
 def test_session_disable_blocks_load_enable_reload_and_worker_without_persisting(tmp_path):
@@ -153,7 +153,7 @@ def test_system_route_registration_remains_idempotent(tmp_path):
     root = tmp_path / "resources/resources/system_plugins/system"
     root.mkdir(parents=True)
     (root / "plugin.json").write_text('{"name":"system"}')
-    (root / "main.py").write_text("from ECL.plugins import Plugin as Base\nclass Plugin(Base):\n    pass\n")
+    (root / "main.py").write_text("from ECL.plugins.plugin import Plugin as Base\nclass Plugin(Base):\n    pass\n")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:

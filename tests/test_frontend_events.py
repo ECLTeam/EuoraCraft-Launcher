@@ -23,12 +23,12 @@ from typing import Any
 
 from pydantic import JsonValue
 
-from ECL.foundation import EventBus
-from ECL.host.frontend_events import (
+from ECL.desktop.frontend_events import (
     FrontendEventPolicy,
     subscribe_all_frontend_events,
     subscribe_frontend_event,
 )
+from ECL.utils import EventBus
 
 
 def _collect_events() -> tuple[EventBus, list[tuple[str, Any]], Any]:

@@ -19,7 +19,7 @@ import json
 import pytest
 from test_accounts import FakeAuthlibManager, FakeMicrosoftManager
 
-from ECL.plugins import PluginManager
+from ECL.plugins.framework import PluginManager
 from ECL.services import AccountManager
 from ECL.utils import AccountError
 
@@ -43,7 +43,8 @@ def _register_provider_plugin(data_path, *, permission: bool = True) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import AuthField, Plugin\n"
+        "from ECL.plugins.auth_providers import AuthField\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class AuthPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"

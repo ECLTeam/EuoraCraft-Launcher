@@ -18,8 +18,7 @@ from copy import deepcopy
 
 import pytest
 
-from ECL.utils import ConfigStore
-from ECL.utils.config import default_config
+from ECL.utils.config import ConfigStore, default_config
 
 
 def test_new_config_uses_absolute_minecraft_path_and_creates_directory(tmp_path) -> None:

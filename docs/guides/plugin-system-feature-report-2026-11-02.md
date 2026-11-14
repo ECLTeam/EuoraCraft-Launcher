@@ -57,7 +57,7 @@
 
 ### 2.2 第三方 Worker 插件
 
-第三方插件必须显式声明 `api_version: 2`，使用 `ECL.plugin_api.Plugin`。宿主不把 framework、配置服务或账户服务对象传入 Worker，跨进程只传递经过校验的 JSON。
+第三方插件必须显式声明 `api_version: 2`，使用 `ECL.plugins.api.Plugin`。宿主不把 framework、配置服务或账户服务对象传入 Worker，跨进程只传递经过校验的 JSON。
 
 主要调用关系如下：
 
@@ -77,7 +77,7 @@
 
 接口缺失或当前宿主没有接入某项服务时，应返回明确失败。存在 SDK 方法或设计章节，并不单独证明该能力在所有运行环境可用。
 
-依据：[管理器](../../ECL/plugins/manager/base.py)、[Worker 服务](../../ECL/plugins/worker_service.py)、[Broker](../../ECL/plugins/runtime/broker.py)、[第三方 SDK](../../ECL/plugin_api/plugin.py)。
+依据：[管理器](../../ECL/plugins/manager/base.py)、[Worker 服务](../../ECL/plugins/worker_service.py)、[Broker](../../ECL/plugins/runtime/broker.py)、[第三方 SDK](../../ECL/plugins/api/plugin.py)。
 
 ## 3. 安装、更新与依赖
 
@@ -467,7 +467,7 @@ Python Worker SDK 提供 `HostClient.call/call_async`、本地回调注册、自
 
 制作归档可运行 `python packaging/build-eclplugin.py <插件源目录> <输出.eclplugin>`；输出不得位于插件源目录内。制作工具生成归档清单，不替作者求解或准备完整依赖锁和 wheels。
 
-依据：[Python SDK](../../ECL/plugin_api/plugin.py)、[前端 SDK 导出](../../frontend/src/plugin-sdk/index.ts)、[前端 API 封装](../../frontend/src/plugin-sdk/api.ts)、[注入桥](../../frontend/src/composables/usePluginBridge.ts)、[制作工具](../../packaging/build-eclplugin.py)。
+依据：[Python SDK](../../ECL/plugins/api/plugin.py)、[前端 SDK 导出](../../frontend/src/plugin-sdk/index.ts)、[前端 API 封装](../../frontend/src/plugin-sdk/api.ts)、[注入桥](../../frontend/src/composables/usePluginBridge.ts)、[制作工具](../../packaging/build-eclplugin.py)。
 
 ### 16.2 现有示例
 

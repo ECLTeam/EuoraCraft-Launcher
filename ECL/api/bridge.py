@@ -44,8 +44,8 @@ from ECL.api.models import (
 from ECL.api.operation_logging import IpcLogPolicy, IpcLogRuntime, IpcLogSpec
 from ECL.application import ApplicationContext
 from ECL.cli import LaunchOptions, apply_launch_overrides
+from ECL.desktop.maintenance import DebugMaintenanceError
 from ECL.game import AuthException, GameDataError, NetException
-from ECL.host.maintenance import DebugMaintenanceError
 from ECL.services.account import AccountError, WardrobeError
 from ECL.services.game import GameServiceError
 from ECL.services.game.launch import candidate_roots, resolve_launch_target

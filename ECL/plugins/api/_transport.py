@@ -17,8 +17,8 @@ import sys
 from typing import Protocol
 
 from ECL.bootstrap import local_worker_endpoint
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api.contracts import WireMessage
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api.contracts import WireMessage
 
 
 class LocalChannel(Protocol):
@@ -93,11 +93,11 @@ def create_local_server(run_id: str) -> LocalServer:
     """
     address = local_worker_endpoint(run_id)
     if sys.platform == "win32":
-        from ECL.plugin_api._windows_transport import PipeServer
+        from ECL.plugins.api._windows_transport import PipeServer
 
         return PipeServer(address)
     if sys.platform in {"linux", "darwin"}:
-        from ECL.plugin_api._posix_transport import UnixServer
+        from ECL.plugins.api._posix_transport import UnixServer
 
         return UnixServer(address)
     raise PluginRuntimeError("当前平台尚不支持插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")
@@ -114,11 +114,11 @@ def connect_local(address: str, host_pid: int, timeout: float = 5.0) -> LocalCha
     :raises PluginRuntimeError: 平台、连接或身份不满足要求
     """
     if sys.platform == "win32":
-        from ECL.plugin_api._windows_transport import connect_pipe
+        from ECL.plugins.api._windows_transport import connect_pipe
 
         return connect_pipe(address, host_pid, timeout)
     if sys.platform in {"linux", "darwin"}:
-        from ECL.plugin_api._posix_transport import connect_unix
+        from ECL.plugins.api._posix_transport import connect_unix
 
         return connect_unix(address, host_pid, timeout)
     raise PluginRuntimeError("当前平台尚不支持插件 Worker", "PLUGIN_RUNTIME_UNSUPPORTED")

@@ -32,7 +32,7 @@ from typing import Annotated, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 from pydantic import JsonValue as PydanticJsonValue
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.network_targets import NetworkOrigin
 
 

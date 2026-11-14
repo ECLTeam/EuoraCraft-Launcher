@@ -7,7 +7,7 @@ from time import monotonic
 import pytest
 from pydantic import ValidationError
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.models import FileReplaceBeginRequest
 from ECL.utils.file_handles import FileBoundaryError, FileHandle
 from tests.test_plugin_file_delete import published

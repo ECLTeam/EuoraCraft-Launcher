@@ -3,11 +3,14 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：通用工具包。
+# 文件作用：通用工具包标记，只聚合无第三方依赖的工具。
+#
+# 需要 pydantic、httpx、dotenv、PIL 的模块（config、network、environment、
+# instance_shortcuts 等）不在此聚合：导入本包不应把外部依赖带进轻量入口
+# 与插件 Worker。使用方按需从具体模块导入。
 # ============================================================
 
-from ECL.utils.config import ConfigStore, default_config
-from ECL.utils.environment import Environment
+from ECL.utils.app_paths import get_pyproject_data, get_runtime_info
 from ECL.utils.errors import (
     AccountError,
     AuthlibError,
@@ -22,30 +25,35 @@ from ECL.utils.errors import (
     VersionScanError,
     WardrobeError,
 )
-from ECL.utils.files import atomic_write_bytes, atomic_write_text
+from ECL.utils.event_bus import EventBus, EventHandler, Unsubscribe
+from ECL.utils.files import AtomicWritePolicy, atomic_write_bytes, atomic_write_text
 from ECL.utils.logging import LoggingRuntime, configure_logging, get_logger
-from ECL.utils.network import get_with_retries
+from ECL.utils.themes import ThemeCatalog, normalize_theme_id
 
 __all__ = [
     "AccountError",
+    "AtomicWritePolicy",
     "AuthlibError",
     "AuthlibProfileSelectionRequired",
     "ConfigError",
-    "ConfigStore",
     "ConfigValidationError",
     "ConnectorError",
     "ConnectorNotAvailableError",
     "DebugMaintenanceError",
-    "Environment",
+    "EventBus",
+    "EventHandler",
     "GameServiceError",
     "LoggingRuntime",
     "PluginCommandError",
+    "ThemeCatalog",
+    "Unsubscribe",
     "VersionScanError",
     "WardrobeError",
     "atomic_write_bytes",
     "atomic_write_text",
     "configure_logging",
-    "default_config",
     "get_logger",
-    "get_with_retries",
+    "get_pyproject_data",
+    "get_runtime_info",
+    "normalize_theme_id",
 ]

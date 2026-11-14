@@ -23,9 +23,9 @@ from time import monotonic
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.installation_store import WorkerManifest
 from ECL.utils import get_logger
 

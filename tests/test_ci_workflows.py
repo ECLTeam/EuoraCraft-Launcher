@@ -143,7 +143,7 @@ def test_actual_platform_version_injection(tmp_path, platform_index, version_typ
     matched = re.search(r"(?ms)^          (?:python|\.venv-arch/bin/python) - <<'PY'\n(.*?)^          PY$", block)
     assert matched is not None
     payload = textwrap.dedent(matched[1])
-    target = tmp_path / "ECL" / "foundation" / "version.py"
+    target = tmp_path / "ECL" / "version.py"
     target.parent.mkdir(parents=True)
     original = '__version__ = "0.0.1-alpha"\n__version_type__ = "alpha"\n'
     target.write_text(original, encoding="utf-8")
@@ -322,7 +322,7 @@ def test_manual_tag_build_never_checks_publication_or_publishes(release_module, 
 
 
 def test_manual_branch_uses_source_version_not_branch_name(release_module, monkeypatch, tmp_path):
-    version_path = tmp_path / "ECL" / "foundation" / "version.py"
+    version_path = tmp_path / "ECL" / "version.py"
     version_path.parent.mkdir(parents=True)
     version_path.write_text('__version__ = "1.2.3-rc.2"\n__version_type__ = "rc"\n', encoding="utf-8")
     calls = _fake_commands(monkeypatch, release_module)

@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from ECL.cli import parse_launch_options
-from ECL.foundation import EventBus
-from ECL.host.single_instance import SingleInstanceService, probe_running_instance
-from ECL.host.tauri import Adapter
+from ECL.desktop.single_instance import SingleInstanceService, probe_running_instance
+from ECL.desktop.tauri import Adapter
+from ECL.utils import EventBus
 
 
 def test_desktop_parameters_keep_request_and_process_settings_separate() -> None:
@@ -68,12 +68,12 @@ def test_forwarding_keeps_different_accounts_as_different_requests(tmp_path) -> 
 def test_initial_minimize_does_not_request_focus(monkeypatch) -> None:
     actions: list[str] = []
     window = SimpleNamespace(minimize=lambda: actions.append("minimize"), set_focus=lambda: actions.append("focus"))
-    monkeypatch.setattr("ECL.host.tauri.Manager.get_webview_window", lambda *_: window)
+    monkeypatch.setattr("ECL.desktop.tauri.Manager.get_webview_window", lambda *_: window)
     adapter = object.__new__(Adapter)
     adapter._start_minimized = True
     adapter._startup_focus_attempted = False
-    monkeypatch.setattr("ECL.host.tauri.RunEvent", SimpleNamespace(Ready=type("Ready", (), {})))
-    from ECL.host.tauri import RunEvent
+    monkeypatch.setattr("ECL.desktop.tauri.RunEvent", SimpleNamespace(Ready=type("Ready", (), {})))
+    from ECL.desktop.tauri import RunEvent
 
     adapter._focus_main_window_on_ready(None, RunEvent.Ready())
     adapter._focus_main_window_on_ready(None, RunEvent.Ready())

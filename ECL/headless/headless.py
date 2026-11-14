@@ -17,11 +17,11 @@ import traceback
 from dataclasses import asdict
 from pathlib import Path
 
-from ECL.foundation.files import atomic_write_text
-from ECL.foundation.logging import safe_log_text
-from ECL.runtime.context import HeadlessContext
-from ECL.runtime.contracts import HeadlessExitCode, HeadlessOptions, HeadlessResult, HeadlessRuntimeError
-from ECL.runtime.tasks import execute_task
+from ECL.headless.context import HeadlessContext
+from ECL.headless.contracts import HeadlessExitCode, HeadlessOptions, HeadlessResult, HeadlessRuntimeError
+from ECL.headless.tasks import execute_task
+from ECL.utils.files import atomic_write_text
+from ECL.utils.log_redaction import safe_log_text
 
 
 def _write_result(result: HeadlessResult, result_file: Path | None) -> None:

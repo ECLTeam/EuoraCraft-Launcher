@@ -21,8 +21,8 @@ from uuid import uuid4
 
 from pydantic import Field, StrictInt, ValidationError
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import RequestModel, ResourceListRequest
 from ECL.plugins.runtime.resources import ResourcePages

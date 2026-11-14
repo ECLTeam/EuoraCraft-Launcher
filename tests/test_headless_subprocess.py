@@ -7,8 +7,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ECL.foundation import EventBus
-from ECL.host.single_instance import SingleInstanceService
+from ECL.desktop.single_instance import SingleInstanceService
+from ECL.utils import EventBus
 
 root_path = Path(__file__).resolve().parents[1]
 
@@ -25,8 +25,8 @@ import runpy
 import sys
 class Guard(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        prefixes = ('ECL.launcher', 'ECL.application', 'ECL.host', 'ECL.api', 'ECL.services', 'ECL.plugins',
-                    'pytaurix', 'ECL.utils')
+        prefixes = ('ECL.launcher', 'ECL.application', 'ECL.desktop', 'ECL.api', 'ECL.services', 'ECL.plugins',
+                    'pytaurix', 'ECL.utils.config', 'ECL.utils.network', 'ECL.utils.environment')
         if any(fullname == name or fullname.startswith(name + '.') for name in prefixes):
             raise AssertionError('禁止载入模块：' + fullname)
 sys.meta_path.insert(0, Guard())
@@ -48,7 +48,7 @@ runpy.run_path('main.py', run_name='__main__')
     )
 
 
-def test_entry_does_not_import_ui_services_or_aggregated_utils(tmp_path) -> None:
+def test_entry_does_not_import_ui_services_or_heavy_dependencies(tmp_path) -> None:
     data_path = tmp_path / "unused"
     result = _run(["--headless", "--task=runtime-check", "--data-dir", str(data_path)], guard_imports=True)
     assert result.returncode == 0, result.stderr

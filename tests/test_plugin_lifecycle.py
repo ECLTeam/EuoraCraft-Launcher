@@ -4,7 +4,7 @@ from pathlib import Path
 
 from test_plugin_worker_manager import make_plugin
 
-from ECL.plugins import PluginManager
+from ECL.plugins.framework import PluginManager
 
 
 def test_reinstall_updates_code_without_enabling(tmp_path: Path) -> None:

@@ -17,7 +17,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameLaunchRequest, GameRunningRequest, GameStopRequest

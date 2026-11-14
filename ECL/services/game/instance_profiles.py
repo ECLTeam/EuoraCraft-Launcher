@@ -37,7 +37,7 @@ from time import monotonic
 from typing import Any
 from uuid import uuid4
 
-from ECL.plugin_api.contracts import JsonValue
+from ECL.plugins.api.contracts import JsonValue
 from ECL.utils import atomic_write_bytes, atomic_write_text, get_logger
 from ECL.utils.instance_reading import InstanceReadBoundary, InstanceReadError
 

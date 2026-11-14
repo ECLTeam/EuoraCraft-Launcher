@@ -6,9 +6,9 @@ from time import monotonic
 import pytest
 from test_plugin_worker_manager import make_plugin
 
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugins import PluginManager
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.framework import PluginManager
 from ECL.plugins.installation_store import WorkerManifest
 
 

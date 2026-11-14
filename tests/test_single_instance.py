@@ -20,8 +20,8 @@ import socket
 
 import pytest
 
-from ECL.foundation import EventBus
-from ECL.host.single_instance import SingleInstanceService, probe_running_instance
+from ECL.desktop.single_instance import SingleInstanceService, probe_running_instance
+from ECL.utils import EventBus
 
 
 def _read_discovery(tmp_path) -> dict:
@@ -64,7 +64,7 @@ def test_probe_removes_stale_discovery(tmp_path, monkeypatch) -> None:
         json.dumps({"port": 1, "token": "t", "pid": 123, "protocolVersion": 1}),
         encoding="utf-8",
     )
-    monkeypatch.setattr("ECL.host.single_instance.psutil.pid_exists", lambda _pid: False)
+    monkeypatch.setattr("ECL.desktop.single_instance.psutil.pid_exists", lambda _pid: False)
 
     assert probe_running_instance(tmp_path, ["x"]) is False
     assert not discovery_path.exists()
@@ -84,7 +84,7 @@ def test_probe_connect_refused_cleans_up(tmp_path, monkeypatch) -> None:
         json.dumps({"port": dead_port, "token": "t", "pid": os.getpid(), "protocolVersion": 1}),
         encoding="utf-8",
     )
-    monkeypatch.setattr("ECL.host.single_instance.psutil.pid_exists", lambda _pid: True)
+    monkeypatch.setattr("ECL.desktop.single_instance.psutil.pid_exists", lambda _pid: True)
 
     assert probe_running_instance(tmp_path, ["x"]) is False
     assert not discovery_path.exists()

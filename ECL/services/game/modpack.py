@@ -862,7 +862,7 @@ class InstanceCommitPolicy:
     复制落位兜底，避免整次安装在最后一步失败。
     """
 
-    # 与单文件原子写同一思路（ECL.foundation.files），但整合包写入量更大，
+    # 与单文件原子写同一思路（ECL.utils.files），但整合包写入量更大，
     # 扫描和索引的占用窗口更长，因此延迟序列更长。
     replace_retry_delays: tuple[float, ...] = (0.05, 0.15, 0.4, 1.0, 2.0)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from test_accounts import FakeAuthlibManager, FakeMicrosoftManager
 
-from ECL.plugins import PluginManager
+from ECL.plugins.framework import PluginManager
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services import AccountManager

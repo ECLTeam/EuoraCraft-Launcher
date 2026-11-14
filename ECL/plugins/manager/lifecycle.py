@@ -28,7 +28,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ECL.plugin_api._errors import PluginRuntimeError
+from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.dependencies import parse_dependency, parse_version
 
 from .base import _PluginState

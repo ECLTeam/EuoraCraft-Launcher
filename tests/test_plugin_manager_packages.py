@@ -7,8 +7,8 @@ import sys
 import pytest
 from plugin_wheel_helpers import make_package, make_wheel
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugins import PluginManager
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.framework import PluginManager
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 
 
@@ -99,7 +99,7 @@ def test_safe_mode_discovers_package_without_starting_worker(tmp_path):
 
 
 def test_failure_in_on_load_does_not_report_enabled(tmp_path):
-    code = "from ECL.plugin_api import Plugin as Base\nclass Plugin(Base):\n    def on_load(self):\n        raise RuntimeError('private detail')\n"
+    code = "from ECL.plugins.api import Plugin as Base\nclass Plugin(Base):\n    def on_load(self):\n        raise RuntimeError('private detail')\n"
     manager = install_and_restart(tmp_path, make_package(tmp_path, code=code))
     try:
         result = manager.enable("demo")
@@ -122,7 +122,7 @@ def test_package_dependency_missing_prevents_enable(tmp_path):
 def test_two_package_workers_use_distinct_versions_without_host_dependency_conflict(tmp_path):
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
-    code = "from ECL.plugin_api import Plugin as Base\nimport samplelib\nclass Plugin(Base):\n    def on_load(self):\n        self.define_command('version', self.version, output_fields=({'name':'value','type':'string'},))\n    def version(self):\n        return {'value':samplelib.VALUE}\n"
+    code = "from ECL.plugins.api import Plugin as Base\nimport samplelib\nclass Plugin(Base):\n    def on_load(self):\n        self.define_command('version', self.version, output_fields=({'name':'value','type':'string'},))\n    def version(self):\n        return {'value':samplelib.VALUE}\n"
     for name, version in (("one", "1.0"), ("two", "2.0")):
         folder = tmp_path / name
         folder.mkdir()

@@ -13,7 +13,7 @@
 import json
 from pathlib import Path
 
-from ECL.plugins import PluginManager
+from ECL.plugins.framework import PluginManager
 from ECL.services.game.crash.analyzer import CrashAnalyzer
 
 
@@ -38,7 +38,7 @@ def _register_plugin(data_path: Path) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import Plugin\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class CrashPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"
@@ -97,7 +97,7 @@ def test_crash_extension_exception_is_isolated(tmp_path) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import Plugin\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class BoomPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"

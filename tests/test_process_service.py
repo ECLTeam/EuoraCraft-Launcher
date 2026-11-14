@@ -25,9 +25,9 @@ from typing import Any
 
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.game import InstancesManager
 from ECL.services.processes import ProcessService
+from ECL.utils import EventBus
 
 
 def wait_until(cond: Callable[[], bool], timeout: float = 6.0) -> bool:

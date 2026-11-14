@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.public_queries import RuntimePublicQueries
 from ECL.plugins.worker_service import PluginWorkerService
@@ -31,7 +31,7 @@ def public(tmp_path):
     source.mkdir()
     metadata = {"name": "public-test", "api_version": 2}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
-    (source / "main.py").write_text("from ECL.plugin_api import Plugin\n", encoding="utf-8")
+    (source / "main.py").write_text("from ECL.plugins.api import Plugin\n", encoding="utf-8")
     service.register(metadata, source, "directory")
     entry = service._entry("public-test")
     api = RuntimePublicQueries(

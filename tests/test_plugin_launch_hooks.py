@@ -13,7 +13,8 @@
 
 import json
 
-from ECL.plugins import LaunchContext, PluginManager
+from ECL.plugins.framework import PluginManager
+from ECL.plugins.launch_hooks import LaunchContext
 
 
 def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> None:
@@ -34,7 +35,7 @@ def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> 
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import Plugin\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class LaunchPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"
@@ -99,7 +100,7 @@ def test_plugin_without_launch_permission_cannot_register_hook(tmp_path) -> None
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import Plugin\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class LaunchPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"
@@ -128,7 +129,7 @@ def test_launch_hook_exception_is_isolated(tmp_path) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import Plugin\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class BoomPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"

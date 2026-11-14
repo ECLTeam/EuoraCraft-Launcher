@@ -1,6 +1,6 @@
 # 无头插件子进程整合实施方案 v1
 
-> 目录约定更新：启动引导与插件 API 已按 下沉实施方案 归入 `ECL/bootstrap.py` 和 `ECL/plugin_api/`。当前插件使用 `from ECL.plugin_api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
+> 目录约定更新：启动引导与插件 API 已按 下沉实施方案 归入 `ECL/bootstrap.py` 和 `ECL/plugins/api/`。当前插件使用 `from ECL.plugins.api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
 
 日期：2026-10-16。状态：用户已确认可改造无头模式并按需导入；本次入口整合已完成验收。
 
@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | `main.py:17` | 在导入 ECL 前识别 `--internal-plugin-worker`，进入独立 SDK 引导 | 插件是专用内部入口，没有纳入正式无头模式 |
 | `ECL/cli.py:290`、`:383` | 无头模式必须提供任务；只允许 runtime-check 相关参数 | 插件是持续 IPC 会话，不能直接套用一次任务、一份 JSON 的结束语义 |
-| `ECL/runtime/context.py`、`headless.py` | 拥有探测日志和路径；结果写入 stdout 或结果文件 | 不适合承载插件认证连接、双向消息和运行结束事件 |
+| `ECL/headless/context.py`、`headless.py` | 拥有探测日志和路径；结果写入 stdout 或结果文件 | 不适合承载插件认证连接、双向消息和运行结束事件 |
 | `ECL/plugins/runtime/executable.py:70` | 源码使用当前 base CPython 与 `-S`；冻结模式使用当前原始 EXE | 已复用发行解释器，不存在单独的 Worker.exe 构建目标 |
 | `ecl_plugin_api/_worker.py:193` | 连接宿主、校验 Job、等待内容加载许可后执行入口 | 安全原语可复用；引导入口应归入无头插件角色 |
 | `ECL/plugins/runtime/supervisor.py:70`、`:132` | 挂起创建、先分配 Job 后恢复、核验实际连接进程、检查用户审阅 | 必须由新的无头启动命令走通相同边界 |
@@ -79,10 +79,10 @@ ECL.exe --headless --role plugin --endpoint <宿主端点> --host-pid <PID> --ru
 - 新增根目录 `ecl_bootstrap.py`：仅标准库，定义不可变的进程路由结果和角色参数规则；不得导入 ECL、PyTauri、业务服务或用户模块。
 - `main.py` 使用轻量分流结果选择模式。桌面和普通无头任务仍交给既有 CLI 与任务执行器；插件角色进入无头插件执行器。
 - `ECL/cli.py` 复用轻量层的模式判定和校验规则，避免与主入口分别解释同一组角色参数。具体桌面业务选项继续由现有解析器处理。
-- `ECL/runtime/contracts.py` 明确任务与插件角色是不同生命周期，不把插件运行塞入仅返回 RuntimeProbe 的任务模型。
+- `ECL/headless/contracts.py` 明确任务与插件角色是不同生命周期，不把插件运行塞入仅返回 RuntimeProbe 的任务模型。
 - 不通过 `sys.modules` 删除、伪造 has_host_modules 或放宽安全握手掩盖导入越界。
 
-不能直接从 `ECL.runtime.headless` 导入插件执行器：Python 会先初始化 ECL 包，而现有插件握手要求尚未加载 ECL。轻量分流放在 ECL 包之外是这一导入边界的实现需要，不是第二份运行环境。
+不能直接从 `ECL.headless.headless` 导入插件执行器：Python 会先初始化 ECL 包，而现有插件握手要求尚未加载 ECL。轻量分流放在 ECL 包之外是这一导入边界的实现需要，不是第二份运行环境。
 
 ### 4.2 无头插件执行器与宿主监管
 

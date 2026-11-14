@@ -10,7 +10,7 @@ from threading import Event
 import pytest
 from plugin_network_helpers import MappedDialer, server, trusted_ssl_context
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.network_api import PluginNetworkService

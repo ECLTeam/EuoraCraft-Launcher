@@ -12,14 +12,14 @@ from types import SimpleNamespace
 import pytest
 from anyio.from_thread import start_blocking_portal
 
-from ECL.foundation import EventBus
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService, GameServiceError
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from ECL.utils.errors import AccountError
 from ECL.utils.file_handles import FileBoundaryError
 from tests.test_game_service import EmptySearchMinecraft, FakeAccounts

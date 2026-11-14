@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ECL.foundation import EventBus
-from ECL.host.single_instance import SingleInstanceService
+from ECL.desktop.single_instance import SingleInstanceService
 from ECL.java.models import JavaPolicy
 from ECL.plugins.environment_pool import PluginEnvironmentPool
 from ECL.plugins.installation_store import PluginInstallationStore
 from ECL.services.account.wardrobe import WardrobeStore
+from ECL.utils import EventBus
 from ECL.utils.config import ConfigStore
 
 declared_top_level = frozenset({"cache", "config", "logs", "plugins", "runtime", "temp", "userdata"})

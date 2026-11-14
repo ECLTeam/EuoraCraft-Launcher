@@ -7,7 +7,6 @@ from threading import Event
 import httpx
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.game import JavaRuntime
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaPolicy
@@ -16,6 +15,7 @@ from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.java_api import RuntimeJava
 from ECL.plugins.runtime.resources import RuntimeResources
+from ECL.utils import EventBus
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_host_files import call, finish
 

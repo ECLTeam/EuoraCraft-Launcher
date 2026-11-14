@@ -15,8 +15,8 @@ import json
 
 import pytest
 
-from ECL.host import maintenance
-from ECL.host.maintenance import (
+from ECL.desktop import maintenance
+from ECL.desktop.maintenance import (
     DebugMaintenanceError,
     MaintenancePolicy,
     apply_pending_debug_maintenance,

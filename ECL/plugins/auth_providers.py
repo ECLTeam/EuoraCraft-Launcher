@@ -27,7 +27,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ECL.plugin_api.contracts import JsonValue
+from ECL.plugins.api.contracts import JsonValue
 from ECL.utils import get_logger
 
 # 第三方认证返回值上限：账户标识与不透明负载都要有界。

@@ -170,7 +170,7 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, re
-          path = "ECL/foundation/build_env.py"
+          path = "ECL/utils/build_env.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
           cid = os.environ.get("CLIENT_ID", "")
@@ -197,7 +197,7 @@ jobs:
           vver = os.environ["VVER"]
           if not vtype or not vver:
               raise ValueError("构建版本信息缺失")
-          path = "ECL/foundation/version.py"
+          path = "ECL/version.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
           # Update __version__ with the full version (pre-release and build metadata included)
@@ -369,7 +369,7 @@ jobs:
         run: |
           .venv-arch/bin/python - <<'PY'
           import json, os, re
-          path = "ECL/foundation/build_env.py"
+          path = "ECL/utils/build_env.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
           cid = os.environ.get("CLIENT_ID", "")
@@ -396,7 +396,7 @@ jobs:
           vver = os.environ["VVER"]
           if not vtype or not vver:
               raise ValueError("构建版本信息缺失")
-          path = "ECL/foundation/version.py"
+          path = "ECL/version.py"
           with open(path, encoding="utf-8") as f:
               text = f.read()
           text = re.sub(

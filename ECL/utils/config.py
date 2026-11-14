@@ -28,9 +28,9 @@ from typing import ClassVar, overload
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from ECL.foundation import EventBus
 from ECL.utils.download_settings import DownloadSettingsPatch
 from ECL.utils.errors import ConfigError, ConfigValidationError
+from ECL.utils.event_bus import EventBus
 from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import get_logger
 

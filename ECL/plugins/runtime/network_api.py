@@ -32,7 +32,7 @@ from urllib.parse import urljoin
 import httpcore
 import httpx
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.network_targets import NetworkOrigin, NetworkTargetPolicy
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession

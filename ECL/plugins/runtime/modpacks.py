@@ -25,7 +25,7 @@ from uuid import uuid4
 import httpcore
 from pydantic import Field, field_validator
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest

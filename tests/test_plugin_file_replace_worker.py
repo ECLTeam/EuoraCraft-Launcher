@@ -8,10 +8,10 @@ from time import monotonic, sleep
 
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from tests.test_plugin_file_delete import published
 from tests.test_plugin_host_files import call
 

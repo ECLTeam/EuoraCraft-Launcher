@@ -13,7 +13,7 @@ from threading import Event
 from time import monotonic
 sys.path.insert(0, str(Path.cwd() / 'tests'))
 from plugin_network_helpers import make_runtime
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 
 def resolve(*_):
     Event().wait()

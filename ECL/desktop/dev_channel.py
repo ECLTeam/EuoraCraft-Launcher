@@ -41,7 +41,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.http11 import Request, Response
 
-from ECL.plugins import PluginActionResult
+from ECL.plugins.framework import PluginActionResult
 from ECL.utils import PluginCommandError
 from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import LoggingPolicy, get_logger
@@ -49,8 +49,8 @@ from ECL.utils.logging import LoggingPolicy, get_logger
 from .frontend_events import subscribe_frontend_event
 
 if TYPE_CHECKING:
-    from ECL.foundation import EventBus
-    from ECL.plugins import PluginManager
+    from ECL.plugins.framework import PluginManager
+    from ECL.utils import EventBus
 
 
 class DevChannelError(Exception):

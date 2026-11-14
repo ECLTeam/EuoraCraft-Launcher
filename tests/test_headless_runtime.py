@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from ECL.runtime import headless, tasks
-from ECL.runtime.context import HeadlessContext
-from ECL.runtime.contracts import HeadlessExitCode, HeadlessOptions, HeadlessRuntimeError, HeadlessTask
+from ECL.headless import headless, tasks
+from ECL.headless.context import HeadlessContext
+from ECL.headless.contracts import HeadlessExitCode, HeadlessOptions, HeadlessRuntimeError, HeadlessTask
 
 
 @pytest.fixture

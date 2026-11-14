@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import JsonValue
 
-from ECL.foundation.event_bus import EventBus, Unsubscribe
+from ECL.utils.event_bus import EventBus, Unsubscribe
 
 Emit = Callable[[str, Any], None]
 

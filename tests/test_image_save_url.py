@@ -134,8 +134,8 @@ sys.modules["pytauri.webview"] = pytauri_webview_module
 FrontendApi = import_module("ECL.api").FrontendApi
 frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
-ConfigStore = import_module("ECL.utils").ConfigStore
-EventBus = import_module("ECL.foundation").EventBus
+ConfigStore = import_module("ECL.utils.config").ConfigStore
+EventBus = import_module("ECL.utils").EventBus
 
 
 class FakeAccounts:

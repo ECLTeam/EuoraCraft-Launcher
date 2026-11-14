@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
-from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepared_code
 
 

@@ -31,8 +31,7 @@ from types import MappingProxyType
 from typing import ClassVar, Literal
 from uuid import uuid4
 
-from ECL.foundation import EventBus
-from ECL.utils import get_logger
+from ECL.utils import EventBus, get_logger
 from ECL.utils.errors import GameServiceError
 from ECL.utils.operation_logging import OperationTrace, trace_scope
 

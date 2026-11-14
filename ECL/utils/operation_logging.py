@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from threading import Event, RLock
 from time import monotonic
 
-from ECL.foundation.logging import ReadableLogFormatter, safe_log_text
+from ECL.utils.log_redaction import ReadableLogFormatter, safe_log_text
 
 __all__ = [
     "OperationLogFilter",

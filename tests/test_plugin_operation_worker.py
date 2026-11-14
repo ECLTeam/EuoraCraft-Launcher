@@ -9,12 +9,12 @@ from time import monotonic, sleep
 
 import pytest
 
-from ECL.foundation import EventBus
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 
 
 @pytest.fixture(params=[False, True], ids=["source", "frozen"])
@@ -39,7 +39,7 @@ def worker(tmp_path, request):
     }
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (root / "main.py").write_text(
-        "from ECL.plugin_api import Plugin as BasePlugin, HostApiError\n"
+        "from ECL.plugins.api import Plugin as BasePlugin, HostApiError\n"
         "class Plugin(BasePlugin):\n"
         "    def on_load(self):\n"
         "        self.define_command('task',self.task,input_fields=({'name':'mode','type':'string'},"

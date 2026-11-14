@@ -19,8 +19,8 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.instance_compat import (
     limit_metadata_fields,
     limit_metadata_text,

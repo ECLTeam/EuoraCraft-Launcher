@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugins import Plugin
+from ECL.plugins.plugin import Plugin
 from ECL.plugins.plugin import Plugin as HostPlugin
 
 

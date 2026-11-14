@@ -13,7 +13,7 @@
 #   - JsonValue — 插件与宿主之间可传输的 JSON 值类型。
 # ============================================================
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
-from ECL.plugin_api.plugin import HostApiError, HostClient, Plugin
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.plugin import HostApiError, HostClient, Plugin
 
 __all__ = ["HostApiError", "HostClient", "JsonValue", "Plugin", "ProtocolError"]

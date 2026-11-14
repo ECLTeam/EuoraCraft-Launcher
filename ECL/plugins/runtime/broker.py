@@ -26,9 +26,8 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from ECL.foundation.version import __version__
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.custom_ui import RuntimeCustomUi
@@ -69,6 +68,7 @@ from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
 from ECL.utils import get_logger
 from ECL.utils.instance_reading import InstanceReadError
+from ECL.version import __version__
 
 if TYPE_CHECKING:
     from pytaurix import AppHandle

@@ -16,9 +16,9 @@ import importlib
 import platform
 import sys
 
-from ECL.foundation.version import __version__
-from ECL.runtime.context import HeadlessContext
-from ECL.runtime.contracts import DependencyProbe, HeadlessRuntimeError, HeadlessTask, RuntimeProbe
+from ECL.headless.context import HeadlessContext
+from ECL.headless.contracts import DependencyProbe, HeadlessRuntimeError, HeadlessTask, RuntimeProbe
+from ECL.version import __version__
 
 
 class RuntimeCheckPolicy:
@@ -30,7 +30,7 @@ class RuntimeCheckPolicy:
     prohibited_modules: tuple[str, ...] = (
         "ECL.launcher",
         "ECL.application",
-        "ECL.host",
+        "ECL.desktop",
         "ECL.api",
         "ECL.services",
         "ECL.plugins",

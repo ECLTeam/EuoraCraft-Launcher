@@ -12,7 +12,7 @@ from plugin_java_helpers import allow, candidates, invoke, make_service, runtime
 from ECL.game import JavaRuntime, JavaScanner
 from ECL.java.models import JavaError, JavaPolicy
 from ECL.java.packages import JavaCatalog
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.models import JavaCatalogRequest, JavaValidateRequest
@@ -114,7 +114,7 @@ def test_revoke_while_probe_is_running_rejects_late_result_and_retains_activity(
     monkeypatch.setattr(JavaScanner, "probe", probe)
     session = shared[0]._entry("java-test").session
     broker = PluginHostBroker(session, shared[0].data_path, lambda *args: {}, java=api, run_state=lambda: "enabled")
-    from ECL.plugin_api._rpc import RpcRequest
+    from ECL.plugins.api._rpc import RpcRequest
 
     request = RpcRequest("java.validate", {"runtime_ref": reference}, monotonic() + 5)
     with ThreadPoolExecutor() as pool:

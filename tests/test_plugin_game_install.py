@@ -11,8 +11,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from ECL.foundation import EventBus
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.game_models import GameInstallRequest, GameLaunchOptions
@@ -20,6 +19,7 @@ from ECL.plugins.runtime.resources import RuntimeResources
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService, GameServiceError
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from tests.test_plugin_host_files import call, finish
 
 

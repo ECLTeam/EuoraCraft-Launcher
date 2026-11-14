@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from ECL.bootstrap import ProcessRole, select_process_route
-from ECL.foundation.version import __version__, __version_type__
-from ECL.runtime.contracts import HeadlessTask, RunMode
+from ECL.headless.contracts import HeadlessTask, RunMode
+from ECL.version import __version__, __version_type__
 
 _log_level_choices = ("debug", "info", "warning", "error")
 _url_schemes = ("http://", "https://")
@@ -463,8 +463,8 @@ def run_launcher(argv: list[str] | None = None) -> int:
     """
     options = parse_launch_options(sys.argv[1:] if argv is None else argv)
     if options.run_mode == RunMode.headless:
-        from ECL.runtime.contracts import HeadlessOptions
-        from ECL.runtime.headless import run_headless
+        from ECL.headless.contracts import HeadlessOptions
+        from ECL.headless.headless import run_headless
 
         assert options.task is not None
         return int(

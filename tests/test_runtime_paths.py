@@ -17,8 +17,8 @@ import json
 import sys
 from unittest.mock import Mock, call
 
-from ECL.foundation import get_runtime_info
-from ECL.plugins import PluginManager
+from ECL.plugins.framework import PluginManager
+from ECL.utils import get_runtime_info
 
 
 def test_frozen_runtime_separates_executable_and_resource_paths(tmp_path, monkeypatch) -> None:
@@ -93,7 +93,7 @@ def test_plugin_install_targets_data_path(tmp_path) -> None:
     source_path.mkdir()
     (source_path / "plugin.json").write_text(json.dumps({"name": "example", "api_version": 2}), encoding="utf-8")
     (source_path / "main.py").write_text(
-        "from ECL.plugins import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
+        "from ECL.plugins.plugin import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
     )
 
     assert framework.install(str(source_path)).success is True

@@ -11,15 +11,15 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from ECL.foundation import EventBus
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import FileRef, FileWriteBeginRequest
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from ECL.utils.file_handles import FileBoundaryError, FileHandle
 
 

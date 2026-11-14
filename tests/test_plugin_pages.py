@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.models import FieldSpec, VuePageDefinition
 from ECL.plugins.worker_service import PluginWorkerService
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
@@ -55,7 +55,7 @@ def test_real_worker_page_publishes_and_clears_on_exit(tmp_path: Path) -> None:
     }
     (code / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (code / "main.py").write_text(
-        "from ECL.plugin_api import Plugin as Base\n"
+        "from ECL.plugins.api import Plugin as Base\n"
         "class Plugin(Base):\n"
         "    def on_load(self):\n"
         '        self.define_vue_page("/room", "联机", "Room", "<div>Room</div>")\n',

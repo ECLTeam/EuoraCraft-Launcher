@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError, ProtocolPolicy, WireMessage
-from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.api.contracts import ProtocolError, ProtocolPolicy, WireMessage
+from ECL.plugins.api.snapshot import CodeSnapshot
 
 
 def test_json_envelope_roundtrip_rejects_python_objects() -> None:
@@ -98,16 +98,16 @@ import sys
 import json
 class ImportGuard(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.startswith('ECL.') and fullname != 'ECL.plugin_api' and not fullname.startswith('ECL.plugin_api.'):
+        if fullname.startswith('ECL.') and fullname not in {'ECL.plugins', 'ECL.plugins.api'} and not fullname.startswith('ECL.plugins.api.'):
             raise AssertionError('Unexpected host import: ' + fullname)
         if fullname.split('.')[0] in {'pytaurix', 'pytauri', 'httpx', 'pydantic'}:
             raise AssertionError('Unexpected dependency import: ' + fullname)
 sys.meta_path.insert(0, ImportGuard())
-import ECL.plugin_api
-assert 'ECL.plugin_api._process' not in sys.modules
-assert 'ECL.plugin_api._windows' not in sys.modules
+import ECL.plugins.api
+assert 'ECL.plugins.api._process' not in sys.modules
+assert 'ECL.plugins.api._windows' not in sys.modules
 print(json.dumps([n for n in sys.modules if
-    (n.startswith('ECL.') and n != 'ECL.plugin_api' and not n.startswith('ECL.plugin_api.'))
+    (n.startswith('ECL.') and n not in {'ECL.plugins', 'ECL.plugins.api'} and not n.startswith('ECL.plugins.api.'))
     or n.startswith(('pytaurix', 'pytauri', 'httpx', 'pydantic'))]))
 """,
         ],
@@ -120,7 +120,7 @@ print(json.dumps([n for n in sys.modules if
     assert json.loads(result.stdout) == []
 
 
-@pytest.mark.parametrize("host_module", [None, "ECL.services", "ECL.plugin_api_extra", "ECL.bootstrap_extra"])
+@pytest.mark.parametrize("host_module", [None, "ECL.services", "ECL.plugins.api_extra", "ECL.bootstrap_extra"])
 @pytest.mark.parametrize("worker_platform", ["win32", "linux", "darwin"])
 def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | None, worker_platform: str) -> None:
     import subprocess
@@ -129,12 +129,12 @@ def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | Non
 import json
 import sys
 from types import ModuleType, SimpleNamespace
-from ECL.plugin_api import _process
-from ECL.plugin_api.contracts import WireMessage
+from ECL.plugins.api import _process
+from ECL.plugins.api.contracts import WireMessage
 host_module = {host_module!r}
 if host_module is not None:
     sys.modules[host_module] = ModuleType(host_module)
-import ECL.plugin_api._windows as windows
+import ECL.plugins.api._windows as windows
 windows.WindowsApi = lambda: SimpleNamespace(
     is_in_job=lambda *args: True,
     kernel=SimpleNamespace(GetCurrentProcess=lambda: 1))

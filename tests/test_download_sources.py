@@ -16,10 +16,10 @@ from unittest.mock import ANY, Mock
 import httpx
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.game import ApiUrlConfig, BmclApiUrl, InstallEvent, InstallObserver
 from ECL.services.game import GameService
 from ECL.services.game.download_sources import PreferredApiClient
+from ECL.utils import EventBus
 
 
 def _clients(preferred_source: str) -> tuple[PreferredApiClient, Mock, Mock]:

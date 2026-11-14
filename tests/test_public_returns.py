@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from ECL.launcher import LauncherExitCode
-from ECL.plugins import PluginAction, PluginActionResult
+from ECL.plugins.framework import PluginAction, PluginActionResult
 from ECL.utils.config import ConfigStore, ConfigValidationError
 
 

@@ -12,8 +12,8 @@ from pydantic import ValidationError
 
 from ECL.api.files import FileHandlers
 from ECL.api.models import SkinAvatarExportRequest, request_schemas
-from ECL.foundation import EventBus
 from ECL.services.account.skin_avatar import SkinAvatarError, SkinAvatarExporter
+from ECL.utils import EventBus
 
 
 def png_bytes(size: int = 128) -> bytes:

@@ -8,8 +8,8 @@ from time import monotonic, sleep
 import psutil
 import pytest
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api._windows import WindowsApi
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api._windows import WindowsApi
 from ECL.plugins.runtime.windows import WindowsJob
 
 

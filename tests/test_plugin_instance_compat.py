@@ -11,7 +11,8 @@
 
 import json
 
-from ECL.plugins import InstanceCompatibilityRegistry, PluginManager
+from ECL.plugins.framework import PluginManager
+from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.services.game.instance_compat import InstanceCompatibilityReader
 
 
@@ -33,7 +34,8 @@ def test_plugin_can_register_instance_compatibility_provider(tmp_path) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins import ExternalInstanceMetadata, Plugin\n"
+        "from ECL.plugins.instance_compat import ExternalInstanceMetadata\n"
+        "from ECL.plugins.plugin import Plugin\n"
         "class CompatPlugin(Plugin):\n"
         "    def on_enable(self):\n"
         "        super().on_enable()\n"

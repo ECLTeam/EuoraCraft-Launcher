@@ -15,9 +15,9 @@ import logging
 import sys
 from typing import TextIO
 
-from ECL.foundation.logging import ReadableLogFormatter
-from ECL.foundation.runtime import RuntimeInfo, get_runtime_info
-from ECL.runtime.contracts import HeadlessOptions
+from ECL.headless.contracts import HeadlessOptions
+from ECL.utils.app_paths import RuntimeInfo, get_runtime_info
+from ECL.utils.log_redaction import ReadableLogFormatter
 
 
 class _HeadlessStreamHandler(logging.StreamHandler):

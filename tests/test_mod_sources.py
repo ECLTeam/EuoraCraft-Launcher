@@ -29,7 +29,6 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from ECL.foundation.version import __version__
 from ECL.services.game.mod_sources import (
     ModSourcePolicy,
     ModSourceRequestPolicy,
@@ -40,6 +39,7 @@ from ECL.services.game.mod_sources import (
     normalize_mod_source,
     rewrite_mod_file_url,
 )
+from ECL.version import __version__
 
 
 def _logger() -> logging.Logger:

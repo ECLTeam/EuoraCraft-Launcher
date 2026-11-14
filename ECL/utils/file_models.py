@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 
 
 class FileBoundaryError(ProtocolError):

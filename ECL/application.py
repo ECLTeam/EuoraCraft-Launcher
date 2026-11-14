@@ -33,16 +33,14 @@ from urllib.request import getproxies
 import httpx
 
 from ECL.cli import LaunchOptions, apply_launch_overrides
-from ECL.foundation import BuildEnvironment, EventBus, __version__, __version_type__
-from ECL.foundation.runtime import RuntimeInfo
+from ECL.desktop.background_media import BackgroundMediaService
+from ECL.desktop.dev_channel import DevChannelService
+from ECL.desktop.single_instance import SingleInstanceService
 from ECL.game import InstancesManager
-from ECL.host.background_media import BackgroundMediaService
-from ECL.host.dev_channel import DevChannelService
-from ECL.host.single_instance import SingleInstanceService
 from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
 from ECL.java.queries import JavaQueries
-from ECL.plugins import PluginManager
+from ECL.plugins.framework import PluginManager
 from ECL.services.account import AccountManager, WardrobeStore
 from ECL.services.account.plugin_textures import read_account_skin
 from ECL.services.custom_downloads import CustomDownloadService
@@ -51,9 +49,14 @@ from ECL.services.game.launch_settings import scan_instance_java_references
 from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
 from ECL.services.updates import AnnouncementService, StartupUpdateService
-from ECL.utils import ConfigStore, Environment
+from ECL.utils import EventBus
+from ECL.utils.app_paths import RuntimeInfo
+from ECL.utils.build_env import BuildEnvironment
+from ECL.utils.config import ConfigStore
 from ECL.utils.download_settings import resolve_mirror_source, resolve_mod_source
+from ECL.utils.environment import Environment
 from ECL.utils.instance_reading import InstanceReadError
+from ECL.version import __version__, __version_type__
 
 if TYPE_CHECKING:
     pass

@@ -29,8 +29,7 @@ from typing import Any
 import psutil
 
 from ECL.cli import LaunchOptions, parse_launch_options
-from ECL.foundation import EventBus
-from ECL.utils import atomic_write_text
+from ECL.utils import EventBus, atomic_write_text
 from ECL.utils.logging import get_logger
 
 discovery_filename = "single_instance.json"

@@ -89,7 +89,7 @@ def make_package(
     (source_path / "main.py").write_text(
         code
         if code is not None
-        else "from ECL.plugin_api import Plugin as BasePlugin\nimport os\nclass Plugin(BasePlugin):\n    def on_load(self):\n        self.define_command('pid', self.pid, output_fields=({'name':'pid','type':'integer'},))\n    def pid(self):\n        return {'pid':os.getpid()}\n",
+        else "from ECL.plugins.api import Plugin as BasePlugin\nimport os\nclass Plugin(BasePlugin):\n    def on_load(self):\n        self.define_command('pid', self.pid, output_fields=({'name':'pid','type':'integer'},))\n    def pid(self):\n        return {'pid':os.getpid()}\n",
         encoding="utf-8",
     )
     if wheel_paths:

@@ -25,7 +25,7 @@ from time import monotonic
 
 from pydantic import BaseModel, ConfigDict, StrictInt
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.utils.file_models import FileBoundaryError
 
 

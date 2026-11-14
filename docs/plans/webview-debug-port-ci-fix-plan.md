@@ -30,7 +30,7 @@
 职责划分：
 
 - `ECL/cli.py` 负责解析与校验该参数，不负责理解 WebView2。
-- `ECL/host/tauri.py` 负责把端口折算为窗口配置字段，是唯一知道 `additionalBrowserArgs` 的位置。
+- `ECL/desktop/tauri.py` 负责把端口折算为窗口配置字段，是唯一知道 `additionalBrowserArgs` 的位置。
 - 测试只负责传入端口并读取浏览器自写的 `EBWebView/DevToolsActivePort`，不再触碰浏览器标志。
 
 已确认的能力边界：
@@ -52,7 +52,7 @@
 - `apply_launch_overrides` 不处理该字段：它不属于配置项，避免被写成存盘配置。
 - 无头模式无需改动：`_validate_run_mode` 的允许集合不包含该参数，`--headless` 下会被拒绝。
 
-### 4.2 `ECL/host/tauri.py`
+### 4.2 `ECL/desktop/tauri.py`
 
 - `Adapter` 增加类级默认 `webview_debug_port: int | None = None`，`__init__` 中从 `context.state.launch_options` 读取，未提供时为 `None`。类级默认保证既有以 `object.__new__` 构造的测试不受影响。
 - `_build_config()` 构造完窗口字典后，若端口不为 `None`：
@@ -62,7 +62,7 @@
 
 需要说明的取舍：设置 `additionalBrowserArgs` 会替换 wry 的默认浏览器参数（`--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`）。该参数仅在调试运行时存在，不影响发布产物；若审阅认为需要保持运行期行为完全一致，可把同一串默认参数一并拼入，代价是把 wry 内部默认值复制进本项目代码。默认按“只加调试参数”实施。
 
-### 4.3 `ECL/host/single_instance.py`（实施时确认无需改动）
+### 4.3 `ECL/desktop/single_instance.py`（实施时确认无需改动）
 
 原计划把该参数并入「强制新进程」条件。实施时确认：`_dispatch` 已把 `enable_dev_channel` 列为强制新进程的条件，而本参数被校验要求必须与 `--dev-channel` 同时使用，因此该条件必然已命中，再追加一项属于不会被触发的死代码，故不改动。
 
@@ -123,7 +123,7 @@
 | 文件 | 实际改动 |
 | --- | --- |
 | `ECL/cli.py` | 新增 `LaunchOptions.webview_debug_port`、`--webview-debug-port` 与 `_validate_webview_debug_port`；`apply_launch_overrides` 不处理该字段。 |
-| `ECL/host/tauri.py` | `Adapter` 增加类级默认 `webview_debug_port`，`__init__` 从 `context.state.launch_options` 读取；`_build_config` 改为先构造窗口字典再调用新增的 `_apply_webview_debug_options` 注入 `additionalBrowserArgs` 并记录警告。 |
+| `ECL/desktop/tauri.py` | `Adapter` 增加类级默认 `webview_debug_port`，`__init__` 从 `context.state.launch_options` 读取；`_build_config` 改为先构造窗口字典再调用新增的 `_apply_webview_debug_options` 注入 `additionalBrowserArgs` 并记录警告。 |
 | `tests/test_packaged_plugin_directories.py` | 删除 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，启动参数追加 `--webview-debug-port 0`；保留 `WEBVIEW2_USER_DATA_FOLDER` 与全部诊断输出。 |
 | `.github/workflows/build.yml` | 新增 `Prepare offline plugin wheels` 步骤经 `$GITHUB_ENV` 共享轮子路径；原生安装验收与 13 个 Worker/网络用例拆成两个步骤，后者按 `runner.os == 'Windows' && matrix.os != 'windows-11-arm'` 执行；修正原多余缩进。 |
 | 测试 | `tests/test_cli_launch_options.py` 增加端口取值、缺 `--dev-channel`、非 Windows 拒绝与无头模式拒绝；`tests/test_frontend_api_config.py` 增加注入与不注入两个窗口配置用例。 |

@@ -29,7 +29,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextvars import copy_context
 from typing import Any
 
-from ECL.plugin_api.contracts import JsonValue
+from ECL.plugins.api.contracts import JsonValue
 from ECL.plugins.plugin import Plugin
 from ECL.utils.operation_logging import current_operation
 

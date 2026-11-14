@@ -40,8 +40,8 @@ import pytest
 
 import main
 from ECL.cli import LaunchOptions, apply_launch_overrides, parse_launch_options, run_launcher
-from ECL.foundation.version import __version__
-from ECL.runtime.contracts import HeadlessTask, RunMode
+from ECL.headless.contracts import HeadlessTask, RunMode
+from ECL.version import __version__
 
 
 def test_parse_defaults_returns_all_unset_options() -> None:
@@ -353,7 +353,7 @@ def test_invalid_mode_exits_before_runtime_import(argv, monkeypatch) -> None:
     original_import = builtins.__import__
 
     def guard(name, *args, **kwargs):
-        if name in {"ECL.launcher", "ECL.runtime.headless"}:
+        if name in {"ECL.launcher", "ECL.headless.headless"}:
             pytest.fail("参数错误不应加载运行入口")
         return original_import(name, *args, **kwargs)
 

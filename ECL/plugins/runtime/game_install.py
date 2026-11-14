@@ -15,7 +15,7 @@ from threading import Event
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations

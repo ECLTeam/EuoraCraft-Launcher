@@ -23,8 +23,7 @@ from threading import RLock
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from ECL.foundation import EventBus
-from ECL.utils import get_logger
+from ECL.utils import EventBus, get_logger
 
 if TYPE_CHECKING:
     from .analyzer import CrashAnalyzer

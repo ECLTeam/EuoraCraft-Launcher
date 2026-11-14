@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker

@@ -18,12 +18,12 @@ from threading import RLock
 from time import monotonic, sleep
 from uuid import uuid4
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api._imports import DependencySnapshot
-from ECL.plugin_api._rpc import RpcPeer, RpcRequest
-from ECL.plugin_api._transport import LocalChannel, LocalServer, create_local_server
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, WireMessage
-from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api._imports import DependencySnapshot
+from ECL.plugins.api._rpc import RpcPeer, RpcRequest
+from ECL.plugins.api._transport import LocalChannel, LocalServer, create_local_server
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, WireMessage
+from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
 

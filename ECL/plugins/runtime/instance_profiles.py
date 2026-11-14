@@ -14,7 +14,7 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from ECL.plugin_api.contracts import JsonValue
+from ECL.plugins.api.contracts import JsonValue
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import InstanceProfilePatchRequest
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations

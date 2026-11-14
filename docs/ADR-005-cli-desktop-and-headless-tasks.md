@@ -15,8 +15,8 @@
 
 1. `ECL/cli.py` 已支持桌面快捷启动、游戏设置覆盖、页面打开、插件开发和有限无头任务。游戏参数已有“全局 → 实例 → 本次显式参数”的合并规则，追加 JVM、游戏参数沿用现有语义。
 2. `ECL/bootstrap.py` 在业务导入前分流桌面、普通无头任务、插件 Worker 与 guardian。普通无头任务当前仅支持 `runtime-check`，不能启动游戏。
-3. `ECL/runtime/contracts.py` 的结果协议为版本 1，任务数据固定为 `probe`；`tasks.py`、`headless.py` 的执行与日志也只面向环境检查。
-4. `ECL/api/bridge.py` 在前端就绪后排队执行桌面快捷启动。`ECL/host/single_instance.py` 转发页面和启动请求；转发成功仅表示接收，不能证明游戏已经启动。
+3. `ECL/headless/contracts.py` 的结果协议为版本 1，任务数据固定为 `probe`；`tasks.py`、`headless.py` 的执行与日志也只面向环境检查。
+4. `ECL/api/bridge.py` 在前端就绪后排队执行桌面快捷启动。`ECL/desktop/single_instance.py` 转发页面和启动请求；转发成功仅表示接收，不能证明游戏已经启动。
 5. `AccountManager.get_launch_credentials()` 当前只读取全局选中账户；`switch_account()` 会保存选中状态，不能用“切换后再切回”实现单次启动账户。
 6. `ECL/application.py` 创建账户、Java、游戏、插件、后台媒体、启动更新等服务，不能直接作为只读任务的初始化方式。实际账户根还可能位于用户目录下的 `.ECL/accounts`，不同 `--data-dir` 不代表账户存储隔离。
 7. 插件临时禁用必须和持久禁用集合区分，且覆盖发现、装载、启用、重载、依赖和开发监听入口。
@@ -193,16 +193,16 @@ python main.py --headless --task launch --launch 'D:\我的游戏\versions\1.21.
 | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `ECL/cli.py`                                                               | 新参数、明确任务输入矩阵、枚举和互斥校验、帮助分组、显式模型转换；长选项要求完整名称，避免扩展后缩写歧义 |
 | `ECL/bootstrap.py`                                                         | 保持轻量角色入口，验证新增业务参数不进入 Worker/guardian；普通任务继续延迟导入                           |
-| `ECL/runtime/contracts.py`                                                 | 任务枚举、版本 2 结果、明确任务结果模型及稳定错误码                                                      |
-| `ECL/runtime/context.py`、`tasks.py`、`headless.py`                        | 按任务装配、输出与日志分离、真实取消/清理、任务专属导入边界                                              |
-| 新增 `ECL/runtime/business.py`                                             | 拥有有副作用无头启动所需服务及逆序关闭；当前调用方仅为普通无头 `launch`，不初始化桌面服务                |
+| `ECL/headless/contracts.py`                                                 | 任务枚举、版本 2 结果、明确任务结果模型及稳定错误码                                                      |
+| `ECL/headless/context.py`、`tasks.py`、`headless.py`                        | 按任务装配、输出与日志分离、真实取消/清理、任务专属导入边界                                              |
+| 新增 `ECL/headless/business.py`                                             | 拥有有副作用无头启动所需服务及逆序关闭；当前调用方仅为普通无头 `launch`，不初始化桌面服务                |
 | `ECL/application.py`、`ECL/launcher.py`                                    | 桌面输入接线、有效配置覆盖、运行锁和共享账户写入边界接入；保持既有桌面服务生命周期                       |
 | `ECL/services/account/accounts.py` 及实际认证存储所属模块                  | 显式账户选择、凭据获取与并发复核；只读账户摘要；共享存储短锁                                             |
 | `ECL/services/game/launch.py`、`launch_settings.py`、`instance_queries.py` | 共享目标/设置输入，预检和完整本地检查；实际启动、进程归属和退出收尾                                      |
 | `ECL/java/queries.py`、`manager.py`、`models.py`                           | 复用登记和探测规则，提供无写入列表读取；避免用会写入的初始化替代只读查询                                 |
 | `ECL/utils/config.py` 及现有环境配置读取模块                               | 区分只读配置加载、持久配置、环境和会话覆盖；无头缺失文件不自动创建，损坏不恢复默认覆盖                   |
 | `ECL/plugins/manager/base.py`、`lifecycle.py` 及加载/开发入口              | 会话禁用、依赖阻断、全入口禁止重新启用；无头必要能力校验                                                 |
-| `ECL/host/single_instance.py`、`tauri.py`、`ECL/api/bridge.py`             | 请求字段与去重、进程级拒绝、主窗口最小化、扩展页面请求                                                   |
+| `ECL/desktop/single_instance.py`、`tauri.py`、`ECL/api/bridge.py`             | 请求字段与去重、进程级拒绝、主窗口最小化、扩展页面请求                                                   |
 | `ECL/api/models.py`、游戏 handlers、现有日志策略                           | 必要的单次账户字段贯穿 IPC 校验、服务参数和操作日志归属，保留界面现有默认行为                            |
 | `frontend/src/types/api.ts`、`app/runtime/useAppRuntime.ts`                | 扩展页面事件的明确联合类型及运行时校验；账户弹窗幂等打开                                                 |
 | `frontend/src/composables/useAccountManager.ts`、游戏页及已有账户状态入口  | 复用账户全屏弹窗和状态所有权，不创建另一套账户列表或弹窗开关状态                                         |

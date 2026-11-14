@@ -7,9 +7,9 @@ from pathlib import Path
 import psutil
 import pytest
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api.contracts import ProtocolError
-from ECL.plugin_api.snapshot import CodeSnapshot
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 

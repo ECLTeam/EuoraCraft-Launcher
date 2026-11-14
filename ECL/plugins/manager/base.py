@@ -18,10 +18,9 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from ECL.foundation import EventBus
 from ECL.java.manager import JavaManager
 from ECL.java.queries import JavaQueries
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.auth_providers import (
     AuthField,
     AuthProviderRegistry,
@@ -50,7 +49,7 @@ from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.resources import InstanceQueries
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
-from ECL.utils import get_logger
+from ECL.utils import EventBus, get_logger
 from ECL.utils.account_reading import AccountSummary
 from ECL.utils.instance_reading import InstanceReadError
 

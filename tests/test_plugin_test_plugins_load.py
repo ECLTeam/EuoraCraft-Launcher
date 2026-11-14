@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from time import monotonic, sleep
 
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugins import PluginManager
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.framework import PluginManager
 
 
 def test_tracked_worker_example_is_discoverable_but_never_auto_executes(tmp_path: Path) -> None:

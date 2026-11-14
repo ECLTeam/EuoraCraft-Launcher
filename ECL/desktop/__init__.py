@@ -6,24 +6,24 @@
 # 文件作用：提供 Tauri 适配器和桌面端使用的服务。
 #
 # 说明：Tauri 入口 ``Adapter`` 依赖 ``ECL.api``，为避免导入环，本包不预先
-# 导入 ``ECL.host.tauri``，需要时请直接从 ``ECL.host.tauri`` 导入。
+# 导入 ``ECL.desktop.tauri``，需要时请直接从 ``ECL.desktop.tauri`` 导入。
 # ============================================================
 
-from ECL.host.app_update import AppUpdateError, UpdateApplier, clear_stale_pending_update
-from ECL.host.background_media import BackgroundMediaService
-from ECL.host.dev_channel import DevChannelError, DevChannelService
-from ECL.host.frontend_events import (
+from ECL.desktop.app_update import AppUpdateError, UpdateApplier, clear_stale_pending_update
+from ECL.desktop.background_media import BackgroundMediaService
+from ECL.desktop.dev_channel import DevChannelError, DevChannelService
+from ECL.desktop.frontend_events import (
     FrontendEventPolicy,
     subscribe_all_frontend_events,
     subscribe_frontend_event,
 )
-from ECL.host.maintenance import (
+from ECL.desktop.maintenance import (
     MaintenanceResult,
     ScheduledMaintenance,
     apply_pending_debug_maintenance,
     schedule_debug_maintenance,
 )
-from ECL.host.single_instance import SingleInstanceService, probe_running_instance
+from ECL.desktop.single_instance import SingleInstanceService, probe_running_instance
 
 __all__ = [
     "AppUpdateError",

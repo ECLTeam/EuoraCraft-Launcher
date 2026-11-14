@@ -21,9 +21,9 @@ from threading import Event, Lock, Thread
 from time import monotonic
 from typing import Protocol, cast
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api._windows import WindowsApi
-from ECL.plugin_api.contracts import ProtocolPolicy, WireMessage
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api._windows import WindowsApi
+from ECL.plugins.api.contracts import ProtocolPolicy, WireMessage
 
 
 class _ByteConnection(Protocol):

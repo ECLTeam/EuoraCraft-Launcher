@@ -14,7 +14,7 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameCatalogRequest, GameLoadersRequest
 from ECL.plugins.runtime.resources import ResourcePages

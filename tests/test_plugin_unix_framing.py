@@ -6,8 +6,8 @@ import struct
 
 import pytest
 
-from ECL.plugin_api import _posix_transport as transport
-from ECL.plugin_api.contracts import WireMessage
+from ECL.plugins.api import _posix_transport as transport
+from ECL.plugins.api.contracts import WireMessage
 
 
 @pytest.fixture

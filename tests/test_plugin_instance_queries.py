@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.runtime.resources import ResourcePages
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService
@@ -396,7 +396,7 @@ def test_static_symlink_metadata_is_never_read(tmp_path, queries):
 def test_real_worker_reads_instances_through_approved_root(shared):
     service, _, _ = shared
     entry = service._entry("reader")
-    code = """from ECL.plugin_api import Plugin as Base
+    code = """from ECL.plugins.api import Plugin as Base
 class Plugin(Base):
  def on_load(self):
   roots=self.host.call('resources.list',{'capability':'instances.read'})

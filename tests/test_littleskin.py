@@ -718,7 +718,7 @@ def test_littleskin_environment_values_override_dotenv_without_aliases(tmp_path,
 
 @pytest.mark.asyncio
 async def test_build_configuration_fallback_and_default_or_custom_redirect(tmp_path, monkeypatch):
-    from ECL.foundation import BuildEnvironment
+    from ECL.utils.build_env import BuildEnvironment
 
     monkeypatch.setattr(BuildEnvironment, "littleskin_client_id", "build-id")
     monkeypatch.setattr(BuildEnvironment, "littleskin_client_secret", "")
@@ -758,8 +758,8 @@ def test_both_build_injection_paths_serialize_littleskin_values_without_executin
     workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
     blocks = re.findall(r"- name: Inject build secrets\n.*?run: \|\n(.*?)(?=\n      - name:)", workflow, re.S)
     assert len(blocks) == 2
-    source = Path("ECL/foundation/build_env.py").read_text(encoding="utf-8")
-    target = tmp_path / "ECL" / "foundation" / "build_env.py"
+    source = Path("ECL/utils/build_env.py").read_text(encoding="utf-8")
+    target = tmp_path / "ECL" / "utils" / "build_env.py"
     target.parent.mkdir(parents=True)
     tricky_value = 'quote"slash\\\\\n$(not-a-command)'
     monkeypatch.chdir(tmp_path)

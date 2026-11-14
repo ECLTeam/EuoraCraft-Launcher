@@ -237,7 +237,7 @@ async def test_packaged_launcher_installs_offline_wheels_and_loads_native_extens
             "ecl_smoke_resource/value.txt": b"offline-resource",
         },
     )
-    code = """from ECL.plugin_api import Plugin as BasePlugin
+    code = """from ECL.plugins.api import Plugin as BasePlugin
 import os
 import importlib.resources
 import time

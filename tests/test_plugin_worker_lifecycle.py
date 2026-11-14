@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunError, PluginRunStore
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
@@ -58,7 +58,7 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
     (code_path / "value.txt").write_text("resource", encoding="utf-8")
     (code_path / "main.py").write_text(
         "import json, os, importlib.resources\nfrom pathlib import Path\n"
-        "from ECL.plugin_api import Plugin as BasePlugin\nfrom .helper import prefix\n"
+        "from ECL.plugins.api import Plugin as BasePlugin\nfrom .helper import prefix\n"
         f"report = Path({str(report_path)!r})\n"
         "class Plugin(BasePlugin):\n"
         "    async def on_load(self):\n"

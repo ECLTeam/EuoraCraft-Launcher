@@ -21,7 +21,7 @@ from threading import Event, Lock, RLock, Thread, current_thread
 from time import monotonic
 from typing import ClassVar, Literal, Protocol
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, WireMessage
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, WireMessage
 
 
 class _Channel(Protocol):

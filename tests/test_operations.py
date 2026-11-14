@@ -5,8 +5,8 @@ from threading import Event
 
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from ECL.utils.errors import GameServiceError
 
 

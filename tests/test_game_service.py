@@ -79,10 +79,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.game import CoreError, GetGames, LaunchConfig, SearchMinecraft, build_minecraft_cmd
 from ECL.game.Core.LaunchCommand import parse_launch_command
 from ECL.services.game import GameService, GameServiceError
+from ECL.utils import EventBus
 
 
 class FakeAccounts:
@@ -1164,7 +1164,7 @@ def test_launch_options_failure_preserves_file_and_continues_launch(tmp_path, mo
                 patch.setattr(Path, "read_bytes", failing_read)
             if failure == "replace":
                 patch.setattr(Path, "replace", failing_replace)
-                patch.setattr("ECL.foundation.files.sleep", lambda _: None)
+                patch.setattr("ECL.utils.files.sleep", lambda _: None)
             result = asyncio.run(
                 service.launch_instance(
                     {"version_id": "1.21.8"},

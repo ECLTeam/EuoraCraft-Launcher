@@ -9,8 +9,8 @@ from time import monotonic
 import pytest
 from plugin_network_helpers import MappedDialer, make_runtime, server
 
-from ECL.foundation import EventBus
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
+from ECL.utils import EventBus
 from ECL.utils.logging import FrontendLogRuntimeState, LoggingRuntime, get_frontend_log_history
 from ECL.utils.operation_logging import OperationLogFilter, private_transport_scope
 

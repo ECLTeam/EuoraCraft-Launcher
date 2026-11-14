@@ -1,6 +1,6 @@
 # ECL 插件子进程隔离与用户权限管理实施设计 v1.2
 
-> 目录约定更新：启动引导与插件 API 已按 下沉实施方案 归入 `ECL/bootstrap.py` 和 `ECL/plugin_api/`。当前插件使用 `from ECL.plugin_api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
+> 目录约定更新：启动引导与插件 API 已按 下沉实施方案 归入 `ECL/bootstrap.py` 和 `ECL/plugins/api/`。当前插件使用 `from ECL.plugins.api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
 
 状态：用户已明确批准 v1.1 及管理器接入方案开始实施。Worker 基础运行层、v2 授权存储、第三方管理器分流及最小可信管理界面已实现，当前结果见第 21 节。真实 WebView2 网络门未通过，原生增补已获批准，但用户随后要求先越过该部分；自定义前端继续关闭。
 
@@ -274,7 +274,7 @@ Windows 使用 Job 管理 Worker、冻结引导后代和插件工具进程。启
 | `ECL/services/processes.py` | 插件工具所有者、监管与展示 |
 | `ECL/services/operations.py` 及相关调用边界 | 所有者、撤销检查、真实取消结果 |
 | `ECL/api/{plugins,models,registry,windows,bridge}.py` | 管理接口、窗口身份、权限和运行状态 |
-| `ECL/host/frontend_events.py` | 白名单 DTO，禁止第三方伪造宿主注入事件 |
+| `ECL/desktop/frontend_events.py` | 白名单 DTO，禁止第三方伪造宿主注入事件 |
 | 前端插件页面、类型、API、Bridge、SDK、窗口 | 权限 UI、声明式组件、受限自定义前端 |
 | `capabilities/`、必要的宿主配置 | 独立窗口最小能力 |
 | `pyproject.toml`、Nuitka 脚本、PyInstaller spec、CI | 收集轻量 SDK；真实冻结验收 |
@@ -336,7 +336,7 @@ Windows 使用 Job 管理 Worker、冻结引导后代和插件工具进程。启
 | `main.py:14`、`ECL/cli.py:318`、`ECL/launcher.py:75` | 当前正常入口会进入 CLI、单实例和宿主初始化 | Worker 分流尚不存在 |
 | `.github/workflows/build.yml:278`、`packaging/build-nuitka.ps1:76` | Windows/Linux 使用 Nuitka onefile，CI Python 3.12；Windows ARM 的压缩选项不同 | 本机开发环境与实际发行物版本完全相同 |
 | `EuoraCraft-Launcher.spec:213`、`:260` | macOS 是 EXE + COLLECT + BUNDLE；非 macOS spec 为 onefile | macOS 当前发行物是 onefile；它实际上是 onedir `.app` |
-| `ECL/foundation/runtime.py:50` | 区分程序目录和资源目录；Nuitka 环境只恢复了原始目录 | 已提供可靠的原始发行文件名解析器 |
+| `ECL/utils/app_paths.py:50` | 区分程序目录和资源目录；Nuitka 环境只恢复了原始目录 | 已提供可靠的原始发行文件名解析器 |
 | `tests/test_packaged_plugin_directories.py:95` | 现有冻结测试断言插件与宿主 PID 相同，并覆盖外部原生 Wheel | 已验证 Worker 模式或 Job |
 | 本机完整仓库 `.venv/Lib/site-packages/nuitka/` | 可读到 Nuitka 4.2.2 的 C 引导源码 | CI 实际构建必然采用 4.2.2 |
 | 本机 PyInstaller 6.22.3、PyTauri/pytauri-wheel 0.8.0 元数据 | 可确认调研所读依赖版本；PyTauri 扩展文件为 cp311 Windows x64 | 实际 Python 3.12 发行包的依赖、Rust 链和 WebView2 已与其一致 |
@@ -919,14 +919,14 @@ P14的各扩展、P15认证、P16联机互相不做一次性大改；每一类�
 
 | 主题 | 源码 |
 |---|---|
-| 启动/单实例/路径 | [main.py](../../main.py)、[cli.py](../../ECL/cli.py) `run_launcher:318`、[launcher.py](../../ECL/launcher.py) 单实例探测`:75`、[runtime.py](../../ECL/foundation/runtime.py) `get_runtime_info:50` |
+| 启动/单实例/路径 | [main.py](../../main.py)、[cli.py](../../ECL/cli.py) `run_launcher:318`、[launcher.py](../../ECL/launcher.py) 单实例探测`:75`、[app_paths.py](../../ECL/utils/app_paths.py) `get_runtime_info:50` |
 | 打包/依赖约束 | [build.yml](../../.github/workflows/build.yml) `:278,330,343`、[Nuitka脚本](../../packaging/build-nuitka.ps1) `:76`、[PyInstaller spec](../../EuoraCraft-Launcher.spec) `:213,260`、[pyproject.toml](../../pyproject.toml) `:53,59,65` |
 | 当前进程内执行 | [discovery.py](../../ECL/plugins/manager/discovery.py) `_create_instance:162`、[plugin.py](../../ECL/plugins/plugin.py) `__init__:185`、[registry.py](../../ECL/plugins/manager/registry.py) `call_command:415` |
 | 权限/安装摘要/事务 | [permissions.py](../../ECL/plugins/permissions.py) `PermissionManager:138`、[package_preparation.py](../../ECL/plugins/package_preparation.py) `verify_prepared_code:92`、[package_activation.py](../../ECL/plugins/package_activation.py) `_payload:97,activate:114`、[lifecycle.py](../../ECL/plugins/manager/lifecycle.py) `_install_staged_plugin:388` |
 | 任务/提交 | [operations.py](../../ECL/services/operations.py) `_Operation:94,submit:157,finalize:207,cancel:314`、[custom_downloads.py](../../ECL/services/custom_downloads.py) `_download:347` |
 | 游戏/Java/联机 | [install.py](../../ECL/services/game/install.py) `install_version:131,_run_install:211,install_blocking:287`、[launch.py](../../ECL/services/game/launch.py) `cancel_launch:1234`、[Java manager](../../ECL/java/manager.py) `install:342,_submit_once:366`、[connector.py](../../ECL/services/connector.py) `host_port:656,host_instance:726,join:753,leave:850` |
-| 原生窗口/IPC | [tauri.py](../../ECL/host/tauri.py) `Adapter.run:51`、[registry.py](../../ECL/api/registry.py) `dispatch:278`、[bridge.py](../../ECL/api/bridge.py) `authorize_window_command:525`、[windows.py](../../ECL/api/windows.py) `window_open:135`、[Capability](../../capabilities/default.toml)、[Tauri.toml](../../Tauri.toml) |
-| 开发通道旁路 | [dev_channel.py](../../ECL/host/dev_channel.py) 发现文件`:328`、`frontend.invoke:587` |
+| 原生窗口/IPC | [tauri.py](../../ECL/desktop/tauri.py) `Adapter.run:51`、[registry.py](../../ECL/api/registry.py) `dispatch:278`、[bridge.py](../../ECL/api/bridge.py) `authorize_window_command:525`、[windows.py](../../ECL/api/windows.py) `window_open:135`、[Capability](../../capabilities/default.toml)、[Tauri.toml](../../Tauri.toml) |
+| 开发通道旁路 | [dev_channel.py](../../ECL/desktop/dev_channel.py) 发现文件`:328`、`frontend.invoke:587` |
 | 前端基线 | `frontend@6429f15` 的 `src/api/transport/tauri.ts:36`、`src/composables/usePluginBridge.ts:299,351`、`src/plugin-sdk/ui.ts:565`、`src/features/windows/PluginWindowShell.vue` |
 | Core进程基线 | `ECL/game@467b58c` 的 `Core/InstancesManager.py` `create_instance:87,stop_instance:200` |
 

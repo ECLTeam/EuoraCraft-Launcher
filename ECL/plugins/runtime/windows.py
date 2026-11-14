@@ -20,8 +20,8 @@ from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api._windows import WindowsApi
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api._windows import WindowsApi
 from ECL.plugins.runtime.process_scope import ProcessReference
 
 

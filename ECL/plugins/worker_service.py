@@ -25,10 +25,10 @@ from uuid import uuid4
 from ECL.java.manager import JavaManager
 from ECL.java.models import JavaError
 from ECL.java.queries import JavaQueries
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.development import DevelopmentSource, PluginDevelopmentService
 from ECL.plugins.environment_pool import PluginDependencyDirectory
 from ECL.plugins.installation_store import PluginInstallationStore, WorkerManifest

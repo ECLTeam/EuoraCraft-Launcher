@@ -27,7 +27,7 @@
 | `ECL/cli.py`                                                                    | 支持调试、开发者通道和禁用插件，没有插件开发模式参数 | 增加互斥的启用、关闭参数及会话覆盖                         |
 | `ECL/utils/config.py`                                                           | `plugins` 分区已有界面注入选项                       | 校验可选开发模式布尔项，保留缺省字段语义                   |
 | `ECL/application.py`、`ECL/plugins/manager/base.py`                             | 插件服务先初始化，由页面 IPC 切换开发状态            | 在启动期统一确定状态并接入已有开发服务                     |
-| `ECL/host/single_instance.py`                                                   | 对部分启动期选项禁止转发                             | 补齐新选项，防止第二次启动改变已有进程的模式               |
+| `ECL/desktop/single_instance.py`                                                   | 对部分启动期选项禁止转发                             | 补齐新选项，防止第二次启动改变已有进程的模式               |
 | `ECL/api/plugins.py`、`plugin_models.py`、`registry.py`、`operation_logging.py` | 提供 `plugin_development_get/set`                    | 保留必要只读查询，移除无调用需求的切换命令、模型和日志声明 |
 | `frontend/src/views/Plugins.vue`、插件管理 API 与页面样式                       | 显示开发模式开关及切换提示                           | 删除开关、切换流程与失效文案，整理工具栏排列               |
 | `frontend/src/features/plugins/components/PluginSettingsModal.vue`              | 已用公共全屏容器，内部自行实现左右卡片和导航         | 保留容器及业务行为，局部布局和样式对齐项目基准             |

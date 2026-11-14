@@ -21,8 +21,8 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.launch_hooks import LaunchContext, LaunchHookRegistry, apply_remote_modifications
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
 

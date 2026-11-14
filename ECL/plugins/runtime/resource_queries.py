@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import Field, StrictInt
 
-from ECL.plugin_api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest

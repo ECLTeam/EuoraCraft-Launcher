@@ -202,11 +202,11 @@ Core（`ECL/game`，**4482 行**生产代码）现有能力：下载、文件校
 
 ### 4.4 应用基础设施移出 `services/`
 
-⚠️ **命名冲突**：`ECL/launcher.py` 已存在，新层**不能**叫 `launcher/`。建议 **`ECL/host/`**（宿主层）。
+⚠️ **命名冲突**：`ECL/launcher.py` 已存在，新层**不能**叫 `launcher/`。建议 **`ECL/desktop/`**（宿主层）。
 
 | 去向 | 模块 | 行数 |
 |---|---:|---:|
-| **→ `ECL/host/`** | `app_update`(578)、`dev_channel`(805)、`single_instance`(255)、`info_card`(232)、`background_media`(209)、`maintenance`(171)、`frontend_events`(153) | 2403 |
+| **→ `ECL/desktop/`** | `app_update`(578)、`dev_channel`(805)、`single_instance`(255)、`info_card`(232)、`background_media`(209)、`maintenance`(171)、`frontend_events`(153) | 2403 |
 | **→ `ECL/utils/`**（纯无状态工具） | `instance_shortcuts`(191) | 191 |
 | **→ `ECL/foundation/`**（纯常量） | `themes`(20) | 20 |
 | **→ `services/account/`**（分组，见下） | `skin_avatar`(96) | 96 |
@@ -236,7 +236,7 @@ Core（`ECL/game`，**4482 行**生产代码）现有能力：下载、文件校
 6. **`java/` 提为顶层 `ECL/java/`**（§4.2.4）：移动整包 → 清理与 `services/game` 的双向依赖 → 收敛为 3~4 个文件 → 改导入。
 7. **顶层微型层合并**（§4.3）：`adapters/` + `common/` + `events/` → `ECL/foundation/`。⚠️ `from ECL.events import EventBus` 有 **31 处**引用，全仓共约 45 处导入需同步修改。
 8. **主仓库内收敛**（§4.3）：`catalog.py` 并入 `scan.py`、`launch_target.py` 并入 `launch.py`，逐个合并、每合并一次跑一次测试。
-9. **应用基础设施移出**（§4.4）：建 `ECL/host/` → 迁 7 个模块 → 建 `services/account/` 并归入 4 个账户皮肤模块 → `themes` 进 `foundation/` → 改 `application.py` / `api/*` 导入。
+9. **应用基础设施移出**（§4.4）：建 `ECL/desktop/` → 迁 7 个模块 → 建 `services/account/` 并归入 4 个账户皮肤模块 → `themes` 进 `foundation/` → 改 `application.py` / `api/*` 导入。
 10. **收尾**：更新 `services/__init__.py` 与 `ECL/services/game/__init__.py` 的聚合导出；确认 IPC 命令名与错误码零变化。
 11. **推送**：按 `AGENTS.md` §5 校验全部子模块指针在远端存在 → 推子模块 → 推主仓库。
 
@@ -283,7 +283,7 @@ Core（`ECL/game`，**4482 行**生产代码）现有能力：下载、文件校
 |---|---|---|
 | 1. `services/java/` 归位 | **B：整体留主仓库，提为顶层 `ECL/java/`** | 不下沉 Core；`java/` 8 文件收敛为 3~4 个；需清理与 `services/game` 的双向依赖 |
 | 2. 顶层微型层是否合并 | **是：合并为 `ECL/foundation/`** | `adapters/` + `common/` + `events/` → 6 文件；约 45 处导入需改 |
-| 3. 本次是否含 `ECL/host/` 新层 | **A：包含** | 移出 7 个模块（2403 行）；`instance_shortcuts` 归 `utils/`、`themes` 归 `foundation/`、`skin_avatar` 归新建的 `services/account/` |
+| 3. 本次是否含 `ECL/desktop/` 新层 | **A：包含** | 移出 7 个模块（2403 行）；`instance_shortcuts` 归 `utils/`、`themes` 归 `foundation/`、`skin_avatar` 归新建的 `services/account/` |
 
 **因决策 1 = B 而简化的部分**：批次 3（java 下沉）取消，Core 只吸收批次 1 + 批次 2 共 **1970 行**，不再需要处理"`java/` 跨两个仓库"的碎片问题。
 

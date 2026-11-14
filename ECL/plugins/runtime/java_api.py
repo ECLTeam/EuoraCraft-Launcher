@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from ECL.java.models import JavaError, JavaInstallPlan, RuntimeRecord
 from ECL.java.queries import JavaQueries
-from ECL.plugin_api.contracts import JsonValue, ProtocolError
+from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession

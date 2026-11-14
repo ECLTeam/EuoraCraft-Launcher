@@ -25,8 +25,8 @@ from pathlib import Path
 from threading import Lock
 from time import monotonic, sleep
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugin_api.contracts import ProtocolPolicy, WireMessage
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.api.contracts import ProtocolPolicy, WireMessage
 
 
 def _credentials(connection: socket.socket) -> tuple[int, int]:

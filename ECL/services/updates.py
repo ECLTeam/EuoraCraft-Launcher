@@ -33,8 +33,8 @@ from typing import Any, NotRequired, TypedDict
 
 import httpx
 
-from ECL.foundation import EventBus
-from ECL.utils import atomic_write_text, get_logger, get_with_retries
+from ECL.utils import EventBus, atomic_write_text, get_logger
+from ECL.utils.network import get_with_retries
 
 
 def parse_version(version: str) -> tuple[tuple[int, ...], tuple[int, int] | None] | None:

@@ -79,9 +79,9 @@ import httpx
 import pytest
 
 import ECL.services.account.accounts as accounts_service
-from ECL.foundation import EventBus
 from ECL.services import AccountManager
 from ECL.services.account.accounts import LauncherMicrosoftAccountManager
+from ECL.utils import EventBus
 
 
 @pytest.mark.asyncio

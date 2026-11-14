@@ -24,7 +24,6 @@ from tempfile import gettempdir
 from threading import Event, RLock, Thread
 from typing import TYPE_CHECKING, Any
 
-from ECL.foundation import EventBus
 from ECL.game import (
     ApiUrlConfig,
     BaseApiClient,
@@ -45,7 +44,7 @@ from ECL.plugins.instance_compat import InstanceCompatibilityRegistry
 from ECL.plugins.launch_hooks import LaunchHookRegistry
 from ECL.services.account import AccountManager, AuthlibInjector
 from ECL.services.operations import OperationManager, OperationOrigin
-from ECL.utils import GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
+from ECL.utils import EventBus, GameServiceError, VersionScanError, get_logger  # noqa: F401  # re-export
 from ECL.utils.instance_reading import DirectoryIdentity
 from ECL.utils.operation_logging import OperationTrace
 

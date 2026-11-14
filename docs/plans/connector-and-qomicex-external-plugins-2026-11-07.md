@@ -33,7 +33,7 @@
 - `ECL/services/connector.py`、`connector_nodes.py`、`ECL/services/florolding/`：EasyTier、房间协调、局域网广播、端口与 NAT 探测、节点配置及会话资源。
 - `ECL/api/connector.py`、`api/bridge.py`、`api/system.py`：直接联机 IPC、状态读取和节点预热。
 - `ECL/plugins/runtime/connector_api.py`：现有 Worker `connector.*` 仍由宿主联机服务执行，不能直接满足外置减包。
-- `ECL/plugins/runtime/broker.py`、`runtime/models.py`、`manager/registry.py`、`ECL/plugin_api/plugin.py`：普通 Worker 有插槽、命令和跨插件调用；尚无完整 Worker 页面注册，命令字段仅支持基础标量。
+- `ECL/plugins/runtime/broker.py`、`runtime/models.py`、`manager/registry.py`、`ECL/plugins/api/plugin.py`：普通 Worker 有插槽、命令和跨插件调用；尚无完整 Worker 页面注册，命令字段仅支持基础标量。
 - `resources/system_plugins/qomicex_compat/`：一个系统插件同时实现实例读取、索引设置和四个 `qml:*` 协议，内部直接使用宿主对象和路径。
 - `ECL/plugins/instance_compat.py`、`tests/test_plugin_compat_remote.py`：Worker 兼容来源目前仅能提交有限字符串字段，不能完整表达现有图标、隐藏/固定状态、运行统计和索引刷新。
 - `frontend/src/views/More.vue`、`views/connect/`、`features/connect/`、`components/connect/`、`composables/usePluginBridge.ts`：现有联机入口和页面仍是宿主代码；宿主已有可复用的动态插件路由。
@@ -168,7 +168,7 @@
 ## 7. 具体实施顺序与文件范围
 
 1. **基线与隔离**：重新检查主/前端工作树、子模块及规范，建立 `codex/` 工作分支和隔离工作树；记录同配置未改动构建的体积与功能基线。
-2. **通用接口**：修改 `ECL/plugin_api/plugin.py`、`ECL/plugins/runtime/models.py`、`broker.py`、`worker_service.py`、`manager/registry.py` 及必要权限/文件模型；补齐页面注册、有界 JSON 和完整实例元数据回调。先完成对应 Worker、拒绝授权和失效测试。
+2. **通用接口**：修改 `ECL/plugins/api/plugin.py`、`ECL/plugins/runtime/models.py`、`broker.py`、`worker_service.py`、`manager/registry.py` 及必要权限/文件模型；补齐页面注册、有界 JSON 和完整实例元数据回调。先完成对应 Worker、拒绝授权和失效测试。
 3. **主窗口承载**：修改前端 `usePluginBridge.ts`、插件类型、Host API、路由及相关测试，复用现有动态路由和页面组件契约；运行中页面撤销必须安全导航。
 4. **联机插件工程**：将 `services/connector.py`、`connector_nodes.py` 和 Florolding 的业务迁入插件，消除私有宿主导入，拆出 DTO、设置和网络资源的明确归属；完成跨插件扩展命令契约。
 5. **兼容插件工程**：将 `resources/system_plugins/qomicex_compat/main.py` 的实例读取与 `qml:*` 语义迁入普通 Worker，改用自身设置、受控实例与索引接口；原设置 Vue 改为宿主标准插件设置/必要声明式面板。

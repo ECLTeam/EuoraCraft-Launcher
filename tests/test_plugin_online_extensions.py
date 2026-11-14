@@ -21,8 +21,8 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.plugins.auth_providers import sanitize_account_payload, sanitize_credentials_payload
 from ECL.plugins.runtime.models import AuthProviderDefinition
 from ECL.plugins.worker_service import PluginWorkerService

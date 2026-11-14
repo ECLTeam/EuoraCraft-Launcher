@@ -47,8 +47,8 @@ from ECL.api.plugin_models import (
     PluginSettingsQuery,
     PluginSettingsUpdate,
 )
-from ECL.plugin_api._rpc import RpcRequest
-from ECL.plugin_api.contracts import ProtocolError, _json_value
+from ECL.plugins.api._rpc import RpcRequest
+from ECL.plugins.api.contracts import ProtocolError, _json_value
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
 from ECL.plugins.package_archive import PluginPackageError

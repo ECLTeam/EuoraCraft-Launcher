@@ -16,8 +16,8 @@
 #   - test_env_manager_reads_curseforge_api_key_from_ecl_prefix(tmp_path, monkeypatch) -> None
 # ============================================================
 
-from ECL.utils import Environment
 from ECL.utils.config import default_config
+from ECL.utils.environment import Environment
 
 
 def test_apply_to_config_maps_non_default_section_to_nested_dict(tmp_path, monkeypatch) -> None:

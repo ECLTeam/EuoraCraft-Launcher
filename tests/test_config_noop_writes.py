@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.foundation import EventBus
+from ECL.utils import EventBus
 from ECL.utils.config import ConfigStore
 from ECL.utils.download_settings import DownloadSettingsPatch
 

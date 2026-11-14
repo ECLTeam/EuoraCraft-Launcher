@@ -89,7 +89,7 @@ example-data==1.3.0 --hash=sha256:<摘要一> --hash=sha256:<摘要二>
 ```
 
 ```python
-from ECL.plugin_api import Plugin as BasePlugin
+from ECL.plugins.api import Plugin as BasePlugin
 
 
 class Plugin(BasePlugin):

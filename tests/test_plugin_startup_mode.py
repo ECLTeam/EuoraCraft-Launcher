@@ -6,9 +6,9 @@ import pytest
 from test_plugin_worker_manager import make_plugin
 
 from ECL.cli import LaunchOptions, apply_launch_overrides, parse_launch_options
-from ECL.foundation import EventBus
-from ECL.host.single_instance import SingleInstanceService, probe_running_instance
-from ECL.plugins import PluginManager
+from ECL.desktop.single_instance import SingleInstanceService, probe_running_instance
+from ECL.plugins.framework import PluginManager
+from ECL.utils import EventBus
 from ECL.utils.config import ConfigStore
 from ECL.utils.errors import ConfigValidationError
 

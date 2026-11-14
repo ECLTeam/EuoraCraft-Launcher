@@ -64,7 +64,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from ECL.foundation import EventBus
 from ECL.services.game import GameService
 from ECL.services.game import modpack as modpack_module
 from ECL.services.game.modpack import (
@@ -75,6 +74,7 @@ from ECL.services.game.modpack import (
     curseforge_fingerprint,
     detect_pack_format,
 )
+from ECL.utils import EventBus
 from ECL.utils.errors import GameServiceError
 
 

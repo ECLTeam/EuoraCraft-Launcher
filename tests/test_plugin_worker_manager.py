@@ -7,8 +7,8 @@ from time import monotonic, sleep
 
 import pytest
 
-from ECL.plugin_api._errors import PluginRuntimeError
-from ECL.plugins import PluginManager
+from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.framework import PluginManager
 
 
 def make_plugin(root: Path, marker: Path, *, api_version=2):
@@ -16,7 +16,7 @@ def make_plugin(root: Path, marker: Path, *, api_version=2):
     metadata = {"name": "example", "version": "1.0.0", "api_version": api_version}
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (root / "main.py").write_text(
-        "from ECL.plugin_api import Plugin as BasePlugin\nfrom pathlib import Path\nimport os\n"
+        "from ECL.plugins.api import Plugin as BasePlugin\nfrom pathlib import Path\nimport os\n"
         f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
         "class Plugin(BasePlugin):\n"
         "    def on_load(self):\n"
@@ -322,7 +322,7 @@ def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path:
     from threading import Event
 
     import ECL.plugins.settings as broker_module
-    from ECL.plugin_api._rpc import RpcRequest
+    from ECL.plugins.api._rpc import RpcRequest
 
     make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "marker")
     manager = PluginManager()

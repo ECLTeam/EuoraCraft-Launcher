@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.plugin_api.contracts import ProtocolError
+from ECL.plugins.api.contracts import ProtocolError
 from ECL.utils.config import default_config
 from tests.test_plugin_game_launch import game_launch  # noqa: F401 - pytest fixture
 from tests.test_plugin_game_resources import assets  # noqa: F401 - pytest fixture

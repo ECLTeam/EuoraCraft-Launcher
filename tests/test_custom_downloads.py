@@ -11,10 +11,10 @@ from urllib.parse import quote
 import pytest
 from pydantic import ValidationError
 
-from ECL.foundation import EventBus
 from ECL.game import Downloader
 from ECL.services.custom_downloads import CustomDownloadRequest, CustomDownloadService, DownloadPolicy
 from ECL.services.operations import OperationManager
+from ECL.utils import EventBus
 from ECL.utils.errors import GameServiceError
 
 
