@@ -168,7 +168,8 @@ def _launch(request: dict[str, object], options: PluginProcessOptions) -> subpro
     executable = Path(sys.executable if getattr(sys, "frozen", False) else sys._base_executable).resolve()
     expected_prefix = [str(executable)]
     if not getattr(sys, "frozen", False):
-        expected_prefix += ["-S", str(Path(__file__).resolve().parents[2] / "main.py")]
+        # SDK 位于 ECL/plugins/api/，向上三级到仓库根，与 executable.py 的 project_path 一致。
+        expected_prefix += ["-S", str(Path(__file__).resolve().parents[3] / "main.py")]
     if prefix != expected_prefix or arguments[-len(expected_tail) :] != expected_tail:
         raise ValueError("监管启动入口与运行不符")
     return subprocess.Popen(
