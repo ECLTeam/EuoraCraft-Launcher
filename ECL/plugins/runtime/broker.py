@@ -21,6 +21,7 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Event, RLock, Thread, current_thread
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
@@ -181,6 +182,55 @@ class PluginHostBroker:
         }
     )
     max_receipts: ClassVar[int] = 1024
+
+    # 前缀命名空间到服务实现的注册表。键是互不重叠的命名空间前缀，
+    # 遍历顺序不影响解析结果；新增命名空间在此登记而非追加分支链。
+    prefix_routes: ClassVar[MappingProxyType[str, str]] = MappingProxyType(
+        {
+            "game.": "_game_service",
+            "mods.": "_game_service",
+            "resourcepacks.": "_game_service",
+            "shaders.": "_game_service",
+            "modpacks.": "_game_service",
+            "files.": "_query_service",
+            "java.": "_query_service",
+            "accounts.": "_query_service",
+            "config.": "_query_service",
+            "panels.": "_panel_service",
+            "ui.": "_ui_service",
+            "plugins.": "_cross_plugin_service",
+            "hooks.": "_hook_service",
+            "crash.": "_crash_service",
+            "compat.": "_compat_service",
+            "tools.": "_tool_service",
+            "auth.": "_auth_service",
+        }
+    )
+
+    # 无命名空间归属的显式方法到服务实现的注册表（含控制面方法）。
+    method_routes: ClassVar[MappingProxyType[str, str]] = MappingProxyType(
+        {
+            "operations.get": "_query_service",
+            "operations.list": "_query_service",
+            "operations.cancel": "_query_service",
+            "resources.list": "_query_service",
+            "instances.scan": "_query_service",
+            "instances.get": "_query_service",
+            "instances.profile_patch": "_query_service",
+            "network.request": "_query_service",
+            "downloads.submit": "_query_service",
+            "runtime.info": "_control_service",
+            "mutations.get": "_control_service",
+            "commands.register": "_control_service",
+            "commands.unregister": "_control_service",
+            "commands.call": "_control_service",
+            "settings.define": "_control_service",
+            "settings.get": "_control_service",
+            "settings.set": "_control_service",
+            "events.subscribe": "_control_service",
+            "events.unsubscribe": "_control_service",
+        }
+    )
 
     def __init__(
         self,
@@ -434,39 +484,27 @@ class PluginHostBroker:
         assert receipt.result is not None
         return receipt.result
 
+    @classmethod
+    def _resolve_handler(cls, method: str) -> str | None:
+        """
+        按注册表解析方法到服务实现名，未知方法返回空。
+
+        :param method: 宿主方法全名
+        :return: 服务实现的属性名，未登记时为 None
+        """
+        explicit = cls.method_routes.get(method)
+        if explicit is not None:
+            return explicit
+        return next(
+            (target for prefix, target in cls.prefix_routes.items() if method.startswith(prefix)),
+            None,
+        )
+
     def _dispatch(self, request: RpcRequest) -> dict[str, JsonValue]:
-        method = request.method
-        if method.startswith(("game.", "mods.", "resourcepacks.", "shaders.", "modpacks.")):
-            return self._game_service(request)
-        if method.startswith(("files.", "java.", "accounts.", "config.")) or method in {
-            "operations.get",
-            "operations.list",
-            "operations.cancel",
-            "resources.list",
-            "instances.scan",
-            "instances.get",
-            "instances.profile_patch",
-            "network.request",
-            "downloads.submit",
-        }:
-            return self._query_service(request)
-        if method.startswith("panels."):
-            return self._panel_service(request)
-        if method.startswith("ui."):
-            return self._ui_service(request)
-        if method.startswith("plugins."):
-            return self._cross_plugin_service(request)
-        if method.startswith("hooks."):
-            return self._hook_service(request)
-        if method.startswith("crash."):
-            return self._crash_service(request)
-        if method.startswith("compat."):
-            return self._compat_service(request)
-        if method.startswith("tools."):
-            return self._tool_service(request)
-        if method.startswith("auth."):
-            return self._auth_service(request)
-        return self._control_service(request)
+        handler_name = self._resolve_handler(request.method)
+        if handler_name is None:
+            raise ProtocolError("未知宿主方法", "PLUGIN_API_METHOD_NOT_FOUND")
+        return getattr(self, handler_name)(request)
 
     def _control_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         """

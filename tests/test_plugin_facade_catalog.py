@@ -12,50 +12,11 @@ from __future__ import annotations
 import re
 
 from ECL.plugins.api.facades import PluginFacadeCatalog
+from ECL.plugins.runtime.broker import PluginHostBroker
 
-# broker 当前 _dispatch 的路由知识基线（批 2 落地后改为对路由表键集断言）。
-_dispatch_prefixes = (
-    "game.",
-    "mods.",
-    "resourcepacks.",
-    "shaders.",
-    "modpacks.",
-    "files.",
-    "java.",
-    "accounts.",
-    "config.",
-    "panels.",
-    "ui.",
-    "plugins.",
-    "hooks.",
-    "crash.",
-    "compat.",
-    "tools.",
-    "auth.",
-)
-_dispatch_explicit_methods = frozenset(
-    {
-        "operations.get",
-        "operations.list",
-        "operations.cancel",
-        "resources.list",
-        "instances.scan",
-        "instances.get",
-        "instances.profile_patch",
-        "network.request",
-        "downloads.submit",
-        "runtime.info",
-        "mutations.get",
-        "commands.register",
-        "commands.unregister",
-        "commands.call",
-        "settings.define",
-        "settings.get",
-        "settings.set",
-        "events.subscribe",
-        "events.unsubscribe",
-    }
-)
+# 路由知识基线来自 broker 注册表；门面目录必须落在这套知识内。
+_dispatch_prefixes = tuple(PluginHostBroker.prefix_routes)
+_dispatch_explicit_methods = frozenset(PluginHostBroker.method_routes)
 
 _promise_snapshot = {
     "instances": frozenset({"instances.get", "instances.scan", "instances.profile_patch", "config.public"}),
@@ -109,8 +70,10 @@ _promise_snapshot = {
             "mutations.get",
             "runtime.info",
             "files.delete",
+            "files.list",
             "files.read",
             "files.replace_begin",
+            "files.stat",
             "files.write_abort",
             "files.write_begin",
             "files.write_chunk",
@@ -125,6 +88,9 @@ _promise_snapshot = {
             "ui.register_html",
             "ui.register_page",
             "ui.register_vue",
+            "ui.windows.close",
+            "ui.windows.focus",
+            "ui.windows.open",
             "commands.register",
             "commands.unregister",
             "commands.call",
@@ -157,7 +123,7 @@ def test_non_method_identifiers_are_excluded() -> None:
     """
     excluded = {"callbacks.invoke", "plugin.base", "java.base", "settings.changed"}
     assert not (set(PluginFacadeCatalog.facade_by_method) & excluded)
-    pattern = re.compile(r"^[a-z][a-z_]*\.[a-z][a-z_]*$")
+    pattern = re.compile(r"^[a-z][a-z_]*(\.[a-z][a-z_]*)+$")
     assert all(pattern.fullmatch(method) for method in PluginFacadeCatalog.facade_by_method)
 
 
@@ -187,3 +153,10 @@ def test_extension_methods_are_weakly_promised_only() -> None:
     extension_methods = {method for methods in PluginFacadeCatalog.extensions.values() for method in methods}
     assert not (promised_methods & extension_methods)
     assert not (frozenset(PluginFacadeCatalog.extensions) & PluginFacadeCatalog.promised_facades)
+
+
+def test_mutation_methods_are_covered_by_catalog() -> None:
+    """
+    broker 的全部变更方法必须归属某个门面；新变更方法登记时目录同步扩面。
+    """
+    assert PluginHostBroker.mutation_methods <= set(PluginFacadeCatalog.facade_by_method)
