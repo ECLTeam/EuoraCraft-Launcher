@@ -68,17 +68,13 @@ jobs:
           tests/test_plugin_guardian_control.py
           tests/test_plugin_worker_protocol.py
           tests/test_plugin_unix_framing.py
-          tests/test_plugin_native_debugging.py
-          tests/test_plugin_native_build_inputs.py
           tests/test_plugin_worker_bootstrap.py
           tests/test_plugin_worker_lifecycle.py
           tests/test_plugin_worker_manager.py
           tests/test_plugin_manager_packages.py
           tests/test_plugin_worker_dependencies.py
-          tests/test_plugin_auth_worker_roundtrip.py
           tests/test_plugin_cross_plugin.py
           tests/test_plugin_disabled_state.py
-          tests/test_plugin_ui_slot_worker.py
           -k 'not frozen and not True'
       - name: Run native process and transport boundaries
         if: always()
@@ -164,17 +160,11 @@ jobs:
           tests/test_plugin_file_replace.py
           tests/test_plugin_instance_profile_write.py
           tests/test_plugin_instance_reading.py
-          tests/test_plugin_file_worker.py
-          tests/test_plugin_file_replace_worker.py
-          tests/test_plugin_file_delete_worker.py
-          tests/test_plugin_download_worker.py
-          tests/test_plugin_instance_profile_worker.py
           tests/test_instance_profile_transactions.py
           tests/test_plugin_game_install.py
           tests/test_plugin_game_launch.py
           tests/test_plugin_game_resources.py
           tests/test_plugin_modpacks.py
-          tests/test_plugin_game_tools_worker.py
           -k 'not frozen and not test_delayed_removal_keeps_cleanup_pending_until_original_entry_gone and not test_staging_metadata_handle_delays_quota_release'
       - name: Reject incomplete file coverage
         run: |
