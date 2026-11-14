@@ -17,20 +17,20 @@ BUNDLE_IDENTIFIER = "EuoraCraft-Launcher"
 def _resolve_console_mode() -> bool:
     """根据构建类型决定是否显示命令行窗口。
 
-    beta/release 构建面向普通用户，隐藏控制台避免弹出黑色命令行窗口；
+    beta/rc/release 构建面向普通用户，隐藏控制台避免弹出黑色命令行窗口；
     alpha 构建与源码启动（dev）保留控制台便于排查启动问题。显式设置 ECL_CONSOLE 时以其为准。
     """
     explicit = os.environ.get("ECL_CONSOLE")
     if explicit is not None:
         return explicit == "1"
-    version_path = SPEC_DIR / "ECL" / "foundation" / "version.py"
+    version_path = SPEC_DIR / "ECL" / "version.py"
     try:
         text = version_path.read_text(encoding="utf-8")
     except OSError:
         return True
     match = re.search(r'__version_type__\s*=\s*["\']([^"\']+)["\']', text)
     version_type = match.group(1) if match else ""
-    return version_type not in {"beta", "release"}
+    return version_type not in {"beta", "rc", "release"}
 
 
 CONSOLE = _resolve_console_mode()
@@ -127,7 +127,6 @@ hiddenimports = [
     "h11",
     "psutil",
     "pydantic",
-    "pyperclip",
     "ECL.minecraft.game",
     "ECL.minecraft.game.auth",
 ] + _wheel_hiddenimports + collect_submodules("ECL")
@@ -185,6 +184,34 @@ excludes = [
     "types_requests",
     "urllib3",
     "charset_normalizer",
+    # 纯 Python 回退实现，实际使用的是 _decimal 加速版
+    "_pydecimal",
+    # 启动器只解析邮件头，不构造 MIME 附件
+    "email.mime",
+    # 未随包携带原生插件，或只服务文档/绘图场景的图片格式；
+    # PIL 的 Image.init() 会跳过导入失败的插件，保留的 PNG/JPEG/GIF/BMP/ICO/WEBP 等格式不受影响。
+    "PIL.AvifImagePlugin",
+    "PIL.ImageCms",
+    "PIL.PdfParser",
+    "PIL.PdfImagePlugin",
+    "PIL.EpsImagePlugin",
+    "PIL.PsdImagePlugin",
+    "PIL.WmfImagePlugin",
+    "PIL.FpxImagePlugin",
+    "PIL.PalmImagePlugin",
+    "PIL.BufrStubImagePlugin",
+    "PIL.GbrImagePlugin",
+    "PIL.IptcImagePlugin",
+    "PIL.MicImagePlugin",
+    "PIL.ImImagePlugin",
+    "PIL.SpiderImagePlugin",
+    "PIL.FliImagePlugin",
+    "PIL.MpoImagePlugin",
+    "PIL.DcxImagePlugin",
+    "PIL.MspImagePlugin",
+    "PIL.PcdImagePlugin",
+    "PIL.SunImagePlugin",
+    "PIL.CurImagePlugin",
 ]
 a = Analysis(
     [str(SPEC_DIR / "main.py")],
@@ -202,6 +229,23 @@ a = Analysis(
 
 # 资源目录可能残留已删除插件的字节码；运行代码由 PYZ 收集，不把历史缓存作为资源分发。
 a.datas = filter_runtime_data(a.datas)
+
+# .icns 只作为 macOS 的 bundle 图标来源，其他平台携带它没有用途，按平台剔除。
+if not IS_MACOS:
+    a.datas = [entry for entry in a.datas if entry[0].replace("\\", "/") != "resources/img/logo.icns"]
+
+
+def _drop_unused_pillow_plugins(entries: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """剔除启动器不使用的 Pillow 原生插件，避免 AVIF 等编解码器进入发行物。
+
+    启动器只用 PIL 核心与截图所需的 WEBP 支持；缺少这些插件时 PIL 按导入失败
+    忽略对应格式，不影响其他图片处理路径。
+    """
+    prefixes = ("PIL/_avif.", "PIL/_imagingcms.")
+    return [entry for entry in entries if not entry[0].replace("\\", "/").startswith(prefixes)]
+
+
+a.binaries = _drop_unused_pillow_plugins(a.binaries)
 
 pyz = PYZ(a.pure)
 upx_enabled = UPX_ENABLED

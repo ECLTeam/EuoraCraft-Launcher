@@ -23,7 +23,7 @@ def test_legacy_sdk_modules_are_not_shipped(relative_path: str) -> None:
     [
         "pyproject.toml",
         "EuoraCraft-Launcher.spec",
-        "packaging/build-nuitka.ps1",
+        "packaging/build-windows.ps1",
         ".github/workflows/build.yml",
         "ECL/plugins/manager/discovery.py",
         "ECL/plugins/host_dependencies.py",

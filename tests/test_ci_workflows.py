@@ -116,13 +116,15 @@ def test_both_platform_groups_use_shared_version_and_publication_results():
     assert "python packaging/release_metadata.py" in source
 
 
-def test_platform_builds_keep_their_compilers_and_arch_toolchain():
+def test_platform_builds_share_one_packager_and_keep_the_arch_toolchain():
     source = _workflow("build.yml")
     assert "os: [windows-latest, windows-11-arm, ubuntu-latest, macos-latest]" in source
-    assert "python -m PyInstaller" in source
-    assert "python -m nuitka" in source
+    assert "python -m nuitka" not in source
+    assert source.count('python -m PyInstaller --noconfirm --clean "EuoraCraft-Launcher.spec"') == 2
     arch = source.split("  build-arch-pkg:", 1)[1].split("  publish-arch:", 1)[0]
-    assert arch.index("Install build toolchain") < arch.index("uv venv") < arch.index("Build Arch binary with Nuitka")
+    assert (
+        arch.index("Install build toolchain") < arch.index("uv venv") < arch.index("Build Arch binary with PyInstaller")
+    )
     assert "gtk3 webkit2gtk-4.1" in arch and "patchelf curl upx" in arch
 
 

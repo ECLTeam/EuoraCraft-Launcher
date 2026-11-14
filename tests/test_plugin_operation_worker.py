@@ -25,7 +25,7 @@ def worker(tmp_path, request):
     if request.param and not artifact:
         pytest.skip("真实冻结验收需要显式提供本轮发行物")
     executable = (
-        ExecutableLaunchSpec(Path(artifact).resolve(), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka"))
+        ExecutableLaunchSpec(Path(artifact).resolve(), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller"))
         if request.param
         else None
     )

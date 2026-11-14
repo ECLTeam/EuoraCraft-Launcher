@@ -33,19 +33,11 @@ htmlcov/
 build/
 output/playwright/plugin-development/
 dist/
-build-nuitka/
 .eggs/
 *.egg-info/
 *.egg
 *.spec
 !EuoraCraft-Launcher.spec
-
-# Nuitka build output（默认输出目录名，未指定 --output-dir 时生成）
-main.build/
-main.dist/
-main.onefile-build/
-main.exe
-nuitka-crash-report.xml
 
 # Frontend dependencies and generated output
 frontend/node_modules/

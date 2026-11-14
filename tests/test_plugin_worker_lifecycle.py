@@ -47,7 +47,7 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
     if use_frozen and not artifact:
         pytest.skip("冻结验收需要提供实际发行物")
     executable = (
-        ExecutableLaunchSpec(Path(artifact).resolve(), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka"))
+        ExecutableLaunchSpec(Path(artifact).resolve(), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller"))
         if use_frozen
         else None
     )

@@ -79,7 +79,7 @@ def test_frozen_worker_gate_with_real_artifact(tmp_path: Path) -> None:
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     if not artifact:
         pytest.skip("需要显式提供真实发行物，不能以源码测试替代")
-    builder = os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka")
+    builder = os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller")
     executable = ExecutableLaunchSpec(Path(artifact).resolve(), None, builder)
     snapshot, marker = _snapshot(tmp_path)
     with WorkerSupervisor(executable) as supervisor:
@@ -94,7 +94,7 @@ def test_frozen_runtime_resolves_its_original_executable(tmp_path: Path) -> None
     artifact = os.environ.get("ECL_WORKER_SMOKE_EXECUTABLE")
     if not artifact:
         pytest.skip("需要真实冻结发行物检查运行时入口，不能仅 mock 构建器字段")
-    builder = os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka")
+    builder = os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller")
     executable = ExecutableLaunchSpec(Path(artifact).resolve(), None, builder)
     code_path = tmp_path / "code"
     code_path.mkdir()

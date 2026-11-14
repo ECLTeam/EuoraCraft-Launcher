@@ -35,7 +35,7 @@ def test_workers_use_different_locked_versions_and_metadata(tmp_path: Path, use_
         ExecutableLaunchSpec(
             Path(artifact).resolve(),
             None,
-            os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka"),
+            os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller"),
         )
         if use_frozen
         else ExecutableLaunchSpec.current()
@@ -106,7 +106,7 @@ def test_native_wheel_loads_from_shared_pool_in_frozen_worker(tmp_path: Path) ->
         encoding="utf-8",
     )
     executable = ExecutableLaunchSpec(
-        Path(artifact).resolve(), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "nuitka")
+        Path(artifact).resolve(), None, os.environ.get("ECL_WORKER_SMOKE_BUILDER", "pyinstaller")
     )
     with WorkerSupervisor(executable) as supervisor:
         supervisor._authorize_snapshot(CodeSnapshot.capture(code_path), dependency=directory)
