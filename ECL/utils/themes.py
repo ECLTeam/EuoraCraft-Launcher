@@ -17,7 +17,7 @@ class ThemeCatalog:
     """
     集中管理启动器内置主题的稳定标识。
 
-    标识同时承载皮肤与配色：classic/folia 决定布局，absolutely 与
+    标识同时承载皮肤与配色：classic/folia 决定布局，absolutely、inkwhite 与
     catppuccin-<flavor> 只替换配色（布局沿用经典皮肤），风味取
     latte/frappe/macchiato/mocha。
     """
@@ -26,6 +26,7 @@ class ThemeCatalog:
         "classic",
         "folia",
         "absolutely",
+        "inkwhite",
         "catppuccin-latte",
         "catppuccin-frappe",
         "catppuccin-macchiato",

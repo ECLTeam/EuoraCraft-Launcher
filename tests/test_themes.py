@@ -16,11 +16,12 @@ from ECL.utils.themes import ThemeCatalog, normalize_theme_id
 
 
 def test_builtin_theme_ids_cover_skins_and_catppuccin_flavors() -> None:
-    # 内置主题包含两个布局皮肤与 Catppuccin 四个风味。
+    # 内置主题包含两个布局皮肤、两支配色主题与 Catppuccin 四个风味。
     assert ThemeCatalog.builtin_theme_ids == (
         "classic",
         "folia",
         "absolutely",
+        "inkwhite",
         "catppuccin-latte",
         "catppuccin-frappe",
         "catppuccin-macchiato",
@@ -35,6 +36,7 @@ def test_normalize_theme_id_accepts_builtin_and_rejects_unknown() -> None:
     assert normalize_theme_id("folia") == "folia"
     assert normalize_theme_id("catppuccin-mocha") == "catppuccin-mocha"
     assert normalize_theme_id("absolutely") == "absolutely"
+    assert normalize_theme_id("inkwhite") == "inkwhite"
 
     # 未知值、None 与大小写不一致的值一律回退到默认皮肤。
     assert normalize_theme_id("untrusted") == "classic"
