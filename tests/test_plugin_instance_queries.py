@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from ECL.plugins.api.contracts import ProtocolError
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.game import GameService
 from ECL.services.game.instance_profiles import InstanceProfileStore

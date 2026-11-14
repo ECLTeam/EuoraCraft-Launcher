@@ -22,7 +22,7 @@ from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.models import OperationGetRequest, OperationListRequest
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.services.operations import OperationAdmission, OperationManager, OperationOrigin, OperationWorker
 from ECL.utils.errors import GameServiceError
 

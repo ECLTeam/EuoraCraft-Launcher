@@ -26,7 +26,7 @@ from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, RequestModel
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.services.operations import OperationCommitRejectedError, OperationContext
 from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle
 

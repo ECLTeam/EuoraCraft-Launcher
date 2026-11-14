@@ -25,7 +25,7 @@ from ECL.plugins.account_resources import PluginAccountResourceCatalog
 from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import RequestModel, ResourceListRequest
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 
 
 class _AccountQuery(RequestModel):

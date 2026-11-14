@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameCatalogRequest, GameLoadersRequest
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.errors import GameServiceError
 
 if TYPE_CHECKING:

@@ -32,7 +32,7 @@ from ECL.plugins.runtime.models import (
     JavaValidateRequest,
     ResourceListRequest,
 )
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.operation_logging import private_transport_scope
 
 if TYPE_CHECKING:

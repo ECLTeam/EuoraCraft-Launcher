@@ -22,7 +22,7 @@ from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import RequestModel
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.errors import GameServiceError
 
 if TYPE_CHECKING:

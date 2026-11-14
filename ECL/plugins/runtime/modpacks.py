@@ -30,7 +30,7 @@ from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.game_models import GameInstallRequest
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, NetworkRequest, RequestModel
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.file_handles import FileDirectory
 from ECL.utils.operation_logging import private_transport_scope
 

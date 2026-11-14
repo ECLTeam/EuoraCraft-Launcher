@@ -39,7 +39,7 @@ from ECL.plugins.runtime.models import (
     ResourceListRequest,
 )
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
-from ECL.plugins.runtime.resources import ResourcePages
+from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.services.operations import OperationCommitRejectedError, OperationContext
 from ECL.utils.file_handles import FileBoundaryError, FileDirectory, FileHandle, FileIdentity, FileInformation
 
