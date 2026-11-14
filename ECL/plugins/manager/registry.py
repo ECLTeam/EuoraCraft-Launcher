@@ -169,7 +169,10 @@ class PluginRegistry(_PluginState):
         """
         从发现元数据和唯一运行服务构造第三方列表，不实例化插件获取展示字段。
 
-        :return: 安装、审阅、运行和清理状态
+        已启用的运行按实际登记结果回填 has_panels，未启用或运行失效时明确为 False，
+        供管理页决定是否提供声明式面板入口。
+
+        :return: 安装、审阅、运行、清理状态及是否声明面板
         """
         result = []
         names = set(self._candidate_map) | set(self._package_entries)
@@ -187,6 +190,7 @@ class PluginRegistry(_PluginState):
             )
             entry["pending_restart"] = bool(package.get("pending_restart"))
             entry["installed_version"] = metadata.get("version", "")
+            entry["has_panels"] = False
             session_reason = self._session_disable_reason(name)
             if session_reason:
                 entry["status"] = "disabled"
@@ -235,6 +239,10 @@ class PluginRegistry(_PluginState):
                 entry["settings"] = broker.settings_view()["schema"]
             except ValueError:
                 entry["settings"] = []
+            try:
+                entry["has_panels"] = bool(broker.panels_view())
+            except ValueError:
+                entry["has_panels"] = False
 
     def get_routes(self) -> list[dict[str, Any]]:
         """

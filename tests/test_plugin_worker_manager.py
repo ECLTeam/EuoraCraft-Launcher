@@ -11,22 +11,45 @@ from ECL.plugins.api._errors import PluginRuntimeError
 from ECL.plugins.framework import PluginManager
 
 
-def make_plugin(root: Path, marker: Path, *, api_version=1):
+def make_plugin(root: Path, marker: Path, *, api_version=1, declare_panel=False):
     root.mkdir(parents=True, exist_ok=True)
     metadata = {"name": "example", "version": "1.0.0", "api_version": api_version}
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
+    panel_line = ""
+    if declare_panel:
+        panel_line = "        self.define_panel('main', '演示面板', ({'type': 'text', 'text': '说明'},))\n"
     (root / "main.py").write_text(
         "from ECL.plugins.api import Plugin as BasePlugin\nfrom pathlib import Path\nimport os\n"
         f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
         "class Plugin(BasePlugin):\n"
         "    def on_load(self):\n"
         "        self.host.call('settings.define', {'definitions':[{'key':'greeting','type':'string','default':'hello'}]})\n"
-        "        self.define_command('echo', self.echo, input_fields=({'name':'value','type':'string'},),"
+        + panel_line
+        + "        self.define_command('echo', self.echo, input_fields=({'name':'value','type':'string'},),"
         " output_fields=({'name':'value','type':'string'},))\n"
         "    def echo(self, value):\n"
         "        return {'value':value}\n",
         encoding="utf-8",
     )
+
+
+@pytest.mark.parametrize("declare_panel", [False, True])
+def test_plugin_list_reports_only_enabled_declared_panels(tmp_path: Path, declare_panel: bool):
+    marker = tmp_path / "executed"
+    source = tmp_path / "data/plugins/sources/example"
+    make_plugin(source, marker, declare_panel=declare_panel)
+    manager = PluginManager()
+    manager.initialize(tmp_path / "data", tmp_path / "resources")
+    try:
+        if manager.list_plugins()[0]["status"] == "enabled":
+            assert manager.disable("example").success
+        assert manager.list_plugins()[0]["has_panels"] is False
+        assert manager.enable("example").success
+        assert manager.list_plugins()[0]["has_panels"] is declare_panel
+        assert manager.disable("example").success
+        assert manager.list_plugins()[0]["has_panels"] is False
+    finally:
+        manager.close()
 
 
 def test_directory_install_does_not_execute_until_enabled(tmp_path: Path):
