@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover - lightweight unit-test stubs omit windo
     class WebviewWindowBuilder:  # type: ignore[no-redef]
         @staticmethod
         def build(*args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("PytaruiX 窗口 API 不可用")
+            raise RuntimeError("pytauriX 窗口 API 不可用")
 
 
 from ECL.api.bridge import _FrontendState, _validate_body
