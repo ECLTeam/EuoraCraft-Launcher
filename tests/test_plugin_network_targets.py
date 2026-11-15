@@ -147,7 +147,7 @@ def test_ordinary_public_targets_are_allowed(address):
 @pytest.mark.parametrize(
     "patch",
     [
-        {"method": "POST"},
+        {"method": "TRACE"},
         {"method": "get"},
         {"url": 3},
         {"body_b64": ""},

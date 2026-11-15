@@ -110,7 +110,16 @@ def server(respond: Callable[[str, dict[str, str]], bytes | Iterator[bytes]], *,
                     lines = bytes(incoming).split(b"\r\n")
                     method, target, _ = lines[0].decode().split(" ")
                     headers = dict(line.decode().split(": ", 1) for line in lines[1:] if b": " in line)
-                    requests.append((method, target, headers))
+                    body = bytearray()
+                    content_length = int(headers.get("Content-Length", "0") or 0)
+                    body_start = bytes(incoming).index(b"\r\n\r\n") + 4
+                    body.extend(bytes(incoming)[body_start:])
+                    while len(body) < content_length:
+                        chunk = connection.recv(8192)
+                        if not chunk:
+                            break
+                        body.extend(chunk)
+                    requests.append((method, target, headers, bytes(body[:content_length])))
                     result = respond(target, headers)
                     chunks = [result] if isinstance(result, bytes) else result
                     for chunk in chunks:

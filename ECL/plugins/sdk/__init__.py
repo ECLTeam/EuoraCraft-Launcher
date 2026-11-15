@@ -11,9 +11,19 @@
 #   - class HostApiError — 宿主接口调用失败。
 #   - class ProtocolError — 插件通信协议校验失败。
 #   - JsonValue — 插件与宿主之间可传输的 JSON 值类型。
+#   - command / launch_hook / event — 静态声明装饰器（预置扫描登记）。
 # ============================================================
 
 from ECL.plugins.contracts import JsonValue, ProtocolError
-from ECL.plugins.sdk.plugin import HostApiError, HostClient, Plugin
+from ECL.plugins.sdk.plugin import HostApiError, HostClient, Plugin, command, event, launch_hook
 
-__all__ = ["HostApiError", "HostClient", "JsonValue", "Plugin", "ProtocolError"]
+__all__ = [
+    "HostApiError",
+    "HostClient",
+    "JsonValue",
+    "Plugin",
+    "ProtocolError",
+    "command",
+    "event",
+    "launch_hook",
+]

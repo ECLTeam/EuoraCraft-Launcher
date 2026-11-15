@@ -3,12 +3,13 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：执行插件 GET/HEAD 查询，维护原始授权、重定向、有限 DNS 与真实清理归属。
+# 文件作用：执行插件受控网络请求（安全只读与带白名单请求体的变更方法），
+#   维护原始授权、重定向、有限 DNS 与真实清理归属。
 #
 # 公开接口：
 #   - class PluginNetworkService — 应用唯一网络请求名额与 DNS 工作者所有者。
 #   - class NetworkCall — 保存查询或任务的原始准入与真实网络资源。
-#   - class RuntimeNetwork — 当前 Worker run 的只读网络门面。
+#   - class RuntimeNetwork — 当前 Worker run 的受控网络门面。
 # ============================================================
 
 from __future__ import annotations
@@ -458,7 +459,7 @@ class RuntimeNetwork:
 
     def handle(self, params: dict[str, JsonValue], deadline: float) -> dict[str, JsonValue]:
         """
-        只接受严格 GET/HEAD，全部跳转与交付使用同一原始租约和总预算。
+        只接受安全只读方法与带白名单请求体的变更方法，全部跳转与交付使用同一原始租约和总预算。
 
         :param params: 已经过 JSON 边界的请求
         :param deadline: RPC 原始截止时间
@@ -506,12 +507,16 @@ class RuntimeNetwork:
         为查询或下载逐跳执行同一受控请求，响应只在上下文内可读取。
 
         :param call: 原始执行授权、任务取消和实际资源归属
-        :param request: 严格验证的 GET/HEAD 请求
+        :param request: 严格验证的只读或变更请求
         :return: 最终规范 URL 与原始响应；退出关闭每跳连接
         :raises ProtocolError: 站点、跳转、网络或期限不满足时抛出
         """
         origin, url = NetworkOrigin.from_url(request.url)
         headers = {name.lower(): value for name, value in request.headers.items()}
+        content = request.encoded_body()
+        if request.json_body is not None and "content-type" not in headers:
+            headers["content-type"] = "application/json"
+        method = request.method
         visited: set[str] = set()
         for hop in range(6):
             call.check()
@@ -525,9 +530,10 @@ class RuntimeNetwork:
                     host = f"{host}:{origin.port}"
                 wire_headers = {"host": host, "accept-encoding": "identity", "connection": "close"} | headers
                 with pool.stream(
-                    request.method,
+                    method,
                     url,
                     headers=wire_headers,
+                    content=content or None,
                     extensions={"timeout": {key: call.timeout() for key in ("connect", "read", "write", "pool")}},
                 ) as response:
                     call.check()
@@ -539,6 +545,9 @@ class RuntimeNetwork:
             if next_origin != origin:
                 headers.pop("authorization", None)
                 headers.pop("x-api-key", None)
+            # 303 明确要求后续跳转改为 GET 且不重放请求体，其余跳转原样重发。
+            if response.status == 303:
+                method, content = "GET", b""
             origin, url = next_origin, next_url
         raise ProtocolError("插件网络重定向超过上限", "PLUGIN_REDIRECT_DENIED")
 

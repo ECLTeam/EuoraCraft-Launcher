@@ -12,11 +12,13 @@ import httpcore
 import pytest
 from plugin_network_helpers import MappedDialer, make_runtime, server
 from plugin_network_helpers import trusted_ssl_context as ssl_context
+from pydantic import ValidationError
 
 from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker
+from ECL.plugins.runtime.models import NetworkRequest
 from ECL.plugins.runtime.network_api import RuntimeNetwork
 from ECL.plugins.sdk._rpc import RpcRequest
 
@@ -654,3 +656,128 @@ def test_worst_url_and_escaped_headers_with_full_body_fit_business_json_budget(t
         finally:
             runtime.close()
             assert runtime.service.close()
+
+
+def test_request_body_is_sent_with_whitelisted_content_type(tmp_path):
+    with server(
+        lambda *_: b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    ) as (port, requests, _sni):
+        runtime, _ = make_runtime(
+            tmp_path,
+            [f"http:p10.example.test:{port}"],
+            resolver=lambda *_: ("93.184.216.34",),
+            dialer=MappedDialer(),
+        )
+        try:
+            # json 字段自动按 application/json 编码
+            payload = {"name": "demo", "count": 3}
+            result = runtime.handle(
+                {"method": "POST", "url": f"http://p10.example.test:{port}/submit", "json": payload},
+                monotonic() + 4,
+            )
+            assert base64.b64decode(result["body_b64"]) == b"ok"
+            method, _target, headers, body = requests[0]
+            assert method == "POST"
+            assert headers["content-type"] == "application/json"
+            assert json.loads(body) == payload
+
+            # data 字段要求显式白名单 Content-Type
+            result = runtime.handle(
+                {
+                    "method": "PUT",
+                    "url": f"http://p10.example.test:{port}/form",
+                    "data": "a=1&b=2",
+                    "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+                },
+                monotonic() + 4,
+            )
+            assert requests[1][3] == b"a=1&b=2"
+            assert requests[1][2]["content-type"] == "application/x-www-form-urlencoded"
+            assert runtime.is_idle()
+        finally:
+            runtime.close()
+            assert runtime.service.close()
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"method": "GET", "url": "http://p10.example.test/", "json": {"a": 1}},
+        {"method": "HEAD", "url": "http://p10.example.test/", "data": "x"},
+        {"method": "POST", "url": "http://p10.example.test/", "json": {"a": 1}, "data": "raw"},
+        {"method": "POST", "url": "http://p10.example.test/", "data": "raw"},
+        {"method": "POST", "url": "http://p10.example.test/", "json": [1], "headers": {"Content-Type": "text/plain"}},
+        {
+            "method": "POST",
+            "url": "http://p10.example.test/",
+            "data": "x",
+            "headers": {"Content-Type": "application/xml"},
+        },
+        {"method": "GET", "url": "http://p10.example.test/", "headers": {"Content-Type": "application/json"}},
+        {"method": "POST", "url": "http://p10.example.test/", "data": "x" * 1_048_577},
+    ],
+)
+def test_request_body_boundary_rejections(params):
+    with pytest.raises(ValidationError):
+        NetworkRequest.model_validate(params)
+
+
+def test_post_redirect_303_switches_to_get_without_body(tmp_path):
+    responses = iter(
+        [
+            b"HTTP/1.1 303 See Other\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone",
+        ]
+    )
+    with server(lambda *_: next(responses)) as (port, requests, _sni):
+        runtime, _ = make_runtime(
+            tmp_path,
+            [f"http:p10.example.test:{port}"],
+            resolver=lambda *_: ("93.184.216.34",),
+            dialer=MappedDialer(),
+        )
+        try:
+            result = runtime.handle(
+                {"method": "POST", "url": f"http://p10.example.test:{port}/a", "json": {"x": 1}},
+                monotonic() + 4,
+            )
+            assert base64.b64decode(result["body_b64"]) == b"done"
+            assert requests[0][0] == "POST" and requests[0][3] == b'{"x": 1}'
+            assert requests[1][0] == "GET" and requests[1][3] == b""
+        finally:
+            runtime.close()
+            assert runtime.service.close()
+
+
+def test_post_redirect_307_replays_body(tmp_path):
+    responses = iter(
+        [
+            b"HTTP/1.1 307 Temporary Redirect\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone",
+        ]
+    )
+    with server(lambda *_: next(responses)) as (port, requests, _sni):
+        runtime, _ = make_runtime(
+            tmp_path,
+            [f"http:p10.example.test:{port}"],
+            resolver=lambda *_: ("93.184.216.34",),
+            dialer=MappedDialer(),
+        )
+        try:
+            result = runtime.handle(
+                {
+                    "method": "POST",
+                    "url": f"http://p10.example.test:{port}/a",
+                    "data": "keep",
+                    "headers": {"Content-Type": "text/plain"},
+                },
+                monotonic() + 4,
+            )
+            assert base64.b64decode(result["body_b64"]) == b"done"
+            assert requests[0][0] == "POST" and requests[0][3] == b"keep"
+            assert requests[1][0] == "POST" and requests[1][3] == b"keep"
+        finally:
+            runtime.close()
+            assert runtime.service.close()
+
+

@@ -12,9 +12,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from time import monotonic, sleep
 
 import pytest
 
+from ECL.plugins.contracts import ProtocolError
+from ECL.plugins.sdk._rpc import RpcRequest
 from ECL.plugins.worker_service import PluginWorkerService
 
 
@@ -105,3 +108,127 @@ def test_system_plugin_content_change_blocks_running_instance(tmp_path: Path) ->
         service.stop("sys-demo")
     finally:
         service.close()
+
+
+def _broker_call(broker, method, params):
+    return broker.handle(RpcRequest(method, params, monotonic() + 5))
+
+
+def _make_emitter(root: Path, marker: Path, topic: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "plugin.json").write_text(
+        json.dumps({"name": "sys-emitter", "entry_point": "main:EmitterPlugin"}),
+        encoding="utf-8",
+    )
+    (root / "main.py").write_text(
+        "from pathlib import Path\n"
+        "from ECL.plugins.sdk import Plugin\n"
+        f"MARKER = Path({str(marker)!r})\n"
+        f"TOPIC = {topic!r}\n"
+        "class EmitterPlugin(Plugin):\n"
+        "    def on_enable(self):\n"
+        "        self.define_command('publish', self.publish, input_fields=({'name': 'value', 'type': 'string'},), output_fields=({'name': 'delivered', 'type': 'number'},))\n"
+        "    def publish(self, value):\n"
+        "        return {'delivered': self.emit_event(TOPIC, {'value': value})}\n"
+        "    def on_unload(self):\n"
+        "        MARKER.write_text('emitter-unloaded')\n",
+        encoding="utf-8",
+    )
+
+
+def _make_listener(root: Path, marker: Path, topic: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "plugin.json").write_text(
+        json.dumps({"name": "sys-listener", "entry_point": "main:ListenerPlugin"}),
+        encoding="utf-8",
+    )
+    (root / "main.py").write_text(
+        "from pathlib import Path\n"
+        "from ECL.plugins.sdk import Plugin\n"
+        f"MARKER = Path({str(marker)!r})\n"
+        f"TOPIC = {topic!r}\n"
+        "class ListenerPlugin(Plugin):\n"
+        "    def on_enable(self):\n"
+        "        self.subscription = self.subscribe_event(TOPIC, self.on_event)\n"
+        "        MARKER.write_text('listening')\n"
+        "    def on_event(self, value):\n"
+        "        MARKER.write_text('received:' + str(value))\n",
+        encoding="utf-8",
+    )
+
+
+def test_event_bus_delivers_across_system_plugins(tmp_path: Path) -> None:
+    marker = tmp_path / "events.txt"
+    topic = "sys-emitter.ready"
+    emitter_root = tmp_path / "resources" / "resources" / "system_plugins" / "sys-emitter"
+    listener_root = tmp_path / "resources" / "resources" / "system_plugins" / "sys-listener"
+    _make_emitter(emitter_root, marker, topic)
+    _make_listener(listener_root, marker, topic)
+    service = PluginWorkerService(tmp_path / "data")
+    try:
+        service.register({"name": "sys-listener", "entry_point": "main:ListenerPlugin"}, listener_root, "system")
+        service.register({"name": "sys-emitter", "entry_point": "main:EmitterPlugin"}, emitter_root, "system")
+        service.enable("sys-listener")
+        service.enable("sys-emitter")
+        assert marker.read_text(encoding="utf-8") == "listening"
+
+        # 发布方收到真实投递计数，订阅方回调异步收到载荷
+        result = service.broker("sys-emitter").call_command("publish", {"value": "42"})
+        assert result["delivered"] == 1
+        deadline = monotonic() + 3
+        while "received:" not in marker.read_text(encoding="utf-8"):
+            assert monotonic() < deadline
+            sleep(0.01)
+        assert marker.read_text(encoding="utf-8") == "received:42"
+
+        # 主题越界（占用他人命名空间）被拒绝
+        broker = service.broker("sys-emitter")
+        with pytest.raises(ProtocolError) as exc:
+            _broker_call(broker, "events.emit", {"topic": "sys-listener.stolen", "payload": {}})
+        assert exc.value.error_code == "PLUGIN_EVENT_TOPIC_INVALID"
+
+        service.stop("sys-emitter")
+        service.stop("sys-listener")
+    finally:
+        service.close()
+
+
+def test_emit_requires_own_namespace_and_bounded_payload(tmp_path: Path) -> None:
+    marker = tmp_path / "marker.txt"
+    root = tmp_path / "resources" / "resources" / "system_plugins" / "sys-demo"
+    _make_system_plugin(root, marker)
+    service = PluginWorkerService(tmp_path / "data")
+    try:
+        service.register({"name": "sys-demo", "entry_point": "main:DemoPlugin"}, root, "system")
+        service.enable("sys-demo")
+        broker = service.broker("sys-demo")
+        with pytest.raises(ProtocolError) as wrong_prefix:
+            _broker_call(broker, "events.emit", {"topic": "other.thing", "payload": {}})
+        assert wrong_prefix.value.error_code == "PLUGIN_EVENT_TOPIC_INVALID"
+        with pytest.raises(ProtocolError) as too_big:
+            _broker_call(broker, "events.emit", {"topic": "sys-demo.big", "payload": {"blob": "x" * 9000}})
+        assert too_big.value.error_code == "PLUGIN_SCHEMA_INVALID"
+        service.stop("sys-demo")
+    finally:
+        service.close()
+
+
+def test_system_plugins_call_each_others_exported_commands(tmp_path: Path) -> None:
+    marker = tmp_path / "marker.txt"
+    root = tmp_path / "resources" / "resources" / "system_plugins" / "sys-demo"
+    _make_system_plugin(root, marker)
+    service = PluginWorkerService(tmp_path / "data")
+    try:
+        service.register({"name": "sys-demo", "entry_point": "main:DemoPlugin"}, root, "system")
+        service.enable("sys-demo")
+        broker = service.broker("sys-demo")
+        # 进程内通道直达跨插件发现（无其他插件时返回空列表），未启用目标明确失败
+        assert _broker_call(broker, "plugins.list", {}) == {"plugins": []}
+        with pytest.raises(ProtocolError) as missing:
+            _broker_call(broker, "plugins.call", {"plugin": "missing", "command": "echo", "args": {}})
+        assert missing.value.error_code in {"PLUGIN_TARGET_INVALID", "PLUGIN_RESOURCE_NOT_FOUND"}
+        service.stop("sys-demo")
+    finally:
+        service.close()
+
+

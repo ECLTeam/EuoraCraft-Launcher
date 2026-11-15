@@ -111,6 +111,8 @@ class PluginRuntime:
                 plugin = plugin_class(self._host)
                 if not isinstance(plugin, Plugin):
                     raise ProtocolError("插件构造结果不满足统一插件基类", "PLUGIN_ENTRY_INVALID")
+                # 装饰器等静态声明先于用户 on_load 批量登记
+                plugin._prescan_declarations()
                 with self._lock:
                     self._plugin = plugin
             else:

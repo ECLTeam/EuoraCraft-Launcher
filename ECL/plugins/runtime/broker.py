@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -34,6 +35,7 @@ from ECL.plugins.runtime.adapters import McAdapterFactory
 from ECL.plugins.runtime.custom_ui import RuntimeCustomUi
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.plugins.runtime.download_api import RuntimeDownloads
+from ECL.plugins.runtime.event_hub import PluginEventHub
 from ECL.plugins.runtime.file_api import RuntimeFiles
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.models import (
@@ -230,6 +232,7 @@ class PluginHostBroker:
             "settings.define": "_control_service",
             "settings.get": "_control_service",
             "settings.set": "_control_service",
+            "events.emit": "_control_service",
             "events.subscribe": "_control_service",
             "events.unsubscribe": "_control_service",
         }
@@ -262,6 +265,7 @@ class PluginHostBroker:
         window_app: Callable[[], AppHandle | None] | None = None,
         plugin_name: str = "",
         settings_service: PluginSettingsService | None = None,
+        event_hub: PluginEventHub | None = None,
     ) -> None:
         """
         绑定宿主持有的会话和回调通道，不接受客户端提供主体。
@@ -289,6 +293,7 @@ class PluginHostBroker:
         :param custom_ui: 已审阅的单文件独立前端声明
         :param window_app: 原生宿主启动后提供应用句柄
         :param plugin_name: 宿主解析的安装名称，用于私有协议命名空间
+        :param event_hub: 宿主持有的插件事件中枢；未提供时 events.emit 拒绝
         """
         self.session: PluginRunSession = session
         self.custom_ui = RuntimeCustomUi(self, custom_ui, data_path, window_app) if window_app is not None else None
@@ -297,6 +302,10 @@ class PluginHostBroker:
         self._run_state = run_state
         self._slot_sink = slot_sink
         self._cross_plugin = cross_plugin
+        self._event_hub = event_hub
+        self._plugin_name = plugin_name
+        if event_hub is not None:
+            event_hub.register(self)
         self._hook_sink = hook_sink
         self._crash_sink = crash_sink
         self._compat_sink = compat_sink
@@ -538,6 +547,8 @@ class PluginHostBroker:
             return {"value": self.call_command(reference, args, max(0.001, request.deadline - monotonic()))}
         if method in {"settings.define", "settings.get", "settings.set"}:
             return self._settings(request)
+        if method == "events.emit":
+            return self._emit(params)
         if method == "events.subscribe":
             return self._subscribe(params)
         raise ProtocolError("此 Host API 尚未接线", "PLUGIN_API_METHOD_NOT_FOUND")
@@ -710,10 +721,14 @@ class PluginHostBroker:
         def register() -> None:
             with self._lock:
                 self._ensure_accepting()
-                if len(self._commands) >= 64 or any(
-                    item[1].name == definition.name for item in self._commands.values()
-                ):
+                existing = next(
+                    (ref for ref, item in self._commands.items() if item[1].name == definition.name), None
+                )
+                if len(self._commands) >= 64 and existing is None:
                     raise ProtocolError("命令已登记或超过上限", "PLUGIN_REGISTRATION_CONFLICT")
+                # 同名重登记覆盖旧声明：显式 define_* 可替换预置扫描的装饰器声明
+                if existing is not None:
+                    del self._commands[existing]
                 self._commands[reference] = (registration, definition, lease)
 
         self.session.accept(lease, register)
@@ -721,12 +736,18 @@ class PluginHostBroker:
 
     def _subscribe(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
         """
-        只在授权接受点登记自身设置订阅，不开放完整宿主事件总线。
+        在授权接受点登记主题订阅；投递经回调通道执行，不暴露宿主内部事件。
         """
         self._keys(params, {"event", "callback_ref"})
         lease = self.session.lease()
         callback = params["callback_ref"]
-        if params["event"] not in {"settings.changed"} or not isinstance(callback, str) or len(callback) != 32:
+        event = params["event"]
+        if (
+            not isinstance(event, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", event) is None
+            or not isinstance(callback, str)
+            or len(callback) != 32
+        ):
             raise ProtocolError("该事件或回调尚未开放", "PLUGIN_EVENT_NOT_EXPOSED")
         reference = uuid4().hex
 
@@ -735,10 +756,60 @@ class PluginHostBroker:
                 self._ensure_accepting()
                 if len(self._subscriptions) >= 32:
                     raise ProtocolError("订阅超过上限", "PLUGIN_RATE_LIMITED")
-                self._subscriptions[reference] = (callback, lease, params["event"])
+                self._subscriptions[reference] = (callback, lease, event)
 
         self.session.accept(lease, register)
         return {"subscription_ref": reference}
+
+    def _emit(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """
+        发布自身命名空间前缀的主题事件；中枢只做匹配转发，不保存历史。
+
+        主题必须以本插件安装名为前缀；载荷是字符串键对象且编码后不超过
+        8 KiB。投递为尽力而为：接收队列已满时丢弃，不阻塞发布方。
+        """
+        self._keys(params, {"topic", "payload"})
+        topic, payload = params["topic"], params["payload"]
+        if (
+            self._event_hub is None
+            or not isinstance(topic, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", topic) is None
+            or not topic.startswith(f"{self._plugin_name}.")
+        ):
+            raise ProtocolError("事件主题无效或不属于本插件命名空间", "PLUGIN_EVENT_TOPIC_INVALID")
+        if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
+            raise ProtocolError("事件载荷必须是字符串键对象", "PLUGIN_SCHEMA_INVALID")
+        encoded = json.dumps(_json_value(payload), ensure_ascii=False).encode("utf-8")
+        if len(encoded) > 8192:
+            raise ProtocolError("事件载荷超过 8 KiB 上限", "PLUGIN_SCHEMA_INVALID")
+        delivered = self._event_hub.publish(
+            self._plugin_name, topic, payload, lambda broker, name, body: broker.accept_published_event(name, body)
+        )
+        return {"delivered": delivered}
+
+    def accept_published_event(self, topic: str, payload: dict[str, JsonValue]) -> int:
+        """
+        接收中枢转发的发布事件，投递给本运行匹配的订阅；队列满时丢弃。
+
+        载荷按订阅逐份深拷贝，避免进程内插件共享同一可变对象。
+
+        :param topic: 中枢已校验的完整主题
+        :param payload: 中枢已校验的事件载荷
+        :return: 本运行实际接收的订阅数量
+        """
+        with self._lock:
+            if self._closed.is_set():
+                return 0
+            subscriptions = tuple((ref, sub) for ref, sub in self._subscriptions.items() if sub[2] == topic)
+        delivered = 0
+        for reference, (_, lease, _) in subscriptions:
+            try:
+                self._events.put_nowait((reference, json.loads(json.dumps(payload, ensure_ascii=False)), lease))
+                delivered += 1
+            except Full:
+                get_logger("PluginHostBroker").debug("插件事件接收队列已满，丢弃本次发布事件")
+                break
+        return delivered
 
     def call_query(self, name: str, args: dict[str, JsonValue], timeout: float = 30) -> JsonValue:
         """
@@ -1319,6 +1390,8 @@ class PluginHostBroker:
         幂等拒绝新调用并清理本运行注册；不宣称已经停止外部 Worker。
         """
         self._closed.set()
+        if self._event_hub is not None:
+            self._event_hub.unregister(self)
         self.settings.release(self._settings_identity, self.session.run_id)
         for resource in (
             self.custom_ui,

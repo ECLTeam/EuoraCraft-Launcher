@@ -32,8 +32,8 @@ class PluginFacadeCatalog:
     "存在且不静默失败"，不承诺跨版本稳定，因此不入 ``promised_facades``。
 
     非方法标识（宿主到 Worker 的反向通道 ``callbacks.invoke``、权限标识
-    ``plugin.base`` 与 ``java.base``、出站事件 ``settings.changed``）不是
-    插件可调用方法，一律不入目录；契约测试对这三类有显式排除断言。
+    ``plugin.base`` 与 ``java.base``）不是插件可调用方法，一律不入目录；
+    契约测试对这两类有显式排除断言。
     """
 
     method_by_facade: ClassVar[MappingProxyType[str, frozenset[str]]] = MappingProxyType(
@@ -101,6 +101,7 @@ class PluginFacadeCatalog:
                     "operations.get",
                     "operations.list",
                     "operations.cancel",
+                    "events.emit",
                     "events.subscribe",
                     "events.unsubscribe",
                     "settings.define",

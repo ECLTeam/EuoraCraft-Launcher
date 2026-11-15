@@ -17,7 +17,7 @@
 #   - class OperationGetRequest / OperationListRequest — 自身任务控制输入契约。
 #   - validate_fields — 校验命令输入输出的基础字段。
 #   - class DownloadSubmitRequest — 私有空间新文件下载任务请求。
-#   - class NetworkRequest — GET/HEAD 只读网络请求的严格边界。
+#   - class NetworkRequest — 安全只读与带白名单请求体变更方法的严格边界。
 #   - class PluginPageNav / VuePageDefinition — 插件页面的宿主容器与导航声明。
 #   - class JavaInventoryRequest / JavaValidateRequest / JavaCatalogRequest — Java 查询与校验输入。
 #   - class TechnologyEntryDefinition — 关于页插件技术栈条目的只读展示声明。
@@ -48,15 +48,34 @@ class RequestModel(BaseModel):
 
 class NetworkRequest(RequestModel):
     """
-    拒绝请求体、任意头和超限输入；凭据只允许显式提供给 HTTPS。
+    允许安全方法与带白名单请求体的变更方法；凭据只允许显式提供给 HTTPS。
     """
 
-    method: Literal["GET", "HEAD"]
+    method: Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
     url: str
     headers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    json_body: PydanticJsonValue | None = Field(default=None, alias="json")
+    data: str | None = None
     allowed_headers: ClassVar[frozenset[str]] = frozenset(
-        {"accept", "if-none-match", "if-modified-since", "user-agent", "authorization", "x-api-key"}
+        {"accept", "if-none-match", "if-modified-since", "user-agent", "authorization", "x-api-key", "content-type"}
     )
+    body_methods: ClassVar[frozenset[str]] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+    body_content_types: ClassVar[frozenset[str]] = frozenset(
+        {"application/json", "application/x-www-form-urlencoded", "text/plain"}
+    )
+    max_body_bytes: ClassVar[int] = 1_048_576
+
+    def encoded_body(self) -> bytes:
+        """
+        返回请求体的字节编码；无体方法返回空字节串。
+
+        :return: json 字段序列化或 data 字段 UTF-8 编码的结果
+        """
+        if self.json_body is not None:
+            return json.dumps(_json_value(self.json_body), ensure_ascii=False).encode("utf-8")
+        if self.data is not None:
+            return self.data.encode("utf-8")
+        return b""
 
     @model_validator(mode="after")
     def _validate_request(self) -> NetworkRequest:
@@ -80,7 +99,33 @@ class NetworkRequest(RequestModel):
             size += len(name.encode()) + len(value.encode())
         if size > 4096:
             raise ValueError("网络请求头超过上限")
+        self._validate_body()
         return self
+
+    def _validate_body(self) -> None:
+        """
+        校验请求体字段组合、方法匹配、大小与 Content-Type 白名单。
+        """
+        if self.json_body is not None and self.data is not None:
+            raise ValueError("请求体字段只能提供 json 或 data 之一")
+        if (self.json_body is not None or self.data is not None) and self.method not in self.body_methods:
+            raise ValueError(f"{self.method} 请求不允许携带请求体")
+        if len(self.encoded_body()) > self.max_body_bytes:
+            raise ValueError("请求体超过 1 MiB 上限")
+        content_type = next(
+            (value for name, value in self.headers.items() if name.lower() == "content-type"), None
+        )
+        if self.json_body is not None:
+            expected = "application/json"
+            if content_type is not None and content_type.lower() != expected:
+                raise ValueError("json 请求体必须使用 application/json")
+        elif self.data is not None:
+            if content_type is None:
+                raise ValueError("data 请求体必须显式声明 Content-Type")
+            if content_type.lower() not in self.body_content_types:
+                raise ValueError("Content-Type 不在白名单内")
+        elif content_type is not None and self.method not in self.body_methods:
+            raise ValueError("无体请求不允许声明 Content-Type")
 
 
 class FieldSpec(RequestModel):

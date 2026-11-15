@@ -62,6 +62,7 @@ _promise_snapshot = {
             "operations.get",
             "operations.list",
             "operations.cancel",
+            "events.emit",
             "events.subscribe",
             "events.unsubscribe",
             "settings.define",

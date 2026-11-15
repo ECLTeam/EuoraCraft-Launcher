@@ -58,6 +58,7 @@ _expected_method_targets = {
     "settings.define": "_control_service",
     "settings.get": "_control_service",
     "settings.set": "_control_service",
+    "events.emit": "_control_service",
     "events.subscribe": "_control_service",
     "events.unsubscribe": "_control_service",
 }

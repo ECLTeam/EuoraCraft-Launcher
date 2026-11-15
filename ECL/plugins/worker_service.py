@@ -41,6 +41,7 @@ from ECL.plugins.run_models import PluginContentBinding, PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession, PluginRunStore
 from ECL.plugins.runtime.adapters import McAdapterFactory
 from ECL.plugins.runtime.broker import CrossPluginChannel, PluginHostBroker, ToolChannel
+from ECL.plugins.runtime.event_hub import PluginEventHub
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.inprocess import InProcessPeer, instantiate_plugin, invoke_plugin_callback, load_entry_module
@@ -190,6 +191,7 @@ class PluginWorkerService:
             else None
         )
         self._resource_pages = ResourcePages()
+        self._event_hub = PluginEventHub()
 
     def bind_window_app(self, app_handle: AppHandle) -> None:
         """
@@ -622,8 +624,9 @@ class PluginWorkerService:
             online_sink=partial(self._publish_auth, name),
             custom_ui=entry.manifest.custom_ui,
             window_app=lambda: self._window_app,
-            plugin_name=entry.manifest.name,
-            settings_service=self.settings,
+                    plugin_name=entry.manifest.name,
+                    settings_service=self.settings,
+                    event_hub=self._event_hub,
             tool_channel=ToolChannel(
                 run=partial(self._tool_run, name),
                 stop=partial(self._tool_stop, name),
@@ -705,6 +708,8 @@ class PluginWorkerService:
         module, class_name = load_entry_module(entry.root_path, entry.manifest.entry_point)
         host = HostClient(InProcessPeer(lambda request: self._handle(name, request)))
         entry.plugin = instantiate_plugin(module, class_name, host)
+        # 装饰器等静态声明先于用户 on_load 批量登记
+        entry.plugin._prescan_declarations()
         self._inprocess_hook(entry, "load")
 
     @staticmethod
@@ -726,7 +731,6 @@ class PluginWorkerService:
         """
         if self._slot_sink is None:
             raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
-            raise ProtocolError("界面注入已被用户关闭", "PLUGIN_UI_INJECTION_DISABLED")
         self._slot_sink(name, payload)
 
     def _publish_hook(self, name: str, phase: str | None, callback_ref: str | None, required: bool) -> None:
@@ -1167,6 +1171,7 @@ class PluginWorkerService:
             except (OSError, ValueError, PluginRuntimeError) as exc:
                 failures.append(exc)
         is_network_idle = self._network_service.close()
+        self._event_hub.close()
         if failures:
             raise PluginRuntimeError("部分插件进程树尚未确认停止", "PLUGIN_JOB_STOP_PENDING") from failures[0]
         if not self._file_storage.close() or not is_network_idle:

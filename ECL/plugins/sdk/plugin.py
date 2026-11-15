@@ -33,6 +33,78 @@ from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.sdk._rpc import RpcPeer
 
 
+def command(
+    _func: Callable[..., JsonValue | Awaitable[JsonValue]] | None = None,
+    *,
+    name: str | None = None,
+    description: str = "",
+    input_fields: tuple[dict[str, JsonValue], ...] = (),
+    output_fields: tuple[dict[str, JsonValue], ...] = (),
+    exported: bool = False,
+    is_query: bool = False,
+) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
+    """
+    静态标记方法为命令声明，统一基类在 on_load 前的预置阶段批量登记。
+
+    只承载静态声明；需要运行期宿主状态的动态注册仍用 ``define_command``。
+    显式调用与装饰器可混用：预置扫描先执行，on_load 内的显式注册可覆盖或补充。
+
+    :param _func: 直接以 ``@command`` 装饰时的目标方法
+    :param name: 命令名，缺省使用方法名
+    :param description: 命令说明
+    :param input_fields: 输入基础字段定义
+    :param output_fields: 输出基础字段定义
+    :param exported: 是否允许明确授权的其他插件调用
+    :param is_query: 是否声明为只读查询命令
+    """
+
+    def decorate(func: Callable[..., JsonValue | Awaitable[JsonValue]]) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
+        func._ecl_command = {
+            "name": name,
+            "description": description,
+            "input_fields": input_fields,
+            "output_fields": output_fields,
+            "exported": exported,
+            "is_query": is_query,
+        }
+        return func
+
+    return decorate(_func) if _func is not None else decorate
+
+
+def launch_hook(
+    phase: str,
+    *,
+    required: bool = False,
+) -> Callable[[Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]]], Callable[..., JsonValue | Awaitable[JsonValue]]]:
+    """
+    静态标记方法为启动钩子声明，预置阶段按既有 hooks.register 通道登记。
+
+    :param phase: prepare / pre_launch / post_launch / exit
+    :param required: 前置阶段失败时是否阻止启动
+    """
+
+    def decorate(func: Callable[..., JsonValue | Awaitable[JsonValue]]) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
+        func._ecl_launch_hook = {"phase": phase, "required": required}
+        return func
+
+    return decorate
+
+
+def event(topic: str) -> Callable[[Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]]], Callable[..., JsonValue | Awaitable[JsonValue]]]:
+    """
+    静态标记方法为事件订阅声明，预置阶段经 events.subscribe 登记。
+
+    :param topic: 要订阅的主题
+    """
+
+    def decorate(func: Callable[..., JsonValue | Awaitable[JsonValue]]) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
+        func._ecl_event = {"topic": topic}
+        return func
+
+    return decorate
+
+
 class HostApiError(ProtocolError):
     """
     表示宿主明确拒绝或业务失败，不能将失败解释成空成功。
@@ -543,6 +615,101 @@ class Plugin:
             {"plugin": plugin, "command": command, "args": arguments or {}},
         )
         return result.get("value")
+
+    def emit_event(self, topic: str, payload: dict[str, JsonValue]) -> int:
+        """
+        发布自身命名空间前缀的主题事件，供其他插件订阅。
+
+        :param topic: 必须以本插件安装名加点号开头的主题
+        :param payload: 字符串键对象载荷，编码后不超过 8 KiB
+        :return: 实际接收本次事件的订阅数量
+        :raises HostApiError: 主题越界、载荷超限或宿主未提供事件中枢时抛出
+        """
+        result = self.host.call("events.emit", {"topic": topic, "payload": payload})
+        delivered = result.get("delivered")
+        if type(delivered) is not int:
+            raise ProtocolError("宿主事件发布结果无效")
+        return delivered
+
+    def subscribe_event(
+        self,
+        topic: str,
+        callback: Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]],
+    ) -> str:
+        """
+        订阅任意主题；事件到达时回调收到主题载荷对象。
+
+        :param topic: 要订阅的主题（含 settings.changed）
+        :param callback: 留在本 Worker 或本进程的事件回调
+        :return: 用于退订的订阅标识
+        :raises HostApiError: 主题无效或超过订阅上限时抛出
+        """
+        reference = self.register_callback(callback)
+        result = self.host.call("events.subscribe", {"event": topic, "callback_ref": reference})
+        subscription = result.get("subscription_ref")
+        if not isinstance(subscription, str) or not subscription:
+            raise ProtocolError("宿主事件订阅结果无效")
+        return subscription
+
+    def unsubscribe_event(self, subscription_ref: str) -> None:
+        """
+        退订一个已登记的事件订阅。
+
+        :param subscription_ref: subscribe_event 返回的订阅标识
+        :raises HostApiError: 订阅标识无效时抛出
+        """
+        self.host.call("events.unsubscribe", {"subscription_ref": subscription_ref})
+
+    def _prescan_declarations(self) -> None:
+        """
+        扫描类与实例上带声明标记的方法，按 MRO 顺序批量刷入既有底层注册。
+
+        预置扫描先于用户 on_load 执行；扫描结果就是显式 define_* 调用，
+        不引入独立语义，进程内与子进程通用。同名命令冲突由宿主既有
+        登记冲突检查处理。
+        """
+        marked: list[tuple[str, Callable[..., JsonValue | Awaitable[JsonValue]]]] = []
+        seen: set[str] = set()
+        for klass in reversed(type(self).__mro__):
+            for attr_name, attr in vars(klass).items():
+                if attr_name in seen or not callable(attr):
+                    continue
+                if (
+                    getattr(attr, "_ecl_command", None) is not None
+                    or getattr(attr, "_ecl_launch_hook", None) is not None
+                    or getattr(attr, "_ecl_event", None) is not None
+                ):
+                    seen.add(attr_name)
+                    marked.append((attr_name, attr))
+        for attr_name, attr in vars(self).items():
+            if attr_name in seen or not callable(attr):
+                continue
+            if (
+                getattr(attr, "_ecl_command", None) is not None
+                or getattr(attr, "_ecl_launch_hook", None) is not None
+                or getattr(attr, "_ecl_event", None) is not None
+            ):
+                seen.add(attr_name)
+                marked.append((attr_name, attr))
+        for attr_name, func in marked:
+            bound = func.__get__(self, type(self))
+            command_meta = getattr(func, "_ecl_command", None)
+            if command_meta is not None:
+                self.define_command(
+                    command_meta["name"] or attr_name,
+                    bound,
+                    description=command_meta["description"],
+                    input_fields=command_meta["input_fields"],
+                    output_fields=command_meta["output_fields"],
+                    exported=command_meta["exported"],
+                    is_query=command_meta["is_query"],
+                )
+            hook_meta = getattr(func, "_ecl_launch_hook", None)
+            if hook_meta is not None:
+                self.register_launch_hook(hook_meta["phase"], bound, required=hook_meta["required"])
+            event_meta = getattr(func, "_ecl_event", None)
+            if event_meta is not None:
+                self.subscribe_event(event_meta["topic"], bound)
 
     def _invoke_callback(self, reference: str, arguments: dict[str, JsonValue]) -> JsonValue:
         """
