@@ -14,46 +14,6 @@
 from unittest.mock import Mock
 
 import ECL.launcher as launcher_module
-from ECL.plugins.framework import PluginManager
-from ECL.utils import EventBus
-
-
-def test_plugin_framework_close_ignores_plugins_that_were_not_loaded() -> None:
-    event_bus = EventBus()
-    framework = PluginManager(event_bus)
-    framework.logger = Mock()
-    plugin = Mock()
-    plugin.name = "loaded"
-    framework._plugins = {"loaded": plugin}
-    framework._status = {"loaded": "enabled", "disabled": "disabled"}
-    framework._dependency_resolution.load_order = ["loaded", "disabled"]
-
-    framework.close()
-
-    plugin.on_disable.assert_called_once_with()
-    plugin.on_unload.assert_called_once_with()
-    framework.logger.warning.assert_not_called()
-    framework = PluginManager(event_bus)
-    first = Mock()
-    second = Mock()
-    framework._plugins = {"first": first, "second": second}
-    framework._status = {"first": "enabled", "second": "enabled"}
-
-    event_bus.subscribe("plugin:html_injected", framework._on_html_injected)
-    event_bus.subscribe("plugin:vue_slot_registered", framework._on_vue_slot_registered)
-    framework._event_handlers_registered = True
-
-    framework.close()
-    framework.close()
-
-    first.on_disable.assert_called_once_with()
-    first.on_unload.assert_called_once_with()
-    second.on_disable.assert_called_once_with()
-    second.on_unload.assert_called_once_with()
-    assert framework._plugins == {}
-    assert framework._status == {}
-    assert "plugin:html_injected" not in event_bus._handlers
-    assert "plugin:vue_slot_registered" not in event_bus._handlers
 
 
 def test_launcher_shutdown_closes_plugins_before_backend_services() -> None:

@@ -10,7 +10,7 @@ from plugin_wheel_helpers import make_package, make_wheel
 
 from ECL.plugins.contracts import PluginRuntimeError
 from ECL.plugins.dependency_lock import PluginDependencyError
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 
 
@@ -19,7 +19,6 @@ def install_and_restart(tmp_path, archive):
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
         assert manager.install(str(archive), confirm_unverified_source=True).success
-        assert manager.get_plugin("demo") is None
         assert manager.list_plugins()[0]["pending_restart"]
         assert not manager.enable("demo").success
     finally:
@@ -51,7 +50,6 @@ def test_package_executes_in_worker_and_can_be_disabled_reloaded_uninstalled(tmp
     try:
         assert manager.enable("demo").success
         assert manager.call_command("demo:pid")["pid"] != os.getpid()
-        assert manager.get_plugin("demo") is None
         assert manager.disable("demo").success
         assert manager.enable("demo").success
         assert manager.reload("demo").success
@@ -94,7 +92,6 @@ def test_safe_mode_discovers_package_without_starting_worker(tmp_path):
     safe = PluginManager()
     safe.initialize(tmp_path / "data", tmp_path / "resources", auto_enable=False)
     try:
-        assert safe.get_plugin("demo") is None
         assert safe.worker_service.runtime_info("demo")["pid"] is None
     finally:
         safe.close()
@@ -116,7 +113,6 @@ def test_package_dependency_missing_prevents_enable(tmp_path):
     manager = install_and_restart(tmp_path, make_package(tmp_path, plugin_dependencies={"missing": ">=1"}))
     try:
         assert not manager.enable("demo").success
-        assert manager.get_plugin("demo") is None
     finally:
         manager.close()
 

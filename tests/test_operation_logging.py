@@ -313,43 +313,6 @@ def test_project_log_templates_have_no_field_equals() -> None:
     assert violations == []
 
 
-def test_plugin_command_timeout_keeps_worker_context_and_reports_real_result(records) -> None:
-    from concurrent.futures import ThreadPoolExecutor
-
-    from ECL.plugins.manager.contracts import PluginCommandError
-    from ECL.plugins.manager.registry import PluginRegistry
-
-    logger, logs = records
-    entered, release = Event(), Event()
-    worker_actions = []
-
-    def handler(**params):
-        worker_actions.append(current_operation().action)
-        entered.set()
-        assert release.wait(3)
-        return "done"
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        state = SimpleNamespace(
-            logger=logger,
-            _command_executor=executor,
-            _status={"demo": "enabled"},
-            _candidate_map={},
-            _plugins={"demo": SimpleNamespace(_commands={"run": handler})},
-        )
-        try:
-            with operation_scope("插件调用"), pytest.raises(PluginCommandError):
-                PluginRegistry.call_command(state, "demo:run", {"password": "never-log-params"}, timeout=0.01)
-            assert entered.wait(3)
-        finally:
-            release.set()
-    assert worker_actions == ["插件调用"]
-    messages = [record.getMessage() for record in logs]
-    assert any("后台线程可能仍在执行" in message for message in messages)
-    assert "插件命令执行完成" in messages[-1]
-    assert "never-log-params" not in str(messages)
-
-
 def test_queued_task_cancellation_is_logged_after_future_stops(tmp_path, records) -> None:
     logger, logs = records
     manager = OperationManager(EventBus(), max_workers=1)

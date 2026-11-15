@@ -11,12 +11,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
-
-import httpx
 
 from ECL.java.manager import JavaManager
 from ECL.java.queries import JavaQueries
@@ -46,7 +43,6 @@ from ECL.plugins.instance_compat import (
     sanitize_external_metadata,
 )
 from ECL.plugins.launch_hooks import LaunchContext, LaunchHookRegistry, apply_remote_modifications
-from ECL.plugins.plugin import Plugin
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -75,7 +71,6 @@ class _PluginState:
         processes: Any = None,
         instance_compatibility: InstanceCompatibilityRegistry | None = None,
         launch_hooks: LaunchHookRegistry | None = None,
-        http_client: httpx.Client | None = None,
         auth_providers: AuthProviderRegistry | None = None,
         crash_extensions: CrashAnalysisExtensionRegistry | None = None,
         instance_queries: InstanceQueries | None = None,
@@ -96,7 +91,6 @@ class _PluginState:
         :param processes: 面向插件的通用子进程注册服务；None 表示当前环境未提供该能力
         :param instance_compatibility: 与游戏服务共享的实例兼容提供者注册表
         :param launch_hooks: 与游戏服务共享的启动钩子注册表
-        :param http_client: 应用共享 HTTP 客户端，供插件的受控网络请求使用
         :param auth_providers: 与账户服务共享的自定义认证提供方注册表
         :param crash_extensions: 与游戏服务共用的插件崩溃分析回调列表
         :param instance_profiles: 应用现有的共享实例资料事务资源
@@ -114,7 +108,6 @@ class _PluginState:
         self.processes = processes  # 插件可经 framework.processes 启动子进程实例
         self.instance_compatibility = instance_compatibility or InstanceCompatibilityRegistry()
         self.launch_hooks = launch_hooks or LaunchHookRegistry()
-        self.http_client = http_client
         self._operations = operations
         self._game_operations = game_operations
         self._java_queries = java_queries
@@ -127,16 +120,8 @@ class _PluginState:
         self._instance_roots = instance_roots
         self.auth_providers = auth_providers or AuthProviderRegistry()
         self.crash_extensions = crash_extensions or CrashAnalysisExtensionRegistry()
-        self._command_executor = ThreadPoolExecutor(
-            max_workers=8, thread_name_prefix="plugin_cmd"
-        )  # 插件命令执行的线程池
-        self._plugins: dict[str, Plugin] = {}  # name → Plugin 实例
         self._status: dict[str, str] = {}  # name → unloaded | loaded | enabled | disabled
         self._routes: list[dict[str, str]] = []  # 所有插件注册的路由
-        # 插件配置值，key 为 "插件名.设置键"
-        self._config_values: dict[str, Any] = {}
-        # 插件配置文件的路径映射
-        self._config_paths: dict[str, Path] = {}
         # 同一插件可以向一个插槽追加多个条目；带 key 的 HTML 和同名 Vue 组件会原位更新
         self._slots: dict[str, list[dict[str, str]]] = {}
         self._vue_slots: dict[str, list[dict[str, str]]] = {}
@@ -299,7 +284,7 @@ class _PluginState:
             self._enable_all()
         self.logger.info(
             "插件框架初始化完成，已加载 %d 个插件，已禁用 %d 个插件",
-            len(self._plugins),
+            len(self._candidate_map),
             len(self._disabled_plugins),
         )
 

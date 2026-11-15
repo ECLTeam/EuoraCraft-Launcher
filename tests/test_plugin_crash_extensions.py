@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from ECL.minecraft.services.game.crash.analyzer import CrashAnalyzer
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 
 
 def _game(tmp_path: Path) -> Path:
@@ -38,15 +38,14 @@ def _register_plugin(data_path: Path) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins.plugin import Plugin\n"
+        "from ECL.plugins.sdk import Plugin\n"
         "class CrashPlugin(Plugin):\n"
         "    def on_enable(self):\n"
-        "        super().on_enable()\n"
-        "        self.register_crash_analyzer('demo', self.enrich)\n"
-        "    def enrich(self, context, result):\n"
+        "        self.register_crash_analyzer(self.enrich)\n"
+        "    def enrich(self, **context):\n"
         "        return {\n"
-        "            'reasons': [{'code': 'plugin.demo_hint', 'confidence': 'possible', 'evidence': [context.version_id], 'parameters': {}}],\n"
-        "            'pluginNote': 'analyzed by demo',\n"
+        "            'reasons': [{'title': 'demo hint', 'detail': context['version_id']}],\n"
+        "            'summary': 'analyzed by demo',\n"
         "        }\n",
         encoding="utf-8",
     )
@@ -68,8 +67,8 @@ def test_crash_extension_enriches_analysis_result(tmp_path) -> None:
     finally:
         analyzer.close()
 
-    assert result["pluginNote"] == "analyzed by demo"
-    assert any(reason["code"] == "plugin.demo_hint" for reason in result["reasons"])
+    assert result["summary"] == "analyzed by demo"
+    assert any(reason.get("title") == "demo hint" for reason in result["reasons"])
 
     # 禁用插件后应自动移除其崩溃分析回调
     framework.crash_extensions.unregister_owner("crash-demo")
@@ -97,12 +96,11 @@ def test_crash_extension_exception_is_isolated(tmp_path) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins.plugin import Plugin\n"
+        "from ECL.plugins.sdk import Plugin\n"
         "class BoomPlugin(Plugin):\n"
         "    def on_enable(self):\n"
-        "        super().on_enable()\n"
-        "        self.register_crash_analyzer('boom', self.enrich)\n"
-        "    def enrich(self, context, result):\n"
+        "        self.register_crash_analyzer(self.enrich)\n"
+        "    def enrich(self, **context):\n"
         "        raise RuntimeError('boom')\n",
         encoding="utf-8",
     )

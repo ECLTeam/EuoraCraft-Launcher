@@ -4,7 +4,7 @@ from pathlib import Path
 
 from test_plugin_worker_manager import make_plugin
 
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 
 
 def test_reinstall_updates_code_without_enabling(tmp_path: Path) -> None:
@@ -22,7 +22,7 @@ def test_reinstall_updates_code_without_enabling(tmp_path: Path) -> None:
         assert entry["installation_id"] == identity
         assert entry["status"] == "disabled"
         assert not marker.exists()
-        assert framework.get_plugin("example") is None
+        assert framework.list_plugins()[0]["status"] == "disabled"
     finally:
         framework.close()
 

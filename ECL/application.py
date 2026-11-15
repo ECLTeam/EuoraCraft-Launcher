@@ -44,7 +44,7 @@ from ECL.minecraft.services.account import AccountManager, WardrobeStore
 from ECL.minecraft.services.account.plugin_textures import read_account_skin
 from ECL.minecraft.services.game import GameService
 from ECL.minecraft.services.game.launch_settings import scan_instance_java_references
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 from ECL.services.custom_downloads import CustomDownloadService
 from ECL.services.operations import OperationManager
 from ECL.services.processes import ProcessService
@@ -476,7 +476,6 @@ def create_application(
             processes=processes,
             instance_compatibility=game.instance_compatibility,
             launch_hooks=game.launch_hooks,
-            http_client=http,
             auth_providers=accounts.plugin_auth_providers,
             crash_extensions=game.crash_extensions,
             instance_queries=game,

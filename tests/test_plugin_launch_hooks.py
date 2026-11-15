@@ -13,8 +13,8 @@
 
 import json
 
-from ECL.plugins.framework import PluginManager
 from ECL.plugins.launch_hooks import LaunchContext
+from ECL.plugins.manager import PluginManager
 
 
 def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> None:
@@ -35,19 +35,18 @@ def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> 
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins.plugin import Plugin\n"
+        "from ECL.plugins.sdk import Plugin\n"
         "class LaunchPlugin(Plugin):\n"
         "    def on_enable(self):\n"
-        "        super().on_enable()\n"
-        "        self.register_launch_hook('demo', on_prepare=self.prepare, pre_launch=self.before, on_exit=self.after)\n"
-        "    def prepare(self, ctx):\n"
-        "        ctx.jvm_args.append('-Ddemo.mode=on')\n"
-        "        ctx.env['ECL_DEMO'] = '1'\n"
-        "        ctx.game_args.append('--demo')\n"
-        "    def before(self, ctx):\n"
-        "        ctx.env['ECL_PRE'] = 'yes'\n"
-        "    def after(self, ctx):\n"
-        "        ctx.env['ECL_EXIT'] = 'yes'\n",
+        "        self.register_launch_hook('prepare', self.prepare)\n"
+        "        self.register_launch_hook('pre_launch', self.before)\n"
+        "        self.register_launch_hook('exit', self.after)\n"
+        "    def prepare(self, **context):\n"
+        "        return {'jvm_args': ['-Ddemo.mode=on'], 'game_args': ['--demo'], 'env': {'ECL_DEMO': '1'}}\n"
+        "    def before(self, **context):\n"
+        "        return None\n"
+        "    def after(self, **context):\n"
+        "        return None\n",
         encoding="utf-8",
     )
 
@@ -66,51 +65,55 @@ def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> 
     assert context.game_args == ["--demo"]
     assert context.env == {"ECL_DEMO": "1"}
 
+    # 统一钩子协议：只有 prepare 阶段允许返回修改，其余阶段返回值被忽略
     framework.launch_hooks.pre_launch(context)
-    assert context.env["ECL_PRE"] == "yes"
     framework.launch_hooks.on_exit(context)
-    assert context.env["ECL_EXIT"] == "yes"
+    assert context.env == {"ECL_DEMO": "1"}
 
     framework.launch_hooks.unregister_owner("launch-demo")
+    context.jvm_args.clear()
+    context.game_args.clear()
     before = context.env.copy()
     framework.launch_hooks.prepare(context)
-    framework.launch_hooks.pre_launch(context)
+    assert context.jvm_args == []
     assert context.env == before
 
-    framework.get_plugin("launch-demo").on_enable()
-    context.jvm_args.clear()
-    context.env.clear()
-    framework.launch_hooks.prepare(context)
-    assert context.jvm_args == ["-Ddemo.mode=on"]
 
-
-def test_plugin_without_launch_permission_cannot_register_hook(tmp_path) -> None:
-    """第三方目录插件使用旧版进程内基类，在 Worker 中因入口不兼容统一插件基类而拒载。"""
+def test_third_party_hook_can_register_from_user_directory(tmp_path) -> None:
+    """启用即信任（ADR-005）：用户目录插件使用统一基类同样可登记启动钩子。"""
     data_path = tmp_path / "data"
-    plugin_dir = data_path / "plugins" / "sources" / "launch-no-perm"
+    plugin_dir = data_path / "plugins" / "sources" / "launch-user"
     plugin_dir.mkdir(parents=True)
     (plugin_dir / "plugin.json").write_text(
         json.dumps(
             {
-                "name": "launch-no-perm",
+                "name": "launch-user",
                 "entry_point": "main:LaunchPlugin",
-                "permissions": [],
             }
         ),
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins.plugin import Plugin\n"
+        "from ECL.plugins.sdk import Plugin\n"
         "class LaunchPlugin(Plugin):\n"
         "    def on_enable(self):\n"
-        "        super().on_enable()\n"
-        "        self.register_launch_hook('demo', on_prepare=lambda ctx: None)\n",
+        "        self.register_launch_hook('prepare', self.prepare)\n"
+        "    def prepare(self, **context):\n"
+        "        return {'jvm_args': ['-Duser.hook=1']}\n",
         encoding="utf-8",
     )
 
     framework = PluginManager()
     framework.initialize(data_path, tmp_path / "resources")
-    assert framework._status.get("launch-no-perm") == "error"
+    context = LaunchContext(
+        version_id="1.21.8",
+        loader="Vanilla",
+        game_path=tmp_path / ".minecraft",
+        game_directory=tmp_path / ".minecraft" / "versions" / "1.21.8",
+        version_isolation=False,
+    )
+    framework.launch_hooks.prepare(context)
+    assert context.jvm_args == ["-Duser.hook=1"]
 
 
 def test_launch_hook_exception_is_isolated(tmp_path) -> None:
@@ -129,16 +132,15 @@ def test_launch_hook_exception_is_isolated(tmp_path) -> None:
         encoding="utf-8",
     )
     (plugin_dir / "main.py").write_text(
-        "from ECL.plugins.plugin import Plugin\n"
+        "from ECL.plugins.sdk import Plugin\n"
         "class BoomPlugin(Plugin):\n"
         "    def on_enable(self):\n"
-        "        super().on_enable()\n"
-        "        self.register_launch_hook('boom', on_prepare=self.prepare)\n"
-        "        self.register_launch_hook('ok', on_prepare=self.prepare_ok)\n"
-        "    def prepare(self, ctx):\n"
+        "        self.register_launch_hook('prepare', self.prepare)\n"
+        "        self.register_launch_hook('prepare', self.prepare_ok)\n"
+        "    def prepare(self, **context):\n"
         "        raise RuntimeError('boom')\n"
-        "    def prepare_ok(self, ctx):\n"
-        "        ctx.jvm_args.append('-Dok=1')\n",
+        "    def prepare_ok(self, **context):\n"
+        "        return {'jvm_args': ['-Dok=1']}\n",
         encoding="utf-8",
     )
 

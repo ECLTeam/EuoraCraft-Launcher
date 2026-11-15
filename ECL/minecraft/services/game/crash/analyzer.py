@@ -530,8 +530,11 @@ class CrashAnalyzer:
             readable.append(f"Exit code: {exit_code}")
         readable.append(f"Detected by: {', '.join(result['detectedBy']) or 'manual'}")
         for reason in reasons:
-            readable.append(f"- {reason['code']} ({reason['confidence']})")
-            readable.extend(f"  {line}" for line in reason["evidence"])
+            # 插件富化原因经净化后只有 title/detail；宿主原因才有 code/confidence/evidence。
+            label = reason.get("code") or reason.get("title") or "unknown"
+            readable.append(f"- {label} ({reason.get('confidence', 'possible')})")
+            evidence = reason.get("evidence") or ([reason["detail"]] if reason.get("detail") else [])
+            readable.extend(f"  {line}" for line in evidence)
             if reason.get("mods"):
                 readable.append(f"  Mods: {', '.join(reason['mods'])}")
         (report_dir / "analysis.txt").write_text("\n".join(readable), encoding="utf-8")

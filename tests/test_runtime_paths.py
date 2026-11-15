@@ -17,7 +17,7 @@ import json
 import sys
 from unittest.mock import Mock, call
 
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 from ECL.utils import get_runtime_info
 
 
@@ -93,11 +93,11 @@ def test_plugin_install_targets_data_path(tmp_path) -> None:
     source_path.mkdir()
     (source_path / "plugin.json").write_text(json.dumps({"name": "example"}), encoding="utf-8")
     (source_path / "main.py").write_text(
-        "from ECL.plugins.plugin import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
+        "from ECL.plugins.sdk import Plugin\nclass Plugin(Plugin): pass\n", encoding="utf-8"
     )
 
     assert framework.install(str(source_path)).success is True
     installed_path = data_path / "plugins" / "sources" / "example"
     assert (installed_path / "plugin.json").is_file()
     assert "example" in framework._candidate_map
-    assert "example" not in framework._plugins
+    assert not any(item["status"] == "enabled" for item in framework.list_plugins())

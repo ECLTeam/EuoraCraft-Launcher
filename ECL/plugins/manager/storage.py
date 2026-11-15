@@ -10,7 +10,6 @@
 # ============================================================
 
 import json
-from typing import Any
 
 from ECL.utils import atomic_write_text
 
@@ -21,25 +20,6 @@ class PluginStorage(_PluginState):
     """
     负责插件配置与禁用状态文件的读写及持久化。
     """
-
-    def _load_plugin_config(self, name: str, metadata: dict[str, Any]) -> None:
-        # 从 plugins/config/{name}.json 读取插件配置值回填到配置字典。
-        config_path = self._plugin_config_dir / f"{name}.json"
-        self._config_paths[name] = config_path
-        if not config_path.is_file():
-            return
-        config_data = json.loads(config_path.read_text(encoding="utf-8"))
-        for key, value in config_data.items():
-            self._config_values[f"{name}.{key}"] = value
-
-    def _save_plugin_config(self, name: str) -> None:
-        # 将该插件的配置值保存到 plugins/config/{name}.json。
-        prefix = f"{name}."
-        data = {k[len(prefix) :]: v for k, v in self._config_values.items() if k.startswith(prefix)}
-        config_path = self._config_paths.get(name)
-        if config_path is None:
-            return
-        atomic_write_text(config_path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def _load_plugin_state(self) -> None:
         # 从 plugins/state.json 读取已禁用的插件列表。

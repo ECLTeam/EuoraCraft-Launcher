@@ -7,7 +7,7 @@ import pytest
 from test_plugin_worker_manager import make_plugin
 
 from ECL.plugins.contracts import ProtocolError
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 
 
 def test_session_disable_blocks_load_enable_reload_and_worker_without_persisting(tmp_path):
@@ -99,7 +99,6 @@ def test_safe_mode_discovers_metadata_without_executing(framework, tmp_path):
 def test_disabling_unstarted_plugin_persists_user_choice(framework, tmp_path):
     assert framework.disable("example").success
     assert json.loads((tmp_path / "data/plugins/state.json").read_text())["disabled"] == ["example"]
-    assert framework.get_plugin("example") is None
 
 
 def test_restart_preserves_disabled_choice(framework, tmp_path):
@@ -149,18 +148,17 @@ def test_third_party_injection_requires_known_plugin(framework):
     assert framework.get_slots()["slot"][0]["plugin"] == "example"
 
 
-def test_system_route_registration_remains_idempotent(tmp_path):
+def test_system_plugin_rejects_disable_and_reports_in_list(tmp_path):
     root = tmp_path / "resources/resources/system_plugins/system"
     root.mkdir(parents=True)
-    (root / "plugin.json").write_text('{"name":"system"}')
-    (root / "main.py").write_text("from ECL.plugins.plugin import Plugin as Base\nclass Plugin(Base):\n    pass\n")
+    (root / "plugin.json").write_text('{"name":"system","entry_point":"main:Plugin"}')
+    (root / "main.py").write_text("from ECL.plugins.sdk import Plugin as Base\nclass Plugin(Base):\n    pass\n")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        plugin = manager.get_plugin("system")
-        manager._register_route(plugin, "/system", "System", "")
-        manager._register_route(plugin, "/system", "System", "")
-        assert len(manager.get_routes()) == 1
         assert manager.disable("system").status == "forbidden"
+        assert manager.unload("system").status == "forbidden"
+        entries = [item for item in manager.list_plugins() if item["name"] == "system"]
+        assert entries and entries[0]["is_system"] and entries[0]["source"] == "system"
     finally:
         manager.close()

@@ -61,14 +61,13 @@ class PluginLifecycle(_PluginState):
     """
 
     def _enable_all(self) -> None:
-        # 按依赖拓扑顺序启用已加载插件；被禁用的插件不参与启用。
+        # 按依赖拓扑顺序启用全部已登记插件；被禁用的插件不参与启用。
         enabled_count = 0
         for name in self._dependency_resolution.load_order:
             if name in self._disabled_plugins:
                 continue
-            if name in self._plugins or not self._candidate_map.get(name, {}).get("is_system", True):
-                enabled, _reason = self._enable(name)
-                enabled_count += int(enabled)
+            enabled, _reason = self._enable(name)
+            enabled_count += int(enabled)
         self.logger.debug("插件批量启用完成：启用数量：%d", enabled_count)
 
     def enable(self, name: str) -> PluginActionResult:
@@ -92,59 +91,15 @@ class PluginLifecycle(_PluginState):
             )
 
     def _enable(self, name: str) -> tuple[bool, str]:
-        # 启用单个插件；若因被禁用而未加载则先按候选信息加载。
+        # 启用单个插件：统一走唯一运行服务（系统插件进程内，用户插件子进程）。
         reason = self._session_disable_reason(name)
         if reason:
             return False, reason
-        candidate = self._candidate_map.get(name)
-        if candidate and not candidate["is_system"]:
-            return self._enable_worker(name)
-        plugin = self._plugins.get(name)
-        # 若插件因被禁用或安全模式（--disable-plugins）而未加载，先按候选信息加载
-        if (
-            plugin is None
-            and name in self._candidate_map
-            and (name in self._disabled_plugins or not self._startup_auto_enable or name in self._package_entries)
-        ):
-            candidate = self._candidate_map[name]
-            self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
-            plugin = self._plugins.get(name)
-        if plugin is None:
-            reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
-            return False, reason or f"插件不存在或未加载: {name}"
-        current = self._status.get(name)
-        if current not in ("loaded", "disabled"):
-            reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
-            return False, reason or f"插件当前状态为 {current}，无法启用"
-        # 加载后若依赖仍不满足，则不应启用
-        if not self._are_dependencies_satisfied(plugin.metadata):
-            reason = f"插件 {name} 依赖未满足"
-            self.logger.warning(reason)
-            self._plugin_errors[name] = reason
-            return False, reason
-        self._status[name] = "enabling"
-        if not self._call_plugin_hook(plugin, "on_enable", fail_status="loaded"):
-            self.instance_compatibility.unregister_owner(name)
-            self.launch_hooks.unregister_owner(name)
-            self.auth_providers.unregister_owner(name)
-            self.crash_extensions.unregister_owner(name)
-            reason = self._plugin_errors.get(name, f"插件 {name} on_enable 钩子执行失败")
-            return False, reason
-        self._status[name] = "enabled"
-        # 从禁用列表移除并持久化，确保下次启动会加载该插件
-        self._disabled_plugins.discard(name)
-        self._save_plugin_state()
-        self._plugin_errors.pop(name, None)
-        self.events.emit("plugin:enabled", plugin)
-        self.logger.info("插件已启用: %s", name)
-        # 若前端已就绪，单独通知该插件注入 UI 资源，避免重复通知所有插件
-        if self._frontend_ready:
-            self._call_plugin_hook(plugin, "on_frontend_ready")
-        return True, ""
+        return self._enable_worker(name)
 
     def _enable_worker(self, name: str) -> tuple[bool, str]:
         """
-        完成第三方插件的依赖校验、内容审阅准入和 Worker 启动后提交运行状态。
+        完成插件的依赖校验、内容审阅准入和运行服务启动后提交运行状态。
 
         返回失败时保留既有持久禁用偏好，不将准备成功误报为已启用。
         """
@@ -152,18 +107,19 @@ class PluginLifecycle(_PluginState):
         if not self._are_dependencies_satisfied(candidate["metadata"]):
             self._plugin_errors[name] = "PLUGIN_DEPENDENCY_CONFLICT"
             return False, "PLUGIN_DEPENDENCY_CONFLICT"
-        self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], False)
+        self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], candidate["is_system"])
         if self._status.get(name) == "unsupported":
             return False, self._plugin_errors[name]
         try:
             assert self.worker_service is not None
-            self.worker_service.development.intent(name, True)
-            self.worker_service.development.prepare_enable(name, frontend_ready=self._frontend_ready)
-            if (
-                self.worker_service.development.manages(name)
-                and self.worker_service.runtime_info(name)["run_state"] != "enabled"
-            ):
-                self.worker_service.development.retry(name)
+            if not candidate["is_system"]:
+                self.worker_service.development.intent(name, True)
+                self.worker_service.development.prepare_enable(name, frontend_ready=self._frontend_ready)
+                if (
+                    self.worker_service.development.manages(name)
+                    and self.worker_service.runtime_info(name)["run_state"] != "enabled"
+                ):
+                    self.worker_service.development.retry(name)
             self.worker_service.enable(name, frontend_ready=self._frontend_ready)
             self._status[name] = "enabled"
             self._disabled_plugins.discard(name)
@@ -189,48 +145,11 @@ class PluginLifecycle(_PluginState):
         """
         with self._plugin_action_lock(name):
             candidate = self._candidate_map.get(name)
-            if candidate and not candidate["is_system"]:
-                return self._disable_worker(name, _persist_state)
+            if candidate and candidate.get("is_system", False):
+                return PluginActionResult(name, PluginAction.DISABLE, "forbidden", "系统插件不能禁用")
             if _persist_state and name in self._package_entries:
                 return self._disable_package(name)
-            plugin = self._plugins.get(name)
-            if plugin is not None and getattr(plugin, "is_system", False) is True:
-                return PluginActionResult(name, PluginAction.DISABLE, "forbidden", "系统插件不能禁用")
-            if plugin is None or self._status.get(name) != "enabled":
-                reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
-                return PluginActionResult(
-                    name,
-                    PluginAction.DISABLE,
-                    self._status.get(name, "not_found"),
-                    reason or "插件未启用",
-                )
-            self._status[name] = "disabling"
-            self._call_plugin_hook(plugin, "on_disable")
-            self._status[name] = "disabled"
-            # 清理禁用插件注册的前端内容和事件处理器，重新启用时由插件重新注册
-            self._routes = [r for r in self._routes if r["plugin"] != name]
-            self._vue_routes = [r for r in self._vue_routes if r["plugin"] != name]
-            for slot_id, entries in self._slots.items():
-                self._slots[slot_id] = [entry for entry in entries if entry["plugin"] != name]
-            for slot_id, entries in self._vue_slots.items():
-                self._vue_slots[slot_id] = [entry for entry in entries if entry["plugin"] != name]
-            self._vue_components = {
-                component_name: component
-                for component_name, component in self._vue_components.items()
-                if component["plugin"] != name
-            }
-            self.events.remove_handlers_by_owner(name)
-            self.instance_compatibility.unregister_owner(name)
-            self.launch_hooks.unregister_owner(name)
-            self.auth_providers.unregister_owner(name)
-            self.crash_extensions.unregister_owner(name)
-            # 持久化禁用状态，下次启动时跳过该插件；关闭流程中不写入，避免把所有插件标为禁用
-            if _persist_state:
-                self._disabled_plugins.add(name)
-                self._save_plugin_state()
-                self.events.emit("plugin:disabled", plugin)
-            self.logger.info("插件已禁用: %s", name)
-            return PluginActionResult(name, PluginAction.DISABLE, "disabled")
+            return self._disable_worker(name, _persist_state)
 
     def _disable_worker(self, name: str, persist_state: bool) -> PluginActionResult:
         """
@@ -270,46 +189,12 @@ class PluginLifecycle(_PluginState):
         """
         with self._plugin_action_lock(name):
             candidate = self._candidate_map.get(name)
-            if candidate and not candidate["is_system"]:
-                result = self.disable(name, _persist_state)
-                return PluginActionResult(
-                    name, PluginAction.UNLOAD, "unloaded" if result.success else result.status, result.message
-                )
-            plugin = self._plugins.get(name)
-            if plugin is None:
-                reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
-                return PluginActionResult(
-                    name,
-                    PluginAction.UNLOAD,
-                    self._status.get(name, "not_found"),
-                    reason or "插件不存在或未加载",
-                )
-            current = self._status.get(name)
-            if current == "enabled":
-                self.disable(name, _persist_state=_persist_state)
-            self._status[name] = "unloading"
-            self._call_plugin_hook(plugin, "on_unload")
-            # 清理注册的路由和状态
-            self._routes = [r for r in self._routes if r["plugin"] != name]
-            self._vue_routes = [r for r in self._vue_routes if r["plugin"] != name]
-            # 清理插槽注入
-            for slot_id, entries in self._slots.items():
-                self._slots[slot_id] = [entry for entry in entries if entry["plugin"] != name]
-            for slot_id, entries in self._vue_slots.items():
-                self._vue_slots[slot_id] = [entry for entry in entries if entry["plugin"] != name]
-            # 清理已注册的 Vue 组件
-            self._vue_components = {k: v for k, v in self._vue_components.items() if v["plugin"] != name}
-            # 清理事件处理器
-            self.events.remove_handlers_by_owner(name)
-            self.instance_compatibility.unregister_owner(name)
-            self.launch_hooks.unregister_owner(name)
-            self.auth_providers.unregister_owner(name)
-            self.crash_extensions.unregister_owner(name)
-            self._plugins.pop(name, None)
-            self._status.pop(name, None)
-            self.events.emit("plugin:unloaded", name)
-            self.logger.info("插件已卸载: %s", name)
-            return PluginActionResult(name, PluginAction.UNLOAD, "unloaded")
+            if candidate and candidate.get("is_system", False):
+                return PluginActionResult(name, PluginAction.UNLOAD, "forbidden", "系统插件不能卸载")
+            result = self.disable(name, _persist_state)
+            return PluginActionResult(
+                name, PluginAction.UNLOAD, "unloaded" if result.success else result.status, result.message
+            )
 
     def uninstall(self, name: str) -> PluginActionResult:
         """
@@ -373,7 +258,6 @@ class PluginLifecycle(_PluginState):
         self._candidate_map.pop(name, None)
         self._status.pop(name, None)
         self._plugin_errors.pop(name, None)
-        self._config_paths.pop(name, None)
         if name in self._disabled_plugins:
             self._disabled_plugins.discard(name)
             self._save_plugin_state()
@@ -392,44 +276,53 @@ class PluginLifecycle(_PluginState):
             if reason:
                 return PluginActionResult(name, PluginAction.RELOAD, "forbidden", reason)
             candidate = self._candidate_map.get(name)
-            if candidate and not candidate["is_system"]:
-                if self.worker_service is not None and self.worker_service.development.manages(name):
-                    self.worker_service.development.intent(name, True)
-                    try:
-                        self.worker_service.development.retry(name)
-                        self.worker_service.enable(name, frontend_ready=self._frontend_ready)
-                    except (OSError, ValueError, PluginRuntimeError) as exc:
-                        code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
-                        self.logger.warning("插件重载失败：%s；错误码：%s", name, code, exc_info=exc)
-                        return PluginActionResult(name, PluginAction.RELOAD, "failed", code)
-                    self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
-                    return PluginActionResult(name, PluginAction.RELOAD, "enabled")
-                stopped = self.disable(name, _persist_state=False)
-                if not stopped.success:
-                    return PluginActionResult(name, PluginAction.RELOAD, stopped.status, stopped.message)
-                enabled = self.enable(name)
-                return PluginActionResult(name, PluginAction.RELOAD, enabled.status, enabled.message)
-            if name in self._package_entries:
-                return self._reload_package(name)
-            plugin = self._plugins.get(name)
-            if plugin is None:
-                reason = self._plugin_errors.get(name) or self._dependency_resolution.errors.get(name)
+            if candidate is None:
                 return PluginActionResult(
                     name,
                     PluginAction.RELOAD,
                     self._status.get(name, "not_found"),
-                    reason or "插件不存在或未加载",
+                    f"插件不存在: {name}",
                 )
-            plugin_dir = plugin.plugin_dir
-            is_system = getattr(plugin, "is_system", False)
-            # 重载是临时卸载，不应把插件写入禁用状态文件
-            self.unload(name, _persist_state=False)
-            metadata_path = plugin_dir / "plugin.json"
-            if not metadata_path.is_file():
-                return PluginActionResult(name, PluginAction.RELOAD, "invalid", "插件清单不存在")
-            self._load_plugin(plugin_dir, metadata_path, is_system)
-            enabled, reason = self._enable(name)
-            return PluginActionResult(name, PluginAction.RELOAD, "enabled" if enabled else "failed", reason)
+            if candidate["is_system"]:
+                return self._reload_system_plugin(name, candidate)
+            if name in self._package_entries:
+                return self._reload_package(name)
+            if self.worker_service is not None and self.worker_service.development.manages(name):
+                self.worker_service.development.intent(name, True)
+                try:
+                    self.worker_service.development.retry(name)
+                    self.worker_service.enable(name, frontend_ready=self._frontend_ready)
+                except (OSError, ValueError, PluginRuntimeError) as exc:
+                    code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
+                    self.logger.warning("插件重载失败：%s；错误码：%s", name, code, exc_info=exc)
+                    return PluginActionResult(name, PluginAction.RELOAD, "failed", code)
+                self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
+                return PluginActionResult(name, PluginAction.RELOAD, "enabled")
+            stopped = self.disable(name, _persist_state=False)
+            if not stopped.success:
+                return PluginActionResult(name, PluginAction.RELOAD, stopped.status, stopped.message)
+            enabled = self.enable(name)
+            return PluginActionResult(name, PluginAction.RELOAD, enabled.status, enabled.message)
+
+    def _reload_system_plugin(self, name: str, candidate: dict[str, Any]) -> PluginActionResult:
+        """
+        重载系统插件：停止当前运行、按当前目录内容重新登记并启用，不写禁用偏好。
+        """
+        assert self.worker_service is not None
+        try:
+            if self.worker_service.runtime_info(name)["run_state"] == "enabled":
+                self.worker_service.stop(name)
+            self._load_plugin(candidate["plugin_dir"], candidate["metadata_path"], True)
+            self.worker_service.enable(name, frontend_ready=self._frontend_ready)
+        except (OSError, ValueError, PluginRuntimeError) as exc:
+            code = getattr(exc, "error_code", "PLUGIN_WORKER_EXECUTION_FAILED")
+            self.logger.warning("系统插件重载失败：%s；错误码：%s", name, code, exc_info=exc)
+            self._status[name] = "error"
+            self._plugin_errors[name] = code
+            return PluginActionResult(name, PluginAction.RELOAD, "failed", code)
+        self._status[name] = "enabled"
+        self.events.emit("plugin:status_changed", {"plugin": name, "status": "enabled"})
+        return PluginActionResult(name, PluginAction.RELOAD, "enabled")
 
     def install(
         self,
@@ -613,29 +506,25 @@ class PluginLifecycle(_PluginState):
 
     def _is_dependency_satisfied(self, requirement: DependencyRequirement) -> bool:
         """
-        判断单个依赖是否由已加载插件或已启用安装满足。
+        判断单个依赖是否由已登记且已启用的插件安装满足。
 
-        未加载但已登记且已启用的插件同样视为可用，避免安装顺序强迫用户
-        先重启一次；版本不满足的已加载插件一律视为不满足。
+        依赖方经唯一运行服务查询实际运行状态，避免安装顺序强迫用户
+        先重启一次；版本不满足的已启用插件一律视为不满足。
 
         :param requirement: 解析后的依赖要求
         :return: 依赖名称与版本都满足时为 True
         """
-        dep_plugin = self._plugins.get(requirement.name)
-        if dep_plugin is None:
-            candidate = self._candidate_map.get(requirement.name)
-            if (
-                candidate
-                and self.worker_service is not None
-                and not self._session_disable_reason(requirement.name)
-                and self.worker_service.runtime_info(requirement.name)["run_state"] == "enabled"
-            ):
-                version = parse_version(candidate["metadata"].get("version", "0.0.0"))
-                if version is not None and requirement.specifier.contains(version, prereleases=True):
-                    return True
-            return requirement.optional
-        dep_version = parse_version(dep_plugin.version)
-        return dep_version is not None and requirement.specifier.contains(dep_version, prereleases=True)
+        candidate = self._candidate_map.get(requirement.name)
+        if (
+            candidate
+            and self.worker_service is not None
+            and not self._session_disable_reason(requirement.name)
+            and self.worker_service.runtime_info(requirement.name)["run_state"] == "enabled"
+        ):
+            version = parse_version(candidate["metadata"].get("version", "0.0.0"))
+            if version is not None and requirement.specifier.contains(version, prereleases=True):
+                return True
+        return requirement.optional
 
     def on_frontend_ready(self) -> None:
         """
@@ -646,18 +535,8 @@ class PluginLifecycle(_PluginState):
         self._frontend_ready = True
         if self.worker_service is not None:
             self.worker_service.notify_frontend_ready()
-        notified = 0
-        for name, plugin in self._plugins.items():
-            if self._status.get(name) != "enabled":
-                continue
-            self._call_plugin_hook(plugin, "on_frontend_ready")
-            notified += 1
         if self._sidebar_collapsed is not None:
             self.events.emit("frontend:sidebar_changed", {"collapsed": self._sidebar_collapsed})
-        self.logger.debug(
-            "插件前端就绪通知完成：通知数量：%d",
-            notified,
-        )
 
     def set_sidebar_state(self, collapsed: bool) -> None:
         """
@@ -673,10 +552,10 @@ class PluginLifecycle(_PluginState):
 
     def close(self) -> None:
         """
-        按依赖拓扑的逆序卸载已加载插件并解除框架事件订阅。
+        停止全部插件运行并解除框架事件订阅。
 
-        Worker 未能全部停止时只记录失败，仍然完成包、订阅与命令线程池的本地
-        清理，最后再向上抛出：退出流程不能因为进程树回收失败而遗留悬挂资源。
+        运行服务未能全部停止时只记录失败，仍然完成包与订阅的本地清理，
+        最后再向上抛出：退出流程不能因为进程树回收失败而遗留悬挂资源。
         """
         self.events.unsubscribe("config:updated", self._on_instance_config_changed)
         worker_failure: Exception | None = None
@@ -685,19 +564,8 @@ class PluginLifecycle(_PluginState):
                 self.worker_service.close()
             except Exception as exc:
                 worker_failure = exc
-                self.logger.exception("插件 Worker 未能全部停止，继续释放本地资源")
+                self.logger.exception("插件运行服务未能全部停止，继续释放本地资源")
         self._close_packages()
-        loaded_plugins = set(self._plugins)
-        plugin_names = [name for name in reversed(self._dependency_resolution.load_order) if name in loaded_plugins]
-        plugin_names.extend([name for name in reversed(list(self._plugins.keys())) if name not in plugin_names])
-        self.logger.info("正在退出插件框架，共 %d 个已加载插件", len(plugin_names))
-        for name in plugin_names:
-            try:
-                # 关闭流程中不持久化禁用状态，避免把所有插件写入 plugin_state.json
-                if not self.unload(name, _persist_state=False).success:
-                    self.logger.warning("退出时未能卸载插件: %s", name)
-            except Exception:
-                self.logger.exception("退出时卸载插件失败: %s", name)
 
         if self._event_handlers_registered:
             self.events.unsubscribe("plugin:html_injected", self._on_html_injected)
@@ -709,11 +577,8 @@ class PluginLifecycle(_PluginState):
         self._slots.clear()
         self._vue_slots.clear()
         self._vue_components.clear()
-        self._config_values.clear()
-        self._config_paths.clear()
         self._disabled_plugins.clear()
         self._sidebar_collapsed = None
-        self._command_executor.shutdown(wait=False)
         if worker_failure is not None:
             raise worker_failure
         self.logger.info("插件框架已退出")

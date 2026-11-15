@@ -52,7 +52,7 @@ from ECL.api.plugin_models import (
 )
 from ECL.plugins.contracts import ProtocolError, _json_value
 from ECL.plugins.dependency_lock import PluginDependencyError
-from ECL.plugins.framework import PluginActionResult, PluginCommandError
+from ECL.plugins.manager import PluginActionResult, PluginCommandError
 from ECL.plugins.package_archive import PluginPackageError
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.sdk._rpc import RpcRequest
@@ -446,8 +446,7 @@ class PluginHandlers(_FrontendState):
         """
         try:
             query = PluginSettingsQuery.model_validate(body)
-            if self.plugins.get_plugin(query.plugin_name) is None:
-                self._require_main_window(webview_window)
+            self._require_main_window(webview_window)
             return {"success": True, "data": await asyncio.to_thread(self.plugins.get_settings, query.plugin_name)}
         except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
@@ -458,25 +457,23 @@ class PluginHandlers(_FrontendState):
 
         :param body: 前端传入的 IPC 请求参数
         """
-        plugin_name = body.get("plugin_name")
         service = self.plugins.worker_service
-        if service is not None and self.plugins.get_plugin(plugin_name) is None:
-            try:
-                self._require_main_window(webview_window)
-                request = PluginSettingsUpdate.model_validate(body)
-                result = await asyncio.to_thread(
-                    service.update_settings,
-                    request.plugin_name,
-                    request.content_digest,
-                    request.schema_revision,
-                    request.expected_revision,
-                    {request.key: _json_value(request.value)},
-                )
-                return {"success": True, "data": result}
-            except (PluginRunError, ProtocolError) as exc:
-                return failure(str(exc), exc.error_code)
-        result = self.plugins.update_setting(plugin_name, body.get("key"), body.get("value"))
-        return {"success": True} if result.success else failure(result.message, "PLUGIN_SETTING_UPDATE_FAILED")
+        if service is None:
+            return failure("插件运行服务尚未就绪", "PLUGIN_HOST_CLOSED")
+        try:
+            self._require_main_window(webview_window)
+            request = PluginSettingsUpdate.model_validate(body)
+            result = await asyncio.to_thread(
+                service.update_settings,
+                request.plugin_name,
+                request.content_digest,
+                request.schema_revision,
+                request.expected_revision,
+                {request.key: _json_value(request.value)},
+            )
+            return {"success": True, "data": result}
+        except (PluginRunError, ProtocolError) as exc:
+            return failure(str(exc), exc.error_code)
 
     async def plugin_notify_sidebar_state(self, body: dict[str, Any]) -> dict[str, Any]:
         """

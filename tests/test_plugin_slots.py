@@ -8,13 +8,9 @@
 # 公开接口：
 #   - test_html_slot_appends_without_key_and_updates_matching_key() -> None
 #   - test_vue_slot_keeps_distinct_components_from_the_same_plugin() -> None
-#   - test_disable_removes_plugin_frontend_content() -> None
 # ============================================================
 
-from pathlib import Path
-
-from ECL.plugins.framework import PluginManager
-from ECL.plugins.plugin import Plugin
+from ECL.plugins.manager import PluginManager
 from ECL.utils import EventBus
 
 
@@ -53,44 +49,3 @@ def test_vue_slot_keeps_distinct_components_from_the_same_plugin() -> None:
     entries = framework.get_vue_slots()["sidebar-bottom"]
     assert [entry["component_name"] for entry in entries] == ["clock", "status"]
     assert entries[0]["template"] == "new"
-
-
-def test_disable_removes_plugin_frontend_content() -> None:
-    framework = _framework()
-    plugin = Plugin(framework, Path(), {"name": "demo"})
-    framework._candidate_map.clear()
-    framework._plugins["demo"] = plugin
-    framework._status["demo"] = "enabled"
-    framework._routes = [
-        {"plugin": "demo", "path": "/demo"},
-        {"plugin": "other", "path": "/other"},
-    ]
-    framework._vue_routes = [
-        {"plugin": "demo", "path": "/demo"},
-        {"plugin": "other", "path": "/other"},
-    ]
-    framework._slots = {
-        "sidebar-bottom": [
-            {"plugin": "demo", "html": "demo"},
-            {"plugin": "other", "html": "other"},
-        ]
-    }
-    framework._vue_slots = {
-        "sidebar-bottom": [
-            {"plugin": "demo", "component_name": "demo-card"},
-            {"plugin": "other", "component_name": "other-card"},
-        ]
-    }
-    framework._vue_components = {
-        "demo-card": {"plugin": "demo"},
-        "other-card": {"plugin": "other"},
-    }
-
-    result = framework.disable("demo", _persist_state=False)
-
-    assert result.status == "disabled"
-    assert framework._routes == [{"plugin": "other", "path": "/other"}]
-    assert framework._vue_routes == [{"plugin": "other", "path": "/other"}]
-    assert framework.get_slots()["sidebar-bottom"] == [{"plugin": "other", "html": "other"}]
-    assert framework.get_vue_slots()["sidebar-bottom"] == [{"plugin": "other", "component_name": "other-card"}]
-    assert framework.get_vue_components() == {"other-card": {"plugin": "other"}}

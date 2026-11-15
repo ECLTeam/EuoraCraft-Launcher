@@ -41,7 +41,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.http11 import Request, Response
 
-from ECL.plugins.framework import PluginActionResult
+from ECL.plugins.manager import PluginActionResult
 from ECL.utils import PluginCommandError
 from ECL.utils.files import atomic_write_text
 from ECL.utils.logging import LoggingPolicy, get_logger

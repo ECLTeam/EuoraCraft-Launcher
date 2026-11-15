@@ -1074,11 +1074,11 @@ class PluginWorkerService:
 
     def notify_frontend_ready(self) -> None:
         """
-        仅向已启用的 Worker 发送就绪钩子，不允许其注入主窗口脚本。
+        仅向已启用的运行发送就绪钩子，不允许其注入主窗口脚本。
         """
         for entry in tuple(self._entries.values()):
             if entry.state == "enabled":
-                self._phase(entry, "frontend_ready", "enabled")
+                self._notify_frontend_ready(entry)
 
     def remove(self, name: str, remove_files: Callable[[], None]) -> None:
         """

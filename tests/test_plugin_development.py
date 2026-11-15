@@ -7,8 +7,8 @@ import pytest
 from test_plugin_worker_manager import make_plugin
 
 from ECL.plugins.contracts import ProtocolError
-from ECL.plugins.framework import PluginManager
 from ECL.plugins.installation_store import PluginManifest
+from ECL.plugins.manager import PluginManager
 from ECL.plugins.sdk._rpc import RpcRequest
 
 

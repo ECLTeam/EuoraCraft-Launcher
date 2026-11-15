@@ -8,7 +8,7 @@ from time import monotonic, sleep
 import pytest
 
 from ECL.plugins.contracts import PluginRuntimeError
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 
 
 def make_plugin(root: Path, marker: Path, *, declare_panel=False):
@@ -61,7 +61,6 @@ def test_directory_install_does_not_execute_until_enabled(tmp_path: Path):
     try:
         assert manager.install(str(source)).success
         assert not marker.exists()
-        assert manager.get_plugin("example") is None
         assert manager.enable("example").success
         assert marker.exists()
     finally:
@@ -76,7 +75,6 @@ def test_manager_real_worker_command_settings_and_restart(tmp_path: Path):
     try:
         assert manager.enable("example").success, manager.list_plugins()
         assert int(marker.read_text()) != os.getpid()
-        assert manager.get_plugin("example") is None
         assert manager.call_command("example:echo", {"value": "hello"}) == {"value": "hello"}
         assert manager.get_settings("example")["values"] == {"greeting": "hello"}
         original_run = manager.worker_service.runtime_info("example")["run_id"]
@@ -159,7 +157,6 @@ def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        assert manager.get_plugin("example") is None
         assert all(item["status"] != "enabled" for item in manager.list_plugins())
     finally:
         manager.close()
@@ -273,7 +270,7 @@ def test_changed_directory_contents_block_running_worker(tmp_path: Path):
 
 
 def test_callback_timeout_denies_new_calls_and_monitor_confirms_stop(tmp_path: Path):
-    from ECL.plugins.framework import PluginCommandError
+    from ECL.plugins.manager import PluginCommandError
 
     root = tmp_path / "data/plugins/sources/example"
     make_plugin(root, tmp_path / "marker")

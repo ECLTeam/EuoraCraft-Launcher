@@ -316,10 +316,9 @@ class PluginPackages(_PluginState):
 
     def _disable_package(self, name: str) -> PluginActionResult:
         with self._package_lock:
-            if name in self._plugins and self._status.get(name) == "enabled":
-                result = self.disable(name, _persist_state=False)
-                if not result.success:
-                    return result
+            result = self.disable(name, _persist_state=False)
+            if not result.success and result.status != "forbidden":
+                return result
             if self._package_store:
                 try:
                     self._package_store.set_enabled(name, False)

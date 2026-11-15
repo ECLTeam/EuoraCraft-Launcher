@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugins.framework import PluginManager
+from ECL.plugins.manager import PluginManager
 from ECL.plugins.manager.install_transaction import PluginInstallTransaction
 
 
@@ -35,7 +35,6 @@ def test_install_does_not_execute_new_enable_hook(tmp_path: Path) -> None:
     source_path = tmp_path / "new"
     _plugin(source_path, "2.0.0", fail_enable=True)
     assert framework.install(str(source_path)).success
-    assert framework.get_plugin("demo") is None
     assert framework.list_plugins()[0]["status"] == "disabled"
 
 
@@ -60,7 +59,6 @@ def test_failed_update_preserves_disabled_plugin(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(transaction_class, "begin", fail_after_switch)
     assert not framework.install(str(source_path)).success
 
-    assert framework.get_plugin("demo") is None
     assert framework._status["demo"] == "disabled"
     assert framework._candidate_map["demo"]["metadata"]["version"] == "1.0.0"
     assert json.loads((old_path / "plugin.json").read_text(encoding="utf-8"))["version"] == "1.0.0"
@@ -79,7 +77,6 @@ def test_install_preserves_disabled_state_and_updates_candidate(tmp_path: Path) 
     _plugin(source_path, "2.0.0")
 
     assert framework.install(str(source_path)).success
-    assert framework.get_plugin("demo") is None
     assert framework._status["demo"] == "disabled"
     assert framework._candidate_map["demo"]["metadata"]["version"] == "2.0.0"
     assert {item["name"]: item for item in framework.list_plugins()}["demo"]["version"] == "2.0.0"
@@ -138,9 +135,8 @@ def test_pending_first_install_is_removed_before_discovery(tmp_path: Path) -> No
     transaction.begin()
     assert (plugin_dir / "demo").is_dir()
 
-    framework = _framework(data_path, tmp_path / "resources")
+    _framework(data_path, tmp_path / "resources")
 
-    assert framework.get_plugin("demo") is None
     assert not (plugin_dir / "demo").exists()
     assert not transaction.journal_path.exists()
 
@@ -198,7 +194,7 @@ def test_uninstall_after_committed_cleanup_failure_does_not_resurrect_old_versio
 
     assert framework.uninstall("demo").success
     assert not journal_path.exists()
-    assert _framework(data_path, tmp_path / "resources").get_plugin("demo") is None
+    assert not any(item["status"] == "enabled" for item in _framework(data_path, tmp_path / "resources").list_plugins())
 
 
 def test_unrecoverable_journal_skips_user_plugin_without_erasing_disabled_state(tmp_path: Path) -> None:
@@ -217,7 +213,6 @@ def test_unrecoverable_journal_skips_user_plugin_without_erasing_disabled_state(
 
     framework = _framework(data_path, tmp_path / "resources")
 
-    assert framework.get_plugin("demo") is None
     assert "demo" in framework._disabled_plugins
     assert journal_path.exists()
 
