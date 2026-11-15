@@ -37,9 +37,9 @@ def make_service(tmp_path, monkeypatch, transport=None, launch_spec=None, instal
     )
     source = tmp_path / "plugin"
     source.mkdir()
-    metadata = {"name": "java-test", "api_version": 1}
+    metadata = {"name": "java-test"}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
-    (source / "main.py").write_text("from ECL.plugins.api import Plugin\n", encoding="utf-8")
+    (source / "main.py").write_text("from ECL.plugins.sdk import Plugin\n", encoding="utf-8")
     service.register(metadata, source, "directory")
     return service, manager, records, client, operations
 

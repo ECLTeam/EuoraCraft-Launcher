@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from ECL.minecraft.adapters.game_models import GameInstallRequest
 from ECL.minecraft.adapters.resources import RuntimeResources
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
 from ECL.services.operations import OperationOrigin

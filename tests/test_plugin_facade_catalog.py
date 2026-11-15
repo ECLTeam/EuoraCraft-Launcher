@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import re
 
-from ECL.plugins.api.facades import PluginFacadeCatalog
 from ECL.plugins.runtime.broker import PluginHostBroker
+from ECL.plugins.sdk.facades import PluginFacadeCatalog
 
 # 路由知识基线来自 broker 注册表；门面目录必须落在这套知识内。
 _dispatch_prefixes = tuple(PluginHostBroker.prefix_routes)

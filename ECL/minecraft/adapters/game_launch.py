@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from ECL.minecraft.adapters.game_models import GameLaunchRequest, GameRunningRequest, GameStopRequest
 from ECL.minecraft.adapters.resources import RuntimeResources
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations

@@ -151,7 +151,7 @@ class PluginDiscovery(_PluginState):
                 if isinstance(exc, ValidationError):
                     self._plugin_errors[name] = manifest_validation_error_code(exc)
                 else:
-                    self._plugin_errors[name] = getattr(exc, "error_code", "PLUGIN_API_VERSION_UNSUPPORTED")
+                    self._plugin_errors[name] = getattr(exc, "error_code", "PLUGIN_MANIFEST_INVALID")
             return
         if name in self._plugins:
             self.logger.warning("插件 %s 重复，跳过", name)

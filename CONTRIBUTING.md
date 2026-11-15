@@ -77,7 +77,7 @@ Issue 关闭与版本发布分别报告：修复进入默认分支，不代表�
 | --- | --- | --- |
 | `ECL/`、`tests/`、`packaging/`、`tools/`、`main.py`、`pyproject.toml`、`.github/workflows/backend-tests.yml` | Backend Tests；Ruff Lint（仅 `*.py` 与 `pyproject.toml`） | Backend Tests 全量 |
 | `frontend` 子模块指针 | Frontend Checks | 全量 |
-| `ECL/plugins/`、`ECL/plugins/api/` 等插件运行时路径 | Plugin Worker Platforms（Windows / Linux / macOS） | 按路径 |
+| `ECL/plugins/`、`ECL/plugins/sdk/` 等插件运行时路径 | Plugin Worker Platforms（Windows / Linux / macOS） | 按路径 |
 | 依赖清单：`pyproject.toml`、`frontend/package.json`、`frontend/pnpm-lock.yaml` | Dependency Review（依赖审计） | 每周治理任务 |
 | `docs/governance/`、`ECL/tooling/governance.py`、`tests/test_governance.py`、`frontend/tests/browser/` | Engineering Governance（5 个页面 × Classic/Folia × 明暗主题，共 20 次可访问性扫描） | 每次推送 + 每周四定时 |
 | 仅文档、模板、图片 | 无自动检查，按第 6 节自查格式、结构与链接 | — |

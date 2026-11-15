@@ -13,10 +13,10 @@ from ECL.plugins.manager.install_transaction import PluginInstallTransaction
 def _plugin(plugin_path: Path, version: str, *, fail_enable: bool = False) -> None:
     plugin_path.mkdir(parents=True, exist_ok=True)
     (plugin_path / "plugin.json").write_text(
-        json.dumps({"name": "demo", "api_version": 1, "version": version, "entry_point": "main:DemoPlugin"}),
+        json.dumps({"name": "demo", "version": version, "entry_point": "main:DemoPlugin"}),
         encoding="utf-8",
     )
-    source = "from ECL.plugins.api import Plugin\nclass DemoPlugin(Plugin):\n"
+    source = "from ECL.plugins.sdk import Plugin\nclass DemoPlugin(Plugin):\n"
     source += (
         "    def on_enable(self):\n        raise RuntimeError('new enable failed')\n" if fail_enable else "    pass\n"
     )

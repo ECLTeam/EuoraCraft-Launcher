@@ -8,11 +8,10 @@ from pathlib import Path
 import psutil
 import pytest
 
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api.contracts import ProtocolError
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import PluginRuntimeError, ProtocolError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 
 def _snapshot(tmp_path: Path) -> tuple[CodeSnapshot, Path]:

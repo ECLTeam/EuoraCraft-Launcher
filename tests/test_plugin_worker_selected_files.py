@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.manager import PluginManager
 
 

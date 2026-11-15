@@ -15,7 +15,7 @@ import pytest
 from ECL.minecraft.services.game import GameService
 from ECL.minecraft.services.game.instance_profiles import InstanceProfileStore
 from ECL.minecraft.services.game.version_stats import VersionStatsStore
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.utils.instance_reading import InstanceReadError
@@ -141,7 +141,7 @@ def shared(tmp_path, queries):
     source = tmp_path / "plugin"
     source.mkdir()
     (source / "main.py").write_text("value=1", encoding="utf-8")
-    metadata = {"name": "reader", "api_version": 1, "permissions": [{"capability": "instances.read", "required": True}]}
+    metadata = {"name": "reader", "permissions": [{"capability": "instances.read", "required": True}]}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     service.register(metadata, source, "directory")
     yield service, roots, root
@@ -396,7 +396,7 @@ def test_static_symlink_metadata_is_never_read(tmp_path, queries):
 def test_real_worker_reads_instances_through_approved_root(shared):
     service, _, _ = shared
     entry = service._entry("reader")
-    code = """from ECL.plugins.api import Plugin as Base
+    code = """from ECL.plugins.sdk import Plugin as Base
 class Plugin(Base):
  def on_load(self):
   roots=self.host.call('resources.list',{'capability':'instances.read'})

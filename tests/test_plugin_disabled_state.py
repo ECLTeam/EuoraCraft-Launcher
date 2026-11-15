@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from test_plugin_worker_manager import make_plugin
 
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.framework import PluginManager
 
 

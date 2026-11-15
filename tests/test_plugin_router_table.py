@@ -13,9 +13,9 @@ import random
 
 import pytest
 
-from ECL.plugins.api.contracts import ProtocolError
-from ECL.plugins.api.facades import PluginFacadeCatalog
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
+from ECL.plugins.sdk.facades import PluginFacadeCatalog
 
 # 改造前前缀分支链的落点基准，键为命名空间前缀，值为服务实现名。
 _expected_prefix_targets = {

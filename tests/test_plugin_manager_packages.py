@@ -8,7 +8,7 @@ import sys
 import pytest
 from plugin_wheel_helpers import make_package, make_wheel
 
-from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.contracts import PluginRuntimeError
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginManager
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
@@ -101,7 +101,7 @@ def test_safe_mode_discovers_package_without_starting_worker(tmp_path):
 
 
 def test_failure_in_on_load_does_not_report_enabled(tmp_path):
-    code = "from ECL.plugins.api import Plugin as Base\nclass Plugin(Base):\n    def on_load(self):\n        raise RuntimeError('private detail')\n"
+    code = "from ECL.plugins.sdk import Plugin as Base\nclass Plugin(Base):\n    def on_load(self):\n        raise RuntimeError('private detail')\n"
     manager = install_and_restart(tmp_path, make_package(tmp_path, code=code))
     try:
         result = manager.enable("demo")
@@ -124,7 +124,7 @@ def test_package_dependency_missing_prevents_enable(tmp_path):
 def test_two_package_workers_use_distinct_versions_without_host_dependency_conflict(tmp_path):
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
-    code = "from ECL.plugins.api import Plugin as Base\nimport samplelib\nclass Plugin(Base):\n    def on_load(self):\n        self.define_command('version', self.version, output_fields=({'name':'value','type':'string'},))\n    def version(self):\n        return {'value':samplelib.VALUE}\n"
+    code = "from ECL.plugins.sdk import Plugin as Base\nimport samplelib\nclass Plugin(Base):\n    def on_load(self):\n        self.define_command('version', self.version, output_fields=({'name':'value','type':'string'},))\n    def version(self):\n        return {'value':samplelib.VALUE}\n"
     for name, version in (("one", "1.0"), ("two", "2.0")):
         folder = tmp_path / name
         folder.mkdir()
@@ -159,7 +159,7 @@ def _write_directory_manifest(source, metadata):
 def test_inspect_directory_reports_manifest_and_dependency_state(tmp_path):
     source = tmp_path / "demo"
     _write_directory_manifest(
-        source, {"name": "demo", "api_version": 1, "version": "1.2.3", "entry_point": "main:Plugin"}
+        source, {"name": "demo", "version": "1.2.3", "entry_point": "main:Plugin"}
     )
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
@@ -194,7 +194,6 @@ def test_inspect_directory_requires_lock_for_python_dependencies(tmp_path):
         source,
         {
             "name": "demo",
-            "api_version": 1,
             "version": "1.0.0",
             "entry_point": "main:Plugin",
             "pythonDependencies": ["example==1.0.0"],

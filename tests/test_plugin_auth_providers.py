@@ -148,7 +148,8 @@ def test_plugin_without_accounts_permission_cannot_register_provider(tmp_path) -
     framework = PluginManager(auth_providers=manager.plugin_auth_providers)
     framework.initialize(data_path, tmp_path / "resources")
 
-    assert framework._status.get("auth-demo") == "unsupported"
+    # 无权限场景的插件使用旧版进程内基类，在 Worker 中因入口不兼容统一插件基类而拒载。
+    assert framework._status.get("auth-demo") == "error"
     assert manager.list_auth_providers() == []
 
 

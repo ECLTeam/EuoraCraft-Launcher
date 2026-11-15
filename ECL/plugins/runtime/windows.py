@@ -20,9 +20,9 @@ from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
 
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api._windows import WindowsApi
+from ECL.plugins.contracts import PluginRuntimeError
 from ECL.plugins.runtime.process_scope import ProcessReference
+from ECL.plugins.sdk._windows import WindowsApi
 
 
 @dataclass(slots=True)

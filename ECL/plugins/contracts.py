@@ -3,13 +3,14 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：校验插件与宿主之间的有界 JSON 信封，不依赖宿主或第三方库。
+# 文件作用：校验插件与宿主之间的有界 JSON 信封，并统一插件运行错误类型。
 #
 # 公开接口：
 #   - JsonValue — 可跨进程传输的 JSON 值类型。
-#   - class ProtocolError — 协议校验或版本协商失败。
-#   - class ProtocolPolicy — 固定版本、消息大小及结构限制。
+#   - class ProtocolError — 协议校验失败。
+#   - class ProtocolPolicy — 固定消息大小及结构限制。
 #   - class WireMessage — 校验后的协议消息及编码接口。
+#   - class PluginRuntimeError — 本地通信、进程身份和资源监管失败的统一错误。
 # ============================================================
 
 from __future__ import annotations
@@ -42,15 +43,12 @@ class ProtocolError(ValueError):
 
 class ProtocolPolicy:
     """
-    定义插件引导和 RPC 使用的不可变协议限制与 API 版本契约。
+    定义插件引导和 RPC 使用的不可变协议限制。
 
-    ``api_version`` 是宿主当前对外声明的插件 API 版本；
-    ``supported_api_versions`` 是按 ADR-005 可同时放行的版本集合，
-    校验一律查集合而非比较单一值。
+    版本协商概念已随插件模型统一移除：信封仅校验协议帧格式本身，
+    不再维护插件 API 版本集合。
     """
 
-    api_version: ClassVar[int] = 1
-    supported_api_versions: ClassVar[frozenset[int]] = frozenset({1})
     protocol_version: ClassVar[int] = 1
     max_frame_bytes: ClassVar[int] = 1024 * 1024
     max_depth: ClassVar[int] = 16
@@ -182,3 +180,21 @@ class WireMessage:
         method = _identifier(payload.get("method", ""), allow_empty=kind != "request")
         mutation_key = _identifier(payload.get("mutation_key", ""), allow_empty=True)
         return cls(kind, params, request_id, method, timeout_ms, mutation_key)
+
+
+class PluginRuntimeError(RuntimeError):
+    """
+    统一表示本地通信、进程身份和资源监管失败。
+    """
+
+    def __init__(self, message: str, error_code: str, native_error: int = 0) -> None:
+        """
+        保存不包含个人目录、请求正文或凭据的失败信息。
+
+        :param message: 安全的业务说明
+        :param error_code: 平台之间保持一致的错误类别
+        :param native_error: 仅用于原生诊断的错误值，不作为身份
+        """
+        super().__init__(message)
+        self.error_code: str = error_code
+        self.native_error: int = native_error

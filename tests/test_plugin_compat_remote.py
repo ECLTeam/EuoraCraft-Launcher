@@ -19,14 +19,14 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.instance_compat import (
     limit_metadata_fields,
     limit_metadata_text,
     limit_metadata_warnings,
     sanitize_external_metadata,
 )
+from ECL.plugins.sdk._rpc import RpcRequest
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
 
 

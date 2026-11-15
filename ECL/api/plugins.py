@@ -50,12 +50,12 @@ from ECL.api.plugin_models import (
     PluginSettingsQuery,
     PluginSettingsUpdate,
 )
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import ProtocolError, _json_value
+from ECL.plugins.contracts import ProtocolError, _json_value
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.framework import PluginActionResult, PluginCommandError
 from ECL.plugins.package_archive import PluginPackageError
 from ECL.plugins.run_store import PluginRunError
+from ECL.plugins.sdk._rpc import RpcRequest
 from ECL.utils.operation_logging import current_operation
 
 from .bridge import _FrontendState, _open_folder

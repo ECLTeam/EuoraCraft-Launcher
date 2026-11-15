@@ -9,11 +9,11 @@ import pytest
 
 from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
 from ECL.minecraft.services.game import GameService
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
+from ECL.plugins.sdk._rpc import RpcRequest
 
 
 @pytest.fixture

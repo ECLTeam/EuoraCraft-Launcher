@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：在 Worker 内执行 v2 生命周期与本地回调，不创建宿主业务服务。
+# 文件作用：在 Worker 内执行插件生命周期与本地回调，不创建宿主业务服务。
 #
 # 公开接口：
 #   - class PluginRuntime — 经许可模块的受控生命周期和回调分派。
@@ -17,9 +17,9 @@ import os
 from threading import RLock
 from types import ModuleType
 
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError, ProtocolPolicy
-from ECL.plugins.api.plugin import HostClient, Plugin
+from ECL.plugins.contracts import JsonValue, ProtocolError
+from ECL.plugins.sdk._rpc import RpcRequest
+from ECL.plugins.sdk.plugin import HostClient, Plugin
 
 
 class PluginRuntime:
@@ -32,7 +32,7 @@ class PluginRuntime:
         绑定已经过内容许可的模块，构造插件及钩子须等宿主生命周期请求。
 
         :param module: 已在当前 Worker 中执行的模块
-        :param entry_class: 宿主选择并校验的 v2 插件类
+        :param entry_class: 宿主选择并校验的插件类
         :param host: 当前运行的反向 RPC 门面
         """
         self._module = module
@@ -54,7 +54,7 @@ class PluginRuntime:
         request.check_deadline()
         if request.method == "runtime.info" and not request.params:
             with self._lock:
-                return {"api_version": ProtocolPolicy.api_version, "pid": os.getpid(), "run_state": self._phase}
+                return {"pid": os.getpid(), "run_state": self._phase}
         if request.method == "lifecycle.invoke":
             return self._lifecycle(request)
         if request.method == "callbacks.invoke":
@@ -107,10 +107,10 @@ class PluginRuntime:
             if phase == "load":
                 plugin_class = getattr(self._module, self._entry_class, None)
                 if not isinstance(plugin_class, type) or not issubclass(plugin_class, Plugin):
-                    raise ProtocolError("插件入口不是 API v2 基类", "PLUGIN_API_VERSION_UNSUPPORTED")
+                    raise ProtocolError("插件入口不是统一插件基类", "PLUGIN_ENTRY_INVALID")
                 plugin = plugin_class(self._host)
                 if not isinstance(plugin, Plugin):
-                    raise ProtocolError("插件构造结果不满足 API v2", "PLUGIN_API_VERSION_UNSUPPORTED")
+                    raise ProtocolError("插件构造结果不满足统一插件基类", "PLUGIN_ENTRY_INVALID")
                 with self._lock:
                     self._plugin = plugin
             else:

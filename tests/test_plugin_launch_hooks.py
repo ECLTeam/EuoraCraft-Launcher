@@ -85,7 +85,7 @@ def test_plugin_can_register_launch_hook_and_mutate_launch_context(tmp_path) -> 
 
 
 def test_plugin_without_launch_permission_cannot_register_hook(tmp_path) -> None:
-    """未声明 launch 权限的插件注册启动钩子时 enable 失败。"""
+    """第三方目录插件使用旧版进程内基类，在 Worker 中因入口不兼容统一插件基类而拒载。"""
     data_path = tmp_path / "data"
     plugin_dir = data_path / "plugins" / "sources" / "launch-no-perm"
     plugin_dir.mkdir(parents=True)
@@ -110,7 +110,7 @@ def test_plugin_without_launch_permission_cannot_register_hook(tmp_path) -> None
 
     framework = PluginManager()
     framework.initialize(data_path, tmp_path / "resources")
-    assert framework._status.get("launch-no-perm") == "unsupported"
+    assert framework._status.get("launch-no-perm") == "error"
 
 
 def test_launch_hook_exception_is_isolated(tmp_path) -> None:

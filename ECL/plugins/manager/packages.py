@@ -21,7 +21,7 @@ from pydantic import ValidationError
 from ECL.plugins.dependency_lock import PluginDependencyError
 from ECL.plugins.environment_pool import PluginDependencyDirectory
 from ECL.plugins.host_dependencies import HostDependencyPolicy
-from ECL.plugins.installation_store import WorkerManifest, manifest_validation_error_code
+from ECL.plugins.installation_store import PluginManifest
 from ECL.plugins.package_activation import PluginPackageActivation, PluginPackageActivationStore, plugin_name_pattern
 from ECL.plugins.package_archive import PluginPackageError
 from ECL.plugins.package_preparation import PluginDirectoryPreflight, PluginPackagePreflight, PluginPackagePreparer
@@ -53,10 +53,8 @@ class PluginPackages(_PluginState):
         preflight = PluginPackagePreparer(self._data_path).inspect(archive_path)
         try:
             with zipfile.ZipFile(archive_path) as archive:
-                WorkerManifest.model_validate_json(archive.read("plugin.json"))
+                PluginManifest.model_validate_json(archive.read("plugin.json"))
         except ValidationError as exc:
-            if manifest_validation_error_code(exc) == "PLUGIN_API_VERSION_UNSUPPORTED":
-                raise PluginDependencyError("插件清单需要声明受支持的 API v2") from exc
             raise PluginDependencyError("插件清单字段无效，请检查 name、version 与 entry_point") from exc
         except ValueError as exc:
             raise PluginDependencyError("插件清单无法解析") from exc
@@ -82,10 +80,8 @@ class PluginPackages(_PluginState):
         if not metadata_path.is_file():
             raise PluginDependencyError("所选目录缺少 plugin.json")
         try:
-            manifest = WorkerManifest.model_validate_json(metadata_path.read_bytes())
+            manifest = PluginManifest.model_validate_json(metadata_path.read_bytes())
         except ValidationError as exc:
-            if manifest_validation_error_code(exc) == "PLUGIN_API_VERSION_UNSUPPORTED":
-                raise PluginDependencyError("此插件要求的 API 版本不被当前启动器支持") from exc
             raise PluginDependencyError("插件清单字段无效，请检查 name、version 与 entry_point") from exc
         except ValueError as exc:
             raise PluginDependencyError("插件清单无法解析，请确认是有效的 UTF-8 JSON") from exc

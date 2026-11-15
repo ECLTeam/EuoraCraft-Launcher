@@ -29,12 +29,10 @@ from ECL.minecraft.adapters.java_api import RuntimeJava
 from ECL.minecraft.adapters.public_queries import RuntimePublicQueries
 from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.plugins.account_resources import PluginAccountResourceCatalog
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, PluginRuntimeError, ProtocolError
 from ECL.plugins.development import DevelopmentSource, PluginDevelopmentService
 from ECL.plugins.environment_pool import PluginDependencyDirectory
-from ECL.plugins.installation_store import PluginInstallationStore, WorkerManifest
+from ECL.plugins.installation_store import PluginInstallationStore, PluginManifest
 from ECL.plugins.java_resources import PluginJavaResourceCatalog
 from ECL.plugins.package_preparation import PluginPackagePreparer, current_plugin_target
 from ECL.plugins.resource_catalog import PluginResourceCatalog
@@ -47,6 +45,7 @@ from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.plugins.sdk._rpc import RpcRequest
 from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
 from ECL.utils import AccountError, get_logger
@@ -69,7 +68,7 @@ _cross_call_depth: ContextVar[int] = ContextVar("plugin_cross_call_depth", defau
 
 @dataclass(slots=True)
 class _WorkerEntry:
-    manifest: WorkerManifest
+    manifest: PluginManifest
     root_path: Path
     installation_id: str
     dependency: PluginDependencyDirectory | None
@@ -288,7 +287,7 @@ class PluginWorkerService:
         """
         if self._closed.is_set():
             raise ProtocolError("插件宿主已经关闭", "PLUGIN_HOST_CLOSED")
-        manifest = WorkerManifest.model_validate(metadata)
+        manifest = PluginManifest.model_validate(metadata)
         with self._lock:
             previous = self._entries.get(manifest.name)
         if (

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.contracts import PluginRuntimeError
 
 
 @dataclass(frozen=True, slots=True)

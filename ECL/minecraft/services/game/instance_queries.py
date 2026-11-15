@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ECL.minecraft.game import InstanceMetadata
-from ECL.plugins.api.contracts import JsonValue
+from ECL.plugins.contracts import JsonValue
 from ECL.utils.instance_reading import InstanceReadBoundary, InstanceReadError
 
 from .base import _GameState

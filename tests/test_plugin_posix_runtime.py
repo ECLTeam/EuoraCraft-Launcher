@@ -13,13 +13,12 @@ import psutil
 import pytest
 
 from ECL.bootstrap import local_worker_endpoint
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api._posix_transport import UnixServer, connect_unix
-from ECL.plugins.api.contracts import ProtocolPolicy, WireMessage
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import PluginRuntimeError, ProtocolPolicy, WireMessage
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.posix import PosixScope
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.plugins.sdk._posix_transport import UnixServer, connect_unix
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 pytestmark = pytest.mark.skipif(sys.platform not in {"linux", "darwin"}, reason="需要真实 POSIX 内核")
 
@@ -187,7 +186,7 @@ def test_posix_guardian_recovers_worker_on_abrupt_host_exit(tmp_path):
     )
     source = (
         "import os\nfrom pathlib import Path\n"
-        "from ECL.plugins.api.snapshot import CodeSnapshot\n"
+        "from ECL.plugins.sdk.snapshot import CodeSnapshot\n"
         "from ECL.plugins.runtime.supervisor import WorkerSupervisor\n"
         "worker = WorkerSupervisor()\nworker.start()\n"
         f"worker._authorize_snapshot(CodeSnapshot.capture(Path({str(code)!r})))\n"
@@ -203,7 +202,7 @@ def test_posix_guardian_recovers_worker_on_abrupt_host_exit(tmp_path):
 
 
 def test_unix_transport_rejects_foreign_uid(monkeypatch):
-    from ECL.plugins.api import _posix_transport
+    from ECL.plugins.sdk import _posix_transport
 
     server = UnixServer(local_worker_endpoint(uuid4().hex))
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

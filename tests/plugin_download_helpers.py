@@ -7,12 +7,12 @@ from uuid import uuid4
 import pytest
 from plugin_network_helpers import MappedDialer, trusted_ssl_context
 
-from ECL.plugins.api._rpc import RpcRequest
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.file_storage import PluginFileStorage
 from ECL.plugins.runtime.network_api import PluginNetworkService
+from ECL.plugins.sdk._rpc import RpcRequest
 from ECL.services.operations import OperationManager
 from ECL.utils import EventBus
 

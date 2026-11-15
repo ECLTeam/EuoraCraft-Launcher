@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugins.api._process import _report_failure
-from ECL.plugins.api.contracts import ProtocolError, ProtocolPolicy, WireMessage
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import ProtocolError, ProtocolPolicy, WireMessage
+from ECL.plugins.sdk._process import _report_failure
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 
 def test_json_envelope_roundtrip_rejects_python_objects() -> None:
@@ -99,16 +99,16 @@ import sys
 import json
 class ImportGuard(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.startswith('ECL.') and fullname not in {'ECL.plugins', 'ECL.plugins.api'} and not fullname.startswith('ECL.plugins.api.'):
+        if fullname.startswith('ECL.') and fullname not in {'ECL.plugins', 'ECL.plugins.sdk', 'ECL.plugins.contracts'} and not fullname.startswith('ECL.plugins.sdk.'):
             raise AssertionError('Unexpected host import: ' + fullname)
         if fullname.split('.')[0] in {'pytaurix', 'pytauri', 'httpx', 'pydantic'}:
             raise AssertionError('Unexpected dependency import: ' + fullname)
 sys.meta_path.insert(0, ImportGuard())
-import ECL.plugins.api
-assert 'ECL.plugins.api._process' not in sys.modules
-assert 'ECL.plugins.api._windows' not in sys.modules
+import ECL.plugins.sdk
+assert 'ECL.plugins.sdk._process' not in sys.modules
+assert 'ECL.plugins.sdk._windows' not in sys.modules
 print(json.dumps([n for n in sys.modules if
-    (n.startswith('ECL.') and n not in {'ECL.plugins', 'ECL.plugins.api'} and not n.startswith('ECL.plugins.api.'))
+    (n.startswith('ECL.') and n not in {'ECL.plugins', 'ECL.plugins.sdk', 'ECL.plugins.contracts'} and not n.startswith('ECL.plugins.sdk.'))
     or n.startswith(('pytaurix', 'pytauri', 'httpx', 'pydantic'))]))
 """,
         ],
@@ -130,12 +130,12 @@ def test_plugin_hello_only_allows_lightweight_ecl_modules(host_module: str | Non
 import json
 import sys
 from types import ModuleType, SimpleNamespace
-from ECL.plugins.api import _process
-from ECL.plugins.api.contracts import WireMessage
+from ECL.plugins.sdk import _process
+from ECL.plugins.contracts import WireMessage
 host_module = {host_module!r}
 if host_module is not None:
     sys.modules[host_module] = ModuleType(host_module)
-import ECL.plugins.api._windows as windows
+import ECL.plugins.sdk._windows as windows
 windows.WindowsApi = lambda: SimpleNamespace(
     is_in_job=lambda *args: True,
     kernel=SimpleNamespace(GetCurrentProcess=lambda: 1))

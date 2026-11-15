@@ -18,14 +18,13 @@ from threading import RLock
 from time import monotonic, sleep
 from uuid import uuid4
 
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api._imports import DependencySnapshot
-from ECL.plugins.api._rpc import RpcPeer, RpcRequest
-from ECL.plugins.api._transport import LocalChannel, LocalServer, create_local_server
-from ECL.plugins.api.contracts import JsonValue, ProtocolError, ProtocolPolicy, WireMessage
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import JsonValue, PluginRuntimeError, ProtocolError, WireMessage
 from ECL.plugins.environment_pool import PluginDependencyDirectory, PluginEnvironmentPool
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
+from ECL.plugins.sdk._imports import DependencySnapshot
+from ECL.plugins.sdk._rpc import RpcPeer, RpcRequest
+from ECL.plugins.sdk._transport import LocalChannel, LocalServer, create_local_server
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 from ECL.utils import get_logger
 
 from .executable import ExecutableLaunchSpec
@@ -93,11 +92,7 @@ class WorkerSupervisor:
                 self._channel = server.accept(timeout)
                 self._authenticate()
                 hello = self._channel.receive(5)
-                if (
-                    hello.kind != "hello"
-                    or hello.params.get("run_id") != self.run_id
-                    or hello.params.get("api_version") not in ProtocolPolicy.supported_api_versions
-                ):
+                if hello.kind != "hello" or hello.params.get("run_id") != self.run_id:
                     raise ProtocolError("Worker 引导握手不兼容")
                 if hello.params.get("has_host_modules") is not False or hello.params.get("is_supervised") is not True:
                     raise ProtocolError("Worker 引导未保持宿主导入及监管边界")
@@ -137,7 +132,7 @@ class WorkerSupervisor:
         :param session: 宿主持有的授权会话，不能由 Worker 自报
         :param entry_file: 快照内的 Python 入口
         :param dependency: 现有共享依赖池中已就绪的目录
-        :param entry_class: v2 Plugin 的实际类名
+        :param entry_class: 统一插件基类的实际类名
         :raises PluginRunError: 内容失效或运行身份不匹配时抛出
         """
         if session.run_id != self.run_id:

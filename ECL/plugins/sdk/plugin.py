@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：第三方 API v2 的轻量宿主门面和本地回调注册，不取得宿主 Python 对象。
+# 文件作用：插件 SDK 的轻量宿主门面和本地回调注册，不取得宿主 Python 对象。
 #
 # 公开接口：
 #   - class HostApiError — Host API 明确返回的稳定失败类别。
@@ -29,8 +29,8 @@ from threading import RLock
 from typing import ClassVar
 from uuid import uuid4
 
-from ECL.plugins.api._rpc import RpcPeer
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
+from ECL.plugins.sdk._rpc import RpcPeer
 
 
 class HostApiError(ProtocolError):
@@ -109,7 +109,7 @@ class HostClient:
 
 class Plugin:
     """
-    在独立 Worker 中运行的 v2 插件基类，不兼容旧宿主对象构造参数。
+    在独立 Worker 中运行的统一插件基类，不接收旧宿主对象构造参数。
 
     生命周期可覆写为同步或 async 方法；回调函数只留在本 Worker，跨进程只传标识。
     """

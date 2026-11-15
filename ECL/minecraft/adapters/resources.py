@@ -20,7 +20,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.resource_catalog import PluginResource, PluginResourceCatalog
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession

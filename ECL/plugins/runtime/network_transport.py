@@ -23,7 +23,7 @@ from typing import Protocol
 
 import httpcore
 
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.network_targets import NetworkOrigin
 
 

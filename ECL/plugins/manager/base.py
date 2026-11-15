@@ -22,7 +22,6 @@ from ECL.java.manager import JavaManager
 from ECL.java.queries import JavaQueries
 from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
 from ECL.minecraft.adapters.resources import InstanceQueries
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
 from ECL.plugins.auth_providers import (
     AuthField,
     AuthProviderRegistry,
@@ -30,6 +29,7 @@ from ECL.plugins.auth_providers import (
     sanitize_credentials_payload,
     sanitize_private_auth_data,
 )
+from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.crash_extensions import (
     CrashAnalysisContext,
     CrashAnalysisExtensionRegistry,

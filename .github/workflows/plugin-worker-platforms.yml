@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "ECL/bootstrap.py"
-      - "ECL/plugins/api/**"
+      - "ECL/plugins/sdk/**"
       - "ECL/plugins/**"
       - "ECL/utils/*file*"
       - "ECL/minecraft/services/game/**"
@@ -17,7 +17,7 @@ on:
     branches: [main]
     paths:
       - "ECL/bootstrap.py"
-      - "ECL/plugins/api/**"
+      - "ECL/plugins/sdk/**"
       - "ECL/plugins/**"
       - "ECL/utils/*file*"
       - "ECL/minecraft/services/game/**"

@@ -19,9 +19,9 @@ from uuid import uuid4
 
 import pytest
 
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.crash_extensions import limit_reason_text, limit_reasons, sanitize_extension_result
+from ECL.plugins.sdk._rpc import RpcRequest
 from tests.test_plugin_panels import panel_setup  # noqa: F401 - pytest fixture
 
 

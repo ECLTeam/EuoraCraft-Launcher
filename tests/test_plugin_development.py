@@ -6,10 +6,10 @@ from time import monotonic
 import pytest
 from test_plugin_worker_manager import make_plugin
 
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.framework import PluginManager
-from ECL.plugins.installation_store import WorkerManifest
+from ECL.plugins.installation_store import PluginManifest
+from ECL.plugins.sdk._rpc import RpcRequest
 
 
 @pytest.fixture
@@ -134,7 +134,7 @@ def test_ignored_manifest_fields_do_not_block_development(development):
 @pytest.mark.parametrize("value", ["false", 0, 1, None])
 def test_manifest_rejects_non_boolean_hot_reload(value):
     with pytest.raises(ValueError):
-        WorkerManifest.model_validate({"api_version": 1, "name": "sample", "supports_hot_reload": value})
+        PluginManifest.model_validate({"name": "sample", "supports_hot_reload": value})
 
 
 def test_ignored_build_inputs_do_not_reload(development):

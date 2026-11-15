@@ -6,8 +6,8 @@ from threading import Event
 
 import pytest
 
-from ECL.plugins.api._rpc import RpcPeer, RpcRequest
-from ECL.plugins.api.contracts import ProtocolError, WireMessage
+from ECL.plugins.contracts import ProtocolError, WireMessage
+from ECL.plugins.sdk._rpc import RpcPeer, RpcRequest
 
 
 class ByteEndpoint:

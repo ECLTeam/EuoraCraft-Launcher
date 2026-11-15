@@ -23,8 +23,8 @@ from pathlib import Path
 from types import MappingProxyType, ModuleType
 from typing import ClassVar, Protocol
 
-from ECL.plugins.api.contracts import ProtocolError
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import ProtocolError
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 
 class _DllDirectory(Protocol):

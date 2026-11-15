@@ -22,10 +22,9 @@ from time import monotonic
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
-from ECL.plugins.api.snapshot import CodeSnapshot
-from ECL.plugins.installation_store import WorkerManifest
+from ECL.plugins.contracts import JsonValue, PluginRuntimeError, ProtocolError
+from ECL.plugins.installation_store import PluginManifest
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 from ECL.utils import get_logger, remove_tree
 
 if TYPE_CHECKING:
@@ -42,7 +41,7 @@ class DevelopmentSource:
     installation_id: str
     source_path: Path
     execution_path: Path
-    manifest: WorkerManifest
+    manifest: PluginManifest
     state: str
     is_development: bool = False
     has_pending_resources: bool = False
@@ -307,7 +306,7 @@ class PluginDevelopmentService:
         for file in snapshot.files:
             if hashlib.sha256((source_path / file.name).read_bytes()).hexdigest() != file.sha256:
                 raise ProtocolError("开发文件仍在保存中", "PLUGIN_DEVELOPMENT_FILES_UNSTABLE")
-        manifest = WorkerManifest.model_validate_json((copy_path / "plugin.json").read_bytes())
+        manifest = PluginManifest.model_validate_json((copy_path / "plugin.json").read_bytes())
         if manifest.name != plugin.source.name:
             raise ProtocolError("开发插件身份已经变化", "PLUGIN_DEVELOPMENT_REVIEW_REQUIRED")
         protected: dict[str, JsonValue] = manifest.model_dump(mode="json", exclude={"version", "supports_hot_reload"})
@@ -369,7 +368,7 @@ class PluginDevelopmentService:
             copy_path, digest, protected, supports = self._prepare(plugin)
             initial = initial or not plugin.digest
             if initial:
-                manifest = WorkerManifest.model_validate_json((copy_path / "plugin.json").read_bytes())
+                manifest = PluginManifest.model_validate_json((copy_path / "plugin.json").read_bytes())
                 protected_fields = {"version", "supports_hot_reload"}
                 if manifest.model_dump(exclude=protected_fields) != plugin.source.manifest.model_dump(
                     exclude=protected_fields

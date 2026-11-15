@@ -26,12 +26,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from pydantic import Field, ValidationError
 
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration, CustomUiRequest
 from ECL.plugins.runtime.models import RequestModel
+from ECL.plugins.sdk._rpc import RpcRequest
 from ECL.utils import get_logger
 
 if TYPE_CHECKING:

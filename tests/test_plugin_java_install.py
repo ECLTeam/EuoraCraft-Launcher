@@ -11,7 +11,7 @@ from test_java_manager import _archive_bytes, _plan
 
 from ECL.java.models import JavaError
 from ECL.minecraft.game import JavaRuntime, JavaScanner
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.run_store import PluginRunError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.services.operations import OperationOrigin

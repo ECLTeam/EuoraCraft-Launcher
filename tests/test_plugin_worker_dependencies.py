@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 from plugin_wheel_helpers import make_wheel, wheel_lock
 
-from ECL.plugins.api._imports import LockedImports
-from ECL.plugins.api.contracts import ProtocolError
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.dependency_lock import plugin_target
 from ECL.plugins.environment_pool import PluginEnvironmentPool, PluginEnvironmentSpec
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.plugins.sdk._imports import LockedImports
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 
 def test_locked_imports_cannot_shadow_standard_library_or_sdk(tmp_path: Path) -> None:

@@ -7,19 +7,19 @@ from time import monotonic, sleep
 
 import pytest
 
-from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.contracts import PluginRuntimeError
 from ECL.plugins.framework import PluginManager
 
 
-def make_plugin(root: Path, marker: Path, *, api_version=1, declare_panel=False):
+def make_plugin(root: Path, marker: Path, *, declare_panel=False):
     root.mkdir(parents=True, exist_ok=True)
-    metadata = {"name": "example", "version": "1.0.0", "api_version": api_version}
+    metadata = {"name": "example", "version": "1.0.0"}
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     panel_line = ""
     if declare_panel:
         panel_line = "        self.define_panel('main', '演示面板', ({'type': 'text', 'text': '说明'},))\n"
     (root / "main.py").write_text(
-        "from ECL.plugins.api import Plugin as BasePlugin\nfrom pathlib import Path\nimport os\n"
+        "from ECL.plugins.sdk import Plugin as BasePlugin\nfrom pathlib import Path\nimport os\n"
         f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
         "class Plugin(BasePlugin):\n"
         "    def on_load(self):\n"
@@ -91,9 +91,14 @@ def test_manager_real_worker_command_settings_and_restart(tmp_path: Path):
         manager.close()
 
 
-def test_legacy_third_party_never_executes_in_host(tmp_path: Path):
+def test_invalid_manifest_third_party_never_executes_in_host(tmp_path: Path):
     marker = tmp_path / "executed"
-    make_plugin(tmp_path / "data/plugins/sources/example", marker, api_version=2)
+    source = tmp_path / "data/plugins/sources/example"
+    make_plugin(source, marker)
+    metadata_path = source / "plugin.json"
+    metadata = json.loads(metadata_path.read_bytes())
+    metadata["version"] = "not-a-version"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
@@ -145,7 +150,7 @@ def test_unexpected_worker_exit_cleans_resources_without_page_polling(tmp_path: 
         manager.close()
 
 
-@pytest.mark.parametrize("metadata", [[], {"name": ["bad"]}, {"name": "example", "api_version": 1, "dependencies": []}])
+@pytest.mark.parametrize("metadata", [[], {"name": ["bad"]}, {"name": "example", "dependencies": []}])
 def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
     root = tmp_path / "data/plugins/sources/example"
     root.mkdir(parents=True)
@@ -160,7 +165,7 @@ def test_malformed_manifest_cannot_break_discovery(tmp_path: Path, metadata):
         manager.close()
 
 
-def test_dependency_failure_reports_dependency_error_instead_of_api_version(tmp_path: Path):
+def test_dependency_failure_reports_dependency_error_instead_of_generic_manifest_code(tmp_path: Path):
     from ECL.plugins.package_preparation import current_plugin_target
 
     root = tmp_path / "data/plugins/sources/example"
@@ -188,13 +193,13 @@ def test_install_reports_specific_manifest_error_codes(tmp_path: Path):
     make_plugin(source, tmp_path / "marker")
     metadata_path = source / "plugin.json"
     metadata = json.loads(metadata_path.read_bytes())
-    metadata["api_version"] = 2
+    metadata["features"] = ["teleport"]
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
-        assert manager.install(str(source)).message == "PLUGIN_API_VERSION_UNSUPPORTED"
-        metadata["api_version"] = 1
+        assert manager.install(str(source)).message == "PLUGIN_FEATURE_UNSUPPORTED"
+        metadata["features"] = []
         metadata["version"] = "not-a-version"
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
         assert manager.install(str(source)).message == "PLUGIN_MANIFEST_INVALID"
@@ -238,7 +243,7 @@ def test_directory_with_complete_offline_lock_loads_its_own_dependency(tmp_path:
 
 
 def test_unsupported_plugin_can_be_disabled_and_uninstalled(tmp_path: Path):
-    make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "marker", api_version=1)
+    make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "marker")
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:
@@ -345,7 +350,7 @@ def test_disable_keeps_pending_until_accepted_basic_write_has_finished(tmp_path:
     from threading import Event
 
     import ECL.plugins.settings as broker_module
-    from ECL.plugins.api._rpc import RpcRequest
+    from ECL.plugins.sdk._rpc import RpcRequest
 
     make_plugin(tmp_path / "data/plugins/sources/example", tmp_path / "marker")
     manager = PluginManager()

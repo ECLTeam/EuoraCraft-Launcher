@@ -293,6 +293,7 @@ class IpcLogPolicy:
             "plugin_get_vue_components": IpcLogSpec("获取插件 Vue 组件", "query"),
             "plugin_call_command": IpcLogSpec("调用插件命令", "action"),
             "plugin_query_command": IpcLogSpec("查询插件状态", "poll"),
+            "plugin_technology_entries_get": IpcLogSpec("查询插件技术栈条目", "query"),
             "plugin_get_settings": IpcLogSpec("获取插件设置", "query"),
             "plugin_update_setting": IpcLogSpec("更新插件设置", "action"),
             "plugin_notify_sidebar_state": IpcLogSpec("同步侧栏折叠状态", "action", result_owner="silent"),

@@ -8,7 +8,7 @@ import pytest
 
 from ECL.minecraft.adapters.public_queries import RuntimePublicQueries
 from ECL.minecraft.services.account.accounts import AccountManager
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.utils import AccountError
@@ -29,9 +29,9 @@ def public(tmp_path):
     )
     source = tmp_path / "plugin"
     source.mkdir()
-    metadata = {"name": "public-test", "api_version": 1}
+    metadata = {"name": "public-test"}
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
-    (source / "main.py").write_text("from ECL.plugins.api import Plugin\n", encoding="utf-8")
+    (source / "main.py").write_text("from ECL.plugins.sdk import Plugin\n", encoding="utf-8")
     service.register(metadata, source, "directory")
     entry = service._entry("public-test")
     api = RuntimePublicQueries(

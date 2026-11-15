@@ -12,7 +12,7 @@ from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
 from ECL.minecraft.adapters.game_models import GameInstallRequest, GameLaunchOptions
 from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.minecraft.services.game import GameService, GameServiceError
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -52,7 +52,6 @@ def game_install(tmp_path, monkeypatch):
     source.mkdir()
     metadata = {
         "name": "game-test",
-        "api_version": 1,
         "permissions": [{"capability": cap} for cap in ["instances.manage", "instances.read"]],
     }
     (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")

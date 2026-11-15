@@ -23,7 +23,7 @@ from uuid import uuid4
 from pydantic import Field, StrictBool, field_validator
 
 from ECL.minecraft.adapters.game_models import GameInstallRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, RequestModel
 from ECL.plugins.runtime.pagination import ResourcePages

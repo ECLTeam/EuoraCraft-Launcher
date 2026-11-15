@@ -6,13 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import PluginRuntimeError, ProtocolError
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunError, PluginRunStore
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
+from ECL.plugins.sdk._rpc import RpcRequest
 
 
 def _prepare_session(supervisor, tmp_path, code_path):
@@ -58,7 +57,7 @@ def test_real_worker_sync_async_lifecycle_relative_import_resources_and_reverse_
     (code_path / "value.txt").write_text("resource", encoding="utf-8")
     (code_path / "main.py").write_text(
         "import json, os, importlib.resources\nfrom pathlib import Path\n"
-        "from ECL.plugins.api import Plugin as BasePlugin\nfrom .helper import prefix\n"
+        "from ECL.plugins.sdk import Plugin as BasePlugin\nfrom .helper import prefix\n"
         f"report = Path({str(report_path)!r})\n"
         "class Plugin(BasePlugin):\n"
         "    async def on_load(self):\n"
@@ -122,7 +121,7 @@ def test_invalid_lifecycle_order_and_legacy_class_do_not_get_adapted(tmp_path: P
         )
         assert (
             supervisor.request("lifecycle.invoke", {"phase": "load", "run_state": "loaded"})["error"]["code"]
-            == "PLUGIN_API_VERSION_UNSUPPORTED"
+            == "PLUGIN_ENTRY_INVALID"
         )
         assert supervisor.request("runtime.info")["data"]["run_state"] == "failed"
 

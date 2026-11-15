@@ -12,7 +12,7 @@ from anyio.from_thread import start_blocking_portal
 from ECL.minecraft.adapters.factory import DefaultMcAdapterFactory
 from ECL.minecraft.adapters.resources import RuntimeResources
 from ECL.minecraft.services.game import GameService, GameServiceError
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -63,7 +63,7 @@ def game_launch(tmp_path, monkeypatch):
         name = f"launcher{len(entries)}"
         source = tmp_path / name
         source.mkdir()
-        metadata = {"name": name, "api_version": 1}
+        metadata = {"name": name}
         (source / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
         (source / "main.py").write_text("value=1", encoding="utf-8")
         worker.register(metadata, source, "directory")

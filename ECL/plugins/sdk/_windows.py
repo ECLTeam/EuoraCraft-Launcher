@@ -16,7 +16,7 @@ import sys
 from ctypes import wintypes
 from pathlib import Path
 
-from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.contracts import PluginRuntimeError
 
 
 class _SecurityAttributes(ctypes.Structure):

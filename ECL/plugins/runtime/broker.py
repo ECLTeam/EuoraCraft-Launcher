@@ -27,8 +27,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError, ProtocolPolicy, _json_value
+from ECL.plugins.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.adapters import McAdapterFactory
@@ -57,6 +56,7 @@ from ECL.plugins.runtime.models import (
 )
 from ECL.plugins.runtime.network_api import PluginNetworkService, RuntimeNetwork
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
+from ECL.plugins.sdk._rpc import RpcRequest
 from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
 from ECL.utils import get_logger
@@ -518,8 +518,6 @@ class PluginHostBroker:
         if method == "runtime.info":
             self._keys(params, set())
             return {
-                # 对外声明宿主当前的插件 API 版本；支持集合见 ProtocolPolicy。
-                "api_version": ProtocolPolicy.api_version,
                 "protocol_version": 1,
                 "launcher_version": __version__,
                 "platform": platform.system(),

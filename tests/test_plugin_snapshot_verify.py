@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugins.api.contracts import ProtocolError
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import ProtocolError
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 
 def _make_code_tree(root: Path) -> Path:

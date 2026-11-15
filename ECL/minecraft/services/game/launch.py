@@ -45,7 +45,7 @@ from anyio import to_thread
 
 from ECL.minecraft.game import CoreError, LaunchConfig
 from ECL.minecraft.services.account.authlib import AuthlibError
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.launch_hooks import LaunchContext
 from ECL.plugins.run_store import PluginRunError
 from ECL.utils.errors import AccountError

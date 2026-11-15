@@ -21,14 +21,13 @@ from pathlib import Path
 from types import ModuleType
 
 from ECL.bootstrap import PluginProcessOptions
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api._imports import DependencySnapshot, LockedImports
-from ECL.plugins.api._rpc import RpcPeer, RpcRequest
-from ECL.plugins.api._runtime import PluginRuntime
-from ECL.plugins.api._transport import LocalChannel, connect_local
-from ECL.plugins.api.contracts import JsonValue, ProtocolError, ProtocolPolicy, WireMessage
-from ECL.plugins.api.plugin import HostClient
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import JsonValue, PluginRuntimeError, ProtocolError, WireMessage
+from ECL.plugins.sdk._imports import DependencySnapshot, LockedImports
+from ECL.plugins.sdk._rpc import RpcPeer, RpcRequest
+from ECL.plugins.sdk._runtime import PluginRuntime
+from ECL.plugins.sdk._transport import LocalChannel, connect_local
+from ECL.plugins.sdk.plugin import HostClient
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 
 def _load(message: WireMessage, run_id: str) -> tuple[ModuleType, LockedImports]:
@@ -143,7 +142,7 @@ def _serve(channel: LocalChannel, run_id: str, host_pid: int) -> None:
     提供受信引导诊断与关闭，未接线的业务方法明确拒绝。
     """
     if sys.platform == "win32":
-        from ECL.plugins.api._windows import WindowsApi
+        from ECL.plugins.sdk._windows import WindowsApi
 
         api = WindowsApi()
         is_supervised = api.is_in_job(None, api.kernel.GetCurrentProcess())
@@ -155,16 +154,17 @@ def _serve(channel: LocalChannel, run_id: str, host_pid: int) -> None:
         WireMessage(
             "hello",
             {
-                "api_version": ProtocolPolicy.api_version,
                 "pid": os.getpid(),
                 "run_id": run_id,
                 "is_supervised": is_supervised,
                 # ECL 包标记、角色分流和插件 API 属于受信引导，其他 ECL 模块仍视为宿主泄漏。
-                # `ECL.plugins` 是本 API 的父包标记，导入 API 必然执行它，故与 API 同属受信范围。
+                # `ECL.plugins` 是本 API 的父包标记，导入 API 必然执行它；contracts 是 SDK
+                # 的协议基础，二者均与 SDK 同属受信范围。
                 "has_host_modules": any(
                     name.startswith("ECL.")
-                    and name not in {"ECL.bootstrap", "ECL.plugins", "ECL.plugins.api"}
-                    and not name.startswith("ECL.plugins.api.")
+                    and name
+                    not in {"ECL.bootstrap", "ECL.plugins", "ECL.plugins.sdk", "ECL.plugins.contracts"}
+                    and not name.startswith("ECL.plugins.sdk.")
                     for name in sys.modules
                 ),
             },

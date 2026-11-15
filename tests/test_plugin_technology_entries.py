@@ -22,12 +22,12 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from ECL.plugins.api._rpc import RpcRequest
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.run_models import PluginContentBinding
 from ECL.plugins.run_store import PluginRunError, PluginRunStore
 from ECL.plugins.runtime.broker import PluginHostBroker
 from ECL.plugins.runtime.models import TechnologyEntryDefinition
+from ECL.plugins.sdk._rpc import RpcRequest
 
 
 @pytest.fixture

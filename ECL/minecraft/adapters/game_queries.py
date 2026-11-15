@@ -15,7 +15,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 from ECL.minecraft.adapters.game_models import GameCatalogRequest, GameLoadersRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.utils.errors import GameServiceError

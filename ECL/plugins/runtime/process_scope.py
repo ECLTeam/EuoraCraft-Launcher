@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Protocol
 
-from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.contracts import PluginRuntimeError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 
 

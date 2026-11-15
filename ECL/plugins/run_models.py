@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
-from ECL.plugins.api.snapshot import CodeSnapshot
 from ECL.plugins.package_preparation import PluginPreparedPackage, verify_prepared_code
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +83,6 @@ class PluginContentBinding:
         """
         payload = {
             "layout_version": 2,
-            "api_version": 1,
             "code_digest": self.snapshot.digest(),
             "lock_sha256": self.lock_sha256,
             "target_tag": self.target_tag,

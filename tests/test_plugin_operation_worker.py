@@ -9,8 +9,7 @@ from time import monotonic, sleep
 
 import pytest
 
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api.contracts import ProtocolError
+from ECL.plugins.contracts import PluginRuntimeError, ProtocolError
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.worker_service import PluginWorkerService
 from ECL.services.operations import OperationManager
@@ -34,12 +33,11 @@ def worker(tmp_path, request):
     metadata = {
         "name": "task_control",
         "version": "1.0.0",
-        "api_version": 1,
         "permissions": [],
     }
     (root / "plugin.json").write_text(json.dumps(metadata), encoding="utf-8")
     (root / "main.py").write_text(
-        "from ECL.plugins.api import Plugin as BasePlugin, HostApiError\n"
+        "from ECL.plugins.sdk import Plugin as BasePlugin, HostApiError\n"
         "class Plugin(BasePlugin):\n"
         "    def on_load(self):\n"
         "        self.define_command('task',self.task,input_fields=({'name':'mode','type':'string'},"

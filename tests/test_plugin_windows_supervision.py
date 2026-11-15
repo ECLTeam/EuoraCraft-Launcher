@@ -8,9 +8,9 @@ from time import monotonic, sleep
 import psutil
 import pytest
 
-from ECL.plugins.api._errors import PluginRuntimeError
-from ECL.plugins.api._windows import WindowsApi
+from ECL.plugins.contracts import PluginRuntimeError
 from ECL.plugins.runtime.windows import WindowsJob
+from ECL.plugins.sdk._windows import WindowsApi
 
 
 def _wait_file(target_path: Path) -> str:

@@ -20,7 +20,7 @@ from threading import RLock
 from time import monotonic
 from uuid import uuid4
 
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
 
 
 @dataclass(frozen=True, slots=True)

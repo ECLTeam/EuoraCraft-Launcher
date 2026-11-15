@@ -21,9 +21,9 @@ from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
-from ECL.plugins.api.contracts import ProtocolError
-from ECL.plugins.api.snapshot import CodeSnapshot
+from ECL.plugins.contracts import ProtocolError
 from ECL.plugins.environment_pool import PluginEnvironmentError
+from ECL.plugins.sdk.snapshot import CodeSnapshot
 from ECL.utils import atomic_write_text, get_logger, remove_tree
 
 plugin_name_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")

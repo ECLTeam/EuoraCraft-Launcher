@@ -27,7 +27,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ECL.plugins.api._errors import PluginRuntimeError
+from ECL.plugins.contracts import PluginRuntimeError
 from ECL.plugins.dependencies import DependencyRequirement, parse_dependency, parse_version
 from ECL.utils import remove_tree
 
@@ -44,7 +44,7 @@ def _manifest_error_summary(exc: ValidationError) -> str:
     """
     把清单校验异常归纳为字段和错误类型，避免日志写出用户填写的原始值。
 
-    :param exc: `WorkerManifest` 校验抛出的异常
+    :param exc: `PluginManifest` 校验抛出的异常
     :return: 以逗号分隔的“字段(错误类型)”说明，无法识别字段时返回错误数量
     """
     details = [
@@ -469,10 +469,10 @@ class PluginLifecycle(_PluginState):
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单不是有效的 UTF-8 JSON")
         if not isinstance(metadata, dict):
             return PluginActionResult("", PluginAction.INSTALL, "invalid", "插件清单必须是对象")
-        from ECL.plugins.installation_store import WorkerManifest, manifest_validation_error_code
+        from ECL.plugins.installation_store import PluginManifest, manifest_validation_error_code
 
         try:
-            WorkerManifest.model_validate(metadata)
+            PluginManifest.model_validate(metadata)
         except ValidationError as exc:
             self.logger.warning("插件 %s 清单校验失败：%s", source, _manifest_error_summary(exc))
             return PluginActionResult("", PluginAction.INSTALL, "invalid", manifest_validation_error_code(exc))

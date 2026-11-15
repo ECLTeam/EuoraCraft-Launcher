@@ -26,7 +26,7 @@ import httpcore
 from pydantic import Field, field_validator
 
 from ECL.minecraft.adapters.game_models import GameInstallRequest
-from ECL.plugins.api.contracts import JsonValue, ProtocolError, _json_value
+from ECL.plugins.contracts import JsonValue, ProtocolError, _json_value
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunSession
 from ECL.plugins.runtime.models import FileRef, InstanceGetRequest, NetworkRequest, RequestModel

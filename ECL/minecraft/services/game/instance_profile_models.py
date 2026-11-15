@@ -22,7 +22,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
-from ECL.plugins.api.contracts import JsonValue
+from ECL.plugins.contracts import JsonValue
 from ECL.utils.instance_reading import DirectoryIdentity, InstanceReadBoundary, InstanceReadError
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from pydantic import Field, StrictInt
 
-from ECL.plugins.api.contracts import JsonValue, ProtocolError
+from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.runtime.models import RequestModel
 
 

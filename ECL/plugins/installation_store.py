@@ -3,10 +3,10 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：校验第三方插件清单（含 ADR-005 协商字段）并原子维护安装身份，不导入插件或授予权限。
+# 文件作用：校验第三方插件清单（含协商字段）并原子维护安装身份，不导入插件或授予权限。
 #
 # 公开接口：
-#   - class WorkerManifest — 第三方插件的受控运行声明。
+#   - class PluginManifest — 第三方插件的受控运行声明。
 #   - class PluginInstallationError — 安装身份损坏或来源冲突。
 #   - class PluginInstallationStore — 安装登记、更新和卸载资格管理。
 #   - manifest_validation_error_code(exc) — 把清单校验异常归入具体错误码。
@@ -26,13 +26,11 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
-    StrictInt,
     ValidationError,
     field_validator,
 )
 from pydantic_core import PydanticCustomError
 
-from ECL.plugins.api.contracts import ProtocolPolicy
 from ECL.plugins.dependencies import parse_dependency, parse_version
 from ECL.plugins.runtime.custom_ui_models import CustomUiDeclaration
 from ECL.utils import atomic_write_text
@@ -52,9 +50,9 @@ def _manifest_field_name(key: str) -> str:
     把校验错误位置中的清单别名还原为模型字段名，供错误码按字段归类。
 
     :param key: 校验错误 loc 中的字段标识，可能是别名
-    :return: WorkerManifest 的字段名，无对应字段时返回原值
+    :return: PluginManifest 的字段名，无对应字段时返回原值
     """
-    for field_name, info in WorkerManifest.model_fields.items():
+    for field_name, info in PluginManifest.model_fields.items():
         if info.alias == key:
             return field_name
     return key
@@ -62,16 +60,14 @@ def _manifest_field_name(key: str) -> str:
 
 def manifest_validation_error_code(exc: ValidationError) -> str:
     """
-    按校验失败的字段区分错误码，避免依赖或清单问题被误报为 API 版本不满足。
+    按校验失败的字段区分错误码，避免依赖或清单问题被误报为清单无效。
 
-    :param exc: WorkerManifest 校验抛出的异常
-    :return: api_version 失败返回 PLUGIN_API_VERSION_UNSUPPORTED；min_launcher
-        版本过高返回 PLUGIN_LAUNCHER_VERSION_UNSUPPORTED（格式问题仍归清单无效）；
-        features 含未知能力返回 PLUGIN_FEATURE_UNSUPPORTED；其余返回 PLUGIN_MANIFEST_INVALID
+    :param exc: PluginManifest 校验抛出的异常
+    :return: min_launcher 版本过高返回 PLUGIN_LAUNCHER_VERSION_UNSUPPORTED
+        （格式问题仍归清单无效）；features 含未知能力返回 PLUGIN_FEATURE_UNSUPPORTED；
+        其余返回 PLUGIN_MANIFEST_INVALID
     """
     fields = {_manifest_field_name(error["loc"][0]) for error in exc.errors() if error.get("loc")}
-    if fields == {"api_version"}:
-        return "PLUGIN_API_VERSION_UNSUPPORTED"
     if fields == {"features"}:
         return "PLUGIN_FEATURE_UNSUPPORTED"
     if fields == {"min_launcher"} and any(
@@ -81,17 +77,16 @@ def manifest_validation_error_code(exc: ValidationError) -> str:
     return "PLUGIN_MANIFEST_INVALID"
 
 
-class WorkerManifest(BaseModel):
+class PluginManifest(BaseModel):
     """
     校验插件清单入口，其他展示字段由既有元数据界面消费。
 
-    ``min_launcher`` 与 ``features`` 是 ADR-005 的协商字段：前者在清单
-    校验期直接与宿主版本比较，后者只做能力名白名单校验，"声明合法但
-    宿主未启用"不在此拦截，由能力自身 API 返回既有错误码。
+    ``min_launcher`` 与 ``features`` 是协商字段：前者在清单校验期直接
+    与宿主版本比较，后者只做能力名白名单校验，"声明合法但宿主未启用"
+    不在此拦截，由能力自身 API 返回既有错误码。
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
-    api_version: StrictInt = Field(ge=1)
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     entry_point: str = "main:Plugin"
     version: str = Field(default="0.0.0", max_length=64)
@@ -105,20 +100,6 @@ class WorkerManifest(BaseModel):
     license: str = Field(default="", max_length=128)
 
     known_features: ClassVar[frozenset[str]] = frozenset({"panels", "webview", "hot_reload"})
-
-    @field_validator("api_version")
-    @classmethod
-    def _check_api_version(cls, value: int) -> int:
-        """
-        按 ADR-005 支持集合校验清单 API 版本。
-
-        :param value: 清单声明的 api_version
-        :return: 原值
-        :raises ValueError: 版本不在宿主支持集合内时抛出
-        """
-        if value not in ProtocolPolicy.supported_api_versions:
-            raise ValueError(f"api_version {value} 不在宿主支持集合内")
-        return value
 
     @field_validator("min_launcher")
     @classmethod
@@ -269,7 +250,7 @@ class WorkerManifest(BaseModel):
     @property
     def entry_class(self) -> str:
         """
-        返回 Worker 内实例化的 v2 类名。
+        返回 Worker 内实例化的插件类名。
 
         :return: 合法 Python 类名
         """
@@ -339,7 +320,7 @@ class PluginInstallationStore:
         if self._root_path.is_symlink() or self._root_path.resolve() != self._data_path / "plugins" / "installations":
             raise PluginInstallationError("插件安装身份目录超出数据边界")
         try:
-            WorkerManifest.model_validate({"name": name, "api_version": 1})
+            PluginManifest.model_validate({"name": name})
         except ValidationError as exc:
             raise PluginInstallationError("插件安装名称无效") from exc
         return self._root_path / f"{name}.json"
