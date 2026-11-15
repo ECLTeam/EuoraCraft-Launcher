@@ -1,5 +1,7 @@
 # ADR-005：插件 API 版本契约与分域兼容承诺
 
+> **历史文档（2026-11-15）**：本 ADR 描述的 API 版本契约已被[插件模型统一方案](plans/plugin-model-unification-2026-11-15.md)取代——插件 API 全面去版本化（清单 `api_version` 字段被忽略、`PLUGIN_API_VERSION_UNSUPPORTED` 错误路径删除），`min_launcher` 与 `features` 协商机制仍然生效。本文其余内容保留为设计记录。
+
 - 日期：2026-11-13。
 - 状态：用户已确认方向。2026-11-14 完成版本基线重置：现行插件 API 以 `api_version = 1` 作为基础版本（原 v2 内部编号重置，发布前无外部插件，无兼容负担）。本文的协商机制（支持集合、`min_launcher`、`features`）已于 2026-11-14 实施：清单校验、安装期与加载期错误码见 `ECL/plugins/installation_store.py`，握手期支持集合校验见 `ECL/plugins/runtime/supervisor.py`。
 

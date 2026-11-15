@@ -1,5 +1,7 @@
 # 无头插件子进程整合实施方案 v1
 
+> **历史设计（2026-11-15）**：本设计描述的 API v2 / 版本化模型已由[插件模型统一方案](../plans/plugin-model-unification-2026-11-15.md)取代——插件模型已统一为单一基类（`ECL/plugins/sdk`）与去版本化清单，文中 v2、`api_version`、旧路径 `ECL/plugins/api/` 等表述保留为设计记录。
+
 > 目录约定更新：启动引导与插件 API 已按 下沉实施方案 归入 `ECL/bootstrap.py` 和 `ECL/plugins/api/`。当前插件使用 `from ECL.plugins.api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
 
 日期：2026-10-16。状态：用户已确认可改造无头模式并按需导入；本次入口整合已完成验收。

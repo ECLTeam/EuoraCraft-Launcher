@@ -1,5 +1,7 @@
 # 第三方插件声明式操作面板设计
 
+> **历史设计（2026-11-15）**：本设计描述的 API v2 / 版本化模型已由[插件模型统一方案](../plans/plugin-model-unification-2026-11-15.md)取代——插件模型已统一为单一基类（`ECL/plugins/sdk`）与去版本化清单，文中 v2、`api_version`、旧路径 `ECL/plugins/api/` 等表述保留为设计记录。
+
 日期：2026-10-31，Asia/Shanghai。状态：已按本契约实现并集成本地 `main`（后端 `panels.register/list/data`、前端渲染器、示例插件与测试）。后续按[主窗口注入决策](plugin-main-window-injection-decision.md)并行增加插槽注入能力，本面板作为结构简单场景的通道保留。
 
 本文件补充已获实施批准的 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)，不改变授权模型、变更回执和运行监管；面板只增加一种「插件向可信界面描述自己界面」的有界表达方式。

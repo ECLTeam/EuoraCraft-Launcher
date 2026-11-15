@@ -1,5 +1,7 @@
 # ECL 插件原生前端隔离增补方案
 
+> **历史设计（2026-11-15）**：本设计描述的 API v2 / 版本化模型已由[插件模型统一方案](../plans/plugin-model-unification-2026-11-15.md)取代——插件模型已统一为单一基类（`ECL/plugins/sdk`）与去版本化清单，文中 v2、`api_version`、旧路径 `ECL/plugins/api/` 等表述保留为设计记录。
+
 日期：2026-10-12，Asia/Shanghai；实施状态更新于 2026-11-01。固定源码原生 Wheel、生产 Broker 与独立窗口已接通，真实 WebView2 网络门禁及 Worker 往返、撤权关闭、重开已通过。构建入口、固定 Runtime 版本与限制见 [PyTaruiX](https://github.com/ECLTeam/PyTaruiX)，具体证据见[第二批交付](../plans/plugin-second-batch-delivery-2026-11-01.md)。本文件保留调研与失败实验的原因，不把早期原型状态作为当前功能状态。
 
 本文件补充已获实施批准的 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)，只调整 P04/P18 的原生边界。Worker 与权限/API 方向不变，不迁移到 PyTauriX，也不修改本机另一套 PyTauri 项目。

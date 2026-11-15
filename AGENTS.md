@@ -184,7 +184,7 @@ def refresh_account(self, account_id: str) -> dict[str, str]:
 
 | 域 | 目录 | 依赖约束 |
 | --- | --- | --- |
-| 内核 | `ECL/plugins/`、`ECL/plugins/api/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.minecraft`、`ECL.minecraft.services.game`、`ECL.minecraft.services.account`、`ECL.java`（装配缝豁免见 `tests/test_layer_boundary.py`） |
+| 内核 | `ECL/plugins/`、`ECL/plugins/sdk/`、`ECL/services/operations.py`、`ECL/services/processes.py`、`ECL/services/updates.py`、`ECL/utils/`、`ECL/desktop/`、`ECL/headless/` | 不得导入 `ECL.minecraft`、`ECL.minecraft.services.game`、`ECL.minecraft.services.account`、`ECL.java`（装配缝豁免见 `tests/test_layer_boundary.py`） |
 | MC | `ECL/minecraft/`（含 `ECL/minecraft/adapters/` 能力适配器）、`ECL/minecraft/services/game/`、`ECL/minecraft/services/account/`、`ECL/java/`、`ECL/minecraft/game/`（Core 子模块） | 可依赖内核 |
 | 边界 | `ECL/api/` | 可依赖两者，只供前端调用 |
 

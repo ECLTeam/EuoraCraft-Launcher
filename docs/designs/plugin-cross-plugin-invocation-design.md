@@ -1,5 +1,7 @@
 # 跨插件命令调用契约
 
+> **历史设计（2026-11-15）**：本设计描述的 API v2 / 版本化模型已由[插件模型统一方案](../plans/plugin-model-unification-2026-11-15.md)取代——插件模型已统一为单一基类（`ECL/plugins/sdk`）与去版本化清单，文中 v2、`api_version`、旧路径 `ECL/plugins/api/` 等表述保留为设计记录。
+
 日期：2026-11-01，Asia/Shanghai。状态：已实现并集成本地 `main`（发现、调用、失效），事件跨插件订阅尚未开放。
 
 本文件补充 [Worker/API v2 设计](plugin-worker-api-v2-implementation-design.md)与[三批方案](../plans/plugin-three-batch-implementation-plan-2026-10-31.md)第二批「跨插件调用与事件」，只增加插件之间的显式调用通道，不改变授权模型与运行监管。

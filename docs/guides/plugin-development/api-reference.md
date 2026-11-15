@@ -16,6 +16,7 @@
 | `settings.define`     | 完整 definitions                           | schema_revision                               |
 | `settings.get`        | keys                                       | values、revision                              |
 | `settings.set`        | values、expected_revision                  | 实际新 revision                               |
+| `events.emit`         | topic、payload                             | delivered（实际接收的订阅数）                 |
 | `events.subscribe`    | event、callback_ref                        | subscription_ref                              |
 | `events.unsubscribe`  | subscription_ref                           | 解除自身订阅                                  |
 | `panels.register`     | panels                                     | panel_refs                                    |
@@ -24,7 +25,7 @@
 | `plugins.list`        | `{}`                                       | 其他已启用插件导出的命令描述                  |
 | `plugins.call`        | plugin、command、args                      | 目标命令的 value                              |
 
-事件仅有自身设置和所属联机变化。面板数据回调和命令定义优先通过 SDK 包装方法注册；取消注册时使用宿主实际返回的引用，不自行生成。
+事件经宿主事件总线发布与订阅：`events.emit` 的主题必须以本插件安装名加点号开头，载荷为字符串键对象且不超过 8 KiB；`events.subscribe` 可订阅任意主题（含 `settings.changed`）。面板数据回调和命令定义优先通过 SDK 包装方法注册；取消注册时使用宿主实际返回的引用，不自行生成。
 
 ## 资源与实例
 
@@ -113,7 +114,7 @@ FileRef 为 `{root_ref, relative_path}`，root_ref 通过基础资源发现获�
 | `files.write_commit`  | write_ref、sha256                              | 所属提交任务回执             |
 | `files.write_abort`   | write_ref                                      | 上传中止或已交任务的释放情况 |
 | `files.delete`        | target、expected_etag                          | 按原文件版本删除任务         |
-| `network.request`     | method:GET/HEAD、url、headers?                 | 获准精确站点的有界响应       |
+| `network.request`     | method:GET/HEAD/POST/PUT/PATCH/DELETE、url、headers?、json?、data? | 获准精确站点的有界响应       |
 | `downloads.submit`    | target、url、overwrite:false、expected_sha256? | 网络加私有提交的所属任务     |
 
 文件和私有下载单文件上限 8 MiB，块最大 32 KiB，安装空间 64 MiB。响应和任务配额详见包协议。资源安装的 64 MiB 领域上限不能解除私有源文件的 8 MiB 限制。
