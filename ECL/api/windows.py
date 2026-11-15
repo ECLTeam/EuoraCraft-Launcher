@@ -11,7 +11,6 @@
 #       - window_open(body, app_handle) -> dict[str, Any]
 #       - window_focus(body) -> dict[str, Any]
 #       - window_close(body) -> dict[str, Any]
-#       - window_update_bounds(body) -> dict[str, Any]
 #       - close_plugin_windows(plugin_name) -> None
 # ============================================================
 
@@ -19,7 +18,6 @@ from __future__ import annotations
 
 import json
 from contextlib import suppress
-from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -44,7 +42,7 @@ except ImportError:  # pragma: no cover - lightweight unit-test stubs omit windo
 
 from ECL.api.bridge import _FrontendState, _validate_body
 from ECL.api.contracts import failure, success
-from ECL.api.models import WindowBoundsRequest, WindowLabelRequest, WindowOpenRequest
+from ECL.api.models import WindowLabelRequest, WindowOpenRequest
 
 
 class WindowDescriptorRegistry:
@@ -80,8 +78,6 @@ class WindowHandlers(_FrontendState):
     """
     Host-owned, local-only WebView window lifecycle boundary.
     """
-
-    window_bounds_flush_interval_seconds: float = 0.3
 
     def _plugin_window_descriptor(self, descriptor_id: str) -> dict[str, Any] | None:
         if not descriptor_id.startswith("plugin."):
@@ -166,13 +162,9 @@ class WindowHandlers(_FrontendState):
         if descriptor.get("route"):
             query["route"] = descriptor["route"]
         url = "index.html"
-        ui_config = self.config.get_config("ui") or {}
-        saved_bounds = (ui_config.get("windows") or {}).get(request.descriptor_id, {})
-        width = min(max(int(saved_bounds.get("width", descriptor["width"])), descriptor["minWidth"]), 7680)
-        height = min(max(int(saved_bounds.get("height", descriptor["height"])), descriptor["minHeight"]), 4320)
         builder_options: dict[str, Any] = {
             "title": descriptor["title"],
-            "inner_size": (width, height),
+            "inner_size": (descriptor["width"], descriptor["height"]),
             "min_inner_size": (descriptor["minWidth"], descriptor["minHeight"]),
             "decorations": False,
             "transparent": bool(descriptor.get("transparent", False)),
@@ -184,8 +176,6 @@ class WindowHandlers(_FrontendState):
         window_icon = _create_child_window_icon()
         if window_icon is not None:
             builder_options["icon"] = window_icon
-        if isinstance(saved_bounds.get("x"), int) and isinstance(saved_bounds.get("y"), int):
-            builder_options["position"] = (saved_bounds["x"], saved_bounds["y"])
         try:
             webview = WebviewWindowBuilder.build(
                 app_handle,
@@ -210,11 +200,6 @@ class WindowHandlers(_FrontendState):
             "allowedEvents": descriptor.get("allowedEvents", []),
             "allowedSettings": descriptor.get("allowedSettings", []),
             "ready": False,
-            "bounds": {
-                "width": width,
-                "height": height,
-                **({"x": saved_bounds["x"], "y": saved_bounds["y"]} if "position" in builder_options else {}),
-            },
         }
         self._window_metadata[label] = metadata
         self.logger.info("已创建受控窗口：窗口标识：%s；类型：%s", label, descriptor["type"])
@@ -281,59 +266,8 @@ class WindowHandlers(_FrontendState):
             return failure("窗口不存在", "WINDOW_NOT_FOUND")
         with suppress(OSError, RuntimeError):
             webview.run_on_main_thread(webview.close)
-        self._flush_window_bounds()
         self.emit_to_frontend("window:closed", metadata or {"label": request.label})
         return success()
-
-    async def window_update_bounds(self, body: dict[str, Any]) -> dict[str, Any]:
-        request, invalid = _validate_body(WindowBoundsRequest, body)
-        if invalid is not None:
-            return invalid
-        metadata = self._window_metadata.get(request.label)
-        if metadata is None:
-            return failure("窗口不存在", "WINDOW_NOT_FOUND")
-        bounds = request.model_dump(mode="json", exclude={"label"}, exclude_none=True)
-        metadata["bounds"] = bounds
-        self._schedule_window_bounds_save(metadata["descriptorId"], bounds)
-        return success(metadata)
-
-    def _schedule_window_bounds_save(self, descriptor_id: str, bounds: dict[str, Any]) -> None:
-        """
-        合并连续窗口移动，按节流间隔写入配置。
-
-        拖拽和缩放会连续触发位置事件，逐次重写 setting.json 会阻塞 UI 线程。
-        只有距上次保存超过一个间隔才落盘，其余位置留待下次保存或退出补写。
-
-        :param descriptor_id: 窗口类型标识，作为配置键
-        :param bounds: 最新的窗口位置与尺寸
-        """
-        self._pending_window_bounds[descriptor_id] = bounds
-        now = monotonic()
-        if now - self._window_bounds_saved_at < self.window_bounds_flush_interval_seconds:
-            return
-        self._window_bounds_saved_at = now
-        self._write_window_bounds()
-
-    def _write_window_bounds(self) -> None:
-        """
-        把累积的窗口位置一次性写入配置；没有待写内容时不做磁盘操作。
-        """
-        if not self._pending_window_bounds:
-            return
-        pending = self._pending_window_bounds
-        self._pending_window_bounds = {}
-        ui = self.config.get_config("ui") or {}
-        windows = dict(ui.get("windows") or {})
-        windows.update(pending)
-        ui["windows"] = windows
-        self.config.save_config("ui", ui)
-
-    def _flush_window_bounds(self) -> None:
-        """
-        立即写入全部待保存的窗口位置，供窗口关闭与启动器退出调用。
-        """
-        self._window_bounds_saved_at = monotonic()
-        self._write_window_bounds()
 
     def close_plugin_windows(self, plugin_name: str) -> None:
         labels = [label for label, metadata in self._window_metadata.items() if metadata.get("plugin") == plugin_name]
@@ -344,7 +278,6 @@ class WindowHandlers(_FrontendState):
                 with suppress(OSError, RuntimeError):
                     webview.run_on_main_thread(webview.close)
             self.emit_to_frontend("window:closed", metadata or {"label": label, "plugin": plugin_name})
-        self._flush_window_bounds()
 
 
 __all__ = ["WindowDescriptorRegistry", "WindowHandlers"]

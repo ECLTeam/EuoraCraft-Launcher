@@ -21,6 +21,7 @@ from anyio.from_thread import start_blocking_portal
 from pydantic import JsonValue, TypeAdapter
 from pytaurix import AppHandle, Commands, Manager, RunEvent, RunEventType, builder_factory, context_factory
 from pytaurix.plugins.dialog import init as dialog_init
+from pytaurix.plugins.window_state import init as window_state_init
 
 from ECL.api import FrontendApi
 from ECL.api.registry import command_handlers
@@ -77,7 +78,13 @@ class Adapter:
                 app = builder_factory().build(
                     context=context,
                     invoke_handler=self.commands.generate_handler(portal),
-                    plugins=[dialog_init()],
+                    plugins=[
+                        dialog_init(),
+                        # 窗口几何跨会话记忆由原生插件在创建与关闭时机自动恢复和落盘，
+                        # 仅记忆尺寸、位置与最大化状态；需要构建期启用 plugin-window-state。
+                        window_state_init(flags=("size", "position", "maximized")),
+                    ],
+                    protocols=[self.frontend_api_instance.image_protocol.protocol()],
                     setup=self._setup_plugin_windows,
                 )
             except BaseException:

@@ -456,8 +456,6 @@ class _FrontendState:
         self._webview: WebviewWindow | None = None
         self._webviews: dict[str, WebviewWindow] = {}
         self._window_metadata: dict[str, dict[str, Any]] = {}
-        self._pending_window_bounds: dict[str, dict[str, Any]] = {}
-        self._window_bounds_saved_at = 0.0
         self._plugins_frontend_ready = False
         self._cli_launch_dispatched = False  # 命令行快捷启动是否已派发（每次进程运行至多一次）
         self._cli_launch_task: asyncio.Task[None] | None = None  # 持有任务引用，避免被垃圾回收
@@ -475,18 +473,6 @@ class _FrontendState:
         self.is_dev_mode_tips = False
         self.is_dev_mode_no_client_id_tips = False
         self.is_dev_mode_no_curseforge_key_tips = False
-        self.events.subscribe("launcher:closing", self._flush_window_bounds_on_exit)
-
-    def _flush_window_bounds_on_exit(self, _payload: Any = None) -> None:
-        """
-        退出前写入节流窗口内尚未落盘的窗口位置。
-
-        窗口位置由窗口处理器按节流间隔合并保存，退出时补写一次，避免最后一次
-        调整因为不足一个节流间隔而丢失。未混入窗口处理器时不执行任何操作。
-        """
-        flush = getattr(self, "_flush_window_bounds", None)
-        if callable(flush):
-            flush()
 
     async def _run_native_dialog(self, title: str, action: Callable[[], _DialogResult]) -> _DialogResult | None:
         """
@@ -603,7 +589,7 @@ class _FrontendState:
         if metadata is None:
             return None if operation == "frontend_ready" else failure("窗口尚未由宿主注册", "WINDOW_NOT_REGISTERED")
         window_type = metadata.get("windowType")
-        common = {"frontend_ready", "window_close", "window_focus", "window_update_bounds"}
+        common = {"frontend_ready", "window_close", "window_focus"}
         if operation in common:
             return None
         if window_type != "plugin":

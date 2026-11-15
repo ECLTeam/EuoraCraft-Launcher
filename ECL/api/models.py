@@ -17,7 +17,6 @@
 #   - class FileSavePurpose
 #   - class WindowOpenRequest
 #   - class WindowLabelRequest
-#   - class WindowBoundsRequest
 #   - class SettingsQuery
 #       - validate_section(value) -> str | None
 #       - validate_sections(value) -> list[str] | None
@@ -124,6 +123,7 @@
 #   - class ImageSelectionRequest
 #   - class SkinAvatarExportRequest — 校验头像导出的图片、尺寸与源文件路径。
 #   - class ImageFetchRequest — 校验远程图片读取与显式刷新请求。
+#   - class ImageUrlResolveRequest — 校验协议图片地址签发的来源与种类匹配。
 #   - class FileSelectionRequest
 #   - class DirectorySelectionRequest — 校验目录选择用途和初始位置。
 #   - class FileSaveRequest
@@ -248,13 +248,6 @@ class WindowOpenRequest(RequestModel):
 
 class WindowLabelRequest(RequestModel):
     label: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_:/.-]+$")
-
-
-class WindowBoundsRequest(WindowLabelRequest):
-    x: int | None = Field(default=None, ge=-100000, le=100000)
-    y: int | None = Field(default=None, ge=-100000, le=100000)
-    width: int = Field(ge=320, le=7680)
-    height: int = Field(ge=240, le=4320)
 
 
 class SettingsQuery(RequestModel):
@@ -971,6 +964,31 @@ class ImageFetchRequest(RequestModel):
     refresh: bool = Field(default=False, strict=True)
 
 
+class ImageUrlResolveRequest(RequestModel):
+    """
+    校验协议图片地址签发请求：本地来源要求路径，远程来源要求 URL。
+    """
+
+    kind: Literal["local", "remote"]
+    path: str = Field(default="", max_length=4096)
+    url: str = Field(default="", max_length=8192)
+    refresh: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def validate_source_matches_kind(self) -> ImageUrlResolveRequest:
+        """
+        拒绝来源字段与种类不匹配的请求，避免歧义输入进入处理器。
+
+        :return: 校验通过的请求实例
+        :raises ValueError: local 缺少 path 或 remote 缺少 url 时抛出
+        """
+        if self.kind == "local" and not self.path.strip():
+            raise ValueError("local 图片地址签发需要 path")
+        if self.kind == "remote" and not self.url.strip():
+            raise ValueError("remote 图片地址签发需要 url")
+        return self
+
+
 class ImageSelectionRequest(RequestModel):
     purpose: ImagePurpose = ImagePurpose.BACKGROUND
 
@@ -1149,7 +1167,6 @@ class RequestModelRegistry:
         "window_open": WindowOpenRequest,
         "window_focus": WindowLabelRequest,
         "window_close": WindowLabelRequest,
-        "window_update_bounds": WindowBoundsRequest,
         "game_versions": GameCatalogRequest,
         "game_loader_versions": LoaderCatalogRequest,
         "game_scan": GameScanRequest,
@@ -1200,6 +1217,7 @@ class RequestModelRegistry:
         "microsoft_reset_cape": AccountTextureRequest,
         "select_image": ImageSelectionRequest,
         "image_fetch_data_url": ImageFetchRequest,
+        "image_url_resolve": ImageUrlResolveRequest,
         "skin_avatar_export": SkinAvatarExportRequest,
         "select_file": FileSelectionRequest,
         "select_save_file": FileSaveRequest,
@@ -1252,6 +1270,7 @@ __all__ = [
     "ImageFetchRequest",
     "ImagePurpose",
     "ImageSelectionRequest",
+    "ImageUrlResolveRequest",
     "InstallRequest",
     "InstanceCategoryDeleteRequest",
     "InstanceCategoryUpsertRequest",
@@ -1284,7 +1303,6 @@ __all__ = [
     "WardrobeKind",
     "WardrobeSyncTextureRequest",
     "WardrobeUpdateRequest",
-    "WindowBoundsRequest",
     "WindowLabelRequest",
     "WindowOpenRequest",
     "request_schemas",

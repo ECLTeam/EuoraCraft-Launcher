@@ -12,6 +12,7 @@
 #       - fs_read_dir(body) -> dict[str, Any] — 读取指定目录的一层条目及基础元数据。
 #       - fs_read_file(body) -> dict[str, Any] — 以 UTF-8 文本或 Base64 读取大小受限的本地文件。
 #       - image_fetch_data_url(body) -> dict[str, Any] — 下载远程图片并转换为受大小限制的 Data URL。
+#       - image_url_resolve(body) -> dict[str, Any] — 为本地或远程图片签发受令牌保护的协议地址。
 #       - image_save_url(body) -> dict[str, Any] — 下载背景图片并缓存到本地数据目录。
 #       - image_save_as(body) -> dict[str, Any] — 保存背景图片。
 #       - skin_avatar_export(body) -> dict[str, Any] — 校验头像 PNG 并通过原生对话框原子导出。
@@ -58,6 +59,7 @@ from ECL.api.models import (
     ImageFetchRequest,
     ImagePurpose,
     ImageSelectionRequest,
+    ImageUrlResolveRequest,
     SkinAvatarExportRequest,
 )
 from ECL.application import ApplicationContext
@@ -78,6 +80,7 @@ from .bridge import (
     _validate_body,
 )
 from .contracts import success
+from .image_protocol import ImageProtocolService
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +123,7 @@ class FileHandlers(_FrontendState):
         self._remote_image_lock = RLock()
         self._remote_image_active = set()
         self._remote_images_closing = False
+        self.image_protocol = ImageProtocolService(self.events)
         self.events.subscribe("launcher:closing", self._close_remote_images)
 
     def _close_remote_images(self, _payload: object) -> None:
@@ -378,12 +382,36 @@ class FileHandlers(_FrontendState):
         encoded = base64.b64encode(content).decode("ascii") if mode == "base64" else content.decode("utf-8")
         return {"success": True, "data": {"content": encoded, "size": len(content)}}
 
+    def _begin_remote_image_request(self, url: str, should_refresh: bool) -> Future[_RemoteImageResult] | None:
+        """
+        合并同 URL 的在途图片请求；显式刷新可升级普通请求为刷新请求。
+
+        :param url: 已规整的远程图片地址
+        :param should_refresh: 是否要求绕过磁盘缓存重新下载
+        :return: 共享结果 Future；启动器正在关闭时返回 None
+        """
+        with self._remote_image_lock:
+            if self._remote_images_closing:
+                return None
+            pending = self._remote_image_tasks.get(url)
+            if pending is None or (should_refresh and not pending.should_refresh):
+                task = asyncio.create_task(
+                    self._fetch_remote_image(url, should_refresh, pending.result if pending else None)
+                )
+                pending = _RemoteImageRequest(should_refresh, task, Future())
+                self._remote_image_tasks[url] = pending
+                self._remote_image_active.add(task)
+                task.add_done_callback(lambda _completed, shared=pending: self._finish_remote_image(url, shared))
+            return pending.result
+
     @_ipc_handler("IMAGE_FETCH_FAILED")
     async def image_fetch_data_url(self, body: dict[str, Any]) -> dict[str, Any]:
         """
         下载远程图片并转换为受大小限制的 Data URL。
 
         有效磁盘缓存优先复用；refresh 为真时重新下载，失败时保留旧缓存。
+        新代码应优先使用 ``image_url_resolve`` 获取协议地址，本命令保留给
+        插件 SDK 与需要字节内容的场景。
 
         :param body: 包含 HTTP(S) 图片 ``url`` 和可选布尔 ``refresh`` 的请求数据
         :return: Data URL、Base64 数据和原始 URL
@@ -394,19 +422,10 @@ class FileHandlers(_FrontendState):
         url = _normalize_image_url(request.url)
         if url is None:
             return {"success": False, "message": "无效的图片 URL", "errorCode": "INVALID_IMAGE_URL"}
-        with self._remote_image_lock:
-            if self._remote_images_closing:
-                return {"success": False, "message": "启动器正在关闭", "errorCode": "LAUNCHER_CLOSING"}
-            pending = self._remote_image_tasks.get(url)
-            if pending is None or (request.refresh and not pending.should_refresh):
-                task = asyncio.create_task(
-                    self._fetch_remote_image(url, request.refresh, pending.result if pending else None)
-                )
-                pending = _RemoteImageRequest(request.refresh, task, Future())
-                self._remote_image_tasks[url] = pending
-                self._remote_image_active.add(task)
-                task.add_done_callback(lambda _completed, shared=pending: self._finish_remote_image(url, shared))
-        result = await asyncio.shield(asyncio.wrap_future(pending.result))
+        future = self._begin_remote_image_request(url, request.refresh)
+        if future is None:
+            return {"success": False, "message": "启动器正在关闭", "errorCode": "LAUNCHER_CLOSING"}
+        result = await asyncio.shield(asyncio.wrap_future(future))
         data_url, encoded = await to_thread.run_sync(_encode_image_bytes, result.image_bytes, result.extension)
         return {
             "success": True,
@@ -418,6 +437,54 @@ class FileHandlers(_FrontendState):
                 "stale": result.is_stale,
             },
         }
+
+    @_ipc_handler("IMAGE_URL_RESOLVE_FAILED")
+    async def image_url_resolve(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        为本地或远程图片签发 ecl-img 协议地址，前端直接以该地址加载原始字节。
+
+        远程图片复用 ``image_fetch_data_url`` 的下载、校验与磁盘缓存；本地路径
+        只接受已存在的常规图片文件并拒绝符号链接，签发后协议处理器仅按令牌
+        读取绑定文件。
+
+        :param body: 符合 ``ImageUrlResolveRequest`` 的请求数据
+        :return: 协议 URL 及远程来源的缓存状态
+        """
+        request, invalid = _validate_body(ImageUrlResolveRequest, body)
+        if invalid is not None:
+            return invalid
+        if request.kind == "remote":
+            url = _normalize_image_url(request.url)
+            if url is None:
+                return {"success": False, "message": "无效的图片 URL", "errorCode": "INVALID_IMAGE_URL"}
+            future = self._begin_remote_image_request(url, request.refresh)
+            if future is None:
+                return {"success": False, "message": "启动器正在关闭", "errorCode": "LAUNCHER_CLOSING"}
+            result = await asyncio.shield(asyncio.wrap_future(future))
+            digest = self._remote_image_digest(url)
+            cache_dir = self._remote_image_cache_dir(self.data_path)
+            try:
+                image_url = self.image_protocol.register_remote_cache(digest, result.extension, cache_dir)
+            except ValueError as exc:
+                return {"success": False, "message": str(exc), "errorCode": "INVALID_IMAGE_TYPE"}
+            return {
+                "success": True,
+                "data": {"url": image_url, "url_source": url, "cached": result.is_cached, "stale": result.is_stale},
+            }
+        raw_path = request.path
+        if not raw_path.strip() or "\0" in raw_path:
+            return {"success": False, "message": "路径无效", "errorCode": "INVALID_PATH"}
+        file_path = Path(self._normalize_file_path(raw_path)).expanduser()
+        if not file_path.is_file():
+            return {"success": False, "message": "图片文件不存在", "errorCode": "FILE_NOT_FOUND"}
+        if file_path.is_symlink():
+            return {"success": False, "message": "图片路径不允许是符号链接", "errorCode": "INVALID_PATH"}
+        resolved_path = file_path.resolve(strict=False)
+        try:
+            image_url = self.image_protocol.register_local(resolved_path)
+        except ValueError as exc:
+            return {"success": False, "message": str(exc), "errorCode": "INVALID_IMAGE_TYPE"}
+        return {"success": True, "data": {"url": image_url}}
 
     @_ipc_handler("IMAGE_SAVE_URL_ERROR")
     async def image_save_url(self, body: dict[str, Any]) -> dict[str, Any]:
