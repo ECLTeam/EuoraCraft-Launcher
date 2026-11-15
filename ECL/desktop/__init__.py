@@ -10,7 +10,6 @@
 # ============================================================
 
 from ECL.desktop.app_update import AppUpdateError, UpdateApplier, clear_stale_pending_update
-from ECL.desktop.background_media import BackgroundMediaService
 from ECL.desktop.dev_channel import DevChannelError, DevChannelService
 from ECL.desktop.frontend_events import (
     FrontendEventPolicy,
@@ -27,7 +26,6 @@ from ECL.desktop.single_instance import SingleInstanceService, probe_running_ins
 
 __all__ = [
     "AppUpdateError",
-    "BackgroundMediaService",
     "DevChannelError",
     "DevChannelService",
     "FrontendEventPolicy",

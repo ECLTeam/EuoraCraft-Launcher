@@ -36,13 +36,13 @@ async def test_background_video_open_prefers_nested_video_path() -> None:
             }
         }
     )
-    handler.background_media = SimpleNamespace(
-        open=lambda path: opened_paths.append(path) or "http://127.0.0.1:9527/background/token"
+    handler.media_protocol = SimpleNamespace(
+        register_local=lambda path: opened_paths.append(path) or "http://ecl-media.localhost/token/background.mp4"
     )
 
     result = await handler.background_video_open({})
 
-    assert result == {"success": True, "data": {"url": "http://127.0.0.1:9527/background/token"}}
+    assert result == {"success": True, "data": {"url": "http://ecl-media.localhost/token/background.mp4"}}
     assert opened_paths == ["C:/saved-background.mp4"]
 
 

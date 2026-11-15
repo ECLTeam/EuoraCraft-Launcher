@@ -81,6 +81,7 @@ from .bridge import (
 )
 from .contracts import success
 from .image_protocol import ImageProtocolService
+from .media_protocol import MediaProtocolService
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +125,7 @@ class FileHandlers(_FrontendState):
         self._remote_image_active = set()
         self._remote_images_closing = False
         self.image_protocol = ImageProtocolService(self.events)
+        self.media_protocol = MediaProtocolService(self.events)
         self.events.subscribe("launcher:closing", self._close_remote_images)
 
     def _close_remote_images(self, _payload: object) -> None:
@@ -837,10 +839,8 @@ class FileHandlers(_FrontendState):
         raw_path = video.get("path") if isinstance(video, dict) else background.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
             return {"success": False, "message": "背景视频路径无效", "errorCode": "BACKGROUND_VIDEO_PATH_INVALID"}
-        if self.background_media is None:
-            return {"success": False, "message": "背景视频服务未就绪", "errorCode": "BACKGROUND_VIDEO_UNAVAILABLE"}
         try:
-            url = await to_thread.run_sync(self.background_media.open, raw_path)
+            url = await to_thread.run_sync(self.media_protocol.register_local, raw_path)
         except (OSError, ValueError) as exc:
             return {"success": False, "message": str(exc), "errorCode": "BACKGROUND_VIDEO_UNAVAILABLE"}
         return {"success": True, "data": {"url": url}}

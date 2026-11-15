@@ -84,7 +84,10 @@ class Adapter:
                         # 仅记忆尺寸、位置与最大化状态；需要构建期启用 plugin-window-state。
                         window_state_init(flags=("size", "position", "maximized")),
                     ],
-                    protocols=[self.frontend_api_instance.image_protocol.protocol()],
+                    protocols=[
+                        self.frontend_api_instance.image_protocol.protocol(),
+                        self.frontend_api_instance.media_protocol.protocol(),
+                    ],
                     setup=self._setup_plugin_windows,
                 )
             except BaseException:

@@ -33,7 +33,6 @@ from urllib.request import getproxies
 import httpx
 
 from ECL.cli import LaunchOptions, apply_launch_overrides
-from ECL.desktop.background_media import BackgroundMediaService
 from ECL.desktop.dev_channel import DevChannelService
 from ECL.desktop.single_instance import SingleInstanceService
 from ECL.java import JavaManager
@@ -235,7 +234,6 @@ class ApplicationContext:
     operations: OperationManager | None = None
     downloads: CustomDownloadService | None = None
     java: JavaManager | None = None
-    background_media: BackgroundMediaService | None = None
     startup_update: StartupUpdateService | None = None
     single_instance: SingleInstanceService | None = None  # 按配置启动的单实例互斥监听
     dev_channel: DevChannelService | None = None  # 按需启动的开发者通道，未开启时为 None
@@ -263,7 +261,6 @@ class ApplicationContext:
                 self.java,
                 self.operations,
                 self.accounts,
-                self.background_media,
                 self.startup_update,
                 self.http,
             )
@@ -392,9 +389,6 @@ def create_application(
         )
         created.append(http)
         logger.debug("共享 HTTP 客户端已创建")
-
-        background_media = BackgroundMediaService()
-        created.append(background_media)
 
         startup_update = StartupUpdateService(
             http,
@@ -537,7 +531,6 @@ def create_application(
             operations=operations,
             downloads=downloads,
             java=java,
-            background_media=background_media,
             startup_update=startup_update,
             single_instance=single_instance,
             dev_channel=dev_channel,
