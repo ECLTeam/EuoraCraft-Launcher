@@ -84,3 +84,11 @@
 - 内核域新增模型与 RPC 方法不引入 Minecraft 语义，`tests/test_layer_boundary.py` 不受影响。
 - 插件 SDK / 文档（插件仓库侧）需要同步 `technology.register` 方法说明，宿主先行时旧插件不受影响（不声明即不展示）。
 - 过渡期联机插件技术栈不出现在关于页，待插件仓库跟进后恢复，需在交付说明中注明。
+
+## 验收结果
+
+- 后端：新增 `tests/test_plugin_technology_entries.py` 5 项通过；路由表、门面快照、面板、层边界等回归共 25 项通过；Ruff 检查与格式通过。
+- 前端：`AboutTab.test.ts` 扩至 19 项（含插件分组渲染、徽标、折叠独立性、失败隐藏、宿主列表不含 EasyTier）；插件特性相关 10 个测试文件 72 项全部通过；Prettier、ESLint、vue-tsc 类型检查通过。
+- 生产构建在独立输出目录验证成功（`vite build --outDir <temp>`）；默认 `pnpm build` 因本机运行中的 `npm run dev` 实例占用 `dist/img` 无法清空输出目录而失败，与本次改动无关，待开发实例退出后可正常构建。
+- 本地提交：前端子模块 `478d7cf`，主仓库 `e246727`（含子模块指针）；未推送远端。
+
