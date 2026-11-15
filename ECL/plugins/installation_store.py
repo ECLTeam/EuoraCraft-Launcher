@@ -262,7 +262,7 @@ class _InstallationRecord(BaseModel):
     schema_version: int = Field(default=1, ge=1, le=1)
     installation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     name: str
-    source: Literal["directory", "package"]
+    source: Literal["directory", "package", "system"]
     active: bool = True
 
 
@@ -283,7 +283,7 @@ class PluginInstallationStore:
         self._root_path = self._data_path / "plugins" / "installations"
         self._thread_lock = Lock()
 
-    def ensure(self, name: str, source: Literal["directory", "package"]) -> str:
+    def ensure(self, name: str, source: Literal["directory", "package", "system"]) -> str:
         """
         登记新安装或读取同来源活动身份，不执行插件或继承旧权限。
 

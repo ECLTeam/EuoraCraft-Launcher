@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -42,10 +43,12 @@ from ECL.plugins.runtime.adapters import McAdapterFactory
 from ECL.plugins.runtime.broker import CrossPluginChannel, PluginHostBroker, ToolChannel
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.file_storage import PluginFileStorage
+from ECL.plugins.runtime.inprocess import InProcessPeer, instantiate_plugin, invoke_plugin_callback, load_entry_module
 from ECL.plugins.runtime.network_api import PluginNetworkService
 from ECL.plugins.runtime.pagination import ResourcePages
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
 from ECL.plugins.sdk._rpc import RpcRequest
+from ECL.plugins.sdk.plugin import HostClient
 from ECL.plugins.settings import PluginSettingsService
 from ECL.services.operations import OperationManager
 from ECL.utils import AccountError, get_logger
@@ -58,6 +61,7 @@ if TYPE_CHECKING:
     from ECL.minecraft.adapters.resources import InstanceQueries
     from ECL.minecraft.services.game.instance_profile_transactions import InstanceProfileTransactions
     from ECL.minecraft.services.game.plugin_games import PluginGameCoordinator
+    from ECL.plugins.sdk.plugin import Plugin
 
 # 生命周期钩子允许插件完成模块导入与资源索引；超过上限按执行失败回收进程树。
 lifecycle_hook_timeout_seconds = 30.0
@@ -72,8 +76,8 @@ class _WorkerEntry:
     root_path: Path
     installation_id: str
     dependency: PluginDependencyDirectory | None
-    source: Literal["directory", "package"]
-    supervisor: WorkerSupervisor
+    source: Literal["directory", "package", "system"]
+    supervisor: WorkerSupervisor | None
     session: PluginRunSession
     broker: PluginHostBroker | None = None
     state: str = "registered"
@@ -82,6 +86,8 @@ class _WorkerEntry:
     lock: RLock = field(default_factory=RLock)
     source_path: Path | None = None
     development_token: str | None = None
+    in_process: bool = False
+    plugin: Plugin | None = None
 
 
 class PluginWorkerService:
@@ -266,7 +272,7 @@ class PluginWorkerService:
         self,
         metadata: object,
         root_path: Path,
-        source: Literal["directory", "package"],
+        source: Literal["directory", "package", "system"],
         dependency: PluginDependencyDirectory | None = None,
         *,
         allow_network: bool = False,
@@ -276,9 +282,12 @@ class PluginWorkerService:
         """
         只登记已校验清单和内容身份；内容变更先停止旧运行，再建立新会话。
 
+        ``system`` 来源表示内置可信分发：进程内执行，不创建 Worker 子进程，
+        不参与依赖准备与开发模式。
+
         :param metadata: JSON 清单边界输入
         :param root_path: 已安装代码根目录
-        :param source: 宿主确定的目录或归档来源
+        :param source: 宿主确定的目录、归档或系统来源
         :param dependency: 已完成校验的锁定依赖
         :param allow_network: 安装阶段明确允许时补齐锁内 Wheel；发现阶段默认离线
         :param development_token: 仅宿主开发服务传入的会话准入
@@ -288,6 +297,7 @@ class PluginWorkerService:
         if self._closed.is_set():
             raise ProtocolError("插件宿主已经关闭", "PLUGIN_HOST_CLOSED")
         manifest = PluginManifest.model_validate(metadata)
+        in_process = source == "system"
         with self._lock:
             previous = self._entries.get(manifest.name)
         if (
@@ -322,10 +332,14 @@ class PluginWorkerService:
                 dependency = PluginPackagePreparer(self.data_path).prepare_dependencies(
                     root_path, tuple(manifest.python_dependencies), allow_network=allow_network
                 )
-            supervisor = WorkerSupervisor(
-                self._executable, host_handler=lambda request: self._handle(manifest.name, request)
-            )
-            session = self.runs.open_session(installation_id, binding, supervisor.run_id)
+            if in_process:
+                supervisor = None
+                session = self.runs.open_session(installation_id, binding)
+            else:
+                supervisor = WorkerSupervisor(
+                    self._executable, host_handler=lambda request: self._handle(manifest.name, request)
+                )
+                session = self.runs.open_session(installation_id, binding, supervisor.run_id)
             entry = _WorkerEntry(
                 manifest,
                 root_path,
@@ -337,6 +351,7 @@ class PluginWorkerService:
                 lock=installation_lock,
                 source_path=source_path or root_path,
                 development_token=development_token,
+                in_process=in_process,
             )
             with self._lock:
                 self._entries[manifest.name] = entry
@@ -517,12 +532,7 @@ class PluginWorkerService:
             if entry.cleanup_state == "pending":
                 raise ProtocolError("上一运行仍在完成清理", "PLUGIN_HOST_CLEANUP_PENDING")
             if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED":
-                entry.supervisor = WorkerSupervisor(
-                    self._executable, host_handler=lambda request: self._handle(name, request)
-                )
-                entry.session = self.runs.open_session(
-                    entry.installation_id, entry.session.binding, entry.supervisor.run_id
-                )
+                self._renew_run_session(entry)
             self._refresh_host_resources()
             entry.session.binding.verify()
             view = entry.session.view()
@@ -530,76 +540,125 @@ class PluginWorkerService:
                 raise PluginRunError("插件运行记录不可用", view.error_code)
             entry.state = "starting"
             try:
-                entry.supervisor.start()
-                entry.broker = PluginHostBroker(
-                    entry.session,
-                    self.data_path,
-                    entry.supervisor.request,
-                    run_state=lambda: entry.state,
-                    operations=self._operations,
-                    file_storage=self._file_storage,
-                    network_service=self._network_service,
-                    instance_profiles=self._instance_profiles,
-                    game_operations=self._game_operations,
-                    mc_factory=self._mc_factory,
-                    public_queries=RuntimePublicQueries(
-                        entry.session,
-                        self._account_catalog,
-                        self.refresh_account_resources,
-                        self._public_config,
-                        self._account_skin,
-                    ),
-                    java=RuntimeJava(
-                        entry.session,
-                        self._java_queries,
-                        self._java_catalog,
-                        self.refresh_java_resources,
-                        self._java_manager,
-                    )
-                    if self._java_queries is not None and self._java_catalog is not None
-                    else None,
-                    resources=RuntimeResources(
-                        entry.session, self._catalog, self._instance_queries, self.refresh_resources
-                    )
-                    if self._catalog is not None and self._instance_queries is not None
-                    else None,
-                    slot_sink=partial(self._publish_slot, name),
-                    hook_sink=partial(self._publish_hook, name),
-                    crash_sink=partial(self._publish_crash, name),
-                    compat_sink=partial(self._publish_compat, name),
-                    online_sink=partial(self._publish_auth, name),
-                    custom_ui=entry.manifest.custom_ui,
-                    window_app=lambda: self._window_app,
-                    plugin_name=entry.manifest.name,
-                    settings_service=self.settings,
-                    tool_channel=ToolChannel(
-                        run=partial(self._tool_run, name),
-                        stop=partial(self._tool_stop, name),
-                    )
-                    if self._tool_spawner is not None and self._tool_stopper is not None
-                    else None,
-                    cross_plugin=CrossPluginChannel(
-                        list_commands=partial(self._cross_plugin_list, name),
-                        call=partial(self._cross_plugin_call, name),
-                    ),
-                )
+                self._start_runtime(entry)
+                entry.broker = self._build_broker(name, entry)
                 entry.broker.initialize_settings()
-                entry.supervisor.authorize_load(
-                    entry.session, entry.manifest.entry_file, entry.dependency, entry_class=entry.manifest.entry_class
-                )
-                self._phase(entry, "load", "loaded")
-                self._phase(entry, "enable", "loaded")
+                self._run_load_and_enable(entry)
                 self.settings.publish(entry.installation_id, entry.session.run_id)
                 entry.state = "enabled"
                 entry.error_code = None
                 self._start_monitor()
                 if frontend_ready:
-                    self._phase(entry, "frontend_ready", "enabled")
+                    self._notify_frontend_ready(entry)
             except BaseException:
                 entry.state = "failed"
                 self.stop(name)
                 entry.state = "failed"
                 raise
+
+    def _renew_run_session(self, entry: _WorkerEntry) -> None:
+        """
+        为失效会话建立新运行代次：进程内直接换会话，子进程重建监管进程。
+        """
+        if entry.in_process:
+            entry.session = self.runs.open_session(entry.installation_id, entry.session.binding)
+            return
+        entry.supervisor = WorkerSupervisor(
+            self._executable, host_handler=lambda request: self._handle(entry.manifest.name, request)
+        )
+        entry.session = self.runs.open_session(entry.installation_id, entry.session.binding, entry.supervisor.run_id)
+
+    def _start_runtime(self, entry: _WorkerEntry) -> None:
+        """
+        启动执行载体：进程内插件清空旧实例，子进程启动监管进程。
+        """
+        if entry.in_process:
+            entry.supervisor = None
+            entry.plugin = None
+            return
+        assert entry.supervisor is not None
+        entry.supervisor.start()
+
+    def _build_broker(self, name: str, entry: _WorkerEntry) -> PluginHostBroker:
+        """
+        为当前运行装配宿主 broker；进程内与子进程共用同一数据面装配。
+        """
+        return PluginHostBroker(
+            entry.session,
+            self.data_path,
+            partial(self._inprocess_invoke, name) if entry.in_process else entry.supervisor.request,
+            run_state=lambda: entry.state,
+            operations=self._operations,
+            file_storage=self._file_storage,
+            network_service=self._network_service,
+            instance_profiles=self._instance_profiles,
+            game_operations=self._game_operations,
+            mc_factory=self._mc_factory,
+            public_queries=RuntimePublicQueries(
+                entry.session,
+                self._account_catalog,
+                self.refresh_account_resources,
+                self._public_config,
+                self._account_skin,
+            ),
+            java=RuntimeJava(
+                entry.session,
+                self._java_queries,
+                self._java_catalog,
+                self.refresh_java_resources,
+                self._java_manager,
+            )
+            if self._java_queries is not None and self._java_catalog is not None
+            else None,
+            resources=RuntimeResources(
+                entry.session, self._catalog, self._instance_queries, self.refresh_resources
+            )
+            if self._catalog is not None and self._instance_queries is not None
+            else None,
+            slot_sink=partial(self._publish_slot, name),
+            hook_sink=partial(self._publish_hook, name),
+            crash_sink=partial(self._publish_crash, name),
+            compat_sink=partial(self._publish_compat, name),
+            online_sink=partial(self._publish_auth, name),
+            custom_ui=entry.manifest.custom_ui,
+            window_app=lambda: self._window_app,
+            plugin_name=entry.manifest.name,
+            settings_service=self.settings,
+            tool_channel=ToolChannel(
+                run=partial(self._tool_run, name),
+                stop=partial(self._tool_stop, name),
+            )
+            if self._tool_spawner is not None and self._tool_stopper is not None
+            else None,
+            cross_plugin=CrossPluginChannel(
+                list_commands=partial(self._cross_plugin_list, name),
+                call=partial(self._cross_plugin_call, name),
+            ),
+        )
+
+    def _run_load_and_enable(self, entry: _WorkerEntry) -> None:
+        """
+        执行装载与启用：进程内直接装载入口并调用钩子，子进程走授权与生命周期请求。
+        """
+        if entry.in_process:
+            self._inprocess_load(entry.manifest.name)
+            self._inprocess_hook(entry, "enable")
+            return
+        assert entry.supervisor is not None
+        entry.supervisor.authorize_load(
+            entry.session, entry.manifest.entry_file, entry.dependency, entry_class=entry.manifest.entry_class
+        )
+        self._phase(entry, "load", "loaded")
+        self._phase(entry, "enable", "loaded")
+
+    def _notify_frontend_ready(self, entry: _WorkerEntry) -> None:
+        """
+        通知单个插件主界面已就绪；执行形态决定走进程内钩子还是生命周期请求。
+        """
+        if entry.in_process:
+            self._inprocess_hook(entry, "frontend_ready")
+        else:
+            self._phase(entry, "frontend_ready", "enabled")
 
     @staticmethod
     def _phase(entry: _WorkerEntry, phase: str, previous: str) -> None:
@@ -610,6 +669,52 @@ class PluginWorkerService:
         )
         if reply.get("ok") is not True:
             raise ProtocolError("插件生命周期执行失败", "PLUGIN_WORKER_EXECUTION_FAILED")
+
+    def _inprocess_invoke(
+        self, name: str, method: str, params: dict[str, JsonValue], timeout: float
+    ) -> dict[str, JsonValue]:
+        """
+        进程内回调通道：按 Worker callbacks.invoke 的信封语义分派插件回调。
+
+        :param name: 当前系统插件安装名称
+        :param method: 反向方法名；进程内仅支持 callbacks.invoke
+        :param params: 含 callback_ref 与 args 的回调请求
+        :param timeout: 与管道通道签名一致；进程内调用由插件代码直接执行
+        :return: ok/data 或 ok/error 应答信封
+        """
+        del timeout
+        if method != "callbacks.invoke":
+            return {"ok": False, "error": {"code": "PLUGIN_API_METHOD_NOT_FOUND"}}
+        try:
+            entry = self._entry(name)
+            plugin = entry.plugin
+            if plugin is None or entry.state not in {"starting", "enabled", "stopping"}:
+                raise ProtocolError("插件回调运行状态已经失效", "PLUGIN_CALLBACK_EXPIRED")
+            return {"ok": True, "data": invoke_plugin_callback(plugin, params)}
+        except ProtocolError as exc:
+            return {"ok": False, "error": {"code": exc.error_code}}
+
+    def _inprocess_load(self, name: str) -> None:
+        """
+        装载系统插件入口并执行 on_load；插件代码与本进程共享解释器，仅适用于内置可信分发。
+
+        :param name: 当前系统插件安装名称
+        :raises ProtocolError: 入口格式、越界或基类不兼容时抛出
+        """
+        entry = self._entry(name)
+        module, class_name = load_entry_module(entry.root_path, entry.manifest.entry_point)
+        host = HostClient(InProcessPeer(lambda request: self._handle(name, request)))
+        entry.plugin = instantiate_plugin(module, class_name, host)
+        self._inprocess_hook(entry, "load")
+
+    @staticmethod
+    def _inprocess_hook(entry: _WorkerEntry, phase: str) -> None:
+        """
+        直接调用进程内插件的生命周期钩子（on_load/on_enable/on_frontend_ready/on_disable/on_unload）。
+        """
+        plugin = entry.plugin
+        assert plugin is not None
+        getattr(plugin, "on_" + phase)()
 
     def _publish_slot(self, name: str, payload: dict[str, JsonValue]) -> None:
         """
@@ -878,11 +983,19 @@ class PluginWorkerService:
             try:
                 if was_enabled:
                     try:
-                        self._phase(entry, "disable", "enabled")
-                        self._phase(entry, "unload", "disabled")
+                        if entry.in_process:
+                            if entry.plugin is not None:
+                                self._inprocess_hook(entry, "disable")
+                                self._inprocess_hook(entry, "unload")
+                        else:
+                            self._phase(entry, "disable", "enabled")
+                            self._phase(entry, "unload", "disabled")
                     except (ProtocolError, OSError):
                         get_logger("PluginWorkerService").warning("插件退出钩子未完成，继续按实际进程树回收")
-                entry.supervisor.close()
+                if entry.in_process:
+                    entry.plugin = None
+                else:
+                    entry.supervisor.close()
                 if entry.broker:
                     entry.broker.close()
                     if not entry.broker.wait_idle(1):
@@ -919,12 +1032,7 @@ class PluginWorkerService:
         entry = self._entry(name)
         with entry.lock:
             if entry.session.view().error_code == "PLUGIN_SESSION_EXPIRED" and entry.cleanup_state != "pending":
-                entry.supervisor = WorkerSupervisor(
-                    self._executable, host_handler=lambda request: self._handle(name, request)
-                )
-                entry.session = self.runs.open_session(
-                    entry.installation_id, entry.session.binding, entry.supervisor.run_id
-                )
+                self._renew_run_session(entry)
             self._refresh_host_resources()
             view = entry.session.view()
             return {
@@ -946,7 +1054,7 @@ class PluginWorkerService:
             "installation_id": entry.installation_id,
             "run_id": entry.session.run_id,
             "run_state": entry.state,
-            "pid": entry.supervisor.pid,
+            "pid": entry.supervisor.pid if entry.supervisor is not None else os.getpid(),
             "cleanup_state": entry.cleanup_state,
             "last_error": {"code": entry.error_code, "message": "插件运行未完成"} if entry.error_code else None,
         }
@@ -1027,7 +1135,7 @@ class PluginWorkerService:
                             entry.broker.refresh_pending_work()
                         view = entry.session.view()
                         if (
-                            entry.supervisor.is_alive()
+                            (entry.supervisor is None or entry.supervisor.is_alive())
                             and not (entry.broker and entry.broker.is_closed)
                             and not view.error_code
                         ):
