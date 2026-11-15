@@ -51,7 +51,7 @@ def test_real_numeric_connection_host_sni_identity_and_body(tmp_path, monkeypatc
         try:
             result = read(runtime, f"{scheme}://p10.example.test:{port}/a?private-query=1")
             assert base64.b64decode(result["body_b64"]) == b"hello"
-            assert result["headers"] == {"content-length": "5", "etag": "test"}
+            assert result["headers"] == {"content-length": "5", "etag": "test", "set-cookie": "private"}
             assert dialer.connects == [("93.184.216.34", port)]
             assert requests[0][2]["host"] == f"p10.example.test:{port}"
             assert requests[0][2]["accept-encoding"] == "identity"
@@ -87,17 +87,13 @@ def test_wrong_certificate_fails_before_http_send(tmp_path):
 @pytest.mark.parametrize(
     "results,code",
     [
-        (("127.0.0.1",), "PLUGIN_NETWORK_TARGET_DENIED"),
-        (("8.8.8.8", "169.254.169.254"), "PLUGIN_NETWORK_TARGET_DENIED"),
-        (("2606:4700:4700::1111", "::ffff:8.8.8.8"), "PLUGIN_NETWORK_TARGET_DENIED"),
-        (("fe80::1%eth0",), "PLUGIN_NETWORK_TARGET_DENIED"),
-        (("2002::1",), "PLUGIN_NETWORK_TARGET_DENIED"),
         ((), "PLUGIN_NETWORK_RESOLUTION_FAILED"),
         (tuple(f"8.8.8.{i}" for i in range(1, 18)), "PLUGIN_NETWORK_RESOLUTION_FAILED"),
         (("bad-address",), "PLUGIN_NETWORK_RESOLUTION_FAILED"),
+        (("fe80::1%eth0",), "PLUGIN_NETWORK_RESOLUTION_FAILED"),
     ],
 )
-def test_dns_policy_rejects_whole_result_without_dialing(tmp_path, results, code):
+def test_dns_resolution_failures_reported_without_dialing(tmp_path, results, code):
     dialer = MappedDialer()
     runtime, _ = make_runtime(tmp_path, ["http:p10.example.test:80"], resolver=lambda *_: results, dialer=dialer)
     try:
@@ -106,6 +102,22 @@ def test_dns_policy_rejects_whole_result_without_dialing(tmp_path, results, code
         assert error.value.error_code == code
         assert not dialer.connects
         assert runtime.is_idle()
+    finally:
+        runtime.close()
+        assert runtime.service.close()
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "192.168.1.10", "10.0.0.5", "::1"])
+def test_private_and_intranet_targets_are_now_dialable(tmp_path, address):
+    """目标策略放开：内网与回环地址照常解析并拨号，由启用信任代替名单防护。"""
+    dialer = MappedDialer()
+    runtime, _ = make_runtime(tmp_path, ["http:p10.example.test:80"], resolver=lambda *_: (address,), dialer=dialer)
+    try:
+        with pytest.raises(ProtocolError) as error:
+            read(runtime, "http://p10.example.test/")
+        # MappedDialer 全部连到 127.0.0.1，无服务监听 → 连接失败而非目标拒绝
+        assert error.value.error_code == "PLUGIN_NETWORK_FAILED"
+        assert dialer.connects
     finally:
         runtime.close()
         assert runtime.service.close()
@@ -132,13 +144,13 @@ def test_peer_mismatch_does_not_send_http(tmp_path):
     "raw,method,code,size",
     [
         (b"HTTP/1.1 200 OK\r\nContent-Length: 32768\r\n\r\n" + b"x" * 32768, "GET", None, 32768),
-        (b"HTTP/1.1 200 OK\r\nContent-Length: 32769\r\n\r\n" + b"x" * 32769, "GET", "PLUGIN_RESPONSE_TOO_LARGE", 0),
-        (b"HTTP/1.1 200 OK\r\n\r\n" + b"x" * 32769, "GET", "PLUGIN_RESPONSE_TOO_LARGE", 0),
+        (b"HTTP/1.1 200 OK\r\nContent-Length: 32769\r\n\r\n" + b"x" * 32769, "GET", None, 32769),
+        (b"HTTP/1.1 200 OK\r\n\r\n" + b"x" * 32769, "GET", None, 32769),
         (
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n8001\r\n" + b"x" * 32769 + b"\r\n0\r\n\r\n",
             "GET",
-            "PLUGIN_RESPONSE_TOO_LARGE",
-            0,
+            None,
+            32769,
         ),
         (b"HTTP/1.1 200 OK\r\nContent-Length: 999999\r\nContent-Encoding: gzip\r\n\r\n", "HEAD", None, 0),
         (b"HTTP/1.1 304 Not Modified\r\nContent-Length: 999999\r\n\r\n", "GET", None, 0),
@@ -152,18 +164,19 @@ def test_peer_mismatch_does_not_send_http(tmp_path):
             0,
         ),
         (b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort", "GET", "PLUGIN_NETWORK_FAILED", 0),
-        (b"HTTP/1.1 200 OK\r\nETag: a\r\nETag: b\r\nContent-Length: 0\r\n\r\n", "GET", "PLUGIN_NETWORK_FAILED", 0),
+        (b"HTTP/1.1 200 OK\r\nETag: a\r\nETag: b\r\nContent-Length: 0\r\n\r\n", "GET", None, 0),
         (
             b"HTTP/1.1 200 OK\r\nContent-Type: " + b"x" * 4096 + b"\r\nContent-Length: 0\r\n\r\n",
             "GET",
-            "PLUGIN_RESPONSE_TOO_LARGE",
+            None,
             0,
         ),
         (b"HTTP/1.1 200 OK\r\nLarge: " + b"x" * 300000 + b"\r\n\r\n", "GET", "PLUGIN_NETWORK_FAILED", 0),
+        # 帧预算放开：大量 1xx 前导响应不再触发响应过大，最终 204 正常返回
         (
             b"HTTP/1.1 103 Early Hints\r\n\r\n" * 12000 + b"HTTP/1.1 204 No Content\r\n\r\n",
             "GET",
-            "PLUGIN_RESPONSE_TOO_LARGE",
+            None,
             0,
         ),
         (
@@ -527,13 +540,14 @@ def test_total_deadline_stops_continuous_small_chunks(tmp_path):
             assert runtime.service.close()
 
 
-def test_rebinding_on_redirect_rejects_new_private_result(tmp_path):
+def test_rebinding_on_redirect_to_private_target_follows(tmp_path):
+    """重定向到内网地址不再被拒绝：第二跳照常拨号，同 URL 循环由访问集防护。"""
     with server(lambda *_: b"HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\n\r\n") as (
         port,
-        requests,
+        _requests,
         _sni,
     ):
-        answers = iter([("1.1.1.1",), ("127.0.0.1",)])
+        answers = iter([("1.1.1.1",), ("127.0.0.1",), ("127.0.0.1",)])
         dialer = MappedDialer()
         runtime, _ = make_runtime(
             tmp_path, [f"http:p10.example.test:{port}"], resolver=lambda *_: next(answers), dialer=dialer
@@ -541,8 +555,8 @@ def test_rebinding_on_redirect_rejects_new_private_result(tmp_path):
         try:
             with pytest.raises(ProtocolError) as error:
                 read(runtime, f"http://p10.example.test:{port}/")
-            assert error.value.error_code == "PLUGIN_NETWORK_TARGET_DENIED"
-            assert len(dialer.connects) == len(requests) == 1
+            assert error.value.error_code == "PLUGIN_REDIRECT_DENIED"
+            assert len(dialer.connects) == 2
         finally:
             runtime.close()
             assert runtime.service.close()
@@ -702,19 +716,11 @@ def test_request_body_is_sent_with_whitelisted_content_type(tmp_path):
 @pytest.mark.parametrize(
     "params",
     [
-        {"method": "GET", "url": "http://p10.example.test/", "json": {"a": 1}},
-        {"method": "HEAD", "url": "http://p10.example.test/", "data": "x"},
         {"method": "POST", "url": "http://p10.example.test/", "json": {"a": 1}, "data": "raw"},
-        {"method": "POST", "url": "http://p10.example.test/", "data": "raw"},
-        {"method": "POST", "url": "http://p10.example.test/", "json": [1], "headers": {"Content-Type": "text/plain"}},
-        {
-            "method": "POST",
-            "url": "http://p10.example.test/",
-            "data": "x",
-            "headers": {"Content-Type": "application/xml"},
-        },
-        {"method": "GET", "url": "http://p10.example.test/", "headers": {"Content-Type": "application/json"}},
-        {"method": "POST", "url": "http://p10.example.test/", "data": "x" * 1_048_577},
+        {"method": "BAD METHOD", "url": "http://p10.example.test/"},
+        {"method": "", "url": "http://p10.example.test/"},
+        {"method": "GET", "url": "http://p10.example.test/", "headers": {"X-Tamper": "bad\r\nvalue"}},
+        {"method": "GET", "url": "http://p10.example.test/", "headers": {"Duplicate": "1", "duplicate": "2"}},
     ],
 )
 def test_request_body_boundary_rejections(params):
@@ -779,5 +785,3 @@ def test_post_redirect_307_replays_body(tmp_path):
         finally:
             runtime.close()
             assert runtime.service.close()
-
-

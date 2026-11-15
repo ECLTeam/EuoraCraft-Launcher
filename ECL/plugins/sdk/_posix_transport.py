@@ -25,7 +25,7 @@ from pathlib import Path
 from threading import Lock
 from time import monotonic, sleep
 
-from ECL.plugins.contracts import PluginRuntimeError, ProtocolPolicy, WireMessage
+from ECL.plugins.contracts import PluginRuntimeError, WireMessage
 
 
 def _credentials(connection: socket.socket) -> tuple[int, int]:
@@ -157,7 +157,7 @@ class UnixChannel:
 
     def receive(self, timeout: float = 5.0) -> WireMessage:
         """
-        读取长度后先核对上限，再分配正文；半帧失败不可继续解析后续消息。
+        核对长度非零后读取完整正文；半帧失败不可继续解析后续消息。
 
         :param timeout: 包含整个帧的等待预算
         :return: 当前协议消息
@@ -172,8 +172,8 @@ class UnixChannel:
             self._ready(writing=False, deadline=deadline)
             try:
                 length = struct.unpack("!I", self._read_exact(4, deadline))[0]
-                if not 0 < length <= ProtocolPolicy.max_frame_bytes:
-                    raise PluginRuntimeError("插件消息长度超限", "PLUGIN_MESSAGE_TOO_LARGE")
+                if length == 0:
+                    raise PluginRuntimeError("插件消息长度无效", "PLUGIN_MESSAGE_TOO_LARGE")
                 return WireMessage.decode(self._read_exact(length, deadline))
             except (OSError, EOFError, ValueError) as exc:
                 self.close()

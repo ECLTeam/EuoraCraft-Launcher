@@ -17,7 +17,7 @@
 #   - class OperationGetRequest / OperationListRequest — 自身任务控制输入契约。
 #   - validate_fields — 校验命令输入输出的基础字段。
 #   - class DownloadSubmitRequest — 私有空间新文件下载任务请求。
-#   - class NetworkRequest — 安全只读与带白名单请求体变更方法的严格边界。
+#   - class NetworkRequest — 任意 HTTP 方法、请求体与请求头的结构边界。
 #   - class PluginPageNav / VuePageDefinition — 插件页面的宿主容器与导航声明。
 #   - class JavaInventoryRequest / JavaValidateRequest / JavaCatalogRequest — Java 查询与校验输入。
 #   - class TechnologyEntryDefinition — 关于页插件技术栈条目的只读展示声明。
@@ -48,22 +48,14 @@ class RequestModel(BaseModel):
 
 class NetworkRequest(RequestModel):
     """
-    允许安全方法与带白名单请求体的变更方法；凭据只允许显式提供给 HTTPS。
+    方法、请求体与请求头不再设白名单；只保留 HTTP 语法与字段结构校验。
     """
 
-    method: Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
+    method: str
     url: str
-    headers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    headers: dict[str, str] = Field(default_factory=dict)
     json_body: PydanticJsonValue | None = Field(default=None, alias="json")
     data: str | None = None
-    allowed_headers: ClassVar[frozenset[str]] = frozenset(
-        {"accept", "if-none-match", "if-modified-since", "user-agent", "authorization", "x-api-key", "content-type"}
-    )
-    body_methods: ClassVar[frozenset[str]] = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-    body_content_types: ClassVar[frozenset[str]] = frozenset(
-        {"application/json", "application/x-www-form-urlencoded", "text/plain"}
-    )
-    max_body_bytes: ClassVar[int] = 1_048_576
 
     def encoded_body(self) -> bytes:
         """
@@ -79,53 +71,27 @@ class NetworkRequest(RequestModel):
 
     @model_validator(mode="after")
     def _validate_request(self) -> NetworkRequest:
-        origin, _ = NetworkOrigin.from_url(self.url)
         names: set[str] = set()
-        size = 0
         for name, value in self.headers.items():
             lowered = name.lower()
             if (
-                len(name) > 64
-                or re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) is None
-                or lowered not in self.allowed_headers
+                re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) is None
                 or lowered in names
-                or len(value) > 1024
-                or any(not 32 <= ord(char) <= 126 for char in value)
+                or any(not (32 <= ord(char) <= 126) for char in value)
             ):
                 raise ValueError("网络请求头无效")
-            if lowered in {"authorization", "x-api-key"} and origin.scheme != "https":
-                raise ValueError("认证头仅允许 HTTPS")
             names.add(lowered)
-            size += len(name.encode()) + len(value.encode())
-        if size > 4096:
-            raise ValueError("网络请求头超过上限")
         self._validate_body()
         return self
 
     def _validate_body(self) -> None:
         """
-        校验请求体字段组合、方法匹配、大小与 Content-Type 白名单。
+        校验 json/data 二选一与 HTTP 方法 token 语法。
         """
         if self.json_body is not None and self.data is not None:
             raise ValueError("请求体字段只能提供 json 或 data 之一")
-        if (self.json_body is not None or self.data is not None) and self.method not in self.body_methods:
-            raise ValueError(f"{self.method} 请求不允许携带请求体")
-        if len(self.encoded_body()) > self.max_body_bytes:
-            raise ValueError("请求体超过 1 MiB 上限")
-        content_type = next(
-            (value for name, value in self.headers.items() if name.lower() == "content-type"), None
-        )
-        if self.json_body is not None:
-            expected = "application/json"
-            if content_type is not None and content_type.lower() != expected:
-                raise ValueError("json 请求体必须使用 application/json")
-        elif self.data is not None:
-            if content_type is None:
-                raise ValueError("data 请求体必须显式声明 Content-Type")
-            if content_type.lower() not in self.body_content_types:
-                raise ValueError("Content-Type 不在白名单内")
-        elif content_type is not None and self.method not in self.body_methods:
-            raise ValueError("无体请求不允许声明 Content-Type")
+        if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", self.method):
+            raise ValueError("HTTP 方法无效")
 
 
 class FieldSpec(RequestModel):
@@ -536,13 +502,13 @@ class CrashExtensionDefinition(RequestModel):
 
 class HtmlSlotDefinition(RequestModel):
     """
-    主窗口 HTML 插槽内容，只允许文本片段，不接受脚本标签外的宿主对象。
+    主窗口 HTML 插槽内容，原样透传给可信界面，不做消毒或长度裁剪。
     """
 
-    slot_id: str = Field(pattern=r"^plugin-slot-[a-z0-9-]{1,60}$")
-    html: str = Field(min_length=1, max_length=60000)
-    key: str | None = Field(default=None, max_length=64)
-    context_key: str | None = Field(default=None, max_length=64)
+    slot_id: str = Field(min_length=1)
+    html: str = Field(min_length=1)
+    key: str | None = None
+    context_key: str | None = None
 
 
 class PluginPageNav(RequestModel):
@@ -578,16 +544,16 @@ class VuePageDefinition(RequestModel):
     「更多」页的有界子路由与导航入口，容器只能从枚举中选择，不覆盖宿主路由。
     """
 
-    path: str = Field(pattern=r"^/(?:[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*)?$", max_length=128)
-    title: str = Field(min_length=1, max_length=64)
+    path: str = Field(pattern=r"^/(?:[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*)?$")
+    title: str = Field(min_length=1)
     container: Literal["top", "more"] = "top"
     nav: PluginPageNav | None = None
-    locales: list[str] = Field(default_factory=list, max_length=6)
+    locales: list[str] = Field(default_factory=list)
     icon: str = Field(default="puzzle", pattern=r"^[A-Za-z0-9_-]{1,64}$")
     component_name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
-    template: str = Field(min_length=1, max_length=60000)
-    script: str = Field(default="", max_length=60000)
-    style: str = Field(default="", max_length=60000)
+    template: str = Field(min_length=1)
+    script: str = ""
+    style: str = ""
 
     @model_validator(mode="after")
     def _require_nav_for_host_container(self) -> VuePageDefinition:
@@ -600,16 +566,16 @@ class VuePageDefinition(RequestModel):
 
 class VueSlotDefinition(RequestModel):
     """
-    主窗口 Vue 插槽组件，模板与脚本由宿主在渲染期编译执行。
+    主窗口 Vue 插槽组件，模板/脚本/样式原样透传，由宿主在渲染期编译执行。
     """
 
-    slot_id: str = Field(pattern=r"^plugin-slot-[a-z0-9-]{1,60}$")
+    slot_id: str = Field(min_length=1)
     component_name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
-    template: str = Field(min_length=1, max_length=60000)
-    script: str = Field(default="", max_length=60000)
-    style: str = Field(default="", max_length=60000)
-    key: str | None = Field(default=None, max_length=64)
-    context_key: str | None = Field(default=None, max_length=64)
+    template: str = Field(min_length=1)
+    script: str = ""
+    style: str = ""
+    key: str | None = None
+    context_key: str | None = None
 
 
 class TechnologyEntryDefinition(RequestModel):
@@ -818,7 +784,7 @@ class FileWriteBeginRequest(FileStatRequest):
     明确声明有限大小且禁止覆盖，不接受尚未实现的目标版本替换。
     """
 
-    total_bytes: StrictInt = Field(ge=0, le=8388608)
+    total_bytes: StrictInt = Field(ge=0)
     overwrite: StrictBool
 
     @field_validator("overwrite")
@@ -848,7 +814,7 @@ class FileReplaceBeginRequest(FileDeleteRequest):
     显式选择原版本并声明新大小，不支持缺失目标时新建或无条件覆盖。
     """
 
-    total_bytes: StrictInt = Field(ge=0, le=8388608)
+    total_bytes: StrictInt = Field(ge=0)
 
 
 class FileWriteChunkRequest(FileWriteRef):
@@ -856,7 +822,7 @@ class FileWriteChunkRequest(FileWriteRef):
     限制编码前后大小并要求顺序写入。
     """
 
-    offset: StrictInt = Field(ge=0, le=8388608)
+    offset: StrictInt = Field(ge=0)
     data_b64: str = Field(min_length=4, max_length=43692)
 
 

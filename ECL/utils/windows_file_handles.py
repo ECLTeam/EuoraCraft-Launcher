@@ -628,7 +628,7 @@ class FileHandle:
             raise FileBoundaryError("插件文件读取失败", "PLUGIN_FILE_IO_FAILED")
         return buffer.raw[: received.value]
 
-    def digest(self, deadline: float, max_bytes: int = 8388608) -> str:
+    def digest(self, deadline: float, max_bytes: int | None = None) -> str:
         """
         在同一文件句柄上校验总量并计算完整内容摘要。
 
@@ -637,7 +637,7 @@ class FileHandle:
         :return: SHA-256
         """
         size = self.information().size
-        if size > max_bytes:
+        if max_bytes is not None and size > max_bytes:
             raise FileBoundaryError("插件文件大小超限", "PLUGIN_WRITE_SIZE_EXCEEDED")
         digest, offset = hashlib.sha256(), 0
         while offset < size:

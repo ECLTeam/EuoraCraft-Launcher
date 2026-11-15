@@ -348,10 +348,9 @@ def test_upload_count_disk_quota_expiry_and_foreign_ref(files, tmp_path):
         call(broker, "files.write_abort", {"write_ref": reference})
     directory = tmp_path / "plugin_data" / broker.session.view().installation_id / "files"
     (directory / ".upload-crash-left").write_bytes(b"old bytes")
-    storage.max_space_bytes = 8
-    with pytest.raises(ProtocolError) as error:
-        begin(broker, name="full", content=b"")
-    assert error.value.error_code == "PLUGIN_STORAGE_QUOTA_EXCEEDED"
+    # 空间配额放开：私有目录已有遗留文件也不阻止新建上传，遗留文件不受影响
+    _, write_ref = begin(broker, name="full", content=b"")
+    assert call(broker, "files.write_abort", {"write_ref": write_ref}) == {"released": True}
     assert (directory / ".upload-crash-left").read_bytes() == b"old bytes"
 
 
@@ -468,26 +467,31 @@ def test_unrecorded_space_is_preserved_and_unknown_root_rejected(files, tmp_path
     assert error.value.error_code == "PLUGIN_FILE_INVALID"
 
 
-def test_shared_quota_reservations_and_entry_limit(files, tmp_path):
-    broker, _, storage, _, create = files
+def test_concurrent_uploads_share_space_and_cancel_without_quota(files, tmp_path):
+    """上传空间配额放开：配额入口与常量移除，并发预留和取消不再受字节预算影响。"""
+    broker, manager, storage, _, create = files
+    assert not hasattr(storage, "check_quota")
+    assert not hasattr(storage, "max_space_bytes")
+    assert not hasattr(storage, "max_file_bytes")
     target, write_ref = begin(broker)
-    storage.max_run_bytes = 6
-    with pytest.raises(ProtocolError) as error:
-        begin(broker, name="second")
-    assert error.value.error_code == "PLUGIN_STORAGE_QUOTA_EXCEEDED"
-    storage.max_host_bytes = 6
+    _, second_ref = begin(broker, name="second")
     other = create()
-    with pytest.raises(ProtocolError) as error:
-        begin(other)
-    assert error.value.error_code == "PLUGIN_STORAGE_QUOTA_EXCEEDED"
-    call(broker, "files.write_abort", {"write_ref": write_ref})
+    _, other_ref = begin(other)
+    for reference in (write_ref, second_ref):
+        call(broker, "files.write_abort", {"write_ref": reference})
+    call(other, "files.write_abort", {"write_ref": other_ref})
     directory = tmp_path / "plugin_data" / broker.session.view().installation_id / "files"
-    for index in range(1024):
+    directory.mkdir(parents=True, exist_ok=True)
+    # 已占用的私有目录不再参与空间核算，新建上传照常完成
+    for index in range(32):
         (directory / f"f{index}").touch()
-    with pytest.raises(ProtocolError) as error:
-        begin(broker, content=b"", reference=target["root_ref"])
-    assert error.value.error_code == "PLUGIN_STORAGE_QUOTA_EXCEEDED"
-    assert len(tuple(directory.iterdir())) == 1024
+    target2, write_ref2 = begin(
+        broker, name="after-existing-files.bin", content=b"payload", reference=target["root_ref"]
+    )
+    chunk(broker, write_ref2, b"payload")
+    view = finish(broker, manager, commit(broker, write_ref2, b"payload"))
+    assert view["state"] == "completed"
+    assert (directory / target2["relative_path"]).read_bytes() == b"payload"
 
 
 def test_global_close_cleans_task_cancelled_while_still_in_queue(files):

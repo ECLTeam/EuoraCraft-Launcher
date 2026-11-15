@@ -50,7 +50,6 @@ class ProtocolPolicy:
     """
 
     protocol_version: ClassVar[int] = 1
-    max_frame_bytes: ClassVar[int] = 1024 * 1024
     max_depth: ClassVar[int] = 16
     max_identifier_length: ClassVar[int] = 64
     max_timeout_ms: ClassVar[int] = 120000
@@ -129,10 +128,10 @@ class WireMessage:
 
     def encode(self) -> bytes:
         """
-        编码并复核消息大小及字段，拒绝任意 Python 对象。
+        编码并复核字段与 JSON 边界，拒绝任意 Python 对象。
 
         :return: UTF-8 JSON 字节
-        :raises ProtocolError: 类型、结构或大小不满足协议时抛出
+        :raises ProtocolError: 类型或结构不满足协议时抛出
         """
         payload = {
             "protocol_version": ProtocolPolicy.protocol_version,
@@ -157,8 +156,6 @@ class WireMessage:
         :return: 类型明确的消息
         :raises ProtocolError: 消息无法安全解析时抛出
         """
-        if len(raw) > ProtocolPolicy.max_frame_bytes:
-            raise ProtocolError("消息大小超过上限", "PLUGIN_MESSAGE_TOO_LARGE")
         try:
             decoded: object = json.loads(raw, object_pairs_hook=_unique_object)
             payload = _json_value(decoded)

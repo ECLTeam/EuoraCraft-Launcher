@@ -2,6 +2,8 @@
 
 > **历史设计（2026-11-15）**：本设计描述的 API v2 / 版本化模型已由[插件模型统一方案](../plans/plugin-model-unification-2026-11-15.md)取代——插件模型已统一为单一基类（`ECL/plugins/sdk`）与去版本化清单，文中 v2、`api_version`、旧路径 `ECL/plugins/api/` 等表述保留为设计记录。
 
+> **边界开放（2026-11-15）**：本文第 11—13 节及后续目录中的配额、白名单与内容限制（8 MiB/64 MiB/32 KiB/64 KiB/1 MiB 帧、GET/HEAD 限定、请求头白名单、内网拒绝、命令与回调数量、环境变量白名单、HTML/Vue 内容上限）均已移除或不再生效，保留为初版设计记录。现行契约见[插件包格式](../protocols/eclplugin-package-format.md)。
+
 > 目录约定更新：启动引导与插件 API 已按 下沉实施方案 归入 `ECL/bootstrap.py` 和 `ECL/plugins/api/`。当前插件使用 `from ECL.plugins.api import Plugin`；本文中的旧根模块、独立包路径和“禁止所有 ECL 导入”描述保留为对应阶段的设计记录，现行运行边界以 [无头运行说明](../guides/headless-runtime.md) 为准。
 
 状态：用户已明确批准 v1.1 及管理器接入方案开始实施。Worker 基础运行层、v2 授权存储、第三方管理器分流及最小可信管理界面已实现，当前结果见第 21 节。真实 WebView2 网络门未通过，原生增补已获批准，但用户随后要求先越过该部分；自定义前端继续关闭。

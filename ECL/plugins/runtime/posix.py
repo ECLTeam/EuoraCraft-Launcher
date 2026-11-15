@@ -147,15 +147,13 @@ class PosixScope:
 
     def _send(self, message: dict[str, object], timeout: float = 5.0) -> None:
         """
-        使用宿主私有管道发送有界控制帧，不经过插件的请求分派。
+        使用宿主私有管道发送控制帧，不经过插件的请求分派。
         """
         guardian = self._guardian
         if guardian is None or guardian.stdin is None:
             raise PluginRuntimeError("插件监管控制流已关闭", "PLUGIN_HOST_CLOSED")
         try:
             content = json.dumps(message, separators=(",", ":")).encode()
-            if len(content) > 65536:
-                raise PluginRuntimeError("插件监管消息过长", "PLUGIN_INVALID_REQUEST")
             frame = memoryview(struct.pack("!I", len(content)) + content)
             deadline = monotonic() + timeout
             while frame:
@@ -193,7 +191,7 @@ class PosixScope:
                 return bytes(result)
 
             size = struct.unpack("!I", read(4))[0]
-            if not 0 < size <= 65536:
+            if size == 0:
                 raise PluginRuntimeError("插件监管消息无效", "PLUGIN_PIPE_AUTH_FAILED")
             try:
                 result = json.loads(read(size))

@@ -355,7 +355,6 @@ class PluginHostBroker:
         self._idle.set()
         self._active_requests = 0
         self._commands: dict[str, tuple[str, CommandDefinition, PluginLease]] = {}
-        self._page_paths: set[str] = set()
         self._panels: dict[str, tuple[PanelDefinition, PluginLease]] = {}
         self._technology_entries: dict[str, tuple[TechnologyEntryDefinition, PluginLease]] = {}
         self._subscriptions: dict[str, tuple[str, PluginLease, str]] = {}
@@ -382,8 +381,8 @@ class PluginHostBroker:
                 else:
                     self._check_open()
                 payload = _json_value(request.params)
-                if not isinstance(payload, dict) or len(json.dumps(payload, ensure_ascii=False).encode()) > 65536:
-                    raise ProtocolError("插件业务载荷超限", "PLUGIN_MESSAGE_TOO_LARGE")
+                if not isinstance(payload, dict):
+                    raise ProtocolError("插件业务载荷必须是字典", "PLUGIN_SCHEMA_INVALID")
                 if request.method not in self.mutation_methods:
                     return self._bounded_result(self._dispatch(request))
                 return self._mutate(request, payload)
@@ -431,10 +430,7 @@ class PluginHostBroker:
 
     @staticmethod
     def _bounded_result(result: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        value = _json_value(result)
-        if not isinstance(value, dict) or len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > 65536:
-            raise ProtocolError("插件业务结果超过上限", "PLUGIN_MESSAGE_TOO_LARGE")
-        return value
+        return _json_value(result)
 
     def _mutate(self, request: RpcRequest, payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
         """
@@ -721,11 +717,7 @@ class PluginHostBroker:
         def register() -> None:
             with self._lock:
                 self._ensure_accepting()
-                existing = next(
-                    (ref for ref, item in self._commands.items() if item[1].name == definition.name), None
-                )
-                if len(self._commands) >= 64 and existing is None:
-                    raise ProtocolError("命令已登记或超过上限", "PLUGIN_REGISTRATION_CONFLICT")
+                existing = next((ref for ref, item in self._commands.items() if item[1].name == definition.name), None)
                 # 同名重登记覆盖旧声明：显式 define_* 可替换预置扫描的装饰器声明
                 if existing is not None:
                     del self._commands[existing]
@@ -1171,7 +1163,7 @@ class PluginHostBroker:
 
     def _ui_service(self, request: RpcRequest) -> dict[str, JsonValue]:
         """
-        只接受已批准界面注入的插槽内容，实际渲染与失效由可信界面负责。
+        界面内容（HTML/模板/脚本/样式）原样转交可信界面，不做消毒或数量限制。
         """
         if request.method.startswith("ui.windows."):
             if self.custom_ui is None:
@@ -1180,16 +1172,10 @@ class PluginHostBroker:
         lease = self.session.lease()
         if self._slot_sink is None:
             raise ProtocolError("当前宿主未提供界面注入", "PLUGIN_API_METHOD_NOT_FOUND")
-        page_key = ""
         if request.method == "ui.register_page":
             from ECL.plugins.runtime.models import VuePageDefinition
 
             page = VuePageDefinition.model_validate(request.params)
-            # 顶层页面按插件内路径计数，宿主容器页面按容器导航路径计数。
-            page_key = f"{page.container}:{page.nav.path if page.nav else page.path}"
-            with self._lock:
-                if page_key not in self._page_paths and len(self._page_paths) >= 16:
-                    raise ProtocolError("插件页面数量超过上限", "PLUGIN_RATE_LIMITED")
             payload: dict[str, JsonValue] = {"kind": "page", **page.model_dump(mode="json")}
         elif request.method == "ui.register_html":
             definition = HtmlSlotDefinition.model_validate(request.params)
@@ -1203,11 +1189,6 @@ class PluginHostBroker:
         def publish() -> None:
             self._ensure_accepting()
             assert self._slot_sink is not None
-            if payload["kind"] == "page":
-                with self._lock:
-                    if page_key not in self._page_paths and len(self._page_paths) >= 16:
-                        raise ProtocolError("插件页面数量超过上限", "PLUGIN_RATE_LIMITED")
-                    self._page_paths.add(page_key)
             self._slot_sink(payload)
 
         self.session.accept(lease, publish)

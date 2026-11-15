@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：通过 HTTPcore 公开后端固定实际数字地址，保留 TLS 身份并限制每次收发。
+# 文件作用：通过 HTTPcore 公开后端固定实际数字地址，保留 TLS 身份与逐次租约检查。
 #
 # 公开接口：
 #   - class NetworkCallGuard — 当前请求的授权、截止与真实流归属协议。
@@ -16,7 +16,6 @@ import socket
 import ssl
 from collections.abc import Iterable
 from contextlib import suppress
-from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from threading import RLock
 from typing import Protocol
@@ -63,15 +62,9 @@ class NetworkCallGuard(Protocol):
         ...
 
 
-@dataclass(slots=True)
-class _WireBudget:
-    limit: int = 262144
-    received: int = 0
-
-
 class _GuardedStream(httpcore.NetworkStream):
     """
-    逐次检查租约与收包预算，关闭失败时仍由原请求持有。
+    逐次检查租约与读取超时，关闭失败时仍由原请求持有。
     """
 
     def __init__(
@@ -80,13 +73,11 @@ class _GuardedStream(httpcore.NetworkStream):
         guard: NetworkCallGuard,
         origin: NetworkOrigin,
         address: IPv4Address | IPv6Address,
-        budget: _WireBudget,
     ) -> None:
         self._stream = stream
         self._guard = guard
         self._origin = origin
         self._address = address
-        self._budget = budget
         self._lock = RLock()
         self._is_closed = False
         self._is_closing = False
@@ -109,14 +100,10 @@ class _GuardedStream(httpcore.NetworkStream):
 
     def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
         """
-        限制每次实际收包和每跳原始 HTTP 字节，包括头、临时响应与尾部。
+        按原始租约的剩余时间分块收包，不设累计字节预算。
         """
         self._guard.accept()
-        remaining = self._budget.limit - self._budget.received
-        if remaining <= 0:
-            raise ProtocolError("网络响应超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
-        chunk = self._stream.read(min(max_bytes, 8192, remaining), self._guard.timeout())
-        self._budget.received += len(chunk)
+        chunk = self._stream.read(min(max_bytes, 8192), self._guard.timeout())
         self._guard.check()
         return chunk
 
@@ -142,7 +129,7 @@ class _GuardedStream(httpcore.NetworkStream):
             raise ProtocolError("网络 TLS 身份配置无效", "PLUGIN_NETWORK_FAILED")
         self._guard.accept()
         stream = self._stream.start_tls(ssl_context, server_hostname, self._guard.timeout())
-        secured = _GuardedStream(stream, self._guard, self._origin, self._address, self._budget)
+        secured = _GuardedStream(stream, self._guard, self._origin, self._address)
         try:
             self._guard.attach(secured)
         finally:
@@ -196,7 +183,6 @@ class PinnedNetworkBackend(httpcore.NetworkBackend):
         address: IPv4Address | IPv6Address,
         guard: NetworkCallGuard,
         dialer: httpcore.NetworkBackend,
-        wire_limit: int = 262144,
     ) -> None:
         """
         绑定宿主已检查的站点、数字地址和当前调用的关闭归属。
@@ -205,13 +191,11 @@ class PinnedNetworkBackend(httpcore.NetworkBackend):
         :param address: 本跳唯一已准入地址
         :param guard: 当前请求原始租约及资源归属
         :param dialer: 宿主拥有的公开数字地址拨号后端
-        :param wire_limit: 宿主为当前查询或下载确定的单跳原始收包上限
         """
         self._origin = origin
         self._address = address
         self._guard = guard
         self._dialer = dialer
-        self._wire_limit = wire_limit
 
     def connect_tcp(
         self,
@@ -236,7 +220,7 @@ class PinnedNetworkBackend(httpcore.NetworkBackend):
             raise ProtocolError("网络连接目标无效", "PLUGIN_NETWORK_TARGET_DENIED")
         self._guard.accept()
         raw = self._dialer.connect_tcp(str(self._address), port, timeout=self._guard.timeout())
-        stream = _GuardedStream(raw, self._guard, self._origin, self._address, _WireBudget(self._wire_limit))
+        stream = _GuardedStream(raw, self._guard, self._origin, self._address)
         self._guard.attach(stream)
         stream.verify_peer()
         self._guard.check()

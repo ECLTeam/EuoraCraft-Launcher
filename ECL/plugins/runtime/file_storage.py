@@ -99,10 +99,6 @@ class PluginFileStorage:
     单个应用服务维护目录对象和限额；磁盘操作不持有全局状态锁。
     """
 
-    max_file_bytes: ClassVar[int] = 8 * 1024 * 1024
-    max_space_bytes: ClassVar[int] = 64 * 1024 * 1024
-    max_run_bytes: ClassVar[int] = 32 * 1024 * 1024
-    max_host_bytes: ClassVar[int] = 128 * 1024 * 1024
     max_run_uploads: ClassVar[int] = 4
     max_run_deletions: ClassVar[int] = 4
     max_host_deletions: ClassVar[int] = 32
@@ -296,10 +292,6 @@ class PluginFileStorage:
                 for item in (*items, *self._deletions.values())
             ):
                 raise FileBoundaryError("该目标正在上传", "PLUGIN_FILE_BUSY")
-            if sum(item.reserved_bytes for item in own) + upload.reserved_bytes > self.max_run_bytes or (
-                sum(item.reserved_bytes for item in items) + upload.reserved_bytes > self.max_host_bytes
-            ):
-                raise FileBoundaryError("上传预留空间不足", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
             self._uploads[upload.write_ref] = upload
 
     def reserve_deletion(self, deletion: FileDeletion) -> None:
@@ -365,44 +357,6 @@ class PluginFileStorage:
                 self._deletions.pop(deletion.deletion_ref, None)
                 deletion.is_released = True
             return True
-
-    def check_quota(
-        self,
-        installation_id: str,
-        directory: FileDirectory,
-        deadline: float,
-        additional: int = 0,
-        *,
-        is_new_upload: bool = False,
-    ) -> None:
-        """
-        计入已完成与旧暂存，活跃暂存按声明总量预留；不扫描其他命名空间。
-
-        :param installation_id: 当前安装
-        :param directory: 实际私有根
-        :param deadline: 枚举和核验截止时间
-        :param additional: 尚未登记的新增预留
-        :param is_new_upload: 本次还将新建一个暂存目录项
-        """
-        with self._lock:
-            own = tuple(item for item in self._uploads.values() if item.lease.installation_id == installation_id)
-            active_names = {item.temporary_name for item in own}
-            total = sum(item.reserved_bytes for item in own) + additional
-        names = directory.names(deadline)
-        if is_new_upload and len(names) >= 1024:
-            raise FileBoundaryError("私有目录项数超限", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
-        for name in names:
-            if name in active_names:
-                continue
-            stream = directory.file(name)
-            try:
-                total += stream.information().size
-            finally:
-                stream.close()
-            if total > self.max_space_bytes:
-                raise FileBoundaryError("私有空间已满", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
-        if total > self.max_space_bytes:
-            raise FileBoundaryError("私有空间已满", "PLUGIN_STORAGE_QUOTA_EXCEEDED")
 
     def cleanup(self, upload: StagedFile) -> bool:
         """

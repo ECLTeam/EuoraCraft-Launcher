@@ -3,11 +3,13 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：验证界面注入权限门禁、插槽内容边界与可信接收方转发。
+# 文件作用：验证界面注入内容原样转发、无长度与数量限制，以及可信接收方门禁。
 #
 # 公开接口：
 #   - test_html_slot_forwards_valid_content(tmp_path) -> None
-#   - test_vue_slot_rejects_oversized_template(tmp_path) -> None
+#   - test_html_slot_forwards_unfiltered_content(tmp_path) -> None
+#   - test_vue_slot_forwards_oversized_content(tmp_path) -> None
+#   - test_pages_have_no_registration_limit(tmp_path) -> None
 #   - test_slot_registration_requires_host_sink(tmp_path) -> None
 # ============================================================
 
@@ -71,21 +73,61 @@ def test_html_slot_forwards_valid_content(tmp_path: Path) -> None:
         session.close()
 
 
-def test_vue_slot_rejects_oversized_template(tmp_path: Path) -> None:
+def test_html_slot_forwards_unfiltered_content(tmp_path: Path) -> None:
+    broker, session, received = _broker(tmp_path)
+    html = '<div onclick="alert(1)"><script>window.__injected = true</script></div>'
+    try:
+        assert _request(
+            broker,
+            "ui.register_html",
+            {"slot_id": "custom-area", "html": html, "key": "k" * 100},
+        ) == {"registered": True}
+        assert received[0]["slot_id"] == "custom-area"
+        assert received[0]["html"] == html
+        assert received[0]["key"] == "k" * 100
+    finally:
+        broker.close()
+        session.close()
+
+
+def test_vue_slot_forwards_oversized_content(tmp_path: Path) -> None:
+    broker, session, received = _broker(tmp_path)
+    template, script, style = "x" * 60001, "y" * 60001, "z" * 60001
+    try:
+        assert _request(
+            broker,
+            "ui.register_vue",
+            {
+                "slot_id": "plugin-slot-content-bottom",
+                "component_name": "DemoCard",
+                "template": template,
+                "script": script,
+                "style": style,
+            },
+        ) == {"registered": True}
+        assert received[0]["template"] == template
+        assert received[0]["script"] == script
+        assert received[0]["style"] == style
+    finally:
+        broker.close()
+        session.close()
+
+
+def test_pages_have_no_registration_limit(tmp_path: Path) -> None:
     broker, session, received = _broker(tmp_path)
     try:
-        with pytest.raises(ProtocolError) as error:
-            _request(
+        for index in range(17):
+            assert _request(
                 broker,
-                "ui.register_vue",
+                "ui.register_page",
                 {
-                    "slot_id": "plugin-slot-content-bottom",
-                    "component_name": "DemoCard",
-                    "template": "x" * 60001,
+                    "path": f"/page-{index}",
+                    "title": f"Page {index}",
+                    "component_name": f"Page{index}",
+                    "template": "<div>page</div>",
                 },
-            )
-        assert error.value.error_code == "PLUGIN_SCHEMA_INVALID"
-        assert received == []
+            ) == {"registered": True}
+        assert len(received) == 17
     finally:
         broker.close()
         session.close()

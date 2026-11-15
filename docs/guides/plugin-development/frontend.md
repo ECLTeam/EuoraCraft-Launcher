@@ -29,7 +29,7 @@ self.define_panel("tools", "Tools", (
 
 ## 主窗口插槽
 
-主窗口注入对所有插件开放，无需申请权限。通过 `define_html_slot(slot_id, html, key=..., context_key=...)` 或 `define_vue_slot(slot_id, component_name, template, script=..., style=..., key=..., context_key=...)` 注册。
+主窗口注入对所有插件开放，无需申请权限。通过 `define_html_slot(slot_id, html, key=..., context_key=...)` 或 `define_vue_slot(slot_id, component_name, template, script=..., style=..., key=..., context_key=...)` 注册。HTML、Vue 模板/脚本/样式与注入 CSS 均原样透传：宿主不再做 HTML 消毒、`@scope` 样式包裹、内容长度或页面数量限制（2026-11-15 边界开放）；插槽标识与页面路由的结构校验、插件归属标记仍保留，禁用、卸载或运行结束时按 `data-plugin` 清理。
 
 已有插槽包含标题栏、侧栏、内容顶部/底部、实例区域、插件页、设置、任务队列等；是否挂载及其上下文由实际页面决定。稳定 key 用于更新同一内容，不要每次刷新制造随机插槽身份。
 
@@ -41,7 +41,7 @@ self.define_html_slot(
 
 禁用、卸载和运行结束会清理插件注入的主窗口内容。
 
-同页注入可访问主窗口 DOM 和通用桥，当前尚无完整通用桥隔离。`frontend/src/plugin-sdk` 的主题、DOM、控件、状态、路由和业务封装是主窗口工具，不属于 Worker 或独立窗口的契约接口。详见[注入决策](../../designs/plugin-main-window-injection-decision.md)。
+同页注入可访问主窗口 DOM 和通用桥，当前尚无完整通用桥隔离。启用即信任：内联事件、`<style>` 和 Vue 脚本按浏览器语义执行，经 `innerHTML` 插入的 `<script>` 标签本身不会自动执行；需要执行代码时使用 Vue 插槽的 `script` 或脚本注入事件。`frontend/src/plugin-sdk` 的主题、DOM、控件、状态、路由和业务封装是主窗口工具，不属于 Worker 或独立窗口的契约接口。详见[注入决策](../../designs/plugin-main-window-injection-decision.md)。
 
 ## 独立原生前端（不再提供）
 

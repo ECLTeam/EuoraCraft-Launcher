@@ -51,7 +51,7 @@
 
 目录查询为基础能力，其余使用 `instances.manage`。支持 vanilla/Fabric/Forge/NeoForge/Quilt，省略加载器版本时选择兼容版本，不接受任意下载 URL。
 
-启动 options 允许 memory_mb 512—65536、width 320—16384、height 240—16384、fullscreen，以及获准 `runtime_ref`。账户和其余启动准备由宿主提供。直接启动入口不提供裸 Java 路径、wrapper、脚本、任意参数或环境变量；[启动钩子](extensions.md)另有独立的有限修改规则。
+启动 options 允许 memory_mb 512—65536、width 320—16384、height 240—16384、fullscreen，以及获准 `runtime_ref`。账户和其余启动准备由宿主提供。直接启动入口不提供裸 Java 路径、wrapper、脚本、任意参数或环境变量；[启动钩子](extensions.md)可在所有阶段补充 JVM/游戏参数与环境变量。
 
 GameRunView 包含 game_run_ref、instance_ref、pid、running、exit_code。停止按原始所有者与进程对象复核，不能按 PID 查杀其他来源。
 
@@ -114,12 +114,12 @@ FileRef 为 `{root_ref, relative_path}`，root_ref 通过基础资源发现获�
 | `files.write_commit`  | write_ref、sha256                              | 所属提交任务回执             |
 | `files.write_abort`   | write_ref                                      | 上传中止或已交任务的释放情况 |
 | `files.delete`        | target、expected_etag                          | 按原文件版本删除任务         |
-| `network.request`     | method:GET/HEAD/POST/PUT/PATCH/DELETE、url、headers?、json?、data? | 获准精确站点的有界响应       |
+| `network.request`     | method（任意 HTTP token）、url、headers?、json?、data? | 完整响应状态、响应头与实体   |
 | `downloads.submit`    | target、url、overwrite:false、expected_sha256? | 网络加私有提交的所属任务     |
 
-文件和私有下载单文件上限 8 MiB，块最大 32 KiB，安装空间 64 MiB。响应和任务配额详见包协议。资源安装的 64 MiB 领域上限不能解除私有源文件的 8 MiB 限制。
+私有文件、私有下载与安装空间不再设大小配额；文件仍按 32 KiB 协议分块，每 run 最多 4 个并发上传。分页、实例资料和游戏资源等领域仍有各自上限，详见包协议。任务并发数、回执容量与超时预算另见包协议。
 
-重定向逐跳校验，内网与特殊用途地址防护保留。认证头仅允许 HTTPS；没有 POST、请求体、任意 Socket 或 HTTP 客户端对象。Python 自身 OS 能力不受 Host API 限制。
+网络目标策略、HTTP 方法、请求/响应头与请求/响应体大小限制均已移除（2026-11-15 边界开放）：支持 POST/PUT/PATCH/DELETE 与请求体，内网和回环地址照常拨号，响应头全量返回。URL 结构、DNS 连接固定、真实 peer 核验、重定向循环防护与跨站认证头清除保留。Worker 继承宿主完整环境变量；Python 自身 OS 能力不受 Host API 限制。
 
 ## 自身任务
 

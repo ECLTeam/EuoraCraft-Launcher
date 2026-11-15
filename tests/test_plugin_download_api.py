@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -93,15 +94,17 @@ def test_full_bounded_stream_publishes_only_complete_file(downloads, tmp_path, s
         headers = {k.lower(): v for k, v in requests[0][2].items()}
         assert headers["accept-encoding"] == "identity" and "range" not in headers
         if size > 32768:
-            with pytest.raises(ProtocolError) as exc:
-                call(broker, "network.request", {"method": "GET", "url": f"{scheme}://p10.example.test:{port}/data"})
-            assert exc.value.error_code == "PLUGIN_RESPONSE_TOO_LARGE"
+            # 响应上限放开：同一资源直接经 network.request 读取也应完整返回
+            result = call(
+                broker, "network.request", {"method": "GET", "url": f"{scheme}://p10.example.test:{port}/data"}
+            )
+            assert len(base64.b64decode(result["body_b64"])) == size
 
 
 @pytest.mark.parametrize(
     "raw,code",
     [
-        (b"HTTP/1.1 200 OK\r\nContent-Length: 8388609\r\n\r\n", "PLUGIN_RESPONSE_TOO_LARGE"),
+        (b"HTTP/1.1 200 OK\r\nContent-Length: 8388609\r\n\r\n", "PLUGIN_NETWORK_FAILED"),
         (b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\nshort", "PLUGIN_NETWORK_FAILED"),
         (b"HTTP/1.1 200 OK\r\nContent-Length: nope\r\n\r\n", "PLUGIN_NETWORK_FAILED"),
         (b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nx", "PLUGIN_NETWORK_FAILED"),
@@ -127,8 +130,10 @@ def test_invalid_response_never_publishes_and_does_not_retry(downloads, tmp_path
         assert not (tmp_path / "operations").exists()
 
 
-def test_unknown_length_over_limit_cleans_all_staging(downloads, tmp_path):
+def test_unknown_length_large_download_publishes_complete_file(downloads, tmp_path):
+    """下载大小上限放开：未知长度的 8.4 MiB 响应完整发布。"""
     create, manager, _, _ = downloads
+    body = b"x" * 8192 * 1025
 
     def respond(*_):
         yield b"HTTP/1.1 200 OK\r\n\r\n"
@@ -138,8 +143,9 @@ def test_unknown_length_over_limit_cleans_all_staging(downloads, tmp_path):
     with server(respond) as (port, _, _):
         broker = create([f"http:p10.example.test:{port}"])
         view = finish(broker, manager, submit(broker, f"http://p10.example.test:{port}/"))
-        assert view["error_code"] == "PLUGIN_RESPONSE_TOO_LARGE"
-        assert not list(directory(tmp_path, broker).iterdir())
+        assert view["state"] == "completed"
+        assert view["result"]["size"] == len(body)
+        assert (directory(tmp_path, broker) / "download.bin").read_bytes() == body
 
 
 def test_same_mutation_key_concurrently_returns_one_task(downloads, tmp_path):
@@ -313,7 +319,7 @@ def test_queued_downloads_share_upload_quota_and_cancel_without_network(download
     assert entered.wait(1)
     try:
         receipts = [submit(broker, "https://example.com/x", f"{number}.bin") for number in range(4)]
-        assert sum(item.reserved_bytes for item in storage.uploads(broker.session.run_id)) == 32 * 1024 * 1024
+        assert sum(item.reserved_bytes for item in storage.uploads(broker.session.run_id)) == 0
         assert all(item.expected_bytes is None for item in storage.uploads(broker.session.run_id))
         with pytest.raises(ProtocolError) as exc:
             submit(broker, "https://example.com/x", "fifth.bin")
@@ -429,5 +435,5 @@ def test_raw_informational_response_budget_is_bounded(downloads, tmp_path):
     with server(respond) as (port, _, _):
         broker = create([f"http:p10.example.test:{port}"])
         view = finish(broker, manager, submit(broker, f"http://p10.example.test:{port}/"))
-        assert view["error_code"] == "PLUGIN_RESPONSE_TOO_LARGE"
-        assert not list(directory(tmp_path, broker).iterdir())
+        # 1MiB 临时响应现在完整吞掉后正常完成，不再有原始预算上限
+        assert view["state"] == "completed"

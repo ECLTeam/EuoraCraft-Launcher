@@ -13,7 +13,7 @@ import psutil
 import pytest
 
 from ECL.bootstrap import local_worker_endpoint
-from ECL.plugins.contracts import PluginRuntimeError, ProtocolPolicy, WireMessage
+from ECL.plugins.contracts import PluginRuntimeError, WireMessage
 from ECL.plugins.runtime.executable import ExecutableLaunchSpec
 from ECL.plugins.runtime.posix import PosixScope
 from ECL.plugins.runtime.supervisor import WorkerSupervisor
@@ -94,13 +94,25 @@ def test_unix_transport_partial_frame_timeout_is_terminal(payload):
         server.close()
 
 
-def test_unix_transport_rejects_length_before_reading_payload():
+def test_unix_transport_rejects_zero_length_before_reading_payload():
     server, client, accepted = _pair()
     try:
-        client._socket.sendall(struct.pack("!I", ProtocolPolicy.max_frame_bytes + 1))
+        client._socket.sendall(struct.pack("!I", 0))
         with pytest.raises(PluginRuntimeError) as error:
             accepted.receive()
         assert error.value.error_code == "PLUGIN_MESSAGE_TOO_LARGE"
+    finally:
+        client.close()
+        accepted.close()
+        server.close()
+
+
+def test_unix_transport_accepts_frame_beyond_old_limit():
+    server, client, accepted = _pair()
+    payload = WireMessage("response", {"value": "x" * 128 * 1024}, "1", "callbacks.invoke").encode()
+    try:
+        client._socket.sendall(struct.pack("!I", len(payload)) + payload)
+        assert len(accepted.receive().params["value"]) == 128 * 1024
     finally:
         client.close()
         accepted.close()

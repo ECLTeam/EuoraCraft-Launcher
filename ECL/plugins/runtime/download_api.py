@@ -24,7 +24,7 @@ from ECL.plugins.contracts import JsonValue, ProtocolError
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.file_api import RuntimeFiles
-from ECL.plugins.runtime.file_storage import PluginFileStorage, StagedFile
+from ECL.plugins.runtime.file_storage import StagedFile
 from ECL.plugins.runtime.models import DownloadSubmitRequest, NetworkRequest
 from ECL.plugins.runtime.network_api import NetworkCall, RuntimeNetwork
 from ECL.plugins.runtime.operation_adapters import RuntimeOperations
@@ -83,7 +83,7 @@ class RuntimeDownloads:
         staged = self._files.prepare(
             query.target,
             write_lease,
-            PluginFileStorage.max_file_bytes,
+            0,
             None,
             deadline,
             additional_leases=(network_lease,),
@@ -140,7 +140,6 @@ class RuntimeDownloads:
                     deadline,
                     additional_leases=(resources.staged.lease,),
                     cancel_event=context.cancel_event,
-                    wire_limit=9 * 1024 * 1024,
                 )
                 resources.call = call
                 try:
@@ -188,8 +187,6 @@ class RuntimeDownloads:
             if len(lengths) != 1 or not value or not value.isdigit() or len(value) > 20:
                 raise ProtocolError("插件下载响应长度无效", "PLUGIN_NETWORK_FAILED")
             expected = int(value)
-            if expected > staged.reserved_bytes:
-                raise ProtocolError("插件下载文件超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
         digest = hashlib.sha256()
         for chunk in response.iter_stream():
             for offset in range(0, len(chunk), 32768):

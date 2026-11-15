@@ -229,9 +229,6 @@ class RuntimeModpacks:
         """
         url = str(entry.url)
         lease = self._session.lease()
-        maximum = 128 * 1024 * 1024
-        if entry.size is not None and entry.size > maximum:
-            raise ProtocolError("整合包单个下载文件超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
         with private_transport_scope():
             call = self._network.service.begin(
                 self._network,
@@ -239,7 +236,6 @@ class RuntimeModpacks:
                 deadline,
                 additional_leases=leases,
                 cancel_event=context.cancel_event,
-                wire_limit=maximum + 1024 * 1024,
             )
             try:
                 with self._network.stream(call, NetworkRequest(method="GET", url=url)) as (_, response):
@@ -252,7 +248,7 @@ class RuntimeModpacks:
                         for chunk in response.iter_stream():
                             call.accept()
                             received += len(chunk)
-                            if received > maximum or (entry.size is not None and received > entry.size):
+                            if entry.size is not None and received > entry.size:
                                 raise ProtocolError("整合包文件响应超出预算", "PLUGIN_RESPONSE_TOO_LARGE")
                             stream.write(chunk)
                             context.check_cancelled()

@@ -3,6 +3,8 @@
 - 日期：2026-11-08。
 - 状态：用户已确认并实施，本地验证完成，未推送或发布。
 
+> **后续边界开放（2026-11-15）**：本 ADR 中「与权限无关的安全边界全部保留」的表述已进一步收窄——内网/特殊用途地址防护、文件大小配额、网络方法与响应限制、命令/回调数量、Worker 环境变量白名单、UI 注入消毒与内容长度限制均已移除，宿主 broker 只保留方法路由、运行身份、结构化校验与生命周期管理。本文其余论证作为当时的决策记录保留；现行边界以[插件包格式](protocols/eclplugin-package-format.md)与[开发手册](guides/plugin-development/README.md)为准。
+
 ## 问题与选择
 
 插件 Worker API v2 配有一套完整的权限系统：清单声明 `permissions` 字段（13 种能力）、用户在主窗口逐项 allow/deny、`grant_store` 持久化授权记录、每个运行时 API 经 `authorize(capability) → GrantLease → check()` 四重核对。权限概念渗透到 17 个运行时模块、3 个 IPC 端点、前端审批弹窗与资源选择器。

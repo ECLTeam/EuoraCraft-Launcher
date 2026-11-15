@@ -22,19 +22,12 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ECL.utils import get_logger
-
-# 第三方钩子返回的参数修改上限：一次回调不能塞入巨量参数拖垮命令行。
-remote_limit_args = 32
-remote_limit_arg_length = 512
-remote_limit_env = 32
-_remote_env_key = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 
 
 @dataclass
@@ -59,35 +52,23 @@ class LaunchContext:
 
 def apply_remote_modifications(context: LaunchContext, payload: Mapping[str, Any]) -> None:
     """
-    把第三方钩子返回的参数修改应用到启动上下文，越界整体拒绝。
+    把插件钩子返回的参数修改应用到启动上下文。
 
-    只接受追加 JVM 参数、追加游戏参数与覆写环境变量三类修改；任何一项
-    越界都不应用，避免半份修改让启动参数处于不可解释状态。
+    接受追加 JVM 参数、追加游戏参数与覆写环境变量三类修改；类型不符的
+    条目跳过，不因单项无效丢弃其余合法修改。
 
     :param context: 当前启动上下文
     :param payload: 钩子返回的修改描述
-    :raises ValueError: 字段类型、数量或长度越界时抛出
     """
-    for field_name, limit in (("jvm_args", remote_limit_args), ("game_args", remote_limit_args)):
+    for field_name in ("jvm_args", "game_args"):
         value = payload.get(field_name)
         if value is None:
             continue
-        if not isinstance(value, list) or len(value) > limit:
-            raise ValueError(f"{field_name} 数量无效")
-        if any(not isinstance(item, str) or len(item) > remote_limit_arg_length for item in value):
-            raise ValueError(f"{field_name} 内容无效")
-        getattr(context, field_name).extend(value)
+        if isinstance(value, list):
+            getattr(context, field_name).extend(str(item) for item in value)
     env = payload.get("env")
-    if env is None:
-        return
-    if not isinstance(env, Mapping) or len(env) > remote_limit_env:
-        raise ValueError("env 数量无效")
-    for key, value in env.items():
-        if not isinstance(key, str) or _remote_env_key.fullmatch(key) is None:
-            raise ValueError("env 键无效")
-        if not isinstance(value, str) or len(value) > remote_limit_arg_length:
-            raise ValueError("env 值无效")
-    context.env.update(env)
+    if isinstance(env, Mapping):
+        context.env.update({str(key): str(value) for key, value in env.items()})
 
 
 class LaunchHookRegistry:

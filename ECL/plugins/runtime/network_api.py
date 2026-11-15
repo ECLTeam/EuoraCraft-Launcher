@@ -3,7 +3,7 @@
 # ECLTeam © 2026 GPL-3.0 License
 # https://github.com/ECLTeam/EuoraCraft-Launcher
 #
-# 文件作用：执行插件受控网络请求（安全只读与带白名单请求体的变更方法），
+# 文件作用：执行插件网络请求（任意 HTTP 方法、请求体与全部响应头），
 #   维护原始授权、重定向、有限 DNS 与真实清理归属。
 #
 # 公开接口：
@@ -34,7 +34,7 @@ import httpcore
 import httpx
 
 from ECL.plugins.contracts import JsonValue, ProtocolError
-from ECL.plugins.network_targets import NetworkOrigin, NetworkTargetPolicy
+from ECL.plugins.network_targets import NetworkOrigin
 from ECL.plugins.run_models import PluginLease
 from ECL.plugins.run_store import PluginRunError, PluginRunSession
 from ECL.plugins.runtime.models import NetworkRequest
@@ -64,23 +64,20 @@ class NetworkCall:
         *,
         additional_leases: tuple[PluginLease, ...] = (),
         cancel_event: Event | None = None,
-        wire_limit: int = 262144,
     ) -> None:
         """
-        绑定宿主原始准入、取消信号与查询或下载预算，不读取插件自报权限。
+        绑定宿主原始准入、取消信号与总截止，不读取插件自报权限。
 
         :param owner: 当前运行网络门面
         :param lease: 原网络准入
         :param deadline: 所有跳转共享的总截止
         :param additional_leases: 同时必须有效的原始写准入
         :param cancel_event: 任务服务拥有的真实取消信号
-        :param wire_limit: 宿主确定的单跳原始收包上限
         """
         self.owner: RuntimeNetwork = owner
         self.lease: PluginLease = lease
         self.leases: tuple[PluginLease, ...] = (lease, *additional_leases)
         self.cancel_event: Event | None = cancel_event
-        self.wire_limit: int = wire_limit
         self.deadline: float = deadline
         self._lock = RLock()
         self._cancelled = Event()
@@ -250,7 +247,6 @@ class PluginNetworkService:
         *,
         additional_leases: tuple[PluginLease, ...] = (),
         cancel_event: Event | None = None,
-        wire_limit: int = 262144,
     ) -> NetworkCall:
         """
         在原始授权接受点保留 run 和宿主名额，不排队重放请求。
@@ -260,7 +256,6 @@ class PluginNetworkService:
         :param deadline: 包含所有跳转的截止时间
         :param additional_leases: 下载同时需要的原始写准入
         :param cancel_event: 任务取消信号，查询不提供
-        :param wire_limit: 宿主指定的单跳原始预算
         :return: 持续跟踪至真实结束的调用
         :raises ProtocolError: 已关闭或实际请求名额耗尽时抛出
         """
@@ -270,7 +265,6 @@ class PluginNetworkService:
             deadline,
             additional_leases=additional_leases,
             cancel_event=cancel_event,
-            wire_limit=wire_limit,
         )
 
         def register() -> None:
@@ -310,8 +304,8 @@ class PluginNetworkService:
             if not results or len(results) > 16:
                 raise ProtocolError("插件网络解析结果无效", "PLUGIN_NETWORK_RESOLUTION_FAILED")
             addresses = tuple(dict.fromkeys(ip_address(value) for value in results if "%" not in value))
-            if len(addresses) != len(set(results)) or any(not NetworkTargetPolicy.allows(item) for item in addresses):
-                raise ProtocolError("插件网络目标不允许访问", "PLUGIN_NETWORK_TARGET_DENIED")
+            if not addresses:
+                raise ProtocolError("插件网络解析结果无效", "PLUGIN_NETWORK_RESOLUTION_FAILED")
             return addresses[0]
         except (ProtocolError, PluginRunError, GameServiceError):
             raise
@@ -388,7 +382,7 @@ class PluginNetworkService:
             retries=0,
             http1=True,
             http2=False,
-            network_backend=PinnedNetworkBackend(origin, address, call, self._dialer, call.wire_limit),
+            network_backend=PinnedNetworkBackend(origin, address, call, self._dialer),
         )
 
     def reap(self, call: NetworkCall) -> None:
@@ -429,12 +423,9 @@ class PluginNetworkService:
 
 class RuntimeNetwork:
     """
-    当前 run 的同步只读网络查询，不创建后台业务任务或公开请求句柄。
+    当前 run 的同步网络请求，不创建后台业务任务或公开请求句柄。
     """
 
-    returned_headers: ClassVar[frozenset[str]] = frozenset(
-        {"content-type", "content-length", "etag", "last-modified", "cache-control"}
-    )
     redirects: ClassVar[frozenset[int]] = frozenset({301, 302, 303, 307, 308})
 
     def __init__(self, session: PluginRunSession, service: PluginNetworkService) -> None:
@@ -459,11 +450,11 @@ class RuntimeNetwork:
 
     def handle(self, params: dict[str, JsonValue], deadline: float) -> dict[str, JsonValue]:
         """
-        只接受安全只读方法与带白名单请求体的变更方法，全部跳转与交付使用同一原始租约和总预算。
+        接受任意合法 HTTP 方法与请求体，全部跳转与交付使用同一原始租约和总截止。
 
         :param params: 已经过 JSON 边界的请求
         :param deadline: RPC 原始截止时间
-        :return: 完整有界实体和白名单响应头
+        :return: 完整实体与全部响应头
         :raises ProtocolError: 网络、输入、范围、预算或生命周期不满足时抛出
         """
         deadline = min(deadline, monotonic() + 30)
@@ -561,15 +552,13 @@ class RuntimeNetwork:
             if not location or any(ord(char) <= 32 or ord(char) == 127 for char in location):
                 raise ValueError("重定向无效")
             next_origin, next_url = NetworkOrigin.from_url(urljoin(url, location))
-            if origin.scheme == "https" and next_origin.scheme != "https":
-                raise ValueError("不允许降级")
             return next_origin, next_url
         except (ValueError, UnicodeError):
             raise ProtocolError("插件网络重定向无效", "PLUGIN_REDIRECT_DENIED") from None
 
     def _response_headers(self, response: httpcore.Response) -> tuple[dict[str, str], list[bytes]]:
         """
-        返回完整小型实体，响应头只投影允许字段，不存储 Cookie 或解压实体。
+        返回全部响应头并收集内容编码；含控制字符的头值跳过，实体不解压。
         """
         headers: dict[str, str] = {}
         encodings: list[bytes] = []
@@ -577,23 +566,15 @@ class RuntimeNetwork:
             name = raw_name.decode("ascii").lower()
             if name == "content-encoding":
                 encodings.append(raw_value.lower().strip())
-            if name not in self.returned_headers:
-                continue
             value = raw_value.decode("latin-1")
             if any(ord(char) < 32 or ord(char) == 127 for char in value):
-                raise ProtocolError("插件网络响应头无效", "PLUGIN_NETWORK_FAILED")
-            if name in headers:
-                if name != "cache-control":
-                    raise ProtocolError("插件网络响应头重复", "PLUGIN_NETWORK_FAILED")
-                value = f"{headers[name]}, {value}"
+                continue
             headers[name] = value
-        if sum(len(name.encode()) + len(value.encode()) for name, value in headers.items()) > 4096:
-            raise ProtocolError("插件网络响应头超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
         return headers, encodings
 
     def _result(self, call: NetworkCall, method: str, url: str, response: httpcore.Response) -> dict[str, JsonValue]:
         """
-        返回完整小型实体，无体响应不按描述性的 Content-Length 读取。
+        返回完整实体与全部响应头，无体响应不按描述性的 Content-Length 读取。
         """
         headers, encodings = self._response_headers(response)
         has_body = method != "HEAD" and response.status not in {204, 304}
@@ -601,12 +582,8 @@ class RuntimeNetwork:
         if has_body:
             if encodings and encodings != [b"identity"]:
                 raise ProtocolError("插件网络响应编码不支持", "PLUGIN_NETWORK_ENCODING_UNSUPPORTED")
-            if "content-length" in headers and int(headers["content-length"]) > 32768:
-                raise ProtocolError("插件网络响应体超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
             for chunk in response.iter_stream():
                 call.check()
-                if len(body) + len(chunk) > 32768:
-                    raise ProtocolError("插件网络响应体超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
                 body.extend(chunk)
         call.check()
         return {

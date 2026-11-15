@@ -254,8 +254,7 @@ def test_target_limits_and_native_rejection_keep_original(files, tmp_path, kind)
     target_path = next(tmp_path.glob("plugin_data/*/files/target.bin"))
     if kind in {"8MiB", "oversize"}:
         target_path.write_bytes(b"x" * (8388608 + (kind == "oversize")))
-        if kind == "8MiB":
-            etag = call(broker, "files.stat", {"target": target})["etag"]
+        etag = call(broker, "files.stat", {"target": target})["etag"]
     elif kind == "directory":
         target_path.unlink()
         target_path.mkdir()
@@ -265,10 +264,8 @@ def test_target_limits_and_native_rejection_keep_original(files, tmp_path, kind)
         target_path.chmod(0o444)
     try:
         view = finish(broker, manager, delete(broker, target, etag))
-        assert view["state"] == ("completed" if kind == "8MiB" else "failed")
-        assert target_path.exists() == (kind != "8MiB")
-        if kind == "oversize":
-            assert view["error_code"] == "PLUGIN_FILE_TOO_LARGE"
+        assert view["state"] == ("completed" if kind in {"8MiB", "oversize"} else "failed")
+        assert target_path.exists() == (kind not in {"8MiB", "oversize"})
     finally:
         if kind == "readonly":
             target_path.chmod(0o666)

@@ -1,5 +1,7 @@
 # `.eclplugin` 归档格式 v1
 
+> **边界开放（2026-11-15）**：私有文件/下载配额、网络目标与请求/响应限制、启动钩子阶段、命令/回调数量、Worker 环境变量、UI 注入消毒与内容长度限制均已移除；宿主 broker 只保留方法路由、运行身份、结构化校验与生命周期管理。文中仍出现的 64 KiB/64 MiB 等数值属于未放开的领域（分页、实例资料、游戏资源），不是插件 API 配额。
+
 `.eclplugin` 是无签名 ZIP 归档，不是加密文件。第三方插件使用插件 API（当前契约版本 1），在独立 Worker 中运行；系统插件仍由宿主维护。安装只准备文件，不执行入口。依赖安装到独立库目录，不另建解释器或 venv；Worker 复用当前发行物。归档摘要用于完整性校验，不证明作者身份。Worker 不提供恶意 Python 的操作系统文件或网络沙箱。
 
 后端用 `plugin_package_inspect` 预检，再通过 `plugin_install` 传入 `plugin_path`、`confirm_unverified_source: true` 和 `allow_network` 安装。Dev Channel 对应 `plugin.inspect` 和 `plugin.install`，路径字段为 `path`。预检返回 `dependencies_ready`；安装结果包含 `status` 和 `message`，列表提供 `pending_restart` 与 `installed_version`（Dev Channel 为 `pendingRestart`、`installedVersion`）。不再接受运行时离线包参数。未允许联网时仅使用包内 wheels、共享 wheel 缓存和已就绪依赖目录。
@@ -125,7 +127,7 @@ Worker、面板、独立窗口与可信全屏设置界面共用 `PluginSettingsS
 
 设置写入必须提供 `expected_revision`；变更 RPC 使用本运行 `mutation_key` 去重，同键不同内容拒绝。等待超时不能当作动作已经停止或回滚，也不能无条件换新键重放副作用。
 
-命令字段 schema 当前只接受 `string`、`number`、`integer`、`bool`，支持 `required`、`max_length`、`minimum`、`maximum`、`enum`，不执行插件验证器、不支持任意 JSON Schema 引用或嵌套对象。每组最多 32 个字段，单运行最多 64 个命令、32 个订阅；请求和结果额外限制为 64 KiB。设置支持 `bool`、`string`、`number`、`select`，所有写入经定义校验并原子提交。
+命令字段 schema 当前只接受 `string`、`number`、`integer`、`bool`，支持 `required`、`max_length`、`minimum`、`maximum`、`enum`，不执行插件验证器、不支持任意 JSON Schema 引用或嵌套对象。每组最多 32 个字段，单运行最多 32 个订阅；命令数量、回调数量、请求业务载荷与结果大小不再设上限（2026-11-15 边界开放）。设置支持 `bool`、`string`、`number`、`select`，所有写入经定义校验并原子提交。
 
 需要超时后核对写入的调用方应显式保留原 `mutation_key`，通过 `host.call("mutations.get", {"mutation_key": key})` 查询同一运行的 `pending`、`succeeded` 或 `failed`，结果包含 `result` 和 `error_code`。回执最多保留 1024 个，容量满时拒绝新变更；不淘汰有效回执后重放。运行代次改变后不交付旧回执结果；run 结束后回执不再可用。SDK 自动生成的键不会构成自动重试承诺。
 
@@ -193,17 +195,17 @@ TaskView 返回 `operation_ref,kind,state,percent,stage,message,can_cancel,cance
 
 读取使用 files.stat、files.list、files.read。read 的 count 为 1—32768，结果为 Base64、eof 和完整内容与物理身份绑定的 etag；expected_etag 变化时明确失败。FileView 时间字段为 modified_ms。读取不会初始化首次空间；损坏或丢失的已有空间不能当作空空间重建。
 
-新建按 files.write_begin `{target,total_bytes,overwrite:false}`、files.write_chunk `{write_ref,offset,data_b64}`、files.write_commit `{write_ref,sha256}` 执行。单文件至多 8 MiB，原始块至多 32 KiB；严格 Base64、连续偏移、完整 SHA-256。零长度文件省略 chunk。begin/chunk/commit 需要稳定 mutation_key 才能重试同一请求，HostClient.call 默认每次生成新键；重试须保存原键。
+新建按 files.write_begin `{target,total_bytes,overwrite:false}`、files.write_chunk `{write_ref,offset,data_b64}`、files.write_commit `{write_ref,sha256}` 执行。原始块至多 32 KiB；单文件大小与安装空间不再设配额（2026-11-15 边界开放）。严格 Base64、连续偏移、完整 SHA-256。零长度文件省略 chunk。begin/chunk/commit 需要稳定 mutation_key 才能重试同一请求，HostClient.call 默认每次生成新键；重试须保存原键。
 
 commit 返回 `{operation_ref,state:"queued"}`，表示已接纳；实际结果通过 operations.get/list 查询。发布始终原生不覆盖，目标突现时保留外部文件。任务结果只在提交时和读取时都有有效运行准入时交付。提交等待超时后先查 mutations.get，不能将超时解释为任务未创建。
 
-files.write_abort `{write_ref}` 不消耗变更回执，运行结束后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放配额或允许重新启用。
+files.write_abort `{write_ref}` 不消耗变更回执，运行结束后仍能清理自己的上传。交给任务后返回 released:false，取消改用 operations.cancel；已接受提交不再取消。清理失败、实际线程未结束或审计未完成时保持 pending，不提前释放暂存名额或允许重新启用。
 
-同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量 64 MiB，目录最多 1024 项，每 run 最多 4 个上传及 32 MiB 预留，宿主总上传预留 128 MiB；空闲上传 60 秒过期。未登记的崩溃残留计入空间，不自动恢复或删除；替换事务按下节原子替换。参见 完整协议与验收。
+同一安装更新保留数据但使旧 run 引用失效；重新安装获得新的私有空间，旧文件保留。空间总量、目录项数与上传字节预留不再设配额（2026-11-15 边界开放）；每 run 仍最多 4 个并发上传，空闲上传 60 秒过期。未登记的崩溃残留不自动恢复或删除；替换事务按下节原子替换。参见 完整协议与验收。
 
 ### 按版本删除私有文件
 
-`files.delete({target:FileRef,expected_etag:64位小写十六进制})` 使用本运行基础准入，无独立删除开关。目标必须是当前私有根内非空名称的普通单链接文件，至多8 MiB。拒绝目录、ADS、链接、递归、force、额外字段和真实路径；目标缺失返回 PLUGIN_RESOURCE_NOT_FOUND，超大返回 PLUGIN_FILE_TOO_LARGE。根发现和删除均不初始化首次空间。
+`files.delete({target:FileRef,expected_etag:64位小写十六进制})` 使用本运行基础准入，无独立删除开关。目标必须是当前私有根内非空名称的普通单链接文件，文件大小不再设上限。拒绝目录、ADS、链接、递归、force、额外字段和真实路径；目标缺失返回 PLUGIN_RESOURCE_NOT_FOUND。根发现和删除均不初始化首次空间。
 
 RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；任务 plugin_file_delete 从本次提交起共30秒，包含排队。上传、下载和删除共用大小写不敏感目标占用，冲突为 PLUGIN_FILE_BUSY。每run至多4个、宿主32个未释放删除资源，与上传字节预留独立。
 
@@ -215,7 +217,7 @@ RPC最多5秒只登记名称占用并返回 `{operation_ref,state:"queued"}`；�
 
 ### 按版本替换私有文件
 
-`files.replace_begin({target:FileRef,expected_etag,total_bytes})` 使用本运行基础准入，返回与新建相同的 `{write_ref,max_chunk_bytes}`。随后使用既有write_chunk、write_commit、write_abort；上传始终绑定原始基础准入，运行或代次失效后不能复活旧上传。原、新文件均至多8 MiB，分块32 KiB；不接受overwrite、force或真实路径。begin不初始化缺失空间或目标。已有文件和新暂存同时计入配额。
+`files.replace_begin({target:FileRef,expected_etag,total_bytes})` 使用本运行基础准入，返回与新建相同的 `{write_ref,max_chunk_bytes}`。随后使用既有write_chunk、write_commit、write_abort；上传始终绑定原始基础准入，运行或代次失效后不能复活旧上传。原、新文件大小不再设配额，分块 32 KiB；不接受 overwrite、force 或真实路径。begin 不初始化缺失空间或目标，已有文件和新暂存共用本 run 的 4 个上传名额。
 
 commit创建plugin_file_replace任务，从提交起共30秒，包含排队。执行时从原句柄完整核对原对象与expected_etag，最终接纳前复核原lease、取消、截止及审计。核对通过后释放原对象独占句柄，用**原子替换**把暂存发布为原名：要么旧内容完整保留，要么新内容完整可见，不会出现半写文件。新建与下载继续禁止覆盖。
 
@@ -225,13 +227,13 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 ## 只读网络请求
 
-站点允许清单已随权限系统移除；启用的插件可请求任意 `http`/`https` URL。内网与特殊用途地址防护保留：只连接已验证的数字公网地址，任一 DNS 结果属于私有、保留或特殊用途网段时整跳拒绝。
+站点允许清单、内网与特殊用途地址防护均已移除（2026-11-15 边界开放）：启用的插件可请求任意 `http`/`https` URL，DNS 解析到的回环、内网或保留地址照常拨号。URL 结构、http/https 协议、DNS 连接固定与真实 peer 身份核验仍保留。
 
-调用 `host.call("network.request", {"method":"GET","url":"https://api.example.com/meta"}, timeout=30)`，严格只支持 GET/HEAD，无请求体。返回 `{status_code,url,headers,body_b64}`，url 为校验后的最终 URL。输入与规范 URL 各至多4096字节；GET 完整实体至多32768字节，超限、断流或长度不符明确失败。HEAD、204、304不读实体；HTTP 4xx/5xx 返回真实 HTTP 状态。请求不是任务，也不保存 mutation 回执；重复调用可能重新发送，不承诺远端零副作用或撤回已发送字节。
+调用 `host.call("network.request", {"method":"POST","url":"https://api.example.com/meta","json":{"key":"value"}}, timeout=30)`：方法是任意合法 HTTP token，请求体用 `json` 或 `data`（二选一），请求头不再设白名单。返回 `{status_code,url,headers,body_b64}`，url 为校验后的最终 URL，headers 为全部响应头，body 为完整实体；请求/响应体、请求/响应头与协议帧不再设字节上限。输入与规范 URL 各至多 4096 字节；HEAD、204、304 不读实体；HTTP 4xx/5xx 返回真实 HTTP 状态。请求不是任务，也不保存 mutation 回执；重复调用可能重新发送，不承诺远端零副作用或撤回已发送字节。
 
-请求头仅 Accept、If-None-Match、If-Modified-Since、User-Agent、Authorization、X-API-Key，认证头只允许 HTTPS。最多16项、总4096字节、值最多1024个可打印 ASCII 字符；拒绝大小写重复、控制字符和其他头。响应仅投影小写 content-type、content-length、etag、last-modified、cache-control，总4096字节。GET 不解压，宿主要求 identity，其他实体编码拒绝；无 Cookie、共享账户、环境代理、自定义 CA 或 HTTP/2。
+请求头名称须符合 HTTP token 语法、大小写不重复，值仅允许可打印 ASCII；数量、总长度与 Content-Type 不再设白名单或上限。响应头全量返回（含 `set-cookie`），含控制字符的值跳过；GET 不解压，宿主要求 identity，其他实体编码拒绝；无共享账户、环境代理、自定义 CA 或 HTTP/2，Cookie 不跨请求保存。
 
-每跳独立 DNS 和 HTTP/1 连接，只连接已验证数字公网地址，并核实真实 peer，TLS 始终保留原 DNS 名称与证书校验。任一 DNS 结果是内网、特殊用途、映射或转换地址则整跳拒绝。最多5次跳转，逐跳复核原始运行准入；禁止 HTTPS 降级，跨站永久移除认证头，Cookie 不保存。总截止最多30秒，每次阶段 I/O 最多5秒，每次底层读取最多8 KiB，每跳原始 HTTP 收包最多256 KiB。
+每跳独立 DNS 和 HTTP/1 连接，DNS 结果照常拨号并核实真实 peer，TLS 始终保留原 DNS 名称与证书校验。最多 5 次跳转，逐跳复核原始运行准入；跨站永久移除认证头，Cookie 不跨请求保存。总截止最多 30 秒，每次阶段 I/O 最多 5 秒，每次底层读取最多 8 KiB；每跳原始 HTTP 收包与协议帧不再设字节上限。
 
 每 run 同时2个请求，宿主8个请求、4个真实 DNS 工作者；满额立即拒绝。DNS超时或取消不证明实际解析结束，未结束时保留名额和清理 pending，阻止同安装重新启用；迟到结果只清理，不继续连接。解析工作者为有界守护线程，应用不无限 join，实际结束仍如实跟踪。连接/TLS 尚未返回真实流时按有限阶段预算等待，返回后登记并清理；关闭失败保留监管重试。
 
@@ -239,11 +241,11 @@ commit创建plugin_file_replace任务，从提交起共30秒，包含排队。�
 
 ## 私有空间下载任务
 
-`downloads.submit({url,target:FileRef,overwrite:false,expected_sha256?})` 只向已批准的精确公网站点发送 GET，将完整 HTTP 200 实体新建到当前安装私有根。URL 至多4096字节，文件至多8 MiB；文件名规则与 FileRef 相同，必须非空。overwrite 必须显式严格 false，拒绝覆盖、任意路径、子目录、请求体、自定义请求头、Range、续传或解压。expected_sha256 可省略，提供时须为64位小写十六进制，不接受 null。
+`downloads.submit({url,target:FileRef,overwrite:false,expected_sha256?})` 向目标 URL 发送 GET，将完整 HTTP 200 实体新建到当前安装私有根。URL 至多 4096 字节，下载文件大小不再设配额；文件名规则与 FileRef 相同，必须非空。overwrite 必须显式严格 false，拒绝覆盖、任意路径、子目录、请求体、自定义请求头、Range、续传或解压。expected_sha256 可省略，提供时须为 64 位小写十六进制，不接受 null。
 
-下载复用基础私有数据准入。每跳重新核验运行准入、DNS/IP/peer/TLS 与总截止，最多5次重定向、不降级、不重试、不继承代理/Cookie/账户。仅最终200进入文件写入；204、206、304和错误状态不发布文件，返回 PLUGIN_DOWNLOAD_FAILED。固定长度响应须完整匹配，缺少长度允许到 EOF；实体和原始收包分别限制8 MiB、每跳9 MiB，分块开销过大也明确失败。network.request 仍保持32 KiB实体、256 KiB每跳原始收包和30秒限制。
+下载复用基础私有数据准入。每跳重新核验运行准入、DNS 连接固定/peer/TLS 与总截止，最多 5 次重定向、不重试、不继承代理/Cookie/账户。仅最终 200 进入文件写入；204、206、304 和错误状态不发布文件，返回 PLUGIN_DOWNLOAD_FAILED。固定长度响应须完整匹配，缺少长度允许到 EOF；实体与原始收包不再设字节上限。network.request 同样不再设实体、响应头与每跳原始收包上限，仍保留 30 秒总截止。
 
-提交 RPC 至多5秒，返回 `{operation_ref,state:"queued"}`，通过 `operations.get/list/cancel` 查询与取消，不能把接纳当成文件已经保存。整个任务从首次提交开始最多1800秒，含排队与最终提交前校验；每个网络阶段至多5秒。队列不占网络/DNS名额，但预留目标和8 MiB空间，与上传共用每run4个暂存、32 MiB预留、宿主128 MiB预留和安装64 MiB空间。空间不足8 MiB时小文件也可能被拒绝；实际资源释放前不提前归还对应名额。
+提交 RPC 至多5秒，返回 `{operation_ref,state:"queued"}`，通过 `operations.get/list/cancel` 查询与取消，不能把接纳当成文件已经保存。整个任务从首次提交开始最多1800秒，含排队与最终提交前校验；每个网络阶段至多5秒。队列不占网络/DNS名额，但预留目标，与上传共用每 run 4 个暂存名额；空间配额不再限制下载大小，实际资源释放前不提前归还对应名额。
 
 同一 run 的 mutation_key 和相同请求只接纳一次。RPC 等待超时用原键查询 mutations.get，不换键自动重放；任务控制回执不因运行代次变化而恢复。下载的网络和写 lease 必须共同有效，最终发布按同一准入锁与任务锁排序；取消先于提交接受则无目标文件，发布接受先发生则按真实结果完成，不伪造回滚。
 
@@ -311,7 +313,7 @@ Java 目录中的全部已登记运行时随启用可见，候选 `kind` 为 `ja
 
 目录查询属于固定来源基础能力，复用用户设置的现有模组源，不接受插件指定 API 地址或提供方密钥。搜索每页 1—50 条，偏移最多 1000；版本分页每页 1—50 条。下载文件仍使用 `downloads.submit`，完成后再传私有 `FileRef` 安装。`download_info` 不隐式执行下载或写入。
 
-隔离与共享位置使用现有实例数据归属规则，不能根据实例名称自行拼路径。源与目标均固定实际句柄、拒绝链接和重解析点；同名目标不覆盖，资源版本变化后重新读取列表。当前单个资源安装最多 64 MiB，并继续受私有源文件自身配额约束。仅模组提供启用状态操作。
+隔离与共享位置使用现有实例数据归属规则，不能根据实例名称自行拼路径。源与目标均固定实际句柄、拒绝链接和重解析点；同名目标不覆盖，资源版本变化后重新读取列表。当前单个资源安装最多 64 MiB（游戏资源领域上限，与已移除的私有文件配额无关）。仅模组提供启用状态操作。
 
 ### 整合包所属任务
 
@@ -326,7 +328,7 @@ Java 目录中的全部已登记运行时随启用可见，候选 `kind` 为 `ja
 
 准备使用基础准入，导入使用管理游戏范围，导出同时要求查看实例与私有写入。每次运行最多保留 32 个准备引用和 32 个导出预览引用；准备另受领域有效期约束，运行关闭时释放，分页上限 100，明确选择或排除文件上限 1024。归档识别、路径穿越拒绝、文件大小和格式约束沿用现有领域实现。
 
-清单的每个下载地址单独通过重定向、DNS 和连接检查，不转交普通共享下载器；当前单文件下载上限 128 MiB。共享基础版本安装仍属于该插件的实际任务，运行准入失效在阶段检查处拒绝。取消可能保留已经安装的共享基础版本，按真实 partial / committed 及清理状态报告，不宣称完整事务回滚。导出中间归档不作为最终提交，私有文件原子发布成功才接受任务提交。
+清单的每个下载地址单独通过重定向、DNS 和连接检查，不转交普通共享下载器；插件适配器不再设单文件字节上限（2026-11-15 边界开放），整合包领域自身的归档校验继续有效。共享基础版本安装仍属于该插件的实际任务，运行准入失效在阶段检查处拒绝。取消可能保留已经安装的共享基础版本，按真实 partial / committed 及清理状态报告，不宣称完整事务回滚。导出中间归档不作为最终提交，私有文件原子发布成功才接受任务提交。
 
 导入实例保留实际 Minecraft 父版本关系及完整启动描述，导出不从自定义实例名称猜测版本。插件导入的暂存目录独占创建，不复用或清理既有同名用户暂存目录。
 
@@ -342,7 +344,7 @@ Java 目录中的全部已登记运行时随启用可见，候选 `kind` 为 `ja
 
 游戏目录边界由 `tests/test_plugin_game_queries.py` 验证；安装、共享占位及结果读取由 `test_plugin_game_install.py` 验证；启动、进程所有权及停止由 `test_plugin_game_launch.py` 验证。后两者包含公开示例经过真实源码与冻结Worker的RPC用例，完成记录见[游戏操作实施方案](../plans/plugin-game-install-launch-plan-2026-10-25.md#8-验证与交付)。
 
-真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py`、`test_plugin_network_worker.py` 和 `test_plugin_download_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。下载的流式实体、提交竞争、配额、取消和失败恢复由 `test_plugin_download_api.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
+真实冻结引导、依赖和生命周期用例位于 `tests/test_plugin_worker_bootstrap.py`、`test_plugin_worker_dependencies.py`、`test_plugin_worker_lifecycle.py`、`test_plugin_operation_worker.py`、`test_plugin_network_worker.py` 和 `test_plugin_download_worker.py`；正式管理器流程位于 `test_plugin_worker_manager.py`、`test_plugin_manager_packages.py` 与 `test_packaged_plugin_directories.py`。网络策略、真实流、日志和解释器退出另由 `test_plugin_network_targets.py`、`test_plugin_network_api.py`、`test_plugin_network_logging.py`、`test_plugin_network_shutdown.py` 验证。下载的流式实体、提交竞争、取消和失败恢复由 `test_plugin_download_api.py` 验证。测试报告区分源码、真实冻结 Worker 和真实桌面主窗口，不把历史版本结果作为当前代码的验证。
 
 ## 第二批独立窗口、认证与联机契约
 

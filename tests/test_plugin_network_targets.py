@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from ipaddress import ip_address
-
 import pytest
-from pydantic import ValidationError
 
-from ECL.plugins.network_targets import NetworkOrigin, NetworkTargetPolicy
-from ECL.plugins.runtime.models import NetworkRequest
+from ECL.plugins.network_targets import NetworkOrigin
 
 
 @pytest.mark.parametrize(
@@ -88,84 +84,3 @@ def test_url_normalization_does_not_expand_scope():
     assert url == "https://xn--bcher-kva.example/a?q=1"
     assert origin != NetworkOrigin.parse("http:xn--bcher-kva.example:443")
     assert origin != NetworkOrigin.parse("https:x.xn--bcher-kva.example:443")
-
-
-@pytest.mark.parametrize(
-    "address",
-    [
-        "0.1.2.3",
-        "10.1.1.1",
-        "100.64.0.1",
-        "127.0.0.1",
-        "169.254.169.254",
-        "172.16.0.1",
-        "192.0.0.8",
-        "192.0.0.9",
-        "192.0.2.1",
-        "192.31.196.1",
-        "192.52.193.1",
-        "192.88.99.2",
-        "192.168.1.1",
-        "192.175.48.1",
-        "198.18.1.1",
-        "198.51.100.1",
-        "203.0.113.1",
-        "224.0.0.1",
-        "255.255.255.255",
-        "::",
-        "::1",
-        "::ffff:8.8.8.8",
-        "::8.8.8.8",
-        "64:ff9b::808:808",
-        "64:ff9b:1::1",
-        "100::1",
-        "2001::1",
-        "2001:1::1",
-        "2001:20::1",
-        "2001:db8::1",
-        "2002::1",
-        "2620:4f:8000::1",
-        "3fff::1",
-        "4000::1",
-        "5f00::1",
-        "fc00::1",
-        "fe80::1",
-        "ff00::1",
-    ],
-)
-def test_special_purpose_targets_are_denied(address):
-    assert not NetworkTargetPolicy.allows(ip_address(address))
-
-
-@pytest.mark.parametrize(
-    "address", ["8.8.8.8", "1.1.1.1", "93.184.216.34", "2001:4860:4860::8888", "2606:4700:4700::1111"]
-)
-def test_ordinary_public_targets_are_allowed(address):
-    assert NetworkTargetPolicy.allows(ip_address(address))
-
-
-@pytest.mark.parametrize(
-    "patch",
-    [
-        {"method": "TRACE"},
-        {"method": "get"},
-        {"url": 3},
-        {"body_b64": ""},
-        {"headers": {"Host": "a.example"}},
-        {"headers": {"Cookie": "private"}},
-        {"headers": {"Proxy-Authorization": "private"}},
-        {"headers": {"Accept-Encoding": "gzip"}},
-        {"headers": {"Accept": "x\r\n"}},
-        {"headers": {"Accept": "\t"}},
-        {"headers": {"Accept": "中文"}},
-        {"headers": {"Accept": "x" * 1025}},
-        {"headers": {"Accept": "x", "accept": "y"}},
-        {"headers": {"Accept": 3}},
-        {"headers": {"Authorization": "secret"}, "url": "http://a.example/"},
-        {"headers": {"X-API-Key": "secret"}, "url": "http://a.example/"},
-        {"headers": dict.fromkeys(["Accept", "If-None-Match", "If-Modified-Since", "User-Agent"], "x" * 1024)},
-    ],
-)
-def test_strict_request_rejects_unsafe_inputs(patch):
-    with pytest.raises(ValidationError):
-        NetworkRequest.model_validate({"method": "GET", "url": "https://a.example/"} | patch)

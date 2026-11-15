@@ -212,8 +212,6 @@ class RuntimeFiles:
                 raise FileBoundaryError("私有源文件不存在", "PLUGIN_RESOURCE_NOT_FOUND")
             stream = space.directory.file(target.relative_path)
             try:
-                if stream.information().size > 64 * 1024 * 1024:
-                    raise FileBoundaryError("私有源文件超过读取上限", "PLUGIN_MESSAGE_TOO_LARGE")
                 yield stream
                 stream.information()
             finally:
@@ -337,9 +335,6 @@ class RuntimeFiles:
                 self._absent(space.directory, target.relative_path)
             elif space.directory.entry_identity(target.relative_path, deadline) is None:
                 raise FileBoundaryError("插件文件不存在", "PLUGIN_RESOURCE_NOT_FOUND")
-            self._storage.check_quota(
-                self._installation_id, space.directory, deadline, reserved_bytes, is_new_upload=True
-            )
             upload = StagedFile(target, lease, space.directory, reserved_bytes, expected_bytes)
             upload.expected_etag = expected_etag
             with upload.io_lock:
@@ -381,8 +376,8 @@ class RuntimeFiles:
         with upload.io_lock:
             if upload.owner != "task" or upload.stream is None:
                 raise FileBoundaryError("暂存已交付或释放", "PLUGIN_RESOURCE_NOT_FOUND")
-            if len(block) > 32768 or upload.received_bytes + len(block) > upload.reserved_bytes:
-                raise FileBoundaryError("插件下载文件超过上限", "PLUGIN_RESPONSE_TOO_LARGE")
+            if len(block) > 32768:
+                raise FileBoundaryError("下载块超过协议块大小", "PLUGIN_SCHEMA_INVALID")
             upload.stream.write(upload.received_bytes, block)
             upload.received_bytes += len(block)
 
@@ -456,7 +451,6 @@ class RuntimeFiles:
             assert upload.stream is not None and space.directory is not None and space.identity is not None
             if upload.directory.identity != space.identity:
                 raise FileBoundaryError("上传根身份变化", "PLUGIN_FILE_CHANGED")
-            self._storage.check_quota(self._installation_id, space.directory, deadline)
             information = upload.stream.information()
             if information.identity != upload.stream.identity or information.size != upload.received_bytes:
                 raise FileBoundaryError("暂存大小或身份变化", "PLUGIN_FILE_CHANGED")
@@ -474,8 +468,6 @@ class RuntimeFiles:
                     upload.target.relative_path, lambda stream: setattr(upload, "original", stream)
                 )
                 old = original.information()
-                if old.size > self._storage.max_file_bytes:
-                    raise FileBoundaryError("原文件大小超限", "PLUGIN_FILE_TOO_LARGE")
                 old_digest = original.digest(deadline)
                 if old != original.information() or old.etag(old_digest) != upload.expected_etag:
                     raise FileBoundaryError("原文件版本已变化", "PLUGIN_FILE_CHANGED")
@@ -648,8 +640,6 @@ class RuntimeFiles:
             )
             information = stream.information()
             deletion.identity = information.identity
-            if information.size > self._storage.max_file_bytes:
-                raise FileBoundaryError("插件文件大小超限", "PLUGIN_FILE_TOO_LARGE")
             digest = stream.digest(deadline)
             final = stream.information()
             if final != information or information.etag(digest) != expected_etag:

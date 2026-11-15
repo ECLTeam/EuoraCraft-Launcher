@@ -26,7 +26,6 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from threading import RLock
-from typing import ClassVar
 from uuid import uuid4
 
 from ECL.plugins.contracts import JsonValue, ProtocolError
@@ -58,7 +57,9 @@ def command(
     :param is_query: 是否声明为只读查询命令
     """
 
-    def decorate(func: Callable[..., JsonValue | Awaitable[JsonValue]]) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
+    def decorate(
+        func: Callable[..., JsonValue | Awaitable[JsonValue]],
+    ) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
         func._ecl_command = {
             "name": name,
             "description": description,
@@ -76,7 +77,10 @@ def launch_hook(
     phase: str,
     *,
     required: bool = False,
-) -> Callable[[Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]]], Callable[..., JsonValue | Awaitable[JsonValue]]]:
+) -> Callable[
+    [Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]]],
+    Callable[..., JsonValue | Awaitable[JsonValue]],
+]:
     """
     静态标记方法为启动钩子声明，预置阶段按既有 hooks.register 通道登记。
 
@@ -84,21 +88,30 @@ def launch_hook(
     :param required: 前置阶段失败时是否阻止启动
     """
 
-    def decorate(func: Callable[..., JsonValue | Awaitable[JsonValue]]) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
+    def decorate(
+        func: Callable[..., JsonValue | Awaitable[JsonValue]],
+    ) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
         func._ecl_launch_hook = {"phase": phase, "required": required}
         return func
 
     return decorate
 
 
-def event(topic: str) -> Callable[[Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]]], Callable[..., JsonValue | Awaitable[JsonValue]]]:
+def event(
+    topic: str,
+) -> Callable[
+    [Callable[[dict[str, JsonValue]], JsonValue | Awaitable[JsonValue]]],
+    Callable[..., JsonValue | Awaitable[JsonValue]],
+]:
     """
     静态标记方法为事件订阅声明，预置阶段经 events.subscribe 登记。
 
     :param topic: 要订阅的主题
     """
 
-    def decorate(func: Callable[..., JsonValue | Awaitable[JsonValue]]) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
+    def decorate(
+        func: Callable[..., JsonValue | Awaitable[JsonValue]],
+    ) -> Callable[..., JsonValue | Awaitable[JsonValue]]:
         func._ecl_event = {"topic": topic}
         return func
 
@@ -186,8 +199,6 @@ class Plugin:
     生命周期可覆写为同步或 async 方法；回调函数只留在本 Worker，跨进程只传标识。
     """
 
-    max_callbacks: ClassVar[int] = 128
-
     def __init__(self, host: HostClient) -> None:
         """
         保存当前运行的宿主门面并建立有界本地回调表。
@@ -209,8 +220,6 @@ class Plugin:
         if not callable(callback):
             raise ProtocolError("插件回调必须可以调用", "PLUGIN_SCHEMA_INVALID")
         with self._callback_lock:
-            if len(self._callbacks) >= self.max_callbacks:
-                raise ProtocolError("插件回调数量超过上限", "PLUGIN_RATE_LIMITED")
             reference = uuid4().hex
             self._callbacks[reference] = callback
             return reference

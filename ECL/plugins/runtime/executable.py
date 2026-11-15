@@ -16,7 +16,6 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
 
 from ECL.plugins.contracts import PluginRuntimeError
 
@@ -30,23 +29,6 @@ class ExecutableLaunchSpec:
     executable_path: Path
     project_path: Path | None
     builder_kind: str
-    allowed_environment: ClassVar[frozenset[str]] = frozenset(
-        {
-            "systemroot",
-            "windir",
-            "systemdrive",
-            "temp",
-            "tmp",
-            "path",
-            "pathext",
-            "comspec",
-            "number_of_processors",
-            "lang",
-            "lc_all",
-            "lc_ctype",
-            "tz",
-        }
-    )
 
     @classmethod
     def current(cls) -> ExecutableLaunchSpec:
@@ -120,7 +102,7 @@ class ExecutableLaunchSpec:
 
         :return: 用于进程创建的完整环境
         """
-        result = {key: value for key, value in os.environ.items() if key.casefold() in self.allowed_environment}
+        result = dict(os.environ)
         if self.builder_kind == "pyinstaller":
             result["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         return result

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ECL.plugins.contracts import ProtocolError, ProtocolPolicy, WireMessage
+from ECL.plugins.contracts import ProtocolError, WireMessage
 from ECL.plugins.sdk._process import _report_failure
 from ECL.plugins.sdk.snapshot import CodeSnapshot
 
@@ -35,15 +35,18 @@ def test_untrusted_wire_data_is_rejected(raw: bytes) -> None:
         WireMessage.decode(raw)
 
 
-def test_message_limits_are_enforced_before_processing() -> None:
-    with pytest.raises(ProtocolError) as error:
-        WireMessage.decode(b"x" * (ProtocolPolicy.max_frame_bytes + 1))
-    assert error.value.error_code == "PLUGIN_MESSAGE_TOO_LARGE"
+def test_invalid_nesting_is_rejected_before_processing() -> None:
     value = {}
     for _ in range(20):
         value = {"nested": value}
     with pytest.raises(ProtocolError):
         WireMessage("hello", value).encode()
+
+
+def test_large_payload_roundtrips_without_frame_limit() -> None:
+    payload = {"value": "x" * (1024 * 1024)}
+    message = WireMessage("response", payload, "1", "callbacks.invoke")
+    assert WireMessage.decode(message.encode()).params == payload
 
 
 @pytest.mark.parametrize("params", [{"value": "\ud800"}, {"\udfff": "value"}])

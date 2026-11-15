@@ -49,21 +49,22 @@ def test_remote_modifications_apply_within_limits() -> None:
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "payload,expected",
     [
-        {"jvm_args": ["x"] * 33},
-        {"game_args": ["x" * 513]},
-        {"env": {"bad-key": "1"}},
-        {"env": {"OK": "x" * 513}},
-        {"env": {"K": 1}},
+        ({"jvm_args": ["x"] * 40}, {"jvm_args": ["x"] * 40}),
+        ({"game_args": ["x" * 600]}, {"game_args": ["x" * 600]}),
+        ({"env": {"BAD-KEY": "1", "GOOD_KEY": "1"}}, {"env": {"BAD-KEY": "1", "GOOD_KEY": "1"}}),
+        ({"env": {"K": 1}}, {"env": {"K": "1"}}),
+        ({"jvm_args": "not-a-list"}, {}),
     ],
 )
-def test_remote_modifications_reject_out_of_bounds(payload: dict) -> None:
+def test_remote_modifications_skip_invalid_entries(payload: dict, expected: dict) -> None:
+    """非法条目被跳过，不因单项无效丢弃其余合法修改。"""
     target = context()
-    with pytest.raises(ValueError):
-        apply_remote_modifications(target, payload)
-    assert target.jvm_args == []
-    assert target.env == {}
+    apply_remote_modifications(target, payload)
+    assert target.jvm_args == expected.get("jvm_args", [])
+    assert target.game_args == expected.get("game_args", [])
+    assert target.env == expected.get("env", {})
 
 
 def test_required_hook_blocks_prepare_but_not_exit() -> None:

@@ -1,6 +1,6 @@
 # 第三方插件主窗口界面注入决策
 
-日期：2026-11-01，Asia/Shanghai。状态：已被部分取代——**2026-11-15 用户决策移除全部 UI 能力门禁**（`ui.inject` 权限审阅、用户总开关 `plugins.allow_ui_injection`、系统插件专属事件通道），见[插件前端能力升级方案](../plans/plugin-frontend-capability-upgrade-plan-2026-11-15.md)。本文件其余内容作为历史决策记录保留：主窗口注入路线选择、已接受的风险清单与清理边界继续有效。
+日期：2026-11-01，Asia/Shanghai。状态：已被部分取代——**2026-11-15 用户决策移除全部 UI 能力门禁**（`ui.inject` 权限审阅、用户总开关 `plugins.allow_ui_injection`、系统插件专属事件通道），见[插件前端能力升级方案](../plans/plugin-frontend-capability-upgrade-plan-2026-11-15.md)；同日进一步移除 HTML 消毒（DOMPurify）、CSS `@scope` 包裹、插槽/模板/脚本长度与页面数量上限，内容按插件归属原样透传。本文件其余内容作为历史决策记录保留：主窗口注入路线选择、已接受的风险清单与清理边界继续有效。
 
 ## 1. 决策
 

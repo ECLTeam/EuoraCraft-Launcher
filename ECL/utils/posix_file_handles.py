@@ -372,7 +372,7 @@ class FileHandle:
         with file_errors():
             return os.pread(self._handle, count, offset)
 
-    def digest(self, deadline: float, max_bytes: int = 8388608) -> str:
+    def digest(self, deadline: float, max_bytes: int | None = None) -> str:
         """
         在同一描述符上有界计算全部字节摘要。
 
@@ -381,7 +381,7 @@ class FileHandle:
         :return: 完整 SHA-256
         """
         size = self.information().size
-        if size > max_bytes:
+        if max_bytes is not None and size > max_bytes:
             raise FileBoundaryError("文件大小超限", "PLUGIN_WRITE_SIZE_EXCEEDED")
         digest, offset = hashlib.sha256(), 0
         while offset < size:

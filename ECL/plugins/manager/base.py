@@ -566,7 +566,7 @@ class _PluginState:
                 "version_isolation": context.version_isolation,
             }
             value = self.worker_service.invoke_hook(name, callback_ref, payload, 5.0)
-            if phase == "prepare" and isinstance(value, dict):
+            if isinstance(value, dict):
                 apply_remote_modifications(context, value)
 
         return call

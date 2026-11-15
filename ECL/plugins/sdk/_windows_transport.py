@@ -21,7 +21,7 @@ from threading import Event, Lock, Thread
 from time import monotonic
 from typing import Protocol, cast
 
-from ECL.plugins.contracts import PluginRuntimeError, ProtocolPolicy, WireMessage
+from ECL.plugins.contracts import PluginRuntimeError, WireMessage
 from ECL.plugins.sdk._windows import WindowsApi
 
 
@@ -92,7 +92,7 @@ class PipeChannel:
         with self._read_lock:
             if not self._connection.poll(timeout):
                 raise TimeoutError("等待插件消息超时")
-            raw = self._io(lambda: self._connection.recv_bytes(ProtocolPolicy.max_frame_bytes), timeout)
+            raw = self._io(lambda: self._connection.recv_bytes(1024 * 1024 * 1024), timeout)
         if raw is None:
             raise PluginRuntimeError("插件管道未返回消息", "PLUGIN_PIPE_CLOSED")
         return WireMessage.decode(raw)

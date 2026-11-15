@@ -81,7 +81,6 @@ def test_replace_requires_exact_original_object_and_content(files, tmp_path, cha
         {"expected_etag": "A" * 64},
         {"total_bytes": True},
         {"total_bytes": -1},
-        {"total_bytes": 8388609},
         {"overwrite": True},
         {"target": {"root_ref": "a" * 32, "relative_path": "NUL.txt"}},
     ],

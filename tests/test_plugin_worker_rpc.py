@@ -120,12 +120,12 @@ def test_callback_exception_is_stable_and_private_text_is_not_transferred(peers)
     assert "private-token" not in str(result)
 
 
-def test_oversized_callback_response_is_rejected_without_poisoning_channel(peers) -> None:
+def test_large_callback_response_roundtrips_without_poisoning_channel(peers) -> None:
     def handler(request):
         return {"value": "x" * (1024 * 1024)} if request.method == "large" else {"value": "small"}
 
     host, _worker, _, _ = peers(echo, handler)
-    assert host.call("large", {})["error"]["code"] == "PLUGIN_MESSAGE_TOO_LARGE"
+    assert len(host.call("large", {})["data"]["value"]) == 1024 * 1024
     assert host.call("small", {})["data"]["value"] == "small"
 
 

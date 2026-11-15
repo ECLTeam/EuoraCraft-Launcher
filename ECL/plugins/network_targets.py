@@ -7,15 +7,14 @@
 #
 # 公开接口：
 #   - class NetworkOrigin — 精确协议、DNS 域名和端口组成的不可变站点。
-#   - class NetworkTargetPolicy — 排除特殊用途地址的固定公网策略。
 # ============================================================
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address, ip_network
-from typing import ClassVar, Self
+from ipaddress import ip_address
+from typing import Self
 from urllib.parse import urlsplit
 
 import httpx
@@ -115,56 +114,3 @@ class NetworkOrigin:
                 raise ValueError("网络 DNS 名称不是规范形式")
         except idna.IDNAError as exc:
             raise ValueError("网络 DNS 名称无效") from exc
-
-
-class NetworkTargetPolicy:
-    """
-    只接受普通公网单播，不依赖不同 Python 版本变化的 is_global。
-
-    网段核对 IANA IPv4/IPv6 Special-Purpose Address Registries，日期 2026-10-21。
-    整段排除特殊用途条目，不恢复注册表中的个别可全球到达例外。
-    """
-
-    denied_v4: ClassVar[tuple[IPv4Network | IPv6Network, ...]] = tuple(
-        ip_network(value)
-        for value in (
-            "0.0.0.0/8",
-            "10.0.0.0/8",
-            "100.64.0.0/10",
-            "127.0.0.0/8",
-            "169.254.0.0/16",
-            "172.16.0.0/12",
-            "192.0.0.0/24",
-            "192.0.2.0/24",
-            "192.31.196.0/24",
-            "192.52.193.0/24",
-            "192.88.99.0/24",
-            "192.168.0.0/16",
-            "192.175.48.0/24",
-            "198.18.0.0/15",
-            "198.51.100.0/24",
-            "203.0.113.0/24",
-            "224.0.0.0/4",
-            "240.0.0.0/4",
-        )
-    )
-    ordinary_v6: ClassVar[IPv4Network | IPv6Network] = ip_network("2000::/3")
-    denied_v6: ClassVar[tuple[IPv4Network | IPv6Network, ...]] = tuple(
-        ip_network(value) for value in ("2001::/23", "2001:db8::/32", "2002::/16", "2620:4f:8000::/48", "3fff::/20")
-    )
-
-    @classmethod
-    def allows(cls, address: IPv4Address | IPv6Address) -> bool:
-        """
-        判断解析和实际 peer 的数字地址是否属于本轮准入范围。
-
-        :param address: 已解析且没有 zone id 的数字地址
-        :return: 是否为允许的普通公网单播
-        """
-        if isinstance(address, IPv4Address):
-            return not any(address in network for network in cls.denied_v4)
-        return (
-            address.scope_id is None
-            and address in cls.ordinary_v6
-            and not any(address in network for network in cls.denied_v6)
-        )

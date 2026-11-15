@@ -30,7 +30,7 @@ from ECL.bootstrap import PluginProcessOptions
 
 def _receive(timeout: float) -> dict[str, object] | None:
     """
-    只从宿主保留的标准输入管道读取限长控制帧；EOF 表示需要清理。
+    只从宿主保留的标准输入管道读取完整控制帧；EOF 表示需要清理。
     """
     deadline = monotonic() + timeout
 
@@ -48,8 +48,8 @@ def _receive(timeout: float) -> dict[str, object] | None:
 
     try:
         size = struct.unpack("!I", read(4))[0]
-        if not 0 < size <= 65536:
-            raise ValueError("监管控制消息超限")
+        if size == 0:
+            raise ValueError("监管控制消息长度无效")
         result = json.loads(read(size))
         if not isinstance(result, dict):
             raise ValueError("监管控制消息无效")
@@ -60,7 +60,7 @@ def _receive(timeout: float) -> dict[str, object] | None:
 
 def _send(value: dict[str, object]) -> None:
     """
-    在固定预算内回复宿主控制帧，失去接收方后转入本地清理。
+    向宿主回复控制帧，失去接收方后转入本地清理。
     """
     content = json.dumps(value, separators=(",", ":")).encode()
     frame = memoryview(struct.pack("!I", len(content)) + content)

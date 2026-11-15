@@ -245,8 +245,9 @@ def test_pack_manifest_download_cannot_bypass_plugin_network_authorization(packs
             {"root_ref": root, "preparation_ref": reference, "version_name": "unapproved-pack"},
         ),
     )
+    # 目标策略放开：保留 TLD 域名注入解析到 127.0.0.1 后真实拨号，本机无监听 → 连接失败
     assert result["state"] == "failed", result
-    assert result["error_code"] == "PLUGIN_NETWORK_TARGET_DENIED", result
+    assert result["error_code"] == "PLUGIN_NETWORK_FAILED", result
     assert not (state.root / "versions" / "unapproved-pack").exists()
 
 
