@@ -468,12 +468,25 @@ class _PluginState:
     def _worker_selected_files(self, name: str) -> list[Path]:
         """
         把用户选择的外部索引纳入现有扫描缓存的文件修订检查。
+
+        启动器退出或插件框架先行收尾后，版本扫描缓存失效仍可能读取监听
+        路径；宿主已关闭属于预期关闭时序而非缺陷，返回空列表跳过，其余
+        错误继续向上交由注册表的异常记录暴露。
+
+        :param name: 当前安装名称
+        :return: 用户选择的外部索引文件；宿主已关闭时为空
         """
         from ECL.plugins.runtime.selected_files import selected_file_paths
 
         if self.worker_service is None:
             return []
-        return selected_file_paths(self.worker_service.settings_view(name))
+        try:
+            settings = self.worker_service.settings_view(name)
+        except ProtocolError as exc:
+            if exc.error_code == "PLUGIN_HOST_CLOSED":
+                return []
+            raise
+        return selected_file_paths(settings)
 
     def _worker_compat_reader(self, name: str, source: str, callback_ref: str):
         """
