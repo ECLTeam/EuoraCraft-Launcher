@@ -20,6 +20,7 @@
 #   - class NetworkRequest — GET/HEAD 只读网络请求的严格边界。
 #   - class PluginPageNav / VuePageDefinition — 插件页面的宿主容器与导航声明。
 #   - class JavaInventoryRequest / JavaValidateRequest / JavaCatalogRequest — Java 查询与校验输入。
+#   - class TechnologyEntryDefinition — 关于页插件技术栈条目的只读展示声明。
 # ============================================================
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import json
 import math
 import re
 from typing import Annotated, ClassVar, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 from pydantic import JsonValue as PydanticJsonValue
@@ -563,6 +565,46 @@ class VueSlotDefinition(RequestModel):
     style: str = Field(default="", max_length=60000)
     key: str | None = Field(default=None, max_length=64)
     context_key: str | None = Field(default=None, max_length=64)
+
+
+class TechnologyEntryDefinition(RequestModel):
+    """
+    插件向关于页技术栈声明的单条只读展示条目，仅含文本与外链，不含可执行内容。
+
+    展示样式、插件徽标与分组由宿主统一渲染；插件禁用或卸载后条目随会话失效消失。
+    """
+
+    key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
+    name: str = Field(min_length=1, max_length=64)
+    description: str = Field(default="", max_length=200)
+    url: str = Field(min_length=1, max_length=256)
+    license: str = Field(default="", max_length=128)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        """
+        只接受 http/https 绝对地址，供关于页以外链形式打开。
+
+        :param value: 声明的条目链接
+        :return: 原值
+        :raises ValueError: 非 http/https 或缺少主机名时抛出
+        """
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError("技术栈条目链接必须是 http(s) 绝对地址")
+        return value
+
+    @field_validator("license")
+    @classmethod
+    def _normalize_license(cls, value: str) -> str:
+        """
+        许可证字段仅作为展示文本，去除首尾空白。
+
+        :param value: 声明的许可证说明
+        :return: 规范化后的许可证文本
+        """
+        return value.strip()
 
 
 def validate_fields(fields: list[FieldSpec], values: dict[str, JsonValue]) -> None:

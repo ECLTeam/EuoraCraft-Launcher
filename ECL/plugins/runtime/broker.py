@@ -50,6 +50,7 @@ from ECL.plugins.runtime.models import (
     PanelNode,
     PanelSettingNode,
     SettingDefinition,
+    TechnologyEntryDefinition,
     ToolDefinition,
     VueSlotDefinition,
     validate_fields,
@@ -151,6 +152,7 @@ class PluginHostBroker:
             "commands.register",
             "commands.unregister",
             "panels.register",
+            "technology.register",
             "ui.register_html",
             "hooks.register",
             "crash.register",
@@ -197,6 +199,7 @@ class PluginHostBroker:
             "accounts.": "_query_service",
             "config.": "_query_service",
             "panels.": "_panel_service",
+            "technology.": "_technology_service",
             "ui.": "_ui_service",
             "plugins.": "_cross_plugin_service",
             "hooks.": "_hook_service",
@@ -345,6 +348,7 @@ class PluginHostBroker:
         self._commands: dict[str, tuple[str, CommandDefinition, PluginLease]] = {}
         self._page_paths: set[str] = set()
         self._panels: dict[str, tuple[PanelDefinition, PluginLease]] = {}
+        self._technology_entries: dict[str, tuple[TechnologyEntryDefinition, PluginLease]] = {}
         self._subscriptions: dict[str, tuple[str, PluginLease, str]] = {}
         self._receipts: dict[str, _Receipt] = {}
         self._events: Queue[tuple[str, dict[str, JsonValue], PluginLease]] = Queue(32)
@@ -1023,6 +1027,53 @@ class PluginHostBroker:
                 definition.model_dump(mode="json", exclude={"data_callback_ref"})
                 for definition, _ in self._panels.values()
             ]
+
+    def _technology_service(self, request: RpcRequest) -> dict[str, JsonValue]:
+        """
+        只分派关于页技术栈条目的注册与列举，条目为纯展示声明，无回调通道。
+        """
+        if request.method == "technology.register":
+            return self._register_technology_entries(request.params)
+        if request.method == "technology.list":
+            self._keys(request.params, set())
+            return {"entries": self.technology_entries_view()}
+        raise ProtocolError("此技术栈方法尚未开放", "PLUGIN_API_METHOD_NOT_FOUND")
+
+    def _register_technology_entries(self, params: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        """
+        在授权接受点原子登记本运行的技术栈条目，条目键在本运行内唯一。
+        """
+        self._keys(params, {"entries"})
+        lease = self.session.lease()
+        raw = params["entries"]
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 16:
+            raise ProtocolError("技术栈条目注册数量无效", "PLUGIN_SCHEMA_INVALID")
+        definitions = [TechnologyEntryDefinition.model_validate(item) for item in raw]
+        if len({item.key for item in definitions}) != len(definitions):
+            raise ProtocolError("技术栈条目标识重复", "PLUGIN_SCHEMA_INVALID")
+
+        def register() -> None:
+            with self._lock:
+                self._ensure_accepting()
+                registered = {item[0].key for item in self._technology_entries.values()}
+                if any(definition.key in registered for definition in definitions):
+                    raise ProtocolError("技术栈条目已登记", "PLUGIN_REGISTRATION_CONFLICT")
+                for definition in definitions:
+                    self._technology_entries[definition.key] = (definition, lease)
+
+        self.session.accept(lease, register)
+        return {"registered_count": len(definitions)}
+
+    def technology_entries_view(self) -> list[dict[str, JsonValue]]:
+        """
+        返回本运行已登记的技术栈条目，供可信管理页聚合渲染。
+
+        :return: 条目定义列表，不含任何回调标识
+        :raises ProtocolError: 运行已关闭或授权失效时抛出
+        """
+        self.session.lease()
+        with self._lock:
+            return [definition.model_dump(mode="json") for definition, _ in self._technology_entries.values()]
 
     def _panel_data(self, request: RpcRequest) -> dict[str, JsonValue]:
         """

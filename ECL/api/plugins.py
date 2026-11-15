@@ -27,6 +27,7 @@
 #       - plugin_panels_get(body) -> dict[str, Any] — 获取插件声明式面板定义。
 #       - plugin_panel_data(body) -> dict[str, Any] — 拉取面板列表与任务快照。
 #       - plugin_panel_action(body) -> dict[str, Any] — 执行面板按钮指向的命令。
+#       - plugin_technology_entries_get(body) -> dict[str, Any] — 聚合已启用插件声明的关于页技术栈条目。
 #       - plugin_get_settings(body) -> dict[str, Any] — 获取插件设置。
 #       - plugin_update_setting(body) -> dict[str, Any] — 更新插件设置。
 #       - plugin_notify_sidebar_state(body) -> dict[str, Any] — 通知插件侧栏的折叠状态。
@@ -403,6 +404,39 @@ class PluginHandlers(_FrontendState):
         except (PluginRunError, ProtocolError) as exc:
             return failure(str(exc), exc.error_code)
         return {"success": True, "data": result}
+
+    async def plugin_technology_entries_get(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        聚合所有已启用插件声明的关于页技术栈条目，按插件分组返回。
+
+        :param body: 前端传入的 IPC 请求参数
+        """
+        service = self.plugins.worker_service
+        if service is None:
+            return failure("插件运行服务不可用", "PLUGIN_RUNTIME_UNAVAILABLE")
+        groups = await asyncio.to_thread(self._collect_technology_entries, service)
+        return {"success": True, "data": {"entries": groups}}
+
+    def _collect_technology_entries(self, service: Any) -> list[dict[str, Any]]:
+        """
+        遍历已启用插件并收集各自的技术栈条目。
+
+        单个插件未运行或会话失效时跳过该插件而非中断聚合；插件禁用后
+        条目随会话失效自动不再出现，此处不再区分具体失败原因。
+
+        :param service: 插件运行服务
+        :return: 按插件分组的条目列表
+        """
+        groups: list[dict[str, Any]] = []
+        for entry in self.plugins.list_plugins():
+            if entry.get("status") != "enabled":
+                continue
+            try:
+                entries = service.broker(entry["name"]).technology_entries_view()
+            except (PluginRunError, ProtocolError):
+                continue
+            groups.append({"plugin_name": entry["name"], "entries": entries})
+        return groups
 
     async def plugin_get_settings(self, body: dict[str, Any], webview_window: WebviewWindow = None) -> dict[str, Any]:
         """

@@ -267,6 +267,7 @@ class IpcCommandRegistry:
         "plugin_panels_get",
         "plugin_panel_data",
         "plugin_panel_action",
+        "plugin_technology_entries_get",
         "plugin_get_settings",
         "plugin_update_setting",
         "plugin_notify_sidebar_state",

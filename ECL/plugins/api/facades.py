@@ -125,6 +125,8 @@ class PluginFacadeCatalog:
                     "panels.data",
                     "panels.list",
                     "panels.register",
+                    "technology.list",
+                    "technology.register",
                     "ui.register_html",
                     "ui.register_page",
                     "ui.register_vue",

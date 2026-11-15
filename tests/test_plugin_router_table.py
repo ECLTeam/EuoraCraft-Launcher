@@ -29,6 +29,7 @@ _expected_prefix_targets = {
     "accounts.": "_query_service",
     "config.": "_query_service",
     "panels.": "_panel_service",
+    "technology.": "_technology_service",
     "ui.": "_ui_service",
     "plugins.": "_cross_plugin_service",
     "hooks.": "_hook_service",
