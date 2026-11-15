@@ -9,6 +9,8 @@ pkgver=1.0.0
 pkgrel=1
 pkgdesc="基于 PyTauri 的 Minecraft 启动器（EuoraCraft Launcher）"
 arch=('x86_64')
+# 产物是上游 Release 的预编译二进制，不再产出 makepkg 调试符号包。
+options=('!debug')
 url="https://github.com/ECLTeam/EuoraCraft-Launcher"
 license=('MIT')
 depends=(

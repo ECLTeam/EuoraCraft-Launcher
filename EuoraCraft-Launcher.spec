@@ -1,3 +1,14 @@
+# ============================================================
+# EuoraCraft Launcher
+# ECLTeam © 2026 GPL-3.0 License
+# https://github.com/ECLTeam/EuoraCraft-Launcher
+#
+# 文件作用：PyInstaller 打包配置，定义各平台冻结产物的内容、
+#   排除项与体积裁剪策略；由 CI 与本地构建共用。
+#
+# 公开接口：无（PyInstaller 专用 spec 脚本，按 SPEC 全局变量求值）。
+# ============================================================
+
 import os
 import re
 import sys
@@ -245,7 +256,35 @@ def _drop_unused_pillow_plugins(entries: list[tuple[str, str, str]]) -> list[tup
     return [entry for entry in entries if not entry[0].replace("\\", "/").startswith(prefixes)]
 
 
+def _drop_unused_packaging_files(entries: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """剔除运行时不会加载的翻译目录、文档、静态库与独立调试符号，减小发行体积。
+
+    GTK/WebKit 等系统库在目标机上按依赖分析被整体收集，其 locale 翻译、
+    文档、手册页只影响界面语言提示，缺失时回退英文；`.a`/`.la` 静态库
+    与 `*.debug` 分离调试符号均不参与动态加载，剔除不影响功能。
+    对没有这些条目的平台是安全的无操作。
+    """
+    dropped_prefixes = (
+        "share/locale/",
+        "share/doc/",
+        "share/man/",
+        "share/gtk-doc/",
+    )
+    dropped_suffixes = (".a", ".la", ".debug")
+    result = []
+    for entry in entries:
+        relative_path = entry[0].replace("\\", "/")
+        if relative_path.startswith(dropped_prefixes):
+            continue
+        if relative_path.lower().endswith(dropped_suffixes):
+            continue
+        result.append(entry)
+    return result
+
+
 a.binaries = _drop_unused_pillow_plugins(a.binaries)
+a.datas = _drop_unused_packaging_files(a.datas)
+a.binaries = _drop_unused_packaging_files(a.binaries)
 
 pyz = PYZ(a.pure)
 upx_enabled = UPX_ENABLED

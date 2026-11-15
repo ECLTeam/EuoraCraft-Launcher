@@ -251,11 +251,33 @@ jobs:
             echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
           fi
 
+      # 产物校验文件与产物一一对应，内容为 sha256sum 兼容格式，可 sha256sum -c 校验。
+      - name: Generate artifact checksum
+        working-directory: ${{ steps.package.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILENAME="${{ steps.package.outputs.filename }}"
+          # macOS 无 GNU coreutils，用 shasum 输出同格式校验行。
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum "$FILENAME" > "$FILENAME.sha256"
+          else
+            shasum -a 256 "$FILENAME" > "$FILENAME.sha256"
+          fi
+          cat "$FILENAME.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.filename }}
           path: ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
+          archive: false
+
+      - name: Upload artifact checksum
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.filename }}.sha256
+          path: ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}.sha256
           archive: false
 
       - name: Upload to Release
@@ -265,6 +287,7 @@ jobs:
           tag_name: ${{ needs.validate-release-tag.outputs.filename_version }}
           files: |
             ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}
+            ${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}.sha256
           prerelease: ${{ needs.validate-release-tag.outputs.prerelease == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -419,6 +442,17 @@ jobs:
           echo "filename=${packages[0]}" >> "$GITHUB_OUTPUT"
           echo "path=packaging/arch/${packages[0]}" >> "$GITHUB_OUTPUT"
 
+      # 校验文件内容使用裸文件名，下载后可在任意目录 sha256sum -c 校验。
+      - name: Generate Arch artifact checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_NAME="${{ steps.arch_package.outputs.filename }}"
+          BIN_NAME="EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}"
+          (cd packaging/arch && sha256sum "$PKG_NAME" > "$PKG_NAME.sha256")
+          sha256sum "$BIN_NAME" > "$BIN_NAME.sha256"
+          cat "$BIN_NAME.sha256" packaging/arch/"$PKG_NAME.sha256"
+
       - name: Upload Arch package as artifact
         uses: actions/upload-artifact@v7
         with:
@@ -426,11 +460,25 @@ jobs:
           path: ${{ steps.arch_package.outputs.path }}
           archive: false
 
+      - name: Upload Arch package checksum as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.arch_package.outputs.filename }}.sha256
+          path: packaging/arch/${{ steps.arch_package.outputs.filename }}.sha256
+          archive: false
+
       - name: Upload Arch binary as artifact
         uses: actions/upload-artifact@v7
         with:
           name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}
           path: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}
+          archive: false
+
+      - name: Upload Arch binary checksum as artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}.sha256
+          path: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}.sha256
           archive: false
 
   publish-arch:
@@ -453,6 +501,18 @@ jobs:
           name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}
           path: release-assets
 
+      - name: Download Arch package checksum
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build-arch-pkg.outputs.package_artifact }}.sha256
+          path: release-assets
+
+      - name: Download Arch binary checksum
+        uses: actions/download-artifact@v8
+        with:
+          name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}.sha256
+          path: release-assets
+
       - name: Upload Arch artifacts to Release
         shell: bash
         env:
@@ -461,10 +521,11 @@ jobs:
         run: |
           PKG_FILE="release-assets/${{ needs.build-arch-pkg.outputs.package_artifact }}"
           ARCH_BIN="release-assets/EuoraCraft-Launcher-Arch-X64-$TAG"
-          [ -f "$PKG_FILE" ] || { echo "未找到 Arch 主包：$PKG_FILE" >&2; exit 1; }
-          [ -f "$ARCH_BIN" ] || { echo "未找到 Arch 二进制：$ARCH_BIN" >&2; exit 1; }
-          echo "uploading $PKG_FILE and $ARCH_BIN to $TAG"
+          for file in "$PKG_FILE" "$PKG_FILE.sha256" "$ARCH_BIN" "$ARCH_BIN.sha256"; do
+            [ -f "$file" ] || { echo "未找到发布文件：$file" >&2; exit 1; }
+          done
+          echo "uploading $PKG_FILE, $PKG_FILE.sha256, $ARCH_BIN and $ARCH_BIN.sha256 to $TAG"
           # 本发布 Job 未 checkout 仓库，必须显式指定目标仓库，避免 gh 调用 git 推断仓库失败。
-          gh release upload "$TAG" "$PKG_FILE" "$ARCH_BIN" \
+          gh release upload "$TAG" "$PKG_FILE" "$PKG_FILE.sha256" "$ARCH_BIN" "$ARCH_BIN.sha256" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

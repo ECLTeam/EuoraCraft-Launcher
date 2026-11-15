@@ -128,6 +128,29 @@ def test_platform_builds_share_one_packager_and_keep_the_arch_toolchain():
     assert "gtk3 webkit2gtk-4.1" in arch and "patchelf curl upx" in arch
 
 
+def test_arch_package_disables_debug_and_every_artifact_has_a_checksum():
+    source = _workflow("build.yml")
+    pkgbuild = (Path(__file__).resolve().parents[1] / "packaging" / "arch" / "PKGBUILD").read_text(encoding="utf-8")
+
+    # PKGBUILD 从源头禁用调试符号包；workflow 中对 debug 包名的排除保留作防线。
+    assert "options=('!debug')" in pkgbuild
+    assert "-name 'euoracraft-launcher-debug-*.pkg.tar.zst'" in source
+
+    # 后端矩阵（覆盖四个平台产物）与 Arch job 各生成一次校验文件。
+    assert source.count("- name: Generate artifact checksum") == 1
+    assert source.count("- name: Generate Arch artifact checksums") == 1
+
+    # 校验文件随产物上传 artifact，并进入 Release 上传清单。
+    assert source.count("name: ${{ steps.package.outputs.filename }}.sha256") == 1
+    assert source.count("${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}.sha256") == 2
+    assert source.count("name: ${{ steps.arch_package.outputs.filename }}.sha256") == 1
+    # 一次为 Arch job 上传，一次为 publish-arch 下载。
+    assert source.count("name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}.sha256") == 2
+    publish = source.split("  publish-arch:", 1)[1]
+    assert "Download Arch package checksum" in publish and "Download Arch binary checksum" in publish
+    assert publish.count(".sha256") >= 6
+
+
 @pytest.mark.parametrize("platform_index", [0, 1])
 @pytest.mark.parametrize(
     ("version_type", "version"),
