@@ -8,8 +8,8 @@ from ECL.tooling.package_data import filter_runtime_data
 @pytest.mark.parametrize(
     "cached_name",
     [
-        "resources/system_plugins/qomicex_compat/__pycache__/main.cpython-313.pyc",
-        r"resources\system_plugins\qomicex_compat\__pycache__\main.cpython-313.pyc",
+        "resources/system_plugins/example_plugin/__pycache__/main.cpython-313.pyc",
+        r"resources\system_plugins\example_plugin\__pycache__\main.cpython-313.pyc",
         "resources/old_plugin.PYC",
         "resources/old_plugin.pyo",
     ],

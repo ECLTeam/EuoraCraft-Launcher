@@ -126,8 +126,6 @@ description: Enforce a rigorous inspect → plan → code → test → commit �
 
 | 前端 | `frontend/src/` (子模块) | Vue 3 + TS | vitest |
 
-| 联机插件（已迁出） | 独立仓库 ECL-Plugin-OnlineGame | Python | 其仓库内 pytest |
-
 | 插件系统 | `ECL/plugins/` | Python | pytest |
 
 | CI/CD | `.github/workflows/` | YAML | 无 |

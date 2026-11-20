@@ -47,6 +47,6 @@ def prepare(self, version_id, loader, version_isolation):
 
 ## 外置联机与兼容协议
 
-宿主不再维护联机网络或提供 `connector.*`。普通插件 ECL-Plugin-OnlineGame 自己持有网络资源，ECL-Plugin-QomicexCompatible 可选提供兼容协议，二者均可独立禁用和卸载。
+宿主不再维护联机网络或提供 `connector.*`。联机能力由外部普通插件自己持有网络资源，兼容协议由可选的另一插件提供，两者均可独立禁用和卸载。
 
 通过已导出的 `onlinegame.extension.v1` 普通跨插件命令接入，详见[联机协议](../../protocols/plugin-connector-extensions.md)及各插件仓库说明。

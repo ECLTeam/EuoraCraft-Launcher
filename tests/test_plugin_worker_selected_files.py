@@ -32,7 +32,7 @@ def test_worker_selected_files_returns_empty_when_host_closed() -> None:
 
     manager = _manager_with_worker_service(settings_view)
 
-    assert manager._worker_selected_files("qomicex_compatible") == []
+    assert manager._worker_selected_files("example_plugin") == []
 
 
 def test_worker_selected_files_reraises_other_protocol_errors() -> None:
@@ -42,14 +42,14 @@ def test_worker_selected_files_reraises_other_protocol_errors() -> None:
     manager = _manager_with_worker_service(settings_view)
 
     with pytest.raises(ProtocolError):
-        manager._worker_selected_files("qomicex_compatible")
+        manager._worker_selected_files("example_plugin")
 
 
 def test_worker_selected_files_without_worker_service() -> None:
     manager = object.__new__(PluginManager)
     manager.worker_service = None
 
-    assert manager._worker_selected_files("qomicex_compatible") == []
+    assert manager._worker_selected_files("example_plugin") == []
 
 
 def test_worker_selected_files_returns_selected_paths(tmp_path: Path) -> None:
@@ -61,4 +61,4 @@ def test_worker_selected_files_returns_selected_paths(tmp_path: Path) -> None:
     }
     manager = _manager_with_worker_service(lambda _name: settings)
 
-    assert manager._worker_selected_files("qomicex_compatible") == [index_file]
+    assert manager._worker_selected_files("example_plugin") == [index_file]

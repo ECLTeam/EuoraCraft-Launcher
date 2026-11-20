@@ -52,11 +52,11 @@ def test_manifest_homepage_and_license_defaults_and_validation() -> None:
     manifest = PluginManifest.model_validate(
         {
             "name": "example",
-            "homepage": "https://github.com/ECLTeam/ECL-Plugin-OnlineGame",
+            "homepage": "https://github.com/ECLTeam/ECL-Plugin-Example",
             "license": "GPL-3.0",
         }
     )
-    assert manifest.homepage == "https://github.com/ECLTeam/ECL-Plugin-OnlineGame"
+    assert manifest.homepage == "https://github.com/ECLTeam/ECL-Plugin-Example"
     assert manifest.license == "GPL-3.0"
     # 空白被规范化；未声明时为空字符串。
     assert PluginManifest.model_validate({"name": "example", "license": "  MIT "}).license == "MIT"

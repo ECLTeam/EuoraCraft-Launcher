@@ -1,7 +1,5 @@
 # EuoraCraft Launcher 项目规范
 
-官方插件（联机、Qomicex 兼容）已迁出为独立仓库 [ECL-Plugin-OnlineGame](https://github.com/ECLTeam/ECL-Plugin-OnlineGame) 与 [ECL-Plugin-QomicexCompatible](https://github.com/ECLTeam/ECL-Plugin-QomicexCompatible)，各自的实现约束见其仓库内 AGENTS.md。
-
 本文件约束本项目的所有 AI 编码助手与协作者，为强制要求。
 
 适用范围与维护方式：
