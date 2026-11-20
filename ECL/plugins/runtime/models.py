@@ -11,7 +11,7 @@
 #   - class FileDeleteRequest — 按明确版本删除普通私有文件。
 #   - class FileReplaceBeginRequest — 明确选择原版本的替换上传请求。
 #   - class CommandDefinition — 命令注册契约。
-#   - class SettingDefinition — 非执行式设置定义。
+#   - class SettingOption / SettingDefinition — 非执行式设置定义。
 #   - class ResourceListRequest / InstanceScanRequest / InstanceGetRequest — 实例只读输入契约。
 #   - class InstanceProfilePatchRequest — 绑定完整资料版本的四字段任务请求。
 #   - class OperationGetRequest / OperationListRequest — 自身任务控制输入契约。
@@ -167,16 +167,33 @@ class CommandDefinition(RequestModel):
         return fields
 
 
+class SettingOption(RequestModel):
+    """
+    下拉选项的值与展示名。
+
+    展示名是面向用户的文案；值为提交与持久化的原始字符串。展示名留空时
+    界面回退显示值本身，便于纯技术性选项省略声明。
+    """
+
+    value: str = Field(min_length=1, max_length=16384)
+    label: str = Field(default="", max_length=200)
+
+
 class SettingDefinition(RequestModel):
     """
     定义自身设置的值类型和默认值，不接受可执行内容。
+
+    ``label`` 是配置项在设置界面中的展示名，留空时界面回退显示 ``key``；
+    ``description`` 是渲染在展示名下方的补充说明。``options`` 只在 select
+    类型下有意义，界面按 ``label`` 呈现、按 ``value`` 提交。
     """
 
     key: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
     type: Literal["bool", "string", "text", "number", "select", "readonly_file"]
     default: str | int | float | bool
+    label: str = Field(default="", max_length=200)
     description: str = Field(default="", max_length=1000)
-    options: list[str] = Field(default_factory=list, max_length=64)
+    options: list[SettingOption] = Field(default_factory=list, max_length=64)
 
     def accepts(self, value: JsonValue) -> bool:
         """
@@ -190,7 +207,7 @@ class SettingDefinition(RequestModel):
         if self.type == "number":
             return type(value) in {int, float} and math.isfinite(value)
         if self.type == "select":
-            return isinstance(value, str) and value in self.options
+            return isinstance(value, str) and value in {option.value for option in self.options}
         return isinstance(value, str) and len(value) <= 16384
 
     @model_validator(mode="after")
@@ -201,9 +218,10 @@ class SettingDefinition(RequestModel):
         :return: 已校验设置定义
         :raises ValueError: 默认值或选项无效时抛出
         """
+        option_values = [option.value for option in self.options]
         if self.type == "readonly_file" and self.default != "":
             raise ValueError("只读文件必须由用户选择，不能由插件提供默认路径")
-        if not self.accepts(self.default) or len(set(self.options)) != len(self.options):
+        if not self.accepts(self.default) or len(option_values) != len(set(option_values)):
             raise ValueError("设置默认值或选项无效")
         return self
 

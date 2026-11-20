@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from ECL.plugins.contracts import ProtocolError
-from ECL.plugins.runtime.models import SettingDefinition
+from ECL.plugins.runtime.models import SettingDefinition, SettingOption
 from ECL.plugins.runtime.selected_files import read_selected_file
 
 
@@ -81,3 +81,32 @@ def test_schema_redefinition_cannot_authorize_file_read(tmp_path: Path) -> None:
         base64.b64decode(read_selected_file(service.view(installation, digest, run), {"key": "index"})["content"])
         == b"secret"
     )
+
+
+def test_select_options_carry_display_labels() -> None:
+    definition = SettingDefinition(
+        key="mode",
+        type="select",
+        default="automatic",
+        options=[
+            SettingOption(value="automatic", label="自动选择"),
+            SettingOption(value="custom", label="仅自定义"),
+        ],
+    )
+
+    assert definition.accepts("automatic")
+    assert not definition.accepts("append")
+    assert not definition.accepts(1)
+
+
+def test_duplicate_option_values_are_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SettingDefinition(
+            key="mode",
+            type="select",
+            default="automatic",
+            options=[
+                SettingOption(value="automatic"),
+                SettingOption(value="automatic", label="重复"),
+            ],
+        )

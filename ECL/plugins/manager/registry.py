@@ -22,8 +22,12 @@
 
 from __future__ import annotations
 
+import base64
 import math
-from typing import Any
+from collections.abc import Mapping
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, ClassVar
 
 from ECL.plugins.contracts import JsonValue
 from ECL.plugins.run_store import PluginRunError
@@ -41,6 +45,7 @@ def _plugin_entry(
     services: list[str] | None = None,
     settings: list[str] | None = None,
     is_system: bool = False,
+    icon_data_url: str = "",
 ) -> dict[str, Any]:
     # 构建前端插件列表条目，统一已登记/依赖跳过/禁用/清单无效四类来源的字典结构。
     if isinstance(metadata, dict):
@@ -69,7 +74,7 @@ def _plugin_entry(
         "author": author,
         "homepage": homepage,
         "license": license,
-        "icon": "",
+        "icon": icon_data_url,
         "status": status,
         "error": error,
         "dependencies": dependencies,
@@ -84,6 +89,39 @@ class PluginRegistry(_PluginState):
     """
     负责插件列表、路由插槽收集、设置与命令调用的统一入口。
     """
+
+    icon_mime_by_suffix: ClassVar[Mapping[str, str]] = MappingProxyType(
+        {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+    )
+    max_icon_bytes: ClassVar[int] = 256 * 1024
+
+    def _icon_data_url(self, plugin_dir: Path | None, metadata: Any) -> str:
+        """
+        读取清单 ``icon`` 声明的图片文件并编码为 data URL。
+
+        图标是纯展示资源：文件缺失、超限、不可读或清单未声明时返回空串，
+        界面回退默认拼图图标，不阻断插件列表构建。
+
+        :param plugin_dir: 插件安装目录；归档待恢复等无目录来源传 None
+        :param metadata: 清单元数据
+        :return: data URL；无法提供图标时为空串
+        """
+        icon_name = metadata.get("icon") if isinstance(metadata, dict) else ""
+        if not icon_name or plugin_dir is None:
+            return ""
+        icon_path = plugin_dir / icon_name
+        mime = self.icon_mime_by_suffix.get(icon_path.suffix.lower())
+        if mime is None or not icon_path.is_file() or icon_path.is_symlink():
+            return ""
+        try:
+            if icon_path.stat().st_size > self.max_icon_bytes:
+                self.logger.warning("插件图标超过大小上限，已回退默认图标：%s", icon_path.name)
+                return ""
+            payload = icon_path.read_bytes()
+        except OSError as exc:
+            self.logger.warning("插件图标读取失败，已回退默认图标：%s；%s", icon_path.name, exc)
+            return ""
+        return f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
 
     def get_plugin_metadata(self, name: str) -> dict[str, Any] | None:
         """
@@ -117,6 +155,7 @@ class PluginRegistry(_PluginState):
                     candidate.get("metadata", {}),
                     "unloaded",
                     None,
+                    icon_data_url=self._icon_data_url(candidate.get("plugin_dir"), candidate.get("metadata", {})),
                 )
             )
 
@@ -136,12 +175,17 @@ class PluginRegistry(_PluginState):
             is_system = bool(candidate.get("is_system", False))
             package = self._package_entries.get(name, {})
             metadata = candidate.get("metadata") or package.get("metadata", {})
+            plugin_dir = candidate.get("plugin_dir")
+            if plugin_dir is None:
+                active = package.get("active")
+                plugin_dir = active.code_path if active is not None else None
             entry = _plugin_entry(
                 name,
                 metadata,
                 self._status.get(name, package.get("status", "unloaded")),
                 self._plugin_errors.get(name) or package.get("error") or self._dependency_resolution.errors.get(name),
                 is_system=is_system,
+                icon_data_url=self._icon_data_url(plugin_dir, metadata),
             )
             entry["pending_restart"] = bool(package.get("pending_restart"))
             entry["installed_version"] = metadata.get("version", "")

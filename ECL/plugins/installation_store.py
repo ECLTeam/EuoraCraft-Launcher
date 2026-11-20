@@ -84,6 +84,10 @@ class PluginManifest(BaseModel):
     ``min_launcher`` 与 ``features`` 是协商字段：前者在清单校验期直接
     与宿主版本比较，后者只做能力名白名单校验，"声明合法但宿主未启用"
     不在此拦截，由能力自身 API 返回既有错误码。
+
+    ``icon`` 是相对插件目录的图片文件名（png/jpg/webp）；宿主在构建列表
+    时读取并编码为 data URL 提供给界面，文件缺失、超限或不可读时界面
+    回退默认拼图图标，不影响插件加载。
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -98,6 +102,10 @@ class PluginManifest(BaseModel):
     supports_hot_reload: StrictBool = True
     homepage: str = Field(default="", max_length=256)
     license: str = Field(default="", max_length=128)
+    icon: str = Field(
+        default="",
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*\.(?:png|jpe?g|webp)$",
+    )
 
     known_features: ClassVar[frozenset[str]] = frozenset({"panels", "webview", "hot_reload"})
 

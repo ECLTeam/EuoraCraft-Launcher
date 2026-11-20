@@ -11,7 +11,11 @@
 
 from __future__ import annotations
 
-from ECL.plugins.manager.registry import _plugin_entry
+import base64
+from pathlib import Path
+
+from ECL.plugins.manager.registry import PluginRegistry, _plugin_entry
+from ECL.utils import get_logger
 
 
 def test_plugin_entry_passes_through_registered_info() -> None:
@@ -38,3 +42,32 @@ def test_plugin_entry_passes_through_registered_info() -> None:
     fallback = _plugin_entry("example", None, "unloaded", None)
     assert fallback["homepage"] == ""
     assert fallback["license"] == ""
+
+
+def _registry_for_icon() -> PluginRegistry:
+    registry = object.__new__(PluginRegistry)
+    registry.logger = get_logger("PluginManager")
+    return registry
+
+
+def test_icon_data_url_reads_declared_image(tmp_path: Path) -> None:
+    # 清单声明图标时编码为 data URL；缺失、超限或未声明都回退空串。
+    registry = _registry_for_icon()
+    icon = tmp_path / "icon.webp"
+    icon.write_bytes(b"pixel")
+
+    url = registry._icon_data_url(tmp_path, {"icon": "icon.webp"})
+    assert url.startswith("data:image/webp;base64,")
+    assert base64.b64decode(url.split(",", 1)[1]) == b"pixel"
+
+    assert registry._icon_data_url(tmp_path, {"icon": "missing.webp"}) == ""
+    assert registry._icon_data_url(None, {"icon": "icon.webp"}) == ""
+    assert registry._icon_data_url(tmp_path, {}) == ""
+
+
+def test_icon_data_url_rejects_oversized_image(tmp_path: Path) -> None:
+    registry = _registry_for_icon()
+    icon = tmp_path / "icon.png"
+    icon.write_bytes(b"x" * (registry.max_icon_bytes + 1))
+
+    assert registry._icon_data_url(tmp_path, {"icon": "icon.png"}) == ""
