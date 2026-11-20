@@ -581,7 +581,8 @@ class FileHandlers(_FrontendState):
         picked = await self._run_native_dialog(
             "保存背景图",
             lambda: DialogExt.file(self._webview).blocking_save_file(
-                add_filter=("图片", list(ImagePolicy.mime_by_extension)),
+                # 过滤器由上游补 `*.`，扩展名不能带前导点，否则会拼成 `*..png`
+                add_filter=("图片", [extension.lstrip(".") for extension in ImagePolicy.mime_by_extension]),
                 set_file_name=default_name,
                 set_title="保存背景图",
             ),
