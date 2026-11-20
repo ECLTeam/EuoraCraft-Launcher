@@ -107,3 +107,5 @@ docs/junsi-dev-docs
 
 # 本地工作区记忆与临时任务产物
 /.workbuddy/
+/.playwright-cli/
+/java-layout/
