@@ -205,3 +205,12 @@ def test_delete_blocks_background_reference(tmp_path) -> None:
 
     handler.config = SimpleNamespace(get_config=lambda section: {"background": {"image": {"path": ""}}})
     assert handler._items_in_use([item.id]) == set()
+
+
+def test_dialog_extensions_have_no_leading_dot() -> None:
+    # 原生对话框会自行补 "*."，带点后缀会拼成 "*..png" 而匹配不到文件。
+    extensions = FileSetStore.dialog_extensions()
+
+    assert all(not extension.startswith(".") for extension in extensions)
+    assert {"png", "jpg", "webp", "mp4", "webm"} <= set(extensions)
+    assert extensions == sorted(extensions)

@@ -890,8 +890,7 @@ class FileHandlers(_FrontendState):
                     add_filter=("资源文件", list(ResourceCatalogPolicy.file_extensions[request.resource_type]))
                 )
             if request.purpose == FileSelectionPurpose.FILESET_IMPORT:
-                media_extensions = sorted(FileSetStore.image_extensions | FileSetStore.video_extensions)
-                return dialog.blocking_pick_files(add_filter=("媒体文件", media_extensions))
+                return dialog.blocking_pick_files(add_filter=("媒体文件", FileSetStore.dialog_extensions()))
             return dialog.blocking_pick_files(set_title="选择文件")
 
         selected = await self._run_native_dialog("选择文件", pick_files)

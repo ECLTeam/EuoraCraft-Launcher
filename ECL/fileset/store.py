@@ -139,6 +139,18 @@ class FileSetStore:
         self._items = self._load_items()
         self._cleanup_files()
 
+    @classmethod
+    def dialog_extensions(cls) -> list[str]:
+        """
+        返回原生文件对话框过滤器使用的扩展名。
+
+        上游 ``add_filter`` 会自行补 ``*.``，传带点的后缀会拼成 ``*..png`` 而匹配不到
+        任何文件，因此这里统一去掉前导点。
+
+        :return: 不含点的扩展名列表，已排序
+        """
+        return sorted(extension.lstrip(".") for extension in cls.image_extensions | cls.video_extensions)
+
     @staticmethod
     def _timestamp() -> str:
         return datetime.now(UTC).isoformat()
