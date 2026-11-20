@@ -85,9 +85,7 @@ class PluginEventHub:
                 get_logger("PluginEventHub").debug(
                     "插件事件投递跳过失效接收；主题：%s；原因：%s", topic, exc.error_code
                 )
-        get_logger("PluginEventHub").debug(
-            "插件事件已发布；来源：%s；主题：%s；接收：%d", source, topic, delivered
-        )
+        get_logger("PluginEventHub").debug("插件事件已发布；来源：%s；主题：%s；接收：%d", source, topic, delivered)
         return delivered
 
     def close(self) -> None:

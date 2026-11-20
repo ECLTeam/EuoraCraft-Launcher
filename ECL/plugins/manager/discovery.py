@@ -142,9 +142,7 @@ class PluginDiscovery(_PluginState):
             source = "system" if is_system else ("package" if active else "directory")
             self.worker_service.register(metadata, plugin_dir, source, dependency)
             self._status[name] = "unloaded"
-            self.logger.info(
-                "插件已登记: %s；执行形态：%s", name, ("进程内" if is_system else "子进程")
-            )
+            self.logger.info("插件已登记: %s；执行形态：%s", name, ("进程内" if is_system else "子进程"))
         except (OSError, ValueError) as exc:
             self._status[name] = "unsupported"
             if isinstance(exc, ValidationError):

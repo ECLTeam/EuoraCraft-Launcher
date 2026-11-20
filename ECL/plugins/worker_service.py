@@ -612,9 +612,7 @@ class PluginWorkerService:
             )
             if self._java_queries is not None and self._java_catalog is not None
             else None,
-            resources=RuntimeResources(
-                entry.session, self._catalog, self._instance_queries, self.refresh_resources
-            )
+            resources=RuntimeResources(entry.session, self._catalog, self._instance_queries, self.refresh_resources)
             if self._catalog is not None and self._instance_queries is not None
             else None,
             slot_sink=partial(self._publish_slot, name),
@@ -624,9 +622,9 @@ class PluginWorkerService:
             online_sink=partial(self._publish_auth, name),
             custom_ui=entry.manifest.custom_ui,
             window_app=lambda: self._window_app,
-                    plugin_name=entry.manifest.name,
-                    settings_service=self.settings,
-                    event_hub=self._event_hub,
+            plugin_name=entry.manifest.name,
+            settings_service=self.settings,
+            event_hub=self._event_hub,
             tool_channel=ToolChannel(
                 run=partial(self._tool_run, name),
                 stop=partial(self._tool_stop, name),

@@ -162,8 +162,7 @@ def _serve(channel: LocalChannel, run_id: str, host_pid: int) -> None:
                 # 的协议基础，二者均与 SDK 同属受信范围。
                 "has_host_modules": any(
                     name.startswith("ECL.")
-                    and name
-                    not in {"ECL.bootstrap", "ECL.plugins", "ECL.plugins.sdk", "ECL.plugins.contracts"}
+                    and name not in {"ECL.bootstrap", "ECL.plugins", "ECL.plugins.sdk", "ECL.plugins.contracts"}
                     and not name.startswith("ECL.plugins.sdk.")
                     for name in sys.modules
                 ),
