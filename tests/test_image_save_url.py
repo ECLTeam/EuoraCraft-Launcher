@@ -179,6 +179,7 @@ def _build_api(tmp_path):
         accounts=FakeAccounts(),
         connector=SimpleNamespace(),
         wardrobe=FakeWardrobe(),
+        fileset=SimpleNamespace(),
         announcements=FakeAnnouncements(),
         game=SimpleNamespace(),
         plugins=FakePlugins(),

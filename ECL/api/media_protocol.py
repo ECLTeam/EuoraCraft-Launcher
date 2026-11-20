@@ -65,11 +65,12 @@ def _is_valid_token(value: str) -> bool:
 
 class MediaProtocolService:
     """
-    维护 ``ecl-media`` 协议的令牌绑定表，签发受控背景视频 URL 并按 Range 返回字节区间。
+    维护 ``ecl-media`` 协议的令牌绑定表，签发受控视频 URL 并按 Range 返回字节区间。
 
     与 ``ecl-img`` 相同的安全模型：协议处理器不接受客户端路径，读取边界由注册入口
-    校验扩展名与大小；令牌单次只绑定一个视频，新签发时整体失效旧令牌。区间交付
-    委托 PyTauriX 的 ``file_range_response``，WebView 按 Range 逐块请求，内存无压力。
+    校验扩展名与大小。令牌按路径复用，同一文件重复签发返回已有地址；令牌总数受
+    ``max_tokens`` 限制，超出时淘汰最早过期的绑定。区间交付委托 PyTauriX 的
+    ``file_range_response``，WebView 按 Range 逐块请求，内存无压力。
     """
 
     scheme = scheme_name
@@ -100,9 +101,13 @@ class MediaProtocolService:
 
     def register_local(self, raw_path: str) -> str:
         """
-        校验视频文件并签发协议 URL；新令牌签发时整体失效旧令牌。
+        校验视频文件并签发协议 URL；同一路径复用未过期令牌。
 
-        :param raw_path: 用户已保存到背景配置中的本地视频绝对路径
+        背景切换、画廊预览等场景可能同时持有多个视频地址，因此不再整体失效旧令牌。
+        令牌总数达到上限时淘汰最早过期的绑定，仍在使用的地址可能因此失效，调用方
+        需重新签发。
+
+        :param raw_path: 用户已保存到背景配置或文件集中的本地视频绝对路径
         :return: 含令牌的协议 URL，可直接用于 ``<video src>``
         :raises ValueError: 扩展名不受支持、文件缺失或大小越界时抛出
         """
@@ -115,19 +120,23 @@ class MediaProtocolService:
         if size <= 0 or size > self.max_video_bytes:
             raise ValueError("背景视频必须大于 0 且不超过 1 GiB")
 
-        token = secrets.token_urlsafe(24)
         now = time.monotonic()
         with self._lock:
             self._purge_expired(now)
-            self._bindings.clear()
+            for token, binding in self._bindings.items():
+                if binding.file_path == path:
+                    return f"{self.origin()}/{token}/{quote(path.name)}"
+            if len(self._bindings) >= self.max_tokens:
+                oldest = min(self._bindings, key=lambda key: self._bindings[key].expires_at)
+                self._bindings.pop(oldest, None)
+            token = secrets.token_urlsafe(24)
             self._bindings[token] = _MediaTokenBinding(
                 file_path=path,
                 mime=mime,
                 size=size,
                 expires_at=now + self.token_ttl_seconds,
             )
-        filename = quote(path.name)
-        return f"{self.origin()}/{token}/{filename}"
+        return f"{self.origin()}/{token}/{quote(path.name)}"
 
     def revoke(self) -> None:
         """

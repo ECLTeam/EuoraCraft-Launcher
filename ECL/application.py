@@ -35,6 +35,7 @@ import httpx
 from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.desktop.dev_channel import DevChannelService
 from ECL.desktop.single_instance import SingleInstanceService
+from ECL.fileset.store import FileSetStore
 from ECL.java import JavaManager
 from ECL.java.models import JavaReferenceConfig
 from ECL.java.queries import JavaQueries
@@ -227,6 +228,7 @@ class ApplicationContext:
     http: httpx.Client
     accounts: AccountManager
     wardrobe: WardrobeStore
+    fileset: FileSetStore
     announcements: AnnouncementService
     game: GameService
     plugins: PluginManager
@@ -423,6 +425,9 @@ def create_application(
             "本地衣柜已创建，条目数：%s",
             len(wardrobe.list_items()),
         )
+        # 文件集只维护用户媒体索引，没有需要释放的运行时资源，因此不进入 created 回滚列表。
+        fileset = FileSetStore(state.data_path)
+        logger.debug("文件集已加载，条目数：%s", len(fileset.list_items()))
         announcements = AnnouncementService(
             state.data_path,
             http_client=http,
@@ -523,6 +528,7 @@ def create_application(
             http=http,
             accounts=accounts,
             wardrobe=wardrobe,
+            fileset=fileset,
             announcements=announcements,
             game=game,
             plugins=plugins,

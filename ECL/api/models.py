@@ -112,6 +112,10 @@
 #   - class WardrobeItemRequest
 #   - class WardrobeUpdateRequest
 #   - class WardrobeApplySkinRequest
+#   - class FileSetImportRequest — 校验批量导入的本地文件路径。
+#   - class FileSetItemRequest
+#   - class FileSetRenameRequest
+#   - class FileSetDeleteRequest — 校验批量删除的条目标识。
 #   - class AccountTextureRequest
 #   - class LittleSkinClosetRequest — 校验云端衣柜分页。
 #   - class LittleSkinTextureRequest — 校验云端材质选择。
@@ -225,6 +229,7 @@ class FileSelectionPurpose(StrEnum):
     PLUGIN_PACKAGE = "plugin-package"
     WORLD_IMPORT = "world-import"
     WORLD_IMPORT_FOLDER = "world-import-folder"
+    FILESET_IMPORT = "fileset-import"
 
 
 class FileSavePurpose(StrEnum):
@@ -891,6 +896,34 @@ class WardrobeApplySkinRequest(WardrobeItemRequest):
     account_id: str = Field(min_length=1)
 
 
+class FileSetImportRequest(RequestModel):
+    """
+    批量导入文件集时提交的本地文件路径列表。
+
+    一次最多 200 个路径；每个路径在服务层单独校验格式与大小，单个失败不影响其余文件。
+    """
+
+    paths: list[SafePath] = Field(min_length=1, max_length=200)
+
+
+class FileSetItemRequest(RequestModel):
+    item_id: str = Field(min_length=1)
+
+
+class FileSetRenameRequest(FileSetItemRequest):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class FileSetDeleteRequest(RequestModel):
+    """
+    批量删除文件集条目。
+
+    被背景配置引用的条目由处理器拦截，不在此处做引用判断。
+    """
+
+    item_ids: list[str] = Field(min_length=1, max_length=200)
+
+
 class AccountTextureRequest(RequestModel):
     account_id: str = Field(min_length=1)
 
@@ -1211,6 +1244,12 @@ class RequestModelRegistry:
         "wardrobe_texture": WardrobeItemRequest,
         "wardrobe_export": WardrobeItemRequest,
         "wardrobe_apply_skin": WardrobeApplySkinRequest,
+        "fileset_list": RequestModel,
+        "fileset_import": FileSetImportRequest,
+        "fileset_rename": FileSetRenameRequest,
+        "fileset_delete": FileSetDeleteRequest,
+        "fileset_resolve": FileSetItemRequest,
+        "fileset_thumbnail": FileSetItemRequest,
         "accounts_texture_urls": AccountTextureRequest,
         "microsoft_reset_skin": AccountTextureRequest,
         "microsoft_set_cape": MicrosoftCapeRequest,

@@ -26,6 +26,7 @@ kernel_directories = (
     "utils",
     "desktop",
     "headless",
+    "fileset",
 )
 
 kernel_root_modules = (

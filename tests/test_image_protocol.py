@@ -64,6 +64,7 @@ def _build_api(tmp_path):
         accounts=SimpleNamespace(),
         connector=SimpleNamespace(),
         wardrobe=SimpleNamespace(),
+        fileset=SimpleNamespace(),
         announcements=SimpleNamespace(),
         game=SimpleNamespace(),
         plugins=SimpleNamespace(list_plugins=lambda: [], on_frontend_ready=lambda: None),

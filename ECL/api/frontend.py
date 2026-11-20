@@ -18,6 +18,7 @@ from ECL.api.bridge import (
     _normalize_image_url,
 )
 from ECL.api.files import FileHandlers
+from ECL.api.fileset import FileSetHandlers
 from ECL.api.game import GameHandlers
 from ECL.api.java import JavaHandlers
 from ECL.api.mods import ModHandlers
@@ -33,6 +34,7 @@ class FrontendApi(
     PluginHandlers,
     ModHandlers,
     FileHandlers,
+    FileSetHandlers,
     AccountHandlers,
     GameHandlers,
     SettingsHandlers,

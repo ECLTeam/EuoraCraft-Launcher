@@ -146,6 +146,7 @@ frontend_module = import_module("ECL.api.frontend")
 files_module = import_module("ECL.api.files")
 ConfigStore = import_module("ECL.utils.config").ConfigStore
 EventBus = import_module("ECL.utils").EventBus
+FileSetStore = import_module("ECL.fileset.store").FileSetStore
 AccountError = import_module("ECL.minecraft.services.account.accounts").AccountError
 LaunchOptions = import_module("ECL.cli").LaunchOptions
 command_handlers = import_module("ECL.api.registry").command_handlers
@@ -415,6 +416,7 @@ def _build_api(tmp_path) -> FrontendApi:
         accounts=FakeAccounts(),
         connector=SimpleNamespace(start_node_preload=lambda: False),
         wardrobe=FakeWardrobe(),
+        fileset=FileSetStore(tmp_path / "ECL_data"),
         announcements=FakeAnnouncements(),
         game=FakeGame(),
         plugins=FakePlugins(),
@@ -2080,3 +2082,31 @@ def test_authenticated_launch_requests_wait_for_ready_and_use_temporary_override
 
     asyncio.run(scenario())
     service.close()
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+@pytest.mark.parametrize("window_surface", ["solid", "translucent", "mica"])
+def test_adapter_window_surface_controls_transparency(window_surface: str, platform: str, monkeypatch) -> None:
+    # 透明表面要求自绘边缘；mica 仅在 Windows 保留，其他平台降级为半透明。
+    monkeypatch.setattr(import_module("ECL.desktop.tauri"), "sys", SimpleNamespace(platform=platform))
+    adapter = object.__new__(Adapter)
+    adapter.config = {"tauri": {}, "ui": {"theme": {"window_chrome": "native", "window_surface": window_surface}}}
+    adapter.launcher_version = "0.0.1-alpha"
+
+    window_config = adapter._build_config()["app"]["windows"][0]
+
+    if window_surface == "solid":
+        assert adapter._active_window_chrome == "native"
+        assert window_config["decorations"] is True
+        assert window_config["transparent"] is False
+        assert window_config["shadow"] is True
+        assert "windowEffects" not in window_config
+        return
+    assert adapter._active_window_chrome == "custom"
+    assert window_config["decorations"] is False
+    assert window_config["transparent"] is True
+    assert window_config["shadow"] is False
+    if window_surface == "mica" and platform == "win32":
+        assert window_config["windowEffects"] == {"effects": ["mica"], "state": "active"}
+    else:
+        assert "windowEffects" not in window_config

@@ -47,6 +47,7 @@ from ECL.api.operation_logging import IpcLogPolicy, IpcLogRuntime, IpcLogSpec
 from ECL.application import ApplicationContext
 from ECL.cli import LaunchOptions, apply_launch_overrides
 from ECL.desktop.maintenance import DebugMaintenanceError
+from ECL.fileset.store import FileSetError
 from ECL.minecraft.game import AuthException, GameDataError, NetException
 from ECL.minecraft.services.account import AccountError, WardrobeError
 from ECL.minecraft.services.game import GameServiceError
@@ -404,6 +405,7 @@ class _FrontendState:
     ipc_errors = (
         AccountError,
         WardrobeError,
+        FileSetError,
         GameServiceError,
         GameDataError,
         DebugMaintenanceError,
@@ -444,6 +446,7 @@ class _FrontendState:
         self.config = context.config
         self.accounts = context.accounts
         self.wardrobe = context.wardrobe
+        self.fileset = context.fileset
         self.http = context.http
         self.announcements = context.announcements
         self.game = context.game

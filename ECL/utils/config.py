@@ -105,7 +105,8 @@ default_config: dict[str, JsonValue] = {
             "navigation_mode": "sidebar",
             "titlebar_hidden": False,
             "window_chrome": "system_shadow",
-            "transparent_bg": False,
+            "window_surface": "solid",
+            "window_opacity": 100,
             "background_opacity": 1.0,
             "appearance": {
                 "radius_window": 12,
