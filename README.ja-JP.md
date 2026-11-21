@@ -8,17 +8,17 @@
 
 *Modern Minecraft third-party launcher written in Python, with plugin extensibility, build your own launcher.*
 
-[![Release](https://img.shields.io/github/v/release/ECLTeam/EuoraCraft-Launcher?style=flat-square&logo=github&label=Release&color=40c9c0)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
-[![Stars](https://img.shields.io/github/stars/ECLTeam/EuoraCraft-Launcher?style=flat-square&logo=github&label=Stars&color=f0b429)](https://github.com/ECLTeam/EuoraCraft-Launcher/stargazers)
-[![License](https://img.shields.io/badge/License-GPL--3.0-3fb950?style=flat-square)](./LICENSE)
-[![Platform](https://img.shields.io/badge/%E3%83%97%E3%83%A9%E3%83%83%E3%83%88%E3%83%95%E3%82%A9%E3%83%BC%E3%83%A0-Windows%20%7C%20Linux%20%7C%20macOS-64748b?style=flat-square)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
+[![Release](https://img.shields.io/github/v/release/ECLTeam/EuoraCraft-Launcher?style=flat&logo=github&label=Release&color=40c9c0)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
+[![Stars](https://img.shields.io/github/stars/ECLTeam/EuoraCraft-Launcher?style=flat&logo=github&label=Stars&color=f0b429)](https://github.com/ECLTeam/EuoraCraft-Launcher/stargazers)
+[![License](https://img.shields.io/badge/License-GPL--3.0-3fb950?style=flat)](./LICENSE)
+[![Platform](https://img.shields.io/badge/%E3%83%97%E3%83%A9%E3%83%83%E3%83%88%E3%83%95%E3%82%A9%E3%83%BC%E3%83%A0-Windows%20%7C%20Linux%20%7C%20macOS-64748b?style=flat)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
 
 <br>
 
-[![公式サイト](https://img.shields.io/badge/%E5%85%AC%E5%BC%8F%E3%82%B5%E3%82%A4%E3%83%88-euora.cn-f0b429?style=for-the-badge)](https://www.euora.cn)
-[![ドキュメント](https://img.shields.io/badge/%E3%83%89%E3%82%AD%E3%83%A5%E3%83%A1%E3%83%B3%E3%83%88-docs.euora.cn-40c9c0?style=for-the-badge)](https://docs.euora.cn)
-[![ダウンロード](https://img.shields.io/badge/%E3%83%80%E3%82%A6%E3%83%B3%E3%83%AD%E3%83%BC%E3%83%89-GitHub%20Releases-3b82c4?style=for-the-badge)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
-[![フィードバック](https://img.shields.io/badge/%E3%83%95%E3%82%A3%E3%83%BC%E3%83%89%E3%83%90%E3%83%83%E3%82%AF-GitHub%20Issues-8b949e?style=for-the-badge)](https://github.com/ECLTeam/EuoraCraft-Launcher/issues)
+[![公式サイト](https://img.shields.io/badge/%E5%85%AC%E5%BC%8F%E3%82%B5%E3%82%A4%E3%83%88-euora.cn-f0b429?style=plastic)](https://www.euora.cn)
+[![ドキュメント](https://img.shields.io/badge/%E3%83%89%E3%82%AD%E3%83%A5%E3%83%A1%E3%83%B3%E3%83%88-docs.euora.cn-40c9c0?style=plastic)](https://docs.euora.cn)
+[![ダウンロード](https://img.shields.io/badge/%E3%83%80%E3%82%A6%E3%83%B3%E3%83%AD%E3%83%BC%E3%83%89-GitHub%20Releases-3b82c4?style=plastic)](https://github.com/ECLTeam/EuoraCraft-Launcher/releases)
+[![フィードバック](https://img.shields.io/badge/%E3%83%95%E3%82%A3%E3%83%BC%E3%83%89%E3%83%90%E3%83%83%E3%82%AF-GitHub%20Issues-8b949e?style=plastic)](https://github.com/ECLTeam/EuoraCraft-Launcher/issues)
 
 </div>
 
