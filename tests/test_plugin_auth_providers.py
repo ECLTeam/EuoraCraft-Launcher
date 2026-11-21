@@ -92,9 +92,7 @@ def test_plugin_auth_provider_lists_and_adds_account(tmp_path) -> None:
             "id": provider_id,
             "title": "Demo 登录",
             "description": "Demo provider",
-            "fields": [
-                {"key": "token", "label": "访问令牌", "type": "text", "required": True, "placeholder": ""}
-            ],
+            "fields": [{"key": "token", "label": "访问令牌", "type": "text", "required": True, "placeholder": ""}],
         }
     ]
 

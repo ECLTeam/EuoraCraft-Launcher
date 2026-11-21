@@ -36,9 +36,7 @@ def test_manifest_requires_explicit_name_and_ignores_legacy_permissions() -> Non
     assert PluginManifest.model_validate({"name": "example"}).entry_file == "main.py"
     # 权限声明不再是清单字段；旧清单中的 permissions 被忽略而非报错。
     # api_version 等历史版本化字段同样被忽略，不再参与校验。
-    ignored = PluginManifest.model_validate(
-        {"name": "example", "permissions": [{"capability": "game"}]}
-    )
+    ignored = PluginManifest.model_validate({"name": "example", "permissions": [{"capability": "game"}]})
     assert not hasattr(ignored, "permissions")
     for metadata in (
         {"name": "example", "entry_point": "../escape:Plugin"},
@@ -86,14 +84,8 @@ def test_manifest_min_launcher_is_compared_with_host_version(monkeypatch: pytest
         monkeypatch.setattr(store, "__version__", version)
 
     _with_host_version("0.3.1")
-    assert (
-        PluginManifest.model_validate({"name": "example", "minLauncher": "0.3.1"}).min_launcher
-        == "0.3.1"
-    )
-    assert (
-        PluginManifest.model_validate({"name": "example", "minLauncher": "0.2.0"}).min_launcher
-        == "0.2.0"
-    )
+    assert PluginManifest.model_validate({"name": "example", "minLauncher": "0.3.1"}).min_launcher == "0.3.1"
+    assert PluginManifest.model_validate({"name": "example", "minLauncher": "0.2.0"}).min_launcher == "0.2.0"
     with pytest.raises(ValidationError) as too_new:
         PluginManifest.model_validate({"name": "example", "minLauncher": "0.4.0"})
     assert manifest_validation_error_code(too_new.value) == "PLUGIN_LAUNCHER_VERSION_UNSUPPORTED"
@@ -111,9 +103,7 @@ def test_manifest_features_are_whitelisted_but_need_not_be_enabled() -> None:
 
     from ECL.plugins.installation_store import manifest_validation_error_code
 
-    manifest = PluginManifest.model_validate(
-        {"name": "example", "features": ["panels", "hot_reload"]}
-    )
+    manifest = PluginManifest.model_validate({"name": "example", "features": ["panels", "hot_reload"]})
     assert manifest.features == ["panels", "hot_reload"]
     with pytest.raises(ValidationError) as unknown:
         PluginManifest.model_validate({"name": "example", "features": ["teleport"]})

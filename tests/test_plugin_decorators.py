@@ -58,7 +58,9 @@ def test_decorators_register_before_on_load_and_allow_override(tmp_path: Path) -
     registered_hooks: list[tuple[str, str, str | None, bool]] = []
     service = PluginWorkerService(
         tmp_path / "data",
-        hook_sink=lambda name, phase, callback_ref, required: registered_hooks.append((name, phase, callback_ref, required)),
+        hook_sink=lambda name, phase, callback_ref, required: registered_hooks.append(
+            (name, phase, callback_ref, required)
+        ),
     )
     try:
         service.register({"name": "sys-deco", "entry_point": "main:DecoratedPlugin"}, root, "system")

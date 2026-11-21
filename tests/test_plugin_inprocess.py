@@ -230,5 +230,3 @@ def test_system_plugins_call_each_others_exported_commands(tmp_path: Path) -> No
         service.stop("sys-demo")
     finally:
         service.close()
-
-

@@ -109,10 +109,12 @@ def test_unix_transport_rejects_zero_length_before_reading_payload():
 
 def test_unix_transport_accepts_frame_beyond_old_limit():
     server, client, accepted = _pair()
-    payload = WireMessage("response", {"value": "x" * 128 * 1024}, "1", "callbacks.invoke").encode()
+    message = WireMessage("response", {"value": "x" * 128 * 1024}, "1", "callbacks.invoke")
     try:
-        client._socket.sendall(struct.pack("!I", len(payload)) + payload)
-        assert len(accepted.receive().params["value"]) == 128 * 1024
+        # 客户端 socket 是非阻塞模式：大帧必须经传输层分段发送，
+        # 直接 sendall 会在 macOS 等缓冲区较小的平台上中途触发 EAGAIN。
+        client.send(message, timeout=10)
+        assert len(accepted.receive(timeout=10).params["value"]) == 128 * 1024
     finally:
         client.close()
         accepted.close()

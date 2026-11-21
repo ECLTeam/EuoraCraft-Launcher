@@ -154,9 +154,7 @@ def _write_directory_manifest(source, metadata):
 
 def test_inspect_directory_reports_manifest_and_dependency_state(tmp_path):
     source = tmp_path / "demo"
-    _write_directory_manifest(
-        source, {"name": "demo", "version": "1.2.3", "entry_point": "main:Plugin"}
-    )
+    _write_directory_manifest(source, {"name": "demo", "version": "1.2.3", "entry_point": "main:Plugin"})
     manager = PluginManager()
     manager.initialize(tmp_path / "data", tmp_path / "resources")
     try:

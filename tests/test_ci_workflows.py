@@ -145,7 +145,12 @@ def test_arch_package_disables_debug_and_every_artifact_has_a_checksum():
     assert source.count("${{ steps.package.outputs.dir }}/${{ steps.package.outputs.filename }}.sha256") == 2
     assert source.count("name: ${{ steps.arch_package.outputs.filename }}.sha256") == 1
     # 一次为 Arch job 上传，一次为 publish-arch 下载。
-    assert source.count("name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}.sha256") == 2
+    assert (
+        source.count(
+            "name: EuoraCraft-Launcher-Arch-X64-${{ needs.validate-release-tag.outputs.filename_version }}.sha256"
+        )
+        == 2
+    )
     publish = source.split("  publish-arch:", 1)[1]
     assert "Download Arch package checksum" in publish and "Download Arch binary checksum" in publish
     assert publish.count(".sha256") >= 6
