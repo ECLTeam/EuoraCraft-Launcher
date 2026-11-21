@@ -45,7 +45,7 @@ class Adapter:
     _debug_profile_override_active: bool = False
     _start_minimized: bool = False
     _debug_profile_original: str | None = None
-    window_surfaces = frozenset({"solid", "translucent", "mica"})
+    window_surfaces = frozenset({"solid", "translucent"})
 
     def __init__(self, context: ApplicationContext, watchdog: WatchdogSession | None = None) -> None:
         launcher = context.state
@@ -187,9 +187,6 @@ class Adapter:
         preferred_chrome = theme_config.get("window_chrome") if isinstance(theme_config, dict) else None
         preferred_surface = theme_config.get("window_surface") if isinstance(theme_config, dict) else None
         window_surface = preferred_surface if preferred_surface in self.window_surfaces else "solid"
-        if window_surface == "mica" and sys.platform != "win32":
-            # 毛玻璃仅在 Windows 可用；其他平台降级为半透明，避免窗口静默变成不透明。
-            window_surface = "translucent"
         if window_surface != "solid":
             # 透明表面要求自绘边缘：系统边缘会带来不透明底色，使 CSS 半透明失效。
             self._active_window_chrome = "custom"
@@ -213,8 +210,6 @@ class Adapter:
             "visible": True,
             "focus": not self._start_minimized,
         }
-        if window_surface == "mica":
-            window_config["windowEffects"] = {"effects": ["mica"], "state": "active"}
         self._apply_webview_debug_options(window_config)
         return {
             "version": self.launcher_version,

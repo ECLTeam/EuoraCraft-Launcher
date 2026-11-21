@@ -2086,9 +2086,9 @@ def test_authenticated_launch_requests_wait_for_ready_and_use_temporary_override
 
 
 @pytest.mark.parametrize("platform", ["win32", "linux"])
-@pytest.mark.parametrize("window_surface", ["solid", "translucent", "mica"])
+@pytest.mark.parametrize("window_surface", ["solid", "translucent"])
 def test_adapter_window_surface_controls_transparency(window_surface: str, platform: str, monkeypatch) -> None:
-    # 透明表面要求自绘边缘；mica 仅在 Windows 保留，其他平台降级为半透明。
+    # 透明表面要求自绘边缘；毛玻璃表面已移除，未知值回落为不透明。
     monkeypatch.setattr(import_module("ECL.desktop.tauri"), "sys", SimpleNamespace(platform=platform))
     adapter = object.__new__(Adapter)
     adapter.config = {"tauri": {}, "ui": {"theme": {"window_chrome": "native", "window_surface": window_surface}}}
@@ -2107,7 +2107,18 @@ def test_adapter_window_surface_controls_transparency(window_surface: str, platf
     assert window_config["decorations"] is False
     assert window_config["transparent"] is True
     assert window_config["shadow"] is False
-    if window_surface == "mica" and platform == "win32":
-        assert window_config["windowEffects"] == {"effects": ["mica"], "state": "active"}
-    else:
-        assert "windowEffects" not in window_config
+    assert "windowEffects" not in window_config
+
+
+def test_adapter_window_surface_unknown_value_falls_back_to_solid(monkeypatch) -> None:
+    # 已移除的 mica 等历史值不再被接受，配置解析回落为不透明表面。
+    monkeypatch.setattr(import_module("ECL.desktop.tauri"), "sys", SimpleNamespace(platform="win32"))
+    adapter = object.__new__(Adapter)
+    adapter.config = {"tauri": {}, "ui": {"theme": {"window_chrome": "native", "window_surface": "mica"}}}
+    adapter.launcher_version = "0.0.1-alpha"
+
+    window_config = adapter._build_config()["app"]["windows"][0]
+
+    assert adapter._active_window_chrome == "native"
+    assert window_config["transparent"] is False
+    assert "windowEffects" not in window_config
