@@ -31,6 +31,7 @@ from ECL.desktop.tauri import Adapter
 from ECL.utils import configure_logging, get_runtime_info
 from ECL.utils.logging import resolve_log_level
 from ECL.version import __version__, __version_type__
+from ECL.watchdog.host import WatchdogSession
 
 
 class LauncherExitCode(IntEnum):
@@ -70,6 +71,7 @@ class EuoraCraftLauncher:
         self.debug_log_level = "info"  # 控制台日志级别
         self.config: dict[str, Any] = {}  # 已应用环境变量的启动配置
         self.context: ApplicationContext | None = None  # 已创建的后端服务及共享资源
+        self.watchdog: WatchdogSession | None = None  # 事件循环停转保护，run() 中按配置启动
         self._shutdown_complete = False  # 关闭流程是否已完成（用于幂等）
         # 单实例探测必须先于日志系统：移交成功时不创建日志文件，避免与主实例竞争轮转句柄。
         self._handed_over = probe_running_instance(self.data_path, self.options.forwarded_argv)
@@ -107,7 +109,8 @@ class EuoraCraftLauncher:
 
         try:
             self.logger.info("启动前端")
-            Adapter(self._require_context()).run()
+            self._start_watchdog()
+            Adapter(self._require_context(), watchdog=self.watchdog).run()
         except Exception:
             self.logger.exception("前端界面运行失败")
             return LauncherExitCode.FRONTEND_FAILED
@@ -190,6 +193,24 @@ class EuoraCraftLauncher:
             raise RuntimeError("后端尚未初始化")
         return self.context
 
+    def _start_watchdog(self) -> None:
+        # 按配置启动看门狗；启动失败降级为无看门狗运行，不阻塞前端。
+        launcher_config = self.config.get("launcher") if isinstance(self.config, dict) else None
+        enabled = (launcher_config or {}).get("watchdog_enabled", True)
+        if enabled is not True:
+            self.logger.debug("看门狗已在配置中关闭")
+            return
+        session = WatchdogSession(self.data_path / "logs" / "watchdog-hang.log")
+        if session.start():
+            self.watchdog = session
+
+    def _stop_watchdog(self) -> None:
+        # 幂等回收看门狗子进程，先于日志系统关闭执行以保留告警输出。
+        watchdog = getattr(self, "watchdog", None)
+        if watchdog is not None:
+            watchdog.stop()
+            self.watchdog = None
+
     def _shutdown(self) -> None:
         # 只关闭一次后端服务，最后关闭日志系统。
         if self._shutdown_complete:
@@ -197,6 +218,7 @@ class EuoraCraftLauncher:
             return
         self._shutdown_complete = True
         self.logger.debug("开始关闭启动器后端")
+        self._stop_watchdog()
         if self.context is not None:
             self.context.close()
             self.context = None

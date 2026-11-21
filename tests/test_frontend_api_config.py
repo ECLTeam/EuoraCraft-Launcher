@@ -633,6 +633,7 @@ def test_launcher_config_excludes_runtime_metadata(tmp_path) -> None:
         "request_retries": 2,
         "dev_channel": False,
         "single_instance": True,
+        "watchdog_enabled": True,
     }
 
 

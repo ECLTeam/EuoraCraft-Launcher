@@ -51,6 +51,8 @@ default_config: dict[str, JsonValue] = {
         "dev_channel": False,
         # 单实例互斥：同一数据目录仅允许一个主实例，重复启动时激活已运行窗口。
         "single_instance": True,
+        # 看门狗子进程：事件循环停转超过阈值时写卡死报告并终止主进程。
+        "watchdog_enabled": True,
     },
     "game": {
         "minecraft_paths": [],

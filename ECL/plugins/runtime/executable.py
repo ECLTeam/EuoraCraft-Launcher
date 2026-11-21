@@ -70,6 +70,17 @@ class ExecutableLaunchSpec:
             raise PluginRuntimeError("无法确认冻结启动入口", "WORKER_EXECUTABLE_UNRESOLVED")
         return cls(executable_path.resolve(), None, kind)
 
+    def executable_prefix(self) -> tuple[str, ...]:
+        """
+        返回原始执行前缀，供其他受信角色拼接各自的角色参数。
+
+        :return: 执行文件与源码模式的脚本入口
+        """
+        prefix = (str(self.executable_path),)
+        if self.project_path is not None:
+            prefix += ("-S", str(self.project_path / "main.py"))
+        return prefix
+
     def arguments(self, address: str, host_pid: int, run_id: str, *, guardian: bool = False) -> tuple[str, ...]:
         """
         构造公开启动参数，不在命令行传插件路径或认证秘密。
@@ -80,11 +91,8 @@ class ExecutableLaunchSpec:
         :param guardian: POSIX 是否先进入受信监管角色
         :return: 不经过 shell 的参数序列
         """
-        prefix = (str(self.executable_path),)
-        if self.project_path is not None:
-            prefix += ("-S", str(self.project_path / "main.py"))
         return (
-            *prefix,
+            *self.executable_prefix(),
             "--headless",
             "--role",
             "plugin-guardian" if guardian else "plugin",

@@ -8,6 +8,7 @@
 # 公开接口：
 #   - class ProcessRole — 进程入口选择，不表示业务授权。
 #   - class PluginProcessOptions — 经过结构校验的插件连接参数。
+#   - class WatchdogOptions — 经过结构校验的看门狗宿主连接参数。
 #   - class ProcessRoute — 不可变的入口分流结果。
 #   - select_process_route — 统一校验模式和插件角色参数。
 #   - local_worker_endpoint — 根据平台和运行标识生成唯一的本地端点。
@@ -32,6 +33,7 @@ class ProcessRole(StrEnum):
     task = "task"
     plugin = "plugin"
     guardian = "plugin-guardian"
+    watchdog = "watchdog"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +48,16 @@ class PluginProcessOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class WatchdogOptions:
+    """
+    保存看门狗需要核验的宿主连接信息，仅用于卡死检测，不赋予业务权限。
+    """
+
+    host_pid: int
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProcessRoute:
     """
     保存轻量分流结果，普通任务参数继续交由业务 CLI 校验。
@@ -54,6 +66,7 @@ class ProcessRoute:
     role: ProcessRole
     arguments: tuple[str, ...]
     plugin: PluginProcessOptions | None = None
+    watchdog: WatchdogOptions | None = None
 
 
 def local_worker_endpoint(run_id: str) -> str:
@@ -73,6 +86,37 @@ def local_worker_endpoint(run_id: str) -> str:
     raise ValueError("当前平台不支持插件端点")
 
 
+def _validate_watchdog_route(
+    parser: argparse.ArgumentParser, options: argparse.Namespace, arguments: Sequence[str], remaining: Sequence[str]
+) -> ProcessRoute:
+    """
+    校验看门狗角色的完整参数集合，任何缺项都不回退其他入口。
+
+    :param parser: 用于报告用法错误的解析器
+    :param options: 已解析的模式与角色控制参数
+    :param arguments: 原始参数序列，用于重复项检查
+    :param remaining: 未被识别的剩余参数
+    :return: 看门狗分流结果
+    """
+    if not options.headless or options.endpoint is not None or remaining:
+        parser.error("看门狗角色仅支持 --headless、--role 和宿主连接参数，不使用插件端点")
+    control_flags = frozenset({"--headless", "--gui", "--role", "--endpoint", "--host-pid", "--run-id"})
+    for flag in control_flags:
+        if sum(argument.split("=", 1)[0] == flag for argument in arguments) > 1:
+            parser.error("看门狗角色参数不能重复")
+    if (
+        options.host_pid is None
+        or not 0 < options.host_pid <= 0xFFFFFFFF
+        or options.run_id is None
+        or len(options.run_id) != 32
+        or any(character not in "0123456789abcdef" for character in options.run_id)
+    ):
+        parser.error("看门狗宿主连接参数缺失或无效")
+    return ProcessRoute(
+        ProcessRole.watchdog, tuple(arguments), watchdog=WatchdogOptions(options.host_pid, options.run_id)
+    )
+
+
 def select_process_route(argv: Sequence[str]) -> ProcessRoute:
     """
     在任何宿主导入前确定运行角色，非法插件参数不回退其他入口。
@@ -89,7 +133,7 @@ def select_process_route(argv: Sequence[str]) -> ProcessRoute:
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--headless", action="store_true")
     modes.add_argument("--gui", action="store_true")
-    parser.add_argument("--role", choices=("plugin", "plugin-guardian"))
+    parser.add_argument("--role", choices=("plugin", "plugin-guardian", "watchdog"))
     parser.add_argument("--endpoint")
     parser.add_argument("--host-pid", type=int)
     parser.add_argument("--run-id")
@@ -107,6 +151,8 @@ def select_process_route(argv: Sequence[str]) -> ProcessRoute:
         ):
             parser.error("模式与角色控制参数必须使用完整名称")
     options, remaining = parser.parse_known_args(arguments)
+    if options.role == "watchdog":
+        return _validate_watchdog_route(parser, options, arguments, remaining)
     if options.role not in {"plugin", "plugin-guardian"}:
         if any(value is not None for value in (options.endpoint, options.host_pid, options.run_id)):
             parser.error("插件连接参数需要与 --headless --role plugin 一起使用")
@@ -147,6 +193,11 @@ def run_process(argv: Sequence[str]) -> int:
 
         assert route.plugin is not None
         return run_guardian(route.plugin)
+    if route.role is ProcessRole.watchdog:
+        from ECL.watchdog.child import run_watchdog
+
+        assert route.watchdog is not None
+        return run_watchdog(route.watchdog)
     if route.role is ProcessRole.plugin:
         from ECL.plugins.sdk._process import run_plugin_process
 

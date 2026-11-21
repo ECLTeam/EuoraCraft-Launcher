@@ -35,6 +35,12 @@ def test_launcher_network_defaults_are_bounded() -> None:
     assert launcher_config["request_retries"] == 2
 
 
+def test_launcher_watchdog_enabled_by_default() -> None:
+    launcher_config = default_config["launcher"]
+
+    assert launcher_config["watchdog_enabled"] is True
+
+
 def test_game_defaults_use_full_instance_isolation() -> None:
     game_config = default_config["game"]
 

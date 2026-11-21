@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -27,6 +28,7 @@ from ECL.api import FrontendApi
 from ECL.api.registry import command_handlers
 from ECL.application import ApplicationContext
 from ECL.utils import get_logger
+from ECL.watchdog.host import WatchdogSession, heartbeat_interval_seconds
 
 from .frontend_events import subscribe_all_frontend_events
 
@@ -45,9 +47,10 @@ class Adapter:
     _debug_profile_original: str | None = None
     window_surfaces = frozenset({"solid", "translucent", "mica"})
 
-    def __init__(self, context: ApplicationContext) -> None:
+    def __init__(self, context: ApplicationContext, watchdog: WatchdogSession | None = None) -> None:
         launcher = context.state
         self.context = context
+        self.watchdog = watchdog  # 看门狗会话；None 表示本次运行未启用
         self.logger = get_logger("Adapter")
         self.commands = Commands()
         self.events = context.events
@@ -70,6 +73,9 @@ class Adapter:
         tauri_config = self._build_config()
         self.context.state.active_window_chrome = self._active_window_chrome
         with start_blocking_portal("asyncio") as portal:  # 允许异步方法
+            if self.watchdog is not None:
+                # 心跳必须由事件循环侧发出：循环停转时协程随之冻结，心跳停止后看门狗才会触发。
+                portal.start_task_soon(self._heartbeat_loop)
             portal.call(self.context.game.bind_plugin_launch_loop)
             self.logger.debug("正在创建 Tauri 窗口")
             context = context_factory(self.resource_path, tauri_config=tauri_config)
@@ -102,6 +108,14 @@ class Adapter:
             finally:
                 self._restore_debug_profile()
         self.logger.info("前端已退出")
+
+    async def _heartbeat_loop(self) -> None:
+        """
+        在 portal 事件循环上持续上报存活信号，直到前端退出。
+        """
+        while True:
+            self.watchdog.notify_alive()
+            await asyncio.sleep(heartbeat_interval_seconds)
 
     def _setup_plugin_windows(self, app_handle: AppHandle) -> None:
         """
