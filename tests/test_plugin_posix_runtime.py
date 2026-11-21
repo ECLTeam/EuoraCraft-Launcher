@@ -5,6 +5,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from time import monotonic, sleep
 from uuid import uuid4
@@ -110,11 +111,17 @@ def test_unix_transport_rejects_zero_length_before_reading_payload():
 def test_unix_transport_accepts_frame_beyond_old_limit():
     server, client, accepted = _pair()
     message = WireMessage("response", {"value": "x" * 128 * 1024}, "1", "callbacks.invoke")
+    received: list[WireMessage] = []
     try:
         # 客户端 socket 是非阻塞模式：大帧必须经传输层分段发送，
         # 直接 sendall 会在 macOS 等缓冲区较小的平台上中途触发 EAGAIN。
+        # 缓冲区装不下整个帧，接收方必须与发送并发执行，否则双方互相等待。
+        reader = threading.Thread(target=lambda: received.append(accepted.receive(timeout=10)))
+        reader.start()
         client.send(message, timeout=10)
-        assert len(accepted.receive(timeout=10).params["value"]) == 128 * 1024
+        reader.join(10)
+        assert not reader.is_alive()
+        assert len(received[0].params["value"]) == 128 * 1024
     finally:
         client.close()
         accepted.close()

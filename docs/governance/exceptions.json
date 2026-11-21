@@ -8,7 +8,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -208,7 +207,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -408,7 +406,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -506,8 +503,7 @@
       "div.offline-uuid-field > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > div.n-input__placeholder > span",
       "div.offline-uuid-field > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div.offline-uuid-field > label",
-      "input[aria-label=\"输入用户名\"]",
-      "small"
+      "input[aria-label=\"输入用户名\"]"
     ],
     "repository": "ECLTeam/EuoraCraft-Launcher.Frontend",
     "reason": "axe 对渐变、透明或叠加背景无法下结论；本轮已核对对应场景截图与保守像素测量。不可见项仅记录当前视口，未声明其他滚动状态已通过。",
@@ -549,7 +545,6 @@
       "div.info-card:nth-of-type(2) > div.info-grid > div.info-item:nth-of-type(2) > span.info-value",
       "div.info-card:nth-of-type(2) > div.info-grid > div.info-item:nth-of-type(3) > span.info-label",
       "div.info-card:nth-of-type(2) > div.info-grid > div.info-item:nth-of-type(3) > span.info-value",
-      "div.vdm-nav-copy > span",
       "div.vdm-nav-copy > strong",
       "html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(14) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > aside:nth-of-type(1) > nav:nth-of-type(1) > button:nth-of-type(1) > span:nth-of-type(2)",
       "html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(14) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > aside:nth-of-type(1) > nav:nth-of-type(1) > button:nth-of-type(10) > span:nth-of-type(2)",
@@ -584,8 +579,6 @@
       "h1",
       "h4",
       "html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(8) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > span:nth-of-type(2)",
-      "li",
-      "p.update-result-modal__current",
       "span.update-result-modal__channel",
       "strong.update-result-modal__version"
     ],
@@ -608,7 +601,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -808,7 +800,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[title=\"优先官方源\"] > div.n-base-selection-input__content",
       "div[title=\"官方\"] > div.n-base-selection-input__content",
       "div[title=\"简体中文\"] > div.n-base-selection-input__content",
@@ -852,7 +843,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -895,7 +885,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -938,7 +927,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -981,7 +969,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -1024,7 +1011,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -1067,7 +1053,6 @@
       "div.n-menu-item:nth-of-type(2) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(3) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div.n-menu-item:nth-of-type(4) > div.n-menu-item-content > div.n-menu-item-content-header",
-      "div.n-menu-item:nth-of-type(5) > div.n-menu-item-content > div.n-menu-item-content-header",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-control > div.n-input-number > div.n-input.n-input--medium-size.n-input--resizable.n-input--stateful > div.n-input-wrapper > div.n-input__input > input.n-input__input-el",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-desc",
       "div[data-theme-component=\"setting-row\"]:nth-of-type(4) > div.setting-info > div.setting-label > span",
@@ -1109,5 +1094,73 @@
     "expires_on": "2026-12-08",
     "risk": "other",
     "disposition": "manual-review"
+  },
+  {
+    "scope": "frontend-accessibility",
+    "rule": "color-contrast",
+    "repository": "ECLTeam/EuoraCraft-Launcher.Frontend",
+    "reason": "axe 判定为确定违规的 color-contrast；与既有渐变/叠加背景例外族同源，等待前端维护者按 docs/governance/accessibility-review 流程复核后修复或延续豁免。",
+    "issue": "https://github.com/ECLTeam/EuoraCraft-Launcher/issues/76",
+    "approval": "AI 协助 CI 修复时按既有例外族归类并登记；尚待前端维护者人工复核，30 天期限到期后如未处理将再次阻断治理检查。",
+    "owner": "前端维护者",
+    "approved_on": "2026-11-21",
+    "expires_on": "2026-12-21",
+    "risk": "other",
+    "disposition": "temporary",
+    "subject": "account-login-folia-light-zh-CN-1200x800",
+    "locations": [
+      "small"
+    ]
+  },
+  {
+    "scope": "frontend-accessibility",
+    "rule": "color-contrast",
+    "repository": "ECLTeam/EuoraCraft-Launcher.Frontend",
+    "reason": "axe 判定为确定违规的 color-contrast；与既有渐变/叠加背景例外族同源，等待前端维护者按 docs/governance/accessibility-review 流程复核后修复或延续豁免。",
+    "issue": "https://github.com/ECLTeam/EuoraCraft-Launcher/issues/76",
+    "approval": "AI 协助 CI 修复时按既有例外族归类并登记；尚待前端维护者人工复核，30 天期限到期后如未处理将再次阻断治理检查。",
+    "owner": "前端维护者",
+    "approved_on": "2026-11-21",
+    "expires_on": "2026-12-21",
+    "risk": "other",
+    "disposition": "temporary",
+    "subject": "instance-folia-light-zh-CN-1200x800",
+    "locations": [
+      "div.vdm-nav-copy > span"
+    ]
+  },
+  {
+    "scope": "frontend-accessibility",
+    "rule": "color-contrast",
+    "repository": "ECLTeam/EuoraCraft-Launcher.Frontend",
+    "reason": "axe 判定为确定违规的 color-contrast；与既有渐变/叠加背景例外族同源，等待前端维护者按 docs/governance/accessibility-review 流程复核后修复或延续豁免。",
+    "issue": "https://github.com/ECLTeam/EuoraCraft-Launcher/issues/76",
+    "approval": "AI 协助 CI 修复时按既有例外族归类并登记；尚待前端维护者人工复核，30 天期限到期后如未处理将再次阻断治理检查。",
+    "owner": "前端维护者",
+    "approved_on": "2026-11-21",
+    "expires_on": "2026-12-21",
+    "risk": "other",
+    "disposition": "temporary",
+    "subject": "update-folia-light-zh-CN-1200x800",
+    "locations": [
+      "p.update-result-modal__current"
+    ]
+  },
+  {
+    "scope": "frontend-accessibility",
+    "rule": "color-contrast",
+    "repository": "ECLTeam/EuoraCraft-Launcher.Frontend",
+    "reason": "axe 判定为确定违规的 color-contrast；与既有渐变/叠加背景例外族同源，等待前端维护者按 docs/governance/accessibility-review 流程复核后修复或延续豁免。",
+    "issue": "https://github.com/ECLTeam/EuoraCraft-Launcher/issues/76",
+    "approval": "AI 协助 CI 修复时按既有例外族归类并登记；尚待前端维护者人工复核，30 天期限到期后如未处理将再次阻断治理检查。",
+    "owner": "前端维护者",
+    "approved_on": "2026-11-21",
+    "expires_on": "2026-12-21",
+    "risk": "other",
+    "disposition": "temporary",
+    "subject": "update-folia-light-zh-CN-1200x800",
+    "locations": [
+      "li"
+    ]
   }
 ]
