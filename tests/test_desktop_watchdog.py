@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -245,3 +247,28 @@ def test_watchdog_session_runs_and_stops(tmp_path: Path, monkeypatch: pytest.Mon
         session.notify_alive()
     finally:
         session.stop()
+
+
+def test_blocking_portal_exits_only_after_heartbeat_task_cancelled() -> None:
+    # 回归：anyio portal 正常退出路径不取消残余任务，宿主必须主动 cancel
+    # 常驻心跳协程，否则启动器退出会永久卡在 portal 收尾上。
+    from anyio.from_thread import start_blocking_portal
+
+    async def heartbeat_like_loop() -> None:
+        while True:
+            await asyncio.sleep(0.05)
+
+    finished = threading.Event()
+
+    def run_portal() -> None:
+        with start_blocking_portal("asyncio") as portal:
+            future = portal.start_task_soon(heartbeat_like_loop)
+            time.sleep(0.2)
+            future.cancel()
+        finished.set()
+
+    worker = threading.Thread(target=run_portal, daemon=True)
+    worker.start()
+    assert finished.wait(10), "portal 在取消心跳协程后仍未退出，启动器会卡死在退出流程"
+    worker.join(5)
+    assert not worker.is_alive()

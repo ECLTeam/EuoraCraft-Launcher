@@ -73,9 +73,10 @@ class Adapter:
         tauri_config = self._build_config()
         self.context.state.active_window_chrome = self._active_window_chrome
         with start_blocking_portal("asyncio") as portal:  # 允许异步方法
+            heartbeat_future = None
             if self.watchdog is not None:
                 # 心跳必须由事件循环侧发出：循环停转时协程随之冻结，心跳停止后看门狗才会触发。
-                portal.start_task_soon(self._heartbeat_loop)
+                heartbeat_future = portal.start_task_soon(self._heartbeat_loop)
             portal.call(self.context.game.bind_plugin_launch_loop)
             self.logger.debug("正在创建 Tauri 窗口")
             context = context_factory(self.resource_path, tauri_config=tauri_config)
@@ -107,15 +108,22 @@ class Adapter:
                 app.run_return(self._focus_main_window_on_ready)
             finally:
                 self._restore_debug_profile()
+                if heartbeat_future is not None:
+                    # portal 正常退出路径不取消残余任务，心跳协程必须在这里主动结束，
+                    # 否则退出会卡在等待永不结束的常驻协程上。
+                    heartbeat_future.cancel()
         self.logger.info("前端已退出")
 
     async def _heartbeat_loop(self) -> None:
         """
-        在 portal 事件循环上持续上报存活信号，直到前端退出。
+        在 portal 事件循环上持续上报存活信号，直到前端退出时被主动取消。
         """
-        while True:
-            self.watchdog.notify_alive()
-            await asyncio.sleep(heartbeat_interval_seconds)
+        try:
+            while True:
+                self.watchdog.notify_alive()
+                await asyncio.sleep(heartbeat_interval_seconds)
+        except asyncio.CancelledError:
+            return
 
     def _setup_plugin_windows(self, app_handle: AppHandle) -> None:
         """
